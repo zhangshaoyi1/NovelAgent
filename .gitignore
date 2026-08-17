@@ -1,0 +1,22 @@
+# Python 缓存
+__pycache__/
+*.pyc
+*.pyo
+
+# 密钥：绝不提交 .env（含 LLM API Key 等敏感信息）
+.env
+
+# 测试 / lint 缓存
+.pytest_cache/
+.ruff_cache/
+.coverage
+
+# 构建产物
+*.egg-info/
+build/
+dist/
+
+# 虚拟环境
+.venv/
+venv/
+env/

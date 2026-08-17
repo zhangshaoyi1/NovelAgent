@@ -1,0 +1,291 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>NovelAgent 可视化 Dashboard · {{ payload.project_dir }}</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@10.9.1/dist/mermaid.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1419; --panel:#1a212b; --panel2:#222b38; --text:#e6edf3;
+    --muted:#8b98a5; --border:#2d3645; --accent:#58a6ff; --ok:#3fb950;
+    --info:#58a6ff; --warn:#d29922; --err:#f85149; --radius:10px;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);line-height:1.6;}
+  header{padding:18px 24px;border-bottom:1px solid var(--border);background:var(--panel);position:sticky;top:0;z-index:10;}
+  header h1{margin:0;font-size:18px;}
+  header .meta{color:var(--muted);font-size:13px;margin-top:4px;}
+  .grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:16px;padding:16px 24px;}
+  @media (max-width:900px){.grid{grid-template-columns:1fr;}}
+  .panel{background:var(--panel);border:1px solid var(--border);border-radius:var(--radius);padding:16px;min-width:0;}
+  .panel.wide{grid-column:1 / -1;}
+  .panel h2{margin:0 0 12px;font-size:15px;display:flex;align-items:center;gap:8px;flex-wrap:wrap;}
+  .badge{font-size:11px;padding:2px 8px;border-radius:999px;background:var(--panel2);color:var(--muted);font-weight:400;}
+  .placeholder{color:var(--muted);font-style:italic;padding:10px;background:var(--panel2);border-radius:8px;border:1px dashed var(--border);}
+  .mermaid{background:#fff;border-radius:8px;padding:8px;overflow:auto;}
+  .stat{display:flex;gap:18px;margin-bottom:10px;color:var(--muted);font-size:13px;flex-wrap:wrap;}
+  .stat b{color:var(--text);font-size:16px;}
+  table{width:100%;border-collapse:collapse;font-size:13px;}
+  th,td{text-align:left;padding:6px 8px;border-bottom:1px solid var(--border);vertical-align:top;}
+  th{color:var(--muted);font-weight:600;}
+  .toc ol{margin:0 0 10px;padding-left:20px;font-size:13px;}
+  .toc a{color:var(--accent);text-decoration:none;}
+  .route-md{background:var(--panel2);border-radius:8px;padding:12px;max-height:360px;overflow:auto;font-size:13px;}
+  .route-md h1,.route-md h2,.route-md h3,.route-md h4{margin:.4em 0;}
+  .route-md blockquote{margin:.4em 0;padding-left:10px;border-left:3px solid var(--border);color:var(--muted);}
+  .bar{height:10px;background:var(--panel2);border-radius:999px;overflow:hidden;margin:6px 0;}
+  .bar > span{display:block;height:100%;background:linear-gradient(90deg,var(--ok),var(--accent));}
+  .pill{padding:1px 8px;border-radius:999px;font-size:12px;white-space:nowrap;}
+  .pill.ok{background:rgba(63,185,80,.15);color:var(--ok);}
+  .pill.info{background:rgba(88,166,255,.15);color:var(--info);}
+  .pill.warn{background:rgba(210,153,34,.15);color:var(--warn);}
+  .pill.error{background:rgba(248,81,73,.15);color:var(--err);}
+  .pill.true{background:rgba(63,185,80,.15);color:var(--ok);}
+  .pill.false{background:rgba(248,81,73,.15);color:var(--err);}
+  details{margin-top:4px;}
+  details summary{cursor:pointer;color:var(--muted);font-size:12px;}
+  pre.fix{background:#0b0f14;border:1px solid var(--border);border-radius:6px;padding:8px;overflow:auto;font-size:12px;color:#c9d1d9;white-space:pre-wrap;margin:4px 0 0;}
+  .warn-note{color:var(--warn);font-size:13px;}
+</style>
+</head>
+<body>
+<header>
+  <h1>NovelAgent 可视化 Dashboard</h1>
+  <div class="meta">项目：{{ payload.project_dir | e }} · 生成于 {{ payload.generated_at | e }}</div>
+</header>
+
+<div class="grid">
+
+  <!-- ① 关系网 -->
+  <section class="panel wide" id="relations">
+    <h2>关系网 <span class="badge">relations/graph.md</span></h2>
+    {% if payload.relations.available %}
+      <div class="stat">
+        <span>节点 <b>{{ payload.relations.node_count if payload.relations.node_count is not none else 'N/A' }}</b></span>
+        <span>关系边 <b>{{ payload.relations.edge_count if payload.relations.edge_count is not none else 'N/A' }}</b></span>
+      </div>
+      <div class="mermaid" id="mermaid-graph">{{ payload.relations.mermaid | e }}</div>
+    {% else %}
+      <div class="placeholder">尚未生成关系网（缺少 relations/graph.md）。运行 design-characters 后可见关系图。</div>
+    {% endif %}
+  </section>
+
+  <!-- ② 主角路线 -->
+  <section class="panel" id="route">
+    <h2>主角路线 <span class="badge">protagonist_route.md</span></h2>
+    {% if payload.route.available %}
+      <div class="toc">
+        <ol>
+        {% for t in payload.route.toc %}
+          <li><a href="#">{{ t | e }}</a></li>
+        {% endfor %}
+        </ol>
+      </div>
+      <div class="route-md" id="route-md"></div>
+    {% else %}
+      <div class="placeholder">尚未生成主角路线（缺少 protagonist_route.md）。</div>
+    {% endif %}
+  </section>
+
+  <!-- ③ 伏笔清单 -->
+  <section class="panel" id="foreshadows">
+    <h2>伏笔清单 <span class="badge">{{ payload.foreshadows.total }} 条</span></h2>
+    {% if payload.foreshadows.available %}
+      <div class="stat">
+        {% for st, cnt in payload.foreshadows.by_status.items() %}
+          <span>{{ st | e }} <b>{{ cnt }}</b></span>
+        {% endfor %}
+        <span>待回收 <b>{{ payload.foreshadows.pending | length }}</b></span>
+      </div>
+      <table>
+        <thead><tr><th>ID</th><th>伏笔内容</th><th>埋设</th><th>预期回收</th><th>状态</th><th>关联角色</th></tr></thead>
+        <tbody>
+        {% for r in payload.foreshadows.pending %}
+          <tr>
+            <td>{{ r.fid | e }}</td>
+            <td>{{ r.content | e }}</td>
+            <td>{{ r.plant_at | e }}</td>
+            <td>{{ r.recover_at | e }}</td>
+            <td><span class="pill {{ 'ok' if r.status == '已回收' else ('warn' if r.status == '已废弃' else 'info') }}">{{ r.status | e }}</span></td>
+            <td>{{ r.chars | join(', ') | e }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="placeholder">尚未生成伏笔表（缺少 foreshadows.md）。</div>
+    {% endif %}
+  </section>
+
+  <!-- ④ 写作进度 -->
+  <section class="panel" id="progress">
+    <h2>写作进度 <span class="badge">{{ payload.progress.state | e }}</span></h2>
+    {% if payload.progress.available %}
+      <div class="stat">
+        <span>已写 <b>{{ payload.progress.written }}</b> 章</span>
+        <span>通过率 <b>{{ '%.0f%%' | format(payload.progress.pass_rate * 100) if payload.progress.pass_rate is not none else 'N/A' }}</b></span>
+      </div>
+      <div class="bar"><span style="width:{{ (payload.progress.pass_rate * 100) if payload.progress.pass_rate is not none else 0 }}%"></span></div>
+      <table>
+        <thead><tr><th>#</th><th>支线</th><th>路线节点</th><th>质量</th><th>压力阶段</th></tr></thead>
+        <tbody>
+        {% for c in payload.progress.chapters %}
+          <tr>
+            <td>{{ c.num }}</td>
+            <td>{{ c.subline | e if c.subline is not none else '—' }}</td>
+            <td>{{ c.route_node | e if c.route_node is not none else '—' }}</td>
+            <td>{% if c.quality_passed is not none %}<span class="pill {{ 'true' if c.quality_passed else 'false' }}">{{ '通过' if c.quality_passed else '未通过' }}</span>{% else %}—{% endif %}</td>
+            <td>{{ c.pressure_stage | e if c.pressure_stage is not none else '—' }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="placeholder">尚未初始化（缺少 .state/state.json）。运行 start 开新书。</div>
+    {% endif %}
+  </section>
+
+  <!-- ⑤ 追读力（可选） -->
+  <section class="panel" id="pacing">
+    <h2>追读力 <span class="badge">pacing</span></h2>
+    {% if payload.pacing.available %}
+      <div class="stat">
+        <span>开放债务 <b>{{ payload.pacing.open_debts | length }}</b></span>
+        <span>爽点密度序列 <b>{{ payload.pacing.cool_density | length }}</b></span>
+      </div>
+      {% if payload.pacing.open_debts %}
+      <table>
+        <thead><tr><th>ID</th><th>描述</th><th>类型</th><th>埋设章</th><th>状态</th></tr></thead>
+        <tbody>
+        {% for d in payload.pacing.open_debts %}
+          <tr>
+            <td>{{ d.id | e }}</td>
+            <td>{{ d.desc | e }}</td>
+            <td>{{ d.kind | e }}</td>
+            <td>{{ d.planted_ch }}</td>
+            <td>{{ d.status | e }}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      {% endif %}
+      {% if payload.pacing.cool_density %}
+      <div class="stat"><span>爽点密度</span></div>
+      <div>{{ payload.pacing.cool_density | join(', ') }}</div>
+      {% endif %}
+    {% else %}
+      <div class="placeholder">尚未运行 track-pacing，暂无追读力账本（.state/pacing.json）。</div>
+    {% endif %}
+  </section>
+
+  <!-- ⑥ 学习沉淀（可选） -->
+  <section class="panel" id="learnings">
+    <h2>学习沉淀 <span class="badge">learnings</span></h2>
+    {% if payload.learnings.available %}
+      <div class="stat"><span>条目 <b>{{ payload.learnings.items | length }}</b></span></div>
+      <ul>
+      {% for it in payload.learnings.items %}
+        <li><b>[{{ it.category | e }}]</b> {{ it.text | e }} <span class="badge">{{ it.id | e }}</span></li>
+      {% endfor %}
+      </ul>
+    {% else %}
+      <div class="placeholder">尚未沉淀学习（.state/learnings/learnings.json）。运行 learn 后可见写法模板。</div>
+    {% endif %}
+  </section>
+
+  <!-- ⑦ RAG 索引统计（可选） -->
+  <section class="panel" id="rag">
+    <h2>RAG 索引 <span class="badge">rag</span></h2>
+    {% if payload.rag.available %}
+      <div class="stat"><span>索引条数 <b>{{ payload.rag.index_count if payload.rag.index_count is not none else 0 }}</b></span></div>
+    {% else %}
+      <div class="placeholder">尚未建立 RAG 语义索引（.state/rag/index.json）。长篇章节建议运行 reindex。</div>
+    {% endif %}
+  </section>
+
+  <!-- ⑧ 健康摘要 -->
+  <section class="panel wide" id="health">
+    <h2>健康摘要 <span class="badge">{{ '健康' if payload.health.healthy else '存在问题' }}</span></h2>
+    {% if payload.health.available %}
+      <table>
+        <thead><tr><th>模块</th><th>状态</th><th>说明</th><th>修复命令</th></tr></thead>
+        <tbody>
+        {% for c in payload.health.checks %}
+          <tr>
+            <td>{{ c.module | e }}</td>
+            <td><span class="pill {{ c.status | e }}">{{ c.status | e }}</span></td>
+            <td>{{ c.detail | e }}</td>
+            <td>{% if c.fix_command %}<details><summary>查看</summary><pre class="fix">{{ c.fix_command | e }}</pre></details>{% else %}—{% endif %}</td>
+          </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <div class="placeholder">健康诊断不可用。</div>
+    {% endif %}
+  </section>
+
+</div>
+
+<script>
+  function escapeHtml(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;'); }
+  function inlineMd(s){
+    return escapeHtml(s)
+      .replace(/\*\*([^*]+)\*\*/g,'<strong>$1</strong>')
+      .replace(/\*([^*]+)\*/g,'<em>$1</em>')
+      .replace(/`([^`]+)`/g,'<code>$1</code>');
+  }
+  function renderMd(md){
+    const lines = String(md).split('\n');
+    let html=''; let listOpen=false;
+    function closeList(){ if(listOpen){ html+='</ul>'; listOpen=false; } }
+    for (let raw of lines){
+      const line = raw.replace(/\s+$/,'');
+      if (/^\s*[-*]\s+/.test(line)){
+        if(!listOpen){ html+='<ul>'; listOpen=true; }
+        html+='<li>'+inlineMd(line.replace(/^\s*[-*]\s+/,''))+'</li>';
+        continue;
+      }
+      closeList();
+      let m;
+      if ((m=line.match(/^(#{1,6})\s+(.*)$/))){
+        const lvl=m[1].length;
+        html+='<h'+lvl+'>'+inlineMd(m[2])+'</h'+lvl+'>';
+      } else if (/^\s*>\s?/.test(line)){
+        html+='<blockquote>'+inlineMd(line.replace(/^\s*>\s?/,''))+'</blockquote>';
+      } else if (line.trim()===''){
+        // 跳过空行
+      } else {
+        html+='<p>'+inlineMd(line)+'</p>';
+      }
+    }
+    closeList();
+    return html;
+  }
+
+  // 内联聚合数据（与 --json 同源），供面板 JS 使用
+  const DATA = {{ payload | tojson }};
+
+  // 路线 markdown → HTML（含 TOC 跳转锚点）
+  (function(){
+    const md = (DATA.route && DATA.route.markdown) || '';
+    const el = document.getElementById('route-md');
+    if (el && md) { el.innerHTML = renderMd(md); }
+  })();
+
+  // mermaid 初始化（CDN 离线时给出提示，其余数据表格正常）
+  if (typeof mermaid !== 'undefined') {
+    mermaid.initialize({ startOnLoad: true, theme: 'default' });
+  } else {
+    const g = document.getElementById('mermaid-graph');
+    if (g) {
+      const note = document.createElement('p');
+      note.className = 'warn-note';
+      note.textContent = '关系网图需联网加载 mermaid（CDN）；其余数据表格正常显示。';
+      g.parentNode.insertBefore(note, g);
+    }
+  }
+</script>
+</body>
+</html>

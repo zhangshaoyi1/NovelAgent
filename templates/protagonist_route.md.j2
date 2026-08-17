@@ -1,0 +1,25 @@
+# 主角成长路线 · {{ root_node }}
+
+> 树状结构：主分支 = 当前默认路径，alt_branches = 分叉备选（触发时激活）。
+> M6 调整路线时，旧分支保留为备选（标记 `archived_alt`），不删除。
+
+{% for node in nodes %}
+## {{ node.get('id', '') }} · {{ node.get('milestone', '') }}
+
+- **章节范围**：{{ node.get('chapter_range', '') }}
+
+### 主分支 · {{ (node.get('main_branch') or {}).get('title', '') }}
+
+- **结果**：{{ (node.get('main_branch') or {}).get('result', '') }}
+- **成长**：{{ (node.get('main_branch') or {}).get('growth', '') }}
+
+{% if node.get('alt_branches') %}
+### 备选分支
+
+{% for alt in node.get('alt_branches', []) %}
+- **{{ alt.get('title', '') }}**
+  - 触发：{{ alt.get('when', '') }}
+  - 结果：{{ alt.get('result', '') }}
+{% endfor %}
+{% endif %}
+{% endfor %}
