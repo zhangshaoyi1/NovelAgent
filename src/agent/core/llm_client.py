@@ -401,11 +401,17 @@ class LLMClient:
             try:
                 import agent as _agent_pkg
 
-                _pkg_env = os.path.join(
-                    os.path.dirname(_agent_pkg.__file__), ".env"
-                )
-                if os.path.exists(_pkg_env):
-                    load_dotenv(_pkg_env)
+                _pkg_dir = os.path.dirname(_agent_pkg.__file__)  # .../src/agent
+                # .env 可能在：包目录(src/agent/.env)、src 目录、或仓库根(agent/.env)。
+                # 兼容 src 布局：.env 放在仓库根、不进包、不随 wheel 发布。
+                for _cand in (
+                    os.path.join(_pkg_dir, ".env"),
+                    os.path.join(os.path.dirname(_pkg_dir), ".env"),
+                    os.path.join(os.path.dirname(os.path.dirname(_pkg_dir)), ".env"),
+                ):
+                    if os.path.exists(_cand):
+                        load_dotenv(_cand)
+                        break
             except Exception:
                 pass
 

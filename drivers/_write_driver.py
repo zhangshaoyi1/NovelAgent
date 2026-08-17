@@ -2,6 +2,8 @@ import subprocess, json, time, os
 
 PY = r"D:/env/python/python.exe"
 CWD = r"D:/project/NovelAgent"
+# src 布局：Python 包位于本文件上级目录的 src/
+AGENT_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
 PROJ = r"小说/projects/deep-well"
 TARGET = 50000
 MAX_CHAPTERS = 25
@@ -12,7 +14,9 @@ START = time.time()
 
 def run_cli(*args):
     cmd = [PY, "-m", "agent.cli", *args]
-    p = subprocess.run(cmd, cwd=CWD, capture_output=True, text=True, encoding="utf-8")
+    env = dict(os.environ)
+    env["PYTHONPATH"] = AGENT_SRC + os.pathsep + env.get("PYTHONPATH", "")
+    p = subprocess.run(cmd, cwd=CWD, env=env, capture_output=True, text=True, encoding="utf-8")
     out = (p.stdout or "").strip()
     err = (p.stderr or "").strip()
     result = None

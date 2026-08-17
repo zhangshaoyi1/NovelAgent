@@ -18,6 +18,8 @@ PROJECT = "小说/projects/jipin-yixian"
 STATE = "D:/project/NovelAgent/小说/projects/jipin-yixian/state.json"
 LOG = "D:/project/NovelAgent/小说/_driver_log_jipin.json"
 PY = "D:/env/python/python.exe"
+# src 布局：Python 包位于本文件上级目录的 src/
+AGENT_SRC = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "src")
 HARD_CAP_CHARS = 450_000  # 安全硬上限(兜底，远高于任何合理总字数)；正常情况下小说会在 S05 写满时完结，不会触发此上限提前腰斩结局
 RUN_TARGET_CHARS = 50_000  # 单批增量上限，达到即正常退出，便于分批续写(抗沙箱超时)
 # 每条支线规划的章节数(压缩版，总目标约 15 万字，尽快完结)：
@@ -54,7 +56,9 @@ log = load_log()
 def run_cli(args, timeout=200):
     cmd = [PY, "-m", "agent.cli"] + args
     try:
-        r = subprocess.run(cmd, cwd="D:/project/NovelAgent", capture_output=True,
+        env = dict(os.environ)
+        env["PYTHONPATH"] = AGENT_SRC + os.pathsep + env.get("PYTHONPATH", "")
+        r = subprocess.run(cmd, cwd="D:/project/NovelAgent", env=env, capture_output=True,
                            text=True, timeout=timeout, encoding="utf-8")
         out = r.stdout.strip()
         try:

@@ -1,0 +1,45 @@
+[project]
+name = "novel-agent"
+version = "0.1.0"
+description = "共创式小说写作 Agent - 设定集驱动的长篇一致性 + 剧集树 + 关系演化"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "MIT" }
+authors = [{ name = "novel-agent" }]
+dependencies = [
+    "typer>=0.12.0",
+    "rich>=13.0.0",
+    "pydantic>=2.0.0",
+    "jinja2>=3.1.0",
+    "openai>=1.0.0",
+    "pyyaml>=6.0",
+    "python-frontmatter>=1.1.0",
+    "python-dotenv>=1.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-cov>=5.0.0",
+    "ruff>=0.5.0",
+]
+
+[project.scripts]
+novel-agent = "agent.cli:app"
+
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+# src 布局：Python 包位于 src/agent/，pyproject.toml 在仓库根（agent/）。
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["agent*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
