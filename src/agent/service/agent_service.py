@@ -118,15 +118,26 @@ class AgentService:
         auto_repair: bool = False,
         rollback_window: int = 5,
         max_rollback_attempts: int = 3,
+        real_score: bool = False,
     ) -> dict[str, Any]:
-        """全书「不崩」体检。返回 {report, llmops}。"""
+        """全书「不崩」体检。返回 {report, llmops}。
+
+        ``real_score``：启用真 LLM 评分（B1），把 Evaluator 的人设/设定/连贯/追读/逻辑
+        维度由 LLM 实判，替代离线时的满分安全默认。需配置真实 LLM。
+        """
         from agent.agents.evaluator_agent import EvaluatorAgent
+        from agent.core.reader_appeal import ReaderAppealScorer
+
+        score_fn = None
+        if real_score:
+            score_fn = ReaderAppealScorer(llm_client=self.traced_llm).score
 
         evaluator = EvaluatorAgent(
             self.project_dir,
             auto_rollback=not no_rollback,
             rollback_window=rollback_window,
             max_rollback_attempts=max_rollback_attempts,
+            score_fn=score_fn,
         )
         if auto_repair:
 

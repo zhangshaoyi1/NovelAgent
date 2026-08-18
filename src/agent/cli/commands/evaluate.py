@@ -40,6 +40,11 @@ def evaluate(
     max_rollback: int = typer.Option(
         3, "--max-rollback", help="最大回溯次数（默认 3）"
     ),
+    real_score: bool = typer.Option(
+        False, "--real-score",
+        help="启用真 LLM 评分（B1）：人设/设定/连贯/追读/逻辑维度由 LLM 实判，"
+             "替代离线满分默认。需配置真实 LLM。"
+    ),
 ) -> None:
     """全书「不崩」体检 - 七维量化报告 + 可选自动回溯修复
 
@@ -66,12 +71,20 @@ def evaluate(
     workflow_console = make_quiet_console() if json_output else console
     from agent.agents.evaluator_agent import EvaluatorAgent
 
+    score_fn = None
+    if real_score:
+        from agent.core.llm_client import LLMClient
+        from agent.core.reader_appeal import ReaderAppealScorer
+
+        score_fn = ReaderAppealScorer(llm_client=LLMClient()).score
+
     evaluator = EvaluatorAgent(
         project_path,
         console=workflow_console,
         auto_rollback=not no_rollback,
         rollback_window=rollback_window,
         max_rollback_attempts=max_rollback,
+        score_fn=score_fn,
     )
 
     try:
