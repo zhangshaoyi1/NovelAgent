@@ -31,6 +31,7 @@ from agent.core.llmops import (
 )
 from agent.core.model_routing import ModelRouter
 from agent.core.tools.mcp_bridge import MCPBridge
+from agent.core.guardrails import build_guardrails
 
 
 class AgentService:
@@ -171,3 +172,35 @@ class AgentService:
     def register_prompt(self, key: str, text: str) -> dict[str, Any]:
         """登记/校验提示版本（漂移检测用）。"""
         return self.prompt_registry.register(key, text)
+
+    # ---------------------------------------------------------------- A3 反馈改写
+    def rewrite_chapter(
+        self,
+        chapter_num: int,
+        feedback: str,
+        *,
+        backup: bool = True,
+        gate_mode: str = "advisory",
+        record_learning: bool = True,
+    ) -> dict[str, Any]:
+        """A3 反馈→定向重写（用户好用闭环）。
+
+        把用户针对某章的反馈变成局部定向重写，而非整章回退/重跑。
+        返回 RewriteResult.to_dict()。
+        """
+        from agent.core.feedback_rewriter import FeedbackRewriter
+
+        rewriter = FeedbackRewriter(
+            project_dir=self.project_dir,
+            llm_client=self.traced_llm,
+            guardrails=build_guardrails(),
+            console=self.console,
+        )
+        result = rewriter.rewrite(
+            chapter_num,
+            feedback,
+            backup=backup,
+            gate_mode=gate_mode,
+            record_learning=record_learning,
+        )
+        return result.to_dict()
