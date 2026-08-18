@@ -29,6 +29,8 @@ from agent.core.llmops import (
     get_tracer,
     set_tracer,
 )
+from agent.core.model_routing import ModelRouter
+from agent.core.tools.mcp_bridge import MCPBridge
 
 
 class AgentService:
@@ -48,6 +50,8 @@ class AgentService:
         tier: str = "auto",
         model: str = "creative-strong",
         cost_model: CostModel | None = None,
+        model_router: ModelRouter | None = None,
+        mcp_bridge: MCPBridge | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
@@ -60,6 +64,17 @@ class AgentService:
         self.cost_model = cost_model or CostModel()
         self.prompt_registry = PromptRegistry(self.project_dir)
         self.eval_harness = EvalHarness(self.project_dir)
+
+        # Phase 4 · 生态与强化（可选注入；默认按项目配置构造）
+        self.model_router = model_router or ModelRouter()
+        self.mcp_bridge = mcp_bridge or MCPBridge(
+            config_path=self.project_dir / ".state" / "mcp.json"
+        )
+        # 探测 MCP 服务器可用性（配置为空时瞬时返回，真实服务器不可达则优雅降级）
+        try:
+            self.mcp_bridge.discover()
+        except Exception:  # noqa: BLE001
+            pass
 
         # 接线：全局 Tracer 指向本项目 TraceStore
         set_tracer(self.trace_store)
@@ -141,6 +156,12 @@ class AgentService:
             "cost_alert": alert,
             "eval_runs": len(self.eval_harness.history()),
             "prompt_versions": self.prompt_registry.all(),
+            "model_routing": self.model_router.report(),
+            "mcp": {
+                "servers": self.mcp_bridge.servers,
+                "local_tools": len(self.mcp_bridge.local_manifest()),
+                "remote_tools": len(self.mcp_bridge.remote_manifest()),
+            },
         }
 
     def summarize(self) -> dict[str, Any]:

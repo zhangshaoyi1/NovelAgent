@@ -15,5 +15,6 @@ from agent.core.tools.base import (
     tool,
 )
 from agent.core.tools import builtins  # noqa: F401 — 触发内置工具注册
+from agent.core.tools.mcp_bridge import MCPBridge
 
-__all__ = ["Tool", "ToolResult", "ToolRegistry", "registry", "tool", "builtins"]
+__all__ = ["Tool", "ToolResult", "ToolRegistry", "registry", "tool", "builtins", "MCPBridge"]

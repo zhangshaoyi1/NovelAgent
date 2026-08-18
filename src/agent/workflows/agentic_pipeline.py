@@ -92,6 +92,7 @@ class AgenticPipelineWorkflow:
         editor: EditorLike = None,
         evaluator: EvaluatorLike = None,
         memory: Any = None,
+        guardrails: Any = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
@@ -102,6 +103,7 @@ class AgenticPipelineWorkflow:
         self.eval_enabled = eval_enabled
         self.rollback_window = rollback_window
         self.max_rollback_attempts = max_rollback_attempts
+        self.guardrails = guardrails
         self.console = console or Console()
 
         # Memory：默认按项目新建（持久化到 .state/memory/）
@@ -242,6 +244,19 @@ class AgenticPipelineWorkflow:
                     )
             except Exception:  # noqa: BLE001
                 edit = None
+
+            # Phase 4 · Guardrails 护栏（advisory：违规提示，不阻断出章；
+            # 硬门禁仍由 Evaluator 终审兜底）。未注入则跳过。
+            if self.guardrails is not None:
+                try:
+                    gr = self.guardrails.check(ch_text)
+                    if not gr.passed:
+                        self.console.print(
+                            f"[red]第 {ch_num} 章护栏告警："
+                            f"{len(gr.errors)} 项错误（{', '.join(v.rule_id for v in gr.errors)}）[/red]"
+                        )
+                except Exception:  # noqa: BLE001
+                    pass
 
             # 记忆回写
             try:
