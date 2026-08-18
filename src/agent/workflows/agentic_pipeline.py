@@ -40,6 +40,8 @@ class PipelineResult:
     health_report: Optional[dict[str, Any]] = None
     escalated: bool = False
     escalated_reason: str = ""
+    blocked: bool = False
+    block_reason: str = ""
     engine: str = "Agentic"
 
     def to_dict(self) -> dict[str, Any]:
@@ -50,6 +52,8 @@ class PipelineResult:
             "health_report": self.health_report,
             "escalated": self.escalated,
             "escalated_reason": self.escalated_reason,
+            "blocked": self.blocked,
+            "block_reason": self.block_reason,
             "engine": self.engine,
         }
 
@@ -93,6 +97,7 @@ class AgenticPipelineWorkflow:
         evaluator: EvaluatorLike = None,
         memory: Any = None,
         guardrails: Any = None,
+        gate_mode: str = "advisory",
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
@@ -104,6 +109,7 @@ class AgenticPipelineWorkflow:
         self.rollback_window = rollback_window
         self.max_rollback_attempts = max_rollback_attempts
         self.guardrails = guardrails
+        self.gate_mode = gate_mode
         self.console = console or Console()
 
         # Memory：默认按项目新建（持久化到 .state/memory/）
@@ -245,16 +251,28 @@ class AgenticPipelineWorkflow:
             except Exception:  # noqa: BLE001
                 edit = None
 
-            # Phase 4 · Guardrails 护栏（advisory：违规提示，不阻断出章；
-            # 硬门禁仍由 Evaluator 终审兜底）。未注入则跳过。
+            # Phase 5 · Guardrails 门禁（advisory 提示 / block 硬门禁）。未注入则跳过。
             if self.guardrails is not None:
                 try:
-                    gr = self.guardrails.check(ch_text)
-                    if not gr.passed:
-                        self.console.print(
-                            f"[red]第 {ch_num} 章护栏告警："
-                            f"{len(gr.errors)} 项错误（{', '.join(v.rule_id for v in gr.errors)}）[/red]"
-                        )
+                    if str(self.gate_mode).lower() == "block":
+                        gr = self.guardrails.gate(ch_text, mode="block")
+                        if not gr.passed:
+                            self.console.print(
+                                f"[red]第 {ch_num} 章硬门禁未过："
+                                f"{len(gr.violations)} 项违例，已拒绝发布并终止流水线[/red]"
+                            )
+                            result.blocked = True
+                            result.block_reason = "; ".join(
+                                v.get("message", v.get("rule_id", "")) for v in gr.violations
+                            )
+                            break  # 硬门禁：拒绝发布非合规内容，交由人工/修订
+                    else:
+                        gr = self.guardrails.check(ch_text)
+                        if not gr.passed:
+                            self.console.print(
+                                f"[red]第 {ch_num} 章护栏告警："
+                                f"{len(gr.errors)} 项错误（{', '.join(v.rule_id for v in gr.errors)}）[/red]"
+                            )
                 except Exception:  # noqa: BLE001
                     pass
 

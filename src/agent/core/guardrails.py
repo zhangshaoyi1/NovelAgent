@@ -19,6 +19,8 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import dataclass, field
+from enum import Enum
+from pathlib import Path
 from typing import Any
 
 # 默认占位符（草稿残留，绝不应出现在成书中）
@@ -28,6 +30,31 @@ _DEFAULT_PLACEHOLDERS: list[str] = [
 ]
 # 默认禁用词（平台合规基线；实际项目应以配置文件覆盖为完整词表）
 _DEFAULT_BANNED: list[str] = []
+
+# 默认「内容护栏词表」——聚焦**结构完整性 + 作者残留标记**，非主题审查。
+# 仅收录在正常成书中绝不应当出现的、无歧义的创作残留 / 序列化泄漏标记；
+# 真实平台的合规词表应由部署方通过 ``.state/guardrails.json`` 自行配置。
+# 注意：刻意不含 "null"/"undefined" 等常见英文词，避免误伤正常小说正文。
+_DEFAULT_COMPLIANCE_WORDS: list[str] = [
+    "{{", "}}",        # 未渲染的模板标签
+    "[object Object]", # JSON 序列化泄漏
+    "[REDACTED]",      # 脱敏占位残留
+    "作者注", "作者按",  # 作者备注残留（未清理）
+]
+
+# 默认配置路径
+DEFAULT_GUARDRAIL_CONFIG_PATH = ".state/guardrails.json"
+
+
+class GateMode(str, Enum):
+    """护栏门禁模式。
+
+    - ADVISORY（建议）：仅报告违规，不阻断（默认，保持创作流畅）。
+    - BLOCK（硬门禁）：命中 error 级违规则**拒绝发布**，要求修订后重提。
+    """
+
+    ADVISORY = "advisory"
+    BLOCK = "block"
 
 
 @dataclass
@@ -223,3 +250,130 @@ class Guardrails:
         if not result.passed:
             raise GuardrailViolationError(result)
         return result
+
+    # ------------------------------------------------------------------
+    # 硬门禁：配置化门禁模式（advisory / block）
+    # ------------------------------------------------------------------
+    def gate(
+        self,
+        text: str,
+        *,
+        mode: GateMode | str = GateMode.ADVISORY,
+        required_fields: list[str] | None = None,
+        max_chars: int | None = None,
+        min_chars: int | None = None,
+        auto_clean_placeholders: bool = True,
+    ) -> "GateReport":
+        """门禁入口。
+
+        - ADVISORY：仅报告，``passed`` 反映是否存在 error 级违规。
+        - BLOCK：命中 error 级违规（空 / 禁用词 / 超长 / 缺字段）**拒绝发布**；
+          占位残留（placeholder）可在 ``auto_clean_placeholders`` 下自动剥离后通过，
+          其余硬错需修订后重新提交。
+
+        Returns:
+            GateReport：含 passed / mode / violations / cleaned（处理后文本）。
+        """
+        mode = GateMode(mode) if not isinstance(mode, GateMode) else mode
+        current = text
+        cleaned = None
+
+        # 占位残留可自动清理（不要求重写）
+        if auto_clean_placeholders:
+            new_text = self._strip_placeholders(current)
+            if new_text != current:
+                cleaned = new_text
+                current = new_text
+
+        result = self.check(
+            current, required_fields=required_fields,
+            max_chars=max_chars, min_chars=min_chars,
+        )
+
+        if mode is GateMode.BLOCK:
+            passed = result.passed  # error 级（空/禁用词/超长/缺字段）一律拒绝
+        else:
+            passed = result.passed
+
+        return GateReport(
+            passed=passed,
+            mode=mode,
+            violations=[v.to_dict() for v in result.violations],
+            cleaned=cleaned,
+            text=current,
+        )
+
+    def _strip_placeholders(self, text: str) -> str:
+        out = text
+        for pat in self.placeholder_patterns:
+            out = pat.sub("", out)
+        return out
+
+
+@dataclass
+class GateReport:
+    """门禁结果。"""
+
+    passed: bool
+    mode: GateMode
+    violations: list[dict[str, Any]] = field(default_factory=list)
+    cleaned: str | None = None   # 被自动清理的内容（占位残留）摘要，None 表示无
+    text: str = ""               # 处理后（可能已剥离占位）的文本
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "passed": self.passed,
+            "mode": self.mode.value,
+            "violations": self.violations,
+            "cleaned": self.cleaned,
+            "text": self.text,
+        }
+
+
+# ----------------------------------------------------------------------
+# 配置加载（.state/guardrails.json）
+# ----------------------------------------------------------------------
+def load_guardrail_config(path: str | Path | None = None) -> dict[str, Any]:
+    """读取护栏配置；文件不存在 / 解析失败时返回默认配置（含默认合规词表）。
+
+    配置键：mode（advisory|block）、banned_words、max_chars、min_chars、
+    allow_warnings。``banned_words`` 缺省时填入 ``_DEFAULT_COMPLIANCE_WORDS``。
+    """
+    cfg: dict[str, Any] = {
+        "mode": GateMode.ADVISORY.value,
+        "banned_words": list(_DEFAULT_COMPLIANCE_WORDS),
+        "max_chars": None,
+        "min_chars": None,
+        "allow_warnings": True,
+    }
+    if path is None:
+        return cfg
+    p = Path(path)
+    if not p.exists():
+        return cfg
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - 配置损坏也降级为默认，不阻断写作
+        return cfg
+    if isinstance(raw.get("banned_words"), list):
+        cfg["banned_words"] = raw["banned_words"] or list(_DEFAULT_COMPLIANCE_WORDS)
+    if raw.get("mode") in (GateMode.ADVISORY.value, GateMode.BLOCK.value):
+        cfg["mode"] = raw["mode"]
+    if "max_chars" in raw:
+        cfg["max_chars"] = raw["max_chars"]
+    if "min_chars" in raw:
+        cfg["min_chars"] = raw["min_chars"]
+    if "allow_warnings" in raw:
+        cfg["allow_warnings"] = bool(raw["allow_warnings"])
+    return cfg
+
+
+def build_guardrails(path: str | Path | None = None) -> "Guardrails":
+    """按配置构建 ``Guardrails`` 实例（含门禁模式与默认合规词表）。"""
+    cfg = load_guardrail_config(path)
+    return Guardrails(
+        banned_words=cfg["banned_words"],
+        max_chars=cfg["max_chars"],
+        min_chars=cfg["min_chars"],
+        allow_warnings=cfg["allow_warnings"],
+    )
