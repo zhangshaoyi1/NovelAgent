@@ -118,12 +118,13 @@ class AgentService:
         auto_repair: bool = False,
         rollback_window: int = 5,
         max_rollback_attempts: int = 3,
-        real_score: bool = False,
+        real_score: bool = True,
     ) -> dict[str, Any]:
         """全书「不崩」体检。返回 {report, llmops}。
 
-        ``real_score``：启用真 LLM 评分（B1），把 Evaluator 的人设/设定/连贯/追读/逻辑
-        维度由 LLM 实判，替代离线时的满分安全默认。需配置真实 LLM。
+        ``real_score``（默认 True）：真 LLM 评分（B1），把 Evaluator 的人设/设定/连贯/追读/逻辑
+        维度由 LLM 实判，替代离线时的满分安全默认。传 False 可强制离线（CI/测试）。
+        LLM 不可用时自动降级为离线安全默认。
         """
         from agent.agents.evaluator_agent import EvaluatorAgent
         from agent.core.reader_appeal import ReaderAppealScorer

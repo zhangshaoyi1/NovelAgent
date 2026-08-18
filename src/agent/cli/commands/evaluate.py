@@ -41,15 +41,18 @@ def evaluate(
         3, "--max-rollback", help="最大回溯次数（默认 3）"
     ),
     real_score: bool = typer.Option(
-        False, "--real-score",
-        help="启用真 LLM 评分（B1）：人设/设定/连贯/追读/逻辑维度由 LLM 实判，"
-             "替代离线满分默认。需配置真实 LLM。"
+        True, "--real-score/--no-real-score",
+        help="真 LLM 评分（B1，默认开）：人设/设定/连贯/追读/逻辑维度由 LLM 实判，"
+             "替代离线满分默认；--no-real-score 强制离线（CI/测试）。"
+             "LLM 不可用时自动降级为离线安全默认。"
     ),
 ) -> None:
     """全书「不崩」体检 - 七维量化报告 + 可选自动回溯修复
 
-    跑伏笔回收率 / 节奏异常（确定性）+ 人设/设定/连贯/追读/逻辑（LLM 评测），
-    输出量化报告。默认不修改书稿；加 --auto-repair 可在不达标时回溯并重写。
+    跑伏笔回收率 / 节奏异常（确定性）+ 人设/设定/连贯/追读/逻辑（**默认真 LLM 评测**），
+    输出量化报告。LLM 不可用时自动降级为离线安全默认。
+    默认不修改书稿；加 --auto-repair 可在不达标时回溯并重写。
+    用 --no-real-score 可强制离线评测（CI/测试）。
     """
     if env_file:
         os.environ["NOVEL_AGENT_DOTENV"] = env_file
