@@ -172,7 +172,7 @@ class AgenticWriteWorkflow:
     # ------------------------------------------------------------------
     # 主入口
     # ------------------------------------------------------------------
-    def run(self) -> AgenticWriteResult:
+    def run(self, rewrite_hint: str | None = None) -> AgenticWriteResult:
         self._guard()
 
         # 复用 M5 上下文加载（确定性、已验证）；不注入冲突仲裁以避免前置拦截副作用
@@ -186,6 +186,16 @@ class AgenticWriteWorkflow:
         ctx = m5._load_context()
 
         task = self._build_task(ctx)
+
+        # 针对性重写提示（由 Pipeline 回溯闭环传入）：把全书体检未达标项
+        # 编译成 Writer 可读的修正要求，避免盲目重写导致反复不达标。
+        if rewrite_hint:
+            task = (
+                task
+                + "\n\n# 针对性修正要求（全书体检回溯重写）\n"
+                + rewrite_hint
+                + "\n请在上文各项设定/风格要求不变的前提下，优先消除上述未达标项后重新提交。"
+            )
 
         # WriterAgent（默认门禁注入 LLM 九项审稿，使质量不低于 M5）
         writer = WriterAgent(

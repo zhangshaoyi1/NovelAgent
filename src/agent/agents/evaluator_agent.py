@@ -187,6 +187,8 @@ class EvaluatorAgent:
         self.rollback_window = max(1, rollback_window)
         self.max_rollback_attempts = max(1, max_rollback_attempts)
         self.auto_rollback = auto_rollback
+        # 最近一次「不达标」体检报告（供 Pipeline 的 rewriter 编译针对性重写提示）
+        self.last_failed_report: "Optional[NovelHealthReport]" = None
         qt = dict(quality_targets or {})
         self.qt = {
             "character_stability_high": float(qt.get("character_stability_high", 0)),
@@ -361,12 +363,19 @@ class EvaluatorAgent:
         return report
 
     def evaluate_with_repair(self, rewriter: RewriterFn) -> NovelHealthReport:
-        """闭环：体检 →（不达标）回退 → 重写 → 重评，直至通过或上报人工。"""
+        """闭环：体检 →（不达标）回退 → 针对性重写 → 重评，直至通过或上报人工。
+
+        每轮不达标都会把 ``last_failed_report`` 暴露给上层，使 Pipeline 的
+        ``rewriter`` 能据此把失败维度编译成针对性提示传给 Writer，而不是盲目重写。
+        """
         attempts = 0
         report = self._evaluate_once()
         while not report.overall_pass:
+            # 暴露当前失败报告，供 rewriter 编译针对性修正提示
+            self.last_failed_report = report
             if attempts >= self.max_rollback_attempts:
                 report.escalated = True
+                report.rollback_attempts = attempts
                 report.escalated_reason = (
                     f"回溯 {attempts} 次仍不达标，已超过上限 "
                     f"{self.max_rollback_attempts}，需人工介入。"
@@ -387,6 +396,9 @@ class EvaluatorAgent:
                 return report
             attempts += 1
             report = self._evaluate_once()
+        # 闭环成功收尾：把累计回溯次数回写到最终通过报告，便于审计/复盘
+        report.rollback_attempts = attempts
+        report.rolled_back = attempts > 0
         return report
 
     # 可选：把回溯事件写进 Memory（由 Pipeline 注入）

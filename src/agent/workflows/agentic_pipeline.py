@@ -69,6 +69,43 @@ EvaluatorLike = Any
 PlannerLike = Any
 
 
+def build_rewrite_hint(report: Any, chapter_nums: list[int]) -> str:
+    """把上一轮全书体检的失败项编译成写给 Writer 的针对性修正提示。
+
+    回溯重写若不带反馈，Writer 只会盲目重生成、极易再次不达标而触发无谓上报。
+    这里把未达标维度、回溯原因与重写章节区间浓缩为可读指令，让重写「对症」。
+    """
+    if report is None:
+        return ""
+    failed = [d for d in getattr(report, "dimensions", []) or [] if not d.passed]
+    lo = chapter_nums[0] if chapter_nums else "?"
+    hi = f"–{chapter_nums[-1]}" if chapter_nums else ""
+    lines = [
+        "【全书体检未达标 · 针对性重写要求】",
+        f"以下章节被回退并重写：第 {lo}{hi} 章。",
+    ]
+    if failed:
+        lines.append("上轮未达标维度（请在本轮重写中重点修正）：")
+        for d in failed:
+            arrow = "≥" if d.direction == ">=" else "≤"
+            lines.append(
+                f"- {d.label}（{d.name}）：实测 {d.value} {arrow} 合格线 {d.threshold}"
+            )
+    reason = getattr(report, "escalated_reason", "") or ""
+    if reason:
+        lines.append(f"上下文：{reason}")
+    plan = getattr(report, "repair", None)
+    if plan is not None:
+        r = getattr(plan, "reason", "") or ""
+        if r:
+            lines.append(f"回溯原因：{r}")
+    lines.append(
+        "请在重写时针对以上维度改善（如补全伏笔回收、修复人设/设定冲突、"
+        "提升连贯与追读节奏、控制注水），并保持与世界观/角色档案一致。"
+    )
+    return "\n".join(lines)
+
+
 class AgenticPipelineWorkflow:
     """全流程自主写作流水线。
 
@@ -411,13 +448,16 @@ class AgenticPipelineWorkflow:
             evaluator = self._ensure_evaluator()
 
             def rewriter(chapter_nums: list[int]) -> None:
-                # 回退后逐章重写（writer.run 按进度写下一章）
+                # 回退后逐章重写（writer.run 按进度写下一章）。
+                # 把上一轮体检失败项编译成针对性提示传入，避免盲目重写反复不达标。
                 w = self._ensure_writer()
-                for _ in chapter_nums:
+                ev = self._ensure_evaluator()
+                hint = build_rewrite_hint(getattr(ev, "last_failed_report", None), chapter_nums)
+                for ch in chapter_nums:
                     try:
-                        w.run()
+                        w.run(rewrite_hint=hint)
                     except Exception as e:  # noqa: BLE001
-                        raise RuntimeError(f"重写第 {_} 章失败：{e}")
+                        raise RuntimeError(f"重写第 {ch} 章失败：{e}")
 
             try:
                 report = evaluator.evaluate_with_repair(rewriter)
