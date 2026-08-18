@@ -7,48 +7,48 @@
 
 ---
 
-## 1. `drivers/_write_driver_jipin.py` —— 极品医仙真实写作驱动（核心，已跑完整书）
+## 1. `drivers/generic_writer.py` —— 通用写作驱动（由极品医仙驱动重构，配置驱动、可换书复用）
 
 **用途**
-循环调用真实 `agent.cli write --json` 把《极品医仙归来：前女友跪求复合》写到完结；自带限流退避、草稿清理、断点续写、支线推进、完结后自动导出 TXT + 生成 Dashboard。这是生成极品医仙（最终 51 章 / 176,078 字）**实际使用的驱动**。
+循环调用真实 `agent.cli write --json` 把小说写到完结；自带限流退避、草稿清理、断点续写、支线推进、完结后自动导出 TXT + 生成 Dashboard。**所有小说相关参数已抽到 `driver_config.toml`**，换书只需复制配置改几个值，无需改代码。生成《极品医仙》（最终 51 章 / 176,078 字）即由本驱动的默认配置（极品医仙值）实际跑出。详见同目录 `drivers/README.md`。
 
 **用法**
 ```bash
-cd D:/project/NovelAgent
-D:/env/python/python.exe agent/drivers/_write_driver_jipin.py
-# 或带 PYTHONPATH：
-PYTHONPATH=D:/project/NovelAgent/agent/src D:/env/python/python.exe D:/project/NovelAgent/agent/drivers/_write_driver_jipin.py
+cd D:/project/NovelAgent/agent
+D:/env/python/python.exe drivers/generic_writer.py
+# 换书：指定专属配置
+D:/env/python/python.exe drivers/generic_writer.py --config driver_config.<书名>.toml
 ```
 
-**关键常量（文件顶部，按需改）**
-| 常量 | 含义 | 当前值 |
+**配置项（全部抽到 `drivers/driver_config.toml`，不再硬编码）**
+| 配置键 | 含义 | 极品医仙当前值 |
 |---|---|---|
-| `PROJECT` | 小说项目相对路径（相对 `D:/project/NovelAgent`） | `小说/projects/jipin-yixian` |
-| `STATE` | 状态机文件绝对路径 | `.../jipin-yixian/state.json` |
-| `LOG` | 断点 / 运行日志 JSON | `小说/_driver_log_jipin.json` |
-| `PY` | Python 解释器 | `D:/env/python/python.exe` |
-| `AGENT_SRC` | 自动推导的 `src` 目录，注入 `PYTHONPATH` | `drivers/../src` |
-| `HARD_CAP_CHARS` | 安全硬上限（兜底，正常不会触碰） | `450_000` |
-| `RUN_TARGET_CHARS` | 单批增量上限（抗沙箱超时，达到即退出续写） | `50_000` |
-| `PER_ARC_LIST` | 每条支线规划章节数 `[S01..S05]` | `[25,17,2,2,3]` |
-| `COOLDOWN` | 章节间冷却秒数（避让智谱 RPM） | `45` |
-| `ARCS` | 5 条支线名称列表 | `S01_情感清算…S05_终极清算` |
+| `[project] name` | 小说 projects 目录名 | `jipin-yixian` |
+| `[paths] log` | 断点 / 运行日志 JSON | `小说/_driver_log_jipin.json` |
+| `[paths] python` | Python 解释器 | `D:/env/python/python.exe` |
+| `[run] run_target_chars` | 单批增量上限（抗超时） | `50000` |
+| `[run] hard_cap_chars` | 安全硬上限（兜底） | `450000` |
+| `[run] cooldown_sec` | 章节间冷却秒（避让 RPM） | `45` |
+| `[arcs] ids` / `per_arc_chapters` | 支线 ID 与每弧章节数 | 5 条支线 / `[25,17,2,2,3]` |
+| `[run] max_chapters` | 简单模式章节上限（>0 启用） | `0`（走支线模式） |
+| `[adjust] every` / `tail_from_arc_index` | adjust 频率 / 收官弧索引 | `5` / `3` |
 
-**可复用性：★★★☆☆（专用但结构可借鉴）**
-- 强依赖极品医仙的特定支线规划（`PER_ARC_LIST` / `ARCS` / 项目路径），**不能直接套到其他小说**。
-- 但其「限流退避 + 草稿清理 + 断点续写 + 支线推进 + 完结导出」的**编排框架高度可复用**：换一本小说只需改 `PROJECT` / `STATE` / `ARCS` / `PER_ARC_LIST` 四个常量即可。
-- 建议把它**抽象为一个通用 `NovelDriver` 类 / CLI 参数**，把硬编码常量改为命令行参数（见下方「后续如何使用」）。
+**可复用性：★★★★★（已做成通用驱动）**
+- 原极品医仙驱动的所有硬编码常量已抽进 `driver_config.toml`，脚本本身不再绑定任何一本小说——这正是此前 issue 归档里「抽象为通用 NovelDriver CLI」建议的落地。
+- 「限流退避 + 草稿清理 + 断点续写 + 支线推进 + 完结导出 + 两种完结模式（支线/简单）」的编排框架全部保留且参数化。
+- 换书零代码改动：复制 `driver_config.toml` → 改 `name` / `log` / `arcs` 等 → 指定 `--config` 运行。
 
 **后续如何使用**
-1. 换小说：复制本文件，改 `PROJECT` / `STATE` / `ARCS` / `PER_ARC_LIST` / `RUN_TARGET_CHARS`。
-2. 续写：直接重跑，脚本读 `LOG` 自动从 `arc_index` / `total_chars` 断点继续（**不要手删 `_driver_log_jipin.json`**，否则从 0 开始）。
-3. 调速度：账户配额高就调小 `COOLDOWN`、调大 `RUN_TARGET_CHARS`；配额紧则反向。
-4. 观察进度：看 `_driver_log_jipin.json` 的 `chapters` / `total_chars` / `arc_index`，或跑 `dashboard`。
+1. 换小说：复制 `driver_config.toml` 为 `driver_config.<书名>.toml`，改 `[project] name`、`[paths] log`、按需改 `[arcs]` 或改用 `[run] max_chapters` 简单模式；然后 `python drivers/generic_writer.py --config driver_config.<书名>.toml`。
+2. 续写：直接重跑，脚本读 `[paths] log` 自动从 `arc_index` / `total_chars` 断点继续（**不要手删日志文件**，否则从 0 开始）。
+3. 调速度：账户配额高就调小 `cooldown_sec`、调大 `run_target_chars`；配额紧则反向。
+4. 观察进度：看日志的 `chapters` / `total_chars` / `arc_index`，或跑 `dashboard`。
 
 **注意事项 / 坑**
-- 必须在 `D:/project/NovelAgent` 为 cwd 运行（脚本里 `cwd="D:/project/NovelAgent"` 且 `PROJECT` 是相对路径）。
+- 项目目录与 cwd 已由配置推导（`[project] base_dir` + `name`），无需手填绝对路径；项目路径现在以绝对路径传给 CLI，不再依赖 cwd 相对路径。
 - 依赖 `agent.cli` 的 `write` / `adjust-relation` / `adjust-route` / `export` / `dashboard` 子命令与 `--json` 输出格式；若 CLI 改了输出结构需同步改本脚本的解析。
 - safe-delete 在沙箱会失败关闭（见 issue-02），本脚本用 `clean_stale_draft()` 绕过；若内核修了该问题，可移除该函数。
+- 需要 Python 3.11+（`tomllib` 解析 TOML）。
 
 ---
 
@@ -141,13 +141,13 @@ PYTHONPATH=D:/project/NovelAgent/agent/src D:/env/python/python.exe D:/project/N
 
 | 脚本 | 角色 | 可复用性 | 后续建议 |
 |---|---|---|---|
-| `_write_driver_jipin.py` | 极品医仙正式驱动 | 框架可复用，参数需改 | 抽象为通用 `NovelDriver` CLI（参数化 PROJECT/ARCS/COOLDOWN） |
+| `generic_writer.py` | 通用写作驱动（配置驱动） | ★★★★★ 已通用 | 换书只改 `driver_config.toml`，无需动代码 |
 | `_write_driver.py` | deep-well 模板 | 适合当新小说模板 | 写长篇时从 jipin 版移植断点/支线逻辑 |
 | `_fix_subline_ranges.py` | 一次性修复 | 不可复用（专用） | 仅存档；根治靠状态机自动生成范围 |
 | `_smoke_test_jipin.py` | LLM 冒烟测试 | 通用 | 改名 `smoke_test_llm.py`，参数化后作为标准自检 |
 
 **给后续使用者的三条建议**
-1. **写新书**：复制 `_write_driver_jipin.py` → 改 4 个常量 → 先跑 `_smoke_test_jipin.py` 确认 LLM 通 → 分批续写。
+1. **写新书**：复制 `driver_config.toml` 为 `driver_config.<书名>.toml` → 改 `name`/`log`/`arcs` → 先跑 `scripts/_smoke_test_jipin.py` 确认 LLM 通 → `python drivers/generic_writer.py --config driver_config.<书名>.toml` 分批续写。
 2. **永远先冒烟**：动环境前跑 LLM 冒烟测试，30 秒排除「key / 网络 / 配置」问题。
 3. **别手改大纲范围**：支线章节范围让状态机生成；若已错位且要手写修，先用 `_fix_subline_ranges.py` 的思路但务必备份。
 

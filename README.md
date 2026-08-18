@@ -38,8 +38,10 @@ novel-agent --help
 # 方式二：不安装，直接从 NovelAgent 根目录把 src 加入 PYTHONPATH
 PYTHONPATH=D:/project/NovelAgent/agent/src python -m agent.cli --help
 
-# 驱动脚本（drivers/）会自动把 src 加入 PYTHONPATH，从 NovelAgent 根目录运行即可：
-python agent/drivers/_write_driver_jipin.py
+# 通用写作驱动（drivers/）会自动把 src 加入 PYTHONPATH，从 agent 仓库根运行即可：
+# 默认读同目录 driver_config.toml（已填极品医仙值）；换书改配置后用 --config 指定
+python drivers/generic_writer.py
+python drivers/generic_writer.py --config drivers/driver_config.<书名>.toml
 ```
 
 ## 配置
