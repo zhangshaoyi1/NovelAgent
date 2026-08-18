@@ -23,7 +23,8 @@ class MemoryLayer:
     Args:
         project_dir: 小说项目目录；None 表示三层全为纯内存（测试用）。
         semantic / conversation / consolidated: 可注入的具体实现（替换默认）。
-        scorer: 传入 SemanticMemory 的检索打分器。
+        scorer: 传入 SemanticMemory 的离线检索打分器。
+        embed_fn: 传入 SemanticMemory 的向量函数（启用向量语义检索；None 为离线模式）。
     """
 
     def __init__(
@@ -33,9 +34,12 @@ class MemoryLayer:
         conversation: ConversationMemory | None = None,
         consolidated: ConsolidatedMemory | None = None,
         scorer: Any = None,
+        embed_fn: Any = None,
     ) -> None:
         self.project_dir = Path(project_dir) if project_dir else None
-        self.semantic = semantic or SemanticMemory(self.project_dir, scorer=scorer)
+        self.semantic = semantic or SemanticMemory(
+            self.project_dir, scorer=scorer, embed_fn=embed_fn
+        )
         self.conversation = conversation or ConversationMemory(self.project_dir)
         self.consolidated = consolidated or ConsolidatedMemory(self.project_dir)
 
