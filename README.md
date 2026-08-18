@@ -1,71 +1,340 @@
-# novel-agent
+# NovelAgent 使用指南（面向作者 / 使用者）
 
-共创式小说写作 Agent —— 设定集驱动的长篇一致性 + 剧集树 + 关系演化。
+> 本指南介绍 **NovelAgent 这个写作软件本身怎么用**：如何安装、配置大模型、把一本小说从 0 写到完结、以及日常查看 / 修改 / 导出。
+> 如果你要的是"用脚本自动批量写作（极品医仙那种一键驱动）"，那套工具已单独放到 **`写作自动化/` 独立仓库**，本指南不覆盖。
 
-本目录是 NovelAgent 的**代码仓库（软件本体）**。与 `项目文档/`、`小说/`、`写作自动化/`
-三个目录并列，各自独立 git：
+---
 
-- `agent/`            —— 本仓库：NovelAgent 软件本体（CLI + 核心 + 工作流 + 题材包）
-- `项目文档/`          —— 中文需求 / 架构 / 评审文档（独立仓库）
-- `小说/`             —— 生成物（各小说的 projects、成书、运行日志，独立仓库）
-- `写作自动化/`        —— **自动批量写作驱动与脚本文档**（独立仓库，不属于本软件本体）
-                       详见该仓库 README；本仓库不含任何"一键跑书"的驱动脚本。
+## 一、NovelAgent 是什么
 
-## 布局（src layout）
+NovelAgent 是一个**共创式长篇小说写作 Agent**：你给它世界观、脉络、角色，它按"设定集驱动"的方式一章一章往下写，并在写作过程中维护：
 
-```
-agent/                      # 代码仓库根（本目录）
-├── pyproject.toml          # 项目配置（setuptools，src 布局）
-├── README.md
-├── .env                    # LLM API Key 等密钥（已 gitignore，不入库）
-├── .gitignore
-├── src/agent/              # Python 包（cli/ core/ workflows/ skills/ templates/ state_schema/ ...）
-├── tests/                  # pytest 测试套件
-└── docs/                   # 本软件的使用文档（使用指南.md）
-```
+- **长篇一致性**：角色关系网、主角成长路线、伏笔表、金手指登记，随剧情演化但不矛盾；
+- **剧集树（支线 / 卷）**：按 `outline.md` + 每条支线的 `subline.md` 推进；
+- **质量门禁**：每章生成后做 9 项通用质量校验 + D 多维 LLM 审查（爽点 / OOC / 连贯性 / 追读力），不通过会自动修订；
+- **可逆操作**：快照、回滚、归档，写错了能后退。
 
-## 安装
+命令行入口统一为 `novel-agent`（安装后），等价于 `python -m agent.cli`。所有命令都接受一个 `-d/--dir <项目目录>` 参数指向你的小说项目。
+
+> **状态机**：NovelAgent 内部有状态流转（INIT → 配置/讨论 → 架构确认 → 大纲 → 角色 → 写作 → 完结）。每个命令都有"门禁"——**在错误的阶段运行会被拒绝并提示下一步该做什么**。所以照着下面的顺序走即可，不用担心顺序乱。
+
+---
+
+## 二、安装
+
+### 2.1 环境要求
+- **Python 3.11+**（本体运行建议 3.11+；自动化脚本依赖内置 `tomllib`，必须 3.11+）。
+- 能联网装包（`pip`）。
+
+### 2.2 安装 agent 包
+NovelAgent 用 **src 布局**，从 NovelAgent 根目录安装（构建 wheel 会把 `src/agent` 包装进来）：
 
 ```bash
-# 从 NovelAgent 根目录安装（构建 wheel，装入 src/agent 包）：
+# 方式 A：正式安装（构建 wheel）
 pip install ./agent
-# 或 editable 安装（开发期改代码即时生效）：
+
+# 方式 B：editable 安装（改源码即时生效，推荐开发 / 调试期）
 pip install -e ./agent
 ```
 
-依赖见 `pyproject.toml`（typer / rich / pydantic / jinja2 / openai / pyyaml / python-frontmatter / python-dotenv）。
+依赖见 `agent/pyproject.toml`（核心：typer、rich、pydantic、jinja2、openai、pyyaml、python-frontmatter、python-dotenv）。
 
-## 运行
-
+### 2.3 验证安装
 ```bash
-# 方式一：安装后直接用入口命令
 novel-agent --help
-
-# 方式二：不安装，直接从 NovelAgent 根目录把 src 加入 PYTHONPATH
+# 或（不安装包，直接从根目录把 src 加入 PYTHONPATH）：
 PYTHONPATH=D:/project/NovelAgent/agent/src python -m agent.cli --help
 ```
+能打印出命令列表即安装成功。
 
-> 自动批量写作（一键跑完整本书）**不在本仓库**，见并列的 `写作自动化/` 仓库。
+---
 
-## 配置
+## 三、配置大模型（`.env`）
 
-LLM 密钥放在本目录的 `.env`（已 gitignore，不入库）。`src/agent/core/llm_client.py` 会
-依次从「cwd 及祖先目录的 `.env`」与「包目录 / src 目录 / 仓库根 `agent/.env`」加载，因此
-`.env` 随代码仓库一起放置（位于仓库根、不进包、不随 wheel 发布）即可被自动读取。
+NovelAgent 通过 `.env` 读取 LLM 配置。**把 `.env` 放在 agent 仓库根目录**（`agent/.env`，已 gitignore，不会入库）。加载顺序会依次尝试：当前工作目录及祖先目录的 `.env`、以及 `agent/.env`（仓库根）。所以"密钥随代码仓库一起放根目录"即可被自动读取。
 
-## 文档
+### 3.1 全部环境变量
 
-- `docs/使用指南.md` —— **NovelAgent 软件本身的详细使用指南**（安装 / 配置 / 写作流程 / 命令速查）。
-- 并列仓库 `../项目文档/` —— 需求、架构、评审等中文文档。
-- 并列仓库 `../写作自动化/` —— 自动批量写作驱动（generic_writer 等）及其文档。
+| 变量 | 含义 | 默认值 |
+|---|---|---|
+| `LLM_PROVIDER` | 提供商：`openai`（兼容 OpenAI 协议）或 `ollama`（本地） | `openai` |
+| `LLM_API_KEY` | API 密钥（ollama 不需要） | 空 |
+| `LLM_BASE_URL` | 服务地址。openai 默认 `https://api.openai.com/v1`；ollama 为 `http://localhost:11434` | 按 provider |
+| `LLM_MODEL_ID` | **主模型**（创作：写章节 / 架构 / 角色），质量优先 | `glm-5.2` |
+| `LLM_MODEL_UTILITY` | 轻量模型（校验 / 摘要 / 一致性，省成本），留空则等于主模型 | 空 |
+| `LLM_TIMEOUT` | 单次请求超时（秒） | `120` |
+| `LLM_MAX_RETRIES` | 失败重试次数 | `3` |
+| `LLM_ENABLE_THINKING` | 思考开关：`true`/`false`/`空`（不干预模型默认）。批量写长篇建议 `false` 提速省 token | 空 |
+| `LLM_EMBEDDING_MODEL` | 嵌入模型（RAG 用），留空回退主模型 | 空 |
+| `LLM_EMBEDDING_BASE_URL` | 独立嵌入端点（可选） | 空 |
+| `LLM_EMBEDDING_API_KEY` | 嵌入端点密钥（可选） | 空 |
 
-## 目录
+### 3.2 示例：本项目实际使用的智谱 GLM
+新建 `agent/.env`，内容：
+```dotenv
+LLM_PROVIDER=openai
+LLM_API_KEY=你的智谱APIKey
+LLM_BASE_URL=https://open.bigmodel.cn/api/paas/v4/
+LLM_MODEL_ID=glm-4.7
+LLM_MODEL_UTILITY=glm-4.7
+LLM_TIMEOUT=180
+LLM_MAX_RETRIES=3
+LLM_ENABLE_THINKING=false
+```
+> 换成 OpenAI / DeepSeek / 其它 OpenAI 兼容服务，只需改 `LLM_BASE_URL`、`LLM_MODEL_ID`、`LLM_API_KEY` 三项。
 
-- `src/agent/cli/`          CLI 入口（typer）
-- `src/agent/core/`         核心服务层（状态机 / LLM / 一致性 / 质量 / 冲突仲裁 …）
-- `src/agent/workflows/`    各功能工作流（m<N>_<name>.py）
-- `src/agent/skills/`       题材包 / 评估 skill 插件层
-- `src/agent/templates/`    Jinja2 文件模板
-- `src/agent/state_schema/` 状态文件 JSON schema
-- `tests/`                  pytest 测试套件
-- `docs/`                   本软件使用文档
+### 3.3 本地模型（ollama，零成本离线写作）
+```dotenv
+LLM_PROVIDER=ollama
+LLM_BASE_URL=http://localhost:11434
+LLM_MODEL_ID=qwen2.5:14b
+# 无需 LLM_API_KEY
+```
+
+### 3.4 临时指定 .env
+部分命令支持 `--env <路径>`（仅本次命令生效，透传给下游 LLM 客户端）：
+```bash
+novel-agent write -d projects/my-novel --env ./another.env
+novel-agent doctor -d projects/my-novel --env ./another.env
+```
+
+---
+
+## 四、核心写作流程（从新书到完结）
+
+建议先 `cd` 到你的**工作区根目录**（即 `agent/.env` 所在目录，或任何能让 NovelAgent 找到 `.env` 的目录），再用 `-d` 指定小说项目。项目默认相对路径是 `projects/my-novel`。
+
+### 4.1 开新书 —— `start`
+```bash
+novel-agent start -d projects/my-novel
+```
+交互式收集 **标题 / 体量 / 题材 / 风格 / 故事核心**，然后调 LLM 生成世界观 `world.md`。这是第一步，后续所有命令都依赖它。
+
+### 4.2 脉络讨论 —— `discuss`
+```bash
+novel-agent discuss -d projects/my-novel            # 默认最多 10 轮
+novel-agent discuss -d projects/my-novel -r 15      # 最多 15 轮
+```
+与 Agent 多轮对话，深化故事思路，产出 `discussion.md`。在对话框输入 `/next` 结束讨论。
+
+### 4.3 大纲 —— `outline`
+```bash
+novel-agent outline -d projects/my-novel
+```
+基于已确认的架构生成 `outline.md`（故事简介 + 顶层支线任务列表），并为每条支线创建 `subline.md`。
+
+### 4.4 角色设计 —— `design-characters`
+```bash
+novel-agent design-characters -d projects/my-novel
+```
+产出：
+- `protagonist_route.md`（树状主角成长路线）
+- `characters/<姓名>.md`（角色档案）
+- `relations/graph.md`（Mermaid 关系网）
+- `foreshadows.md`（初始伏笔表）
+- `golden_finger_registration.md`（金手指登记，冻结）
+
+### 4.5 写章节（核心循环）—— `write`
+```bash
+novel-agent write -d projects/my-novel                  # 写下一章
+novel-agent write -d projects/my-novel --no-strict-review   # 跳过 D 严格审查（更快，质量偏弱）
+```
+每一章的执行链条：
+1. **7 步上下文加载**（world → subline → route → relations → characters → foreshadows → 题材规则）；
+2. **LLM 生成**章节正文；
+3. **质量校验**（9 项通用规则），不通过自动修订（≤2 次）；
+4. 持久化 `chapters/ch<NNN>.md` 并更新进度指针。
+
+- 加 `--json` 会以 JSON 输出结果（供外部脚本 / 自动化驱动调用，stdout 是 JSON，rich UI 走 stderr）。
+- 可能触发 **前置冲突检测**（`pre_validation_blocked`）：当世界观出现高严重度冲突时，生成被暂停。此时按报告修改 `world.md` / `subline` / 角色档案，或用下面的 `adjust-*` 调整，再重跑 `write`。
+
+> 想"一口气写完整本"而不手动反复敲命令？见独立的 **`写作自动化/` 仓库**里的通用驱动，它会循环调用 `write` 并自动处理限流、续写、导出。
+
+### 4.6 一致性演化 —— `adjust-relation` / `adjust-route`
+```bash
+novel-agent adjust-relation -d projects/my-novel -i "赵无极对林寻从对立转为暗中赏识"
+novel-agent adjust-route    -d projects/my-novel -i "让主角在N02选择加入执法堂当卧底，后期再反水"
+```
+让**关系网** / **主角成长路线**随真实剧情演化：
+- 旧关系不会删除，而是标记为 `archived` + 强度 0（归档边单独成章）；
+- 旧路线分支保留为 `archived_alt`（备选）；
+- 同时产出**一致性影响报告**，标注与 world / 已写章节 / 金手指的冲突（高 / 中 / 低）。
+
+`-i/--intent` 是必填的自然语言意图；也可不加 `-i` 让它交互式询问。
+
+### 4.7 导出成书 —— `export`
+```bash
+novel-agent export -d projects/my-novel -f txt                 # 导出 TXT
+novel-agent export -d projects/my-novel -f markdown -t "我的修仙路"   # 指定书名
+novel-agent export -d projects/my-novel -f epub -o ./output    # 导出 EPUB 到指定目录
+```
+支持 `txt` / `markdown` / `epub`，默认输出到 `<项目>/exports/`。中途或完结都能导出。
+
+---
+
+## 五、日常辅助命令
+
+### 5.1 查看状态 —— `status`
+```bash
+novel-agent status -d projects/my-novel            # 富文本：状态/模式/进度/可用命令
+novel-agent status -d projects/my-novel --json    # JSON：state/mode/progress/available_commands
+```
+随时看"写到第几章、当前状态、接下来能跑什么命令"。
+
+### 5.2 介入模式 —— `mode`
+```bash
+novel-agent mode -d projects/my-novel              # 查看当前模式
+novel-agent mode -d projects/my-novel -t light     # 切到 light
+novel-agent mode -d projects/my-novel -t auto      # 切到 auto（全自动，重大决策才打断）
+```
+三档：**heavy**（每章前问方向、每章后等反馈）/ **light**（仅剧情节点介入）/ **auto**（自主推进）。
+
+### 5.3 健康体检（只读）—— `doctor`
+```bash
+novel-agent doctor -d projects/my-novel            # 只读诊断，绝不修改
+novel-agent doctor -d projects/my-novel --ping     # 额外探测 embedding / LLM 端点可达性
+```
+逐项检查：结构（阶段产物是否齐全）、状态机、设定集、RAG 索引、依赖配置，并给出**修复命令**。出问题先跑它。
+
+### 5.4 可视化 Dashboard —— `dashboard`
+```bash
+novel-agent dashboard -d projects/my-novel -o out.html          # 生成自包含只读 HTML（可双击打开）
+novel-agent dashboard -d projects/my-novel --serve --port 8080  # 起本地只读服务（Ctrl-C 关闭）
+```
+聚合关系图、主角路线、伏笔、进度、节奏、健康诊断，渲染为只读可视化。**只读，绝不修改任何项目文件**。
+
+### 5.5 安全网：快照与回滚 —— `snapshot` / `rollback`
+```bash
+novel-agent snapshot -d projects/my-novel -l before-revision   # 给设定集打快照
+novel-agent rollback -d projects/my-novel -c 20     # 回滚到第 20 章（1-19 保留，20+ 归档到 chapters/_archived/）
+novel-agent rollback -d projects/my-novel -c 20 -y  # 跳过二次确认
+```
+写歪了不怕：快照随时存，回滚把后续章节归档（不删），进度指针退回，从指定章重写。
+
+### 5.6 其它维护命令
+| 命令 | 作用 |
+|---|---|
+| `reset-state` | 重置状态机（慎用，回到初始） |
+| `reindex` | 重建 RAG 索引（长篇章节多了推荐定期跑） |
+| `resume` | 从异常中恢复 |
+| `context` | 查看当前上下文拼装 |
+| `version` | 打印版本 |
+| `help` | 查看帮助 |
+
+---
+
+## 六、题材包（genre packs）
+
+NovelAgent 内置多种题材的规则 / 套路 / 术语（修仙、都市、悬疑、科幻、重生、末世、玄学……），可注入写作流程：
+
+```bash
+novel-agent list-genres                 # 列出所有可用题材
+novel-agent genre-info <题材名>          # 查看某题材说明
+novel-agent load-genre -d <项目> <题材名>   # 把题材规则加载进项目
+novel-agent inject-genre -d <项目> <题材名> # 注入题材套路到写作
+novel-agent load-skill <skill名>         # 加载评估 / 写作 skill
+```
+
+---
+
+## 七、故障排查
+
+| 现象 | 原因 | 处理 |
+|---|---|---|
+| `LLM_API_KEY 未配置` / 找不到 key | `.env` 没放对或没加载 | 确认 `agent/.env` 存在且含 `LLM_API_KEY`；或命令加 `--env` |
+| `429` / `速率限制` / `rate limit` | LLM 服务商 RPM 限流 | `write` 会自动退避重试；频繁则调大 `LLM_TIMEOUT`、换额度更高模型，或用 `写作自动化/` 驱动的 `cooldown_sec` |
+| `pre_validation_blocked` | 世界观高严重度冲突 | 按报告改 `world.md` / `subline` / 角色，或用 `adjust-*` 调整后再 `write` |
+| `ModuleNotFoundError: agent` | 没装包 / PYTHONPATH 没含 src | `pip install -e ./agent`，或运行前 `PYTHONPATH=.../agent/src` |
+| 进度丢失 / 状态异常 | 状态文件损坏 | 先 `doctor` 诊断；必要时 `snapshot` 后 `rollback`，或 `reset-state` |
+| 想换模型但不生效 | `.env` 未重载 | 重启终端 / 重新运行命令（`.env` 每次命令启动读取） |
+
+---
+
+## 八、命令速查表
+
+> 命令名统一用连字符（文件名下划线转连字符）。`*` 表示全局命令（任意阶段可用）。
+
+### 核心创作
+| 命令 | 说明 | 主要参数 |
+|---|---|---|
+| `start` | 开新书，生成 world.md | `-d` |
+| `discuss` | 脉络讨论，产出 discussion.md | `-d`, `-r/--max-rounds` |
+| `outline` | 大纲 + 各支线 subline | `-d` |
+| `design-characters` | 角色 / 关系 / 伏笔 / 金手指 | `-d` |
+| `write` | 写下一章（核心循环） | `-d`, `--no-strict-review`, `--json`, `--env` |
+| `adjust-relation` | 调整角色关系网 | `-d`, `-i/--intent`, `--json` |
+| `adjust-route` | 调整主角成长路线 | `-d`, `-i/--intent`, `--json` |
+| `export` | 导出 txt/markdown/epub | `-d`, `-f/--format`, `-o/--output`, `-t/--title` |
+
+### 查看 / 诊断（`*`）
+| 命令 | 说明 |
+|---|---|
+| `status`* | 查看状态 / 进度 / 可用命令 |
+| `mode`* | 查看 / 切换介入模式（heavy/light/auto） |
+| `doctor`* | 只读健康体检 + 修复建议 |
+| `dashboard`* | 只读可视化 HTML / 本地服务 |
+| `context`* | 查看上下文拼装 |
+| `version`* | 版本 |
+| `help`* | 帮助 |
+
+### 安全 / 维护（`*`）
+| 命令 | 说明 |
+|---|---|
+| `snapshot`* | 设定集快照 |
+| `rollback` | 回滚到第 N 章（归档不删） |
+| `reset-state`* | 重置状态机 |
+| `reindex`* | 重建 RAG 索引 |
+| `resume`* | 异常恢复 |
+| `rollback-setting` | 回滚设定项 |
+
+### 题材 / 质量 / 分析（`*`）
+| 命令 | 说明 |
+|---|---|
+| `list-genres`* | 列出可用题材 |
+| `genre-info`* | 题材说明 |
+| `load-genre` | 加载题材规则到项目 |
+| `inject-genre` | 注入题材套路 |
+| `load-skill` | 加载 skill |
+| `audit-chapter` | 审计单章质量 |
+| `audit-setting` | 审计设定集 |
+| `bookworm-review` | 书虫视角评审 |
+| `foreshadow-check` | 伏笔一致性检查 |
+| `foreshadow-report` | 伏笔报表 |
+| `track-pacing` | 节奏追踪 |
+| `summarize-chapter` | 章节摘要 |
+| `summarize-range` | 区间摘要 |
+| `learn` | 学习 / 沉淀经验 |
+| `architecture` | 查看架构 |
+| `confirm-architecture` | 确认架构（解锁大纲） |
+| `draft-status` | 草稿状态 |
+| `draft-discard` | 丢弃草稿 |
+| `import-draft` | 导入外部草稿 |
+| `frozen-fields` / `unfreeze` | 冻结 / 解冻字段 |
+| `list-snapshots`* | 列出快照 |
+| `completion-extras`* | 补全扩展 |
+
+---
+
+## 九、最小上手示例
+
+```bash
+# 1) 安装
+pip install -e ./agent
+
+# 2) 配置（新建 agent/.env，填入你的 LLM key，见第三章）
+
+# 3) 开一本新书并依次推进
+novel-agent start    -d projects/my-first-novel
+novel-agent discuss  -d projects/my-first-novel
+novel-agent outline  -d projects/my-first-novel
+novel-agent design-characters -d projects/my-first-novel
+
+# 4) 写前 10 章（手动循环，或改用 写作自动化/ 驱动一键跑）
+novel-agent write -d projects/my-first-novel
+# ……反复 write 直到满意……
+
+# 5) 导出成书
+novel-agent export -d projects/my-first-novel -f txt
+```
+
+更省事的全自动版本，见并列的 **`写作自动化/`** 仓库（通用写作驱动 + 配置即可换书复用）。
