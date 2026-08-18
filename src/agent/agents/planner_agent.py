@@ -209,8 +209,19 @@ class PlannerAgent:
                     {"role": "user", "content": user_msg},
                 ]
             )
-            plan = MasterPlan(**(data if isinstance(data, dict) else dict(data)))
-        except Exception as e:  # noqa: BLE001 - 规划失败降级为空计划（仍落盘，不阻断）
+            # 优先严格构造；结构化输出若部分字段缺失/类型不符导致校验失败，
+            # 退而求其次做「宽松重建」保留有效部分（修复 bug1：避免整体退化为空计划）。
+            try:
+                if isinstance(data, MasterPlan):
+                    plan = data
+                else:
+                    plan = MasterPlan(**(data if isinstance(data, dict) else dict(data)))
+            except Exception as ve:  # noqa: BLE001
+                self.console.print(
+                    f"[yellow]Planner 结构化输出字段校验不严，宽松重建（{ve}）[/yellow]"
+                )
+                plan = self._build_plan_lenient(data, brief)
+        except Exception as e:  # noqa: BLE001 - 决策彻底失败才降级为空计划（仍落盘，不阻断）
             self.console.print(f"[yellow]Planner 决策失败（{e}），使用空计划[/yellow]")
             plan = MasterPlan(brief=brief)
 
@@ -233,7 +244,16 @@ class PlannerAgent:
                     {"role": "user", "content": user_msg},
                 ]
             )
-            plan = MasterPlan(**(data if isinstance(data, dict) else dict(data)))
+            try:
+                if isinstance(data, MasterPlan):
+                    plan = data
+                else:
+                    plan = MasterPlan(**(data if isinstance(data, dict) else dict(data)))
+            except Exception as ve:  # noqa: BLE001
+                self.console.print(
+                    f"[yellow]Planner 结构化输出字段校验不严，宽松重建（{ve}）[/yellow]"
+                )
+                plan = self._build_plan_lenient(data, brief)
         except Exception as e:  # noqa: BLE001
             self.console.print(f"[yellow]Planner 决策失败（{e}），使用空计划[/yellow]")
             plan = MasterPlan(brief=brief)
@@ -241,6 +261,78 @@ class PlannerAgent:
         self._save(plan)
         self._write_memory(plan)
         return plan
+
+    # ---------------------------------------------------------------- 宽松重建
+    def _build_plan_lenient(self, data: Any, brief: str) -> "MasterPlan":
+        """宽松重建 Master Plan。
+
+        结构化输出偶尔会返回字段缺失或类型不符的 dict（嵌套必填项如
+        ``CharacterSketch.name`` 缺失），直接 ``MasterPlan(**data)`` 会抛
+        ``ValidationError`` 并连带丢光整份规划。这里逐模型挑出合法字段、
+        跳过非法条目，尽可能保留有效部分（修复 bug1）。
+
+        Args:
+            data: ``chat_structured`` 返回的（可能不规范的）dict。
+            brief: 用户思路（始终保留）。
+
+        Returns:
+            尽可能完整的 ``MasterPlan``；``data`` 非 dict 时退回仅含 brief 的计划。
+        """
+        if not isinstance(data, dict):
+            return MasterPlan(brief=brief)
+
+        def _keep(model: type, raw: Any):
+            if not isinstance(raw, dict):
+                return None
+            try:
+                return model(**{k: v for k, v in raw.items() if k in model.model_fields})
+            except Exception:  # noqa: BLE001
+                return None
+
+        try:
+            genre = str(data.get("genre") or "modern")
+        except Exception:  # noqa: BLE001
+            genre = "modern"
+        try:
+            title = str(data.get("title") or "")
+        except Exception:  # noqa: BLE001
+            title = ""
+        try:
+            total = int(data.get("total_chapters") or 100)
+        except Exception:  # noqa: BLE001
+            total = 100
+        try:
+            notes = str(data.get("notes") or "")
+        except Exception:  # noqa: BLE001
+            notes = ""
+
+        arcs = (
+            [a for a in (_keep(Arc, x) for x in data.get("episode_tree") or []) if isinstance(a, Arc)]
+            if isinstance(data.get("episode_tree"), list)
+            else []
+        )
+        chars = (
+            [c for c in (_keep(CharacterSketch, x) for x in data.get("character_skeleton") or []) if isinstance(c, CharacterSketch)]
+            if isinstance(data.get("character_skeleton"), list)
+            else []
+        )
+        fs = (
+            [f for f in (_keep(PlannedForeshadow, x) for x in data.get("foreshadow_plan") or []) if isinstance(f, PlannedForeshadow)]
+            if isinstance(data.get("foreshadow_plan"), list)
+            else []
+        )
+
+        return MasterPlan(
+            brief=brief,
+            genre=genre,
+            title=title,
+            total_chapters=total,
+            episode_tree=arcs,
+            character_skeleton=chars,
+            foreshadow_plan=fs,
+            quality_targets=_keep(QualityTargets, data.get("quality_targets")) or QualityTargets(),
+            notes=notes,
+        )
 
     # ---------------------------------------------------------------- 落盘
     def _save(self, plan: MasterPlan) -> None:

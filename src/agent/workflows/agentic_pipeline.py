@@ -28,6 +28,9 @@ from rich.console import Console
 
 from agent.core.llm_client import LLMClient
 from agent.core.state_machine import State, StateMachine
+from agent.core.setting_manager import SettingManager
+from agent.core.confirmation import is_architecture_confirmed
+import frontmatter
 
 
 @dataclass
@@ -214,6 +217,103 @@ class AgenticPipelineWorkflow:
             pass
         return 100
 
+    # ---------------------------------------------------------------- 设定集自检/引导
+    def _ensure_setting_set(self) -> None:
+        """自主模式引导：若设定集/架构/支线缺失，从 brief + MasterPlan 自动补齐，
+        使下游 M5 ``_load_context`` 不再因缺文件而抛错（修复 bug2）。
+
+        仅补齐「缺失项」，已存在的设定/架构/支线不动；幂等、可安全重复调用。
+        ``_load_context`` 仅在 world.md 与 subline.md 缺失时硬抛错，其余项
+        （路线/关系网/角色/伏笔/压力曲线）缺失均优雅降级为空串——故最小补齐
+        即 world.md + 一个主支线 + 已确认架构，并把状态机置为可写状态。
+        """
+        sm = SettingManager(self.project_dir)
+        world = sm.load_world()
+        arch_confirmed = is_architecture_confirmed(self.project_dir)
+        sublines = sm.list_sublines()
+        if world["exists"] and arch_confirmed and sublines:
+            return  # 设定齐备，跳过
+
+        # 取已有/刚生成的 MasterPlan 用于充实设定内容
+        plan = None
+        if self.brief:
+            try:
+                planner = self._ensure_planner()
+                plan = planner.load_plan() or planner.run(self.brief)
+            except Exception:  # noqa: BLE001
+                plan = None
+
+        if not world["exists"]:
+            self._bootstrap_world(plan)
+        if not arch_confirmed:
+            self._bootstrap_architecture(plan)
+        if not sm.list_sublines():
+            self._bootstrap_subline(plan)
+
+        # 状态机置为可写（CHARACTER_DESIGN/WRITING），并初始化进度
+        self.state_machine.load()
+        if self.state_machine.state not in (State.CHARACTER_DESIGN, State.WRITING):
+            self.state_machine.state = State.WRITING
+            self.state_machine.progress = self.state_machine.progress or {"total_written": 0}
+            self.state_machine.save()
+        self.console.print("[cyan]已自动补齐设定集/架构/支线（自主模式引导）[/cyan]")
+
+    def _bootstrap_world(self, plan: Any) -> None:
+        sm = SettingManager(self.project_dir)
+        title = (getattr(plan, "title", "") or "") if plan else ""
+        genre = (getattr(plan, "genre", "") or "modern") if plan else "modern"
+        synopsis = (getattr(plan, "brief", "") or "（自主生成）") if plan else "（自主生成）"
+        metadata = {
+            "title": title or "未命名作品",
+            "genre": genre or "modern",
+            "scope": "autonomous",
+            "style": {
+                "tone": "热血/治愈",
+                "pov": "第三人称有限视角",
+                "rhythm": "紧凑",
+                "chapter_length": 3000,
+                "info_density": "中",
+                "banned_elements": [],
+            },
+        }
+        content = (
+            "# 世界观设定（自主生成）\n\n"
+            f"## 故事简介\n{synopsis}\n\n"
+            "## 境界体系\n（依剧情需要设定）\n\n"
+            "## 金手指登记\n（依剧情需要设定）\n"
+        )
+        sm.save_world(metadata, content)
+
+    def _bootstrap_architecture(self, plan: Any) -> None:
+        arch_file = self.project_dir / "architecture.md"
+        arch_file.parent.mkdir(parents=True, exist_ok=True)
+        post = frontmatter.Post(
+            "# 故事架构（自主生成）\n\n由 AgenticPipeline 自主引导生成，已进入可写状态。\n",
+            confirmed=True,
+        )
+        arch_file.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    def _bootstrap_subline(self, plan: Any) -> None:
+        sm = SettingManager(self.project_dir)
+        name = "主线"
+        goal = "故事主线推进"
+        if plan is not None:
+            arcs = getattr(plan, "episode_tree", None) or []
+            if arcs:
+                first = arcs[0]
+                name = getattr(first, "name", "") or "主线"
+                goal = getattr(first, "goal", "") or "主线推进"
+        subline_id = "S01_主线"
+        metadata = {"subline_name": name, "characters": []}
+        content = (
+            f"# 支线：{name}\n\n"
+            f"## 支线目标\n{goal}\n\n"
+            "## 剧集压力曲线\n"
+            "| 阶段 | 章节 | 张力等级 |\n|---|---|---|\n| 铺垫 | 1-100 | 低 |\n\n"
+            "## 出场角色\n（待角色档案补充）\n"
+        )
+        sm.save_subline(subline_id, metadata, content)
+
     # ---------------------------------------------------------------- 主流程
     def run(self) -> PipelineResult:
         result = PipelineResult(engine="Agentic")
@@ -231,6 +331,9 @@ class AgenticPipelineWorkflow:
                 )
             except Exception as e:  # noqa: BLE001 - 规划失败不阻断写作
                 self.console.print(f"[yellow]Planner 失败（{e}），跳过规划[/yellow]")
+
+        # 1.5) 自主模式引导：补齐缺失的设定集/架构/支线（修复 bug2，使写章不再因缺文件抛错）
+        self._ensure_setting_set()
 
         # 2) 逐章写作 + 编辑 + 记忆回写
         writer = self._ensure_writer()
