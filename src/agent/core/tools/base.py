@@ -10,6 +10,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from dataclasses import dataclass, field
 from typing import Any, Callable
 
@@ -69,6 +70,27 @@ class Tool:
         except Exception as e:  # noqa: BLE001 - 工具失败不应中断 Agent 循环
             return ToolResult(success=False, error=f"{type(e).__name__}: {e}")
 
+    async def run_async(self, **kwargs: Any) -> ToolResult:
+        """异步执行工具。
+
+        - ``is_async`` 工具：直接 ``await``。
+        - 同步工具：卸载到线程池（``run_in_executor``），**不阻塞事件循环**，
+          从而允许同一循环中的其他协程（含其它工具）真正并发。
+        """
+        try:
+            if self.is_async:
+                result = await self._execute(**kwargs)
+            else:
+                loop = asyncio.get_running_loop()
+                result = await loop.run_in_executor(
+                    None, lambda: self._execute(**kwargs)
+                )
+            if isinstance(result, ToolResult):
+                return result
+            return ToolResult(success=True, data=result)
+        except Exception as e:  # noqa: BLE001
+            return ToolResult(success=False, error=f"{type(e).__name__}: {e}")
+
 
 class ToolRegistry:
     """工具注册表（单例式全局注册）"""
@@ -98,6 +120,24 @@ class ToolRegistry:
         if tool is None:
             return ToolResult(success=False, error=f"未知工具: {name}")
         return tool.run(**kwargs)
+
+    async def call_async(self, name: str, **kwargs: Any) -> ToolResult:
+        """异步按名调用工具（见 ``Tool.run_async``）。"""
+        tool = self.get(name)
+        if tool is None:
+            return ToolResult(success=False, error=f"未知工具: {name}")
+        return await tool.run_async(**kwargs)
+
+    async def call_many_async(self, calls: list[dict[str, Any]]) -> list[ToolResult]:
+        """并发执行多个**无依赖**的工具调用，真正并行（``asyncio.gather``）。
+
+        ``calls`` 形如 ``[{"name": "rag_retrieve", "args": {...}}, ...]``。
+        全部完成（无论成功失败）后按顺序返回结果列表，不中断整体。
+        """
+        tasks = [
+            self.call_async(c["name"], **c.get("args", {})) for c in calls
+        ]
+        return await asyncio.gather(*tasks)
 
     def manifests(self) -> list[dict[str, Any]]:
         """全部工具的 MCP 描述列表（可直接喂给支持 tools= 的模型）"""
