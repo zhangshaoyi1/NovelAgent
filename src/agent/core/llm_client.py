@@ -22,6 +22,7 @@ Provider 抽象（E1 增强）：
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import time
@@ -32,8 +33,14 @@ from urllib.error import URLError
 from urllib.request import Request, urlopen
 
 from dotenv import load_dotenv
+from pydantic import BaseModel
 
 from agent.core.exceptions import LLMError
+from agent.core.structured_output import (
+    StructuredOutputError,
+    extract_json,
+    pydantic_to_json_schema,
+)
 
 
 # ============================================================
@@ -635,6 +642,114 @@ class LLMClient:
         messages.append({"role": "user", "content": prompt})
         resp = self.chat(messages, use=use, **kwargs)
         return resp.text
+
+    def chat_structured(
+        self,
+        messages: list[dict[str, str]],
+        schema: "type[BaseModel] | dict[str, Any]",
+        *,
+        model: str | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        use: str = "utility",
+        name: str = "structured_output",
+        strict: bool = False,
+        enable_thinking: bool | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """结构化输出：把模型回复约束为给定 JSON Schema（OpenAI 兼容 response_format）。
+
+        首选 ``response_format={"type":"json_schema",...}``；若 provider 不支持
+        （抛错），回退为"无 response_format + 文本解析"（extract_json）。
+
+        Args:
+            messages: 对话消息
+            schema: pydantic 模型类 或 既有 dict JSON Schema
+            model / temperature / max_tokens / use: 同 ``chat``
+            name: schema 名称（部分端点需要）
+            strict: 是否开启 strict 模式（要求 required 全 + additionalProperties=false）
+            enable_thinking: 思考开关覆盖
+
+        Returns:
+            解析后的 dict。
+
+        Raises:
+            StructuredOutputError: 主路径与回退路径均失败。
+        """
+        json_schema = (
+            pydantic_to_json_schema(schema)
+            if not isinstance(schema, dict)
+            else schema
+        )
+        response_format = {
+            "type": "json_schema",
+            "json_schema": {"name": name, "schema": json_schema, "strict": strict},
+        }
+        try:
+            resp = self.chat(
+                messages,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                use=use,
+                enable_thinking=enable_thinking,
+                response_format=response_format,
+                **kwargs,
+            )
+            return extract_json(resp.text)
+        except (LLMError, StructuredOutputError, ValueError) as e:
+            # 回退：去掉 response_format 再请求一次，文本解析兜底
+            try:
+                resp2 = self.chat(
+                    messages,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=max_tokens,
+                    use=use,
+                    enable_thinking=enable_thinking,
+                    **kwargs,
+                )
+                return extract_json(resp2.text)
+            except Exception as e2:  # noqa: BLE001
+                raise StructuredOutputError(
+                    f"结构化输出失败（含回退）: {e} | {e2}"
+                ) from e2
+
+    async def chat_structured_async(
+        self,
+        messages: list[dict[str, str]],
+        schema: "type[BaseModel] | dict[str, Any]",
+        *,
+        model: str | None = None,
+        temperature: float = 0.2,
+        max_tokens: int | None = None,
+        use: str = "utility",
+        name: str = "structured_output",
+        strict: bool = False,
+        enable_thinking: bool | None = None,
+        **kwargs: Any,
+    ) -> dict[str, Any]:
+        """``chat_structured`` 的异步包装（线程卸载，不阻塞事件循环）。
+
+        注：当前 Provider 的底层 ``chat`` 为同步实现，这里用 ``asyncio.to_thread``
+        卸载到线程，使 Agentic Loop 的 ``run_async`` 可在异步编排中复用同一客户端，
+        而无需为每个 Provider 单独实现原生异步 IO（原生异步 Provider 属 Phase 3/4 范畴）。
+
+        Returns / Raises：与 :meth:`chat_structured` 一致。
+        """
+        return await asyncio.to_thread(
+            self.chat_structured,
+            messages,
+            schema,
+            model=model,
+            temperature=temperature,
+            max_tokens=max_tokens,
+            use=use,
+            name=name,
+            strict=strict,
+            enable_thinking=enable_thinking,
+            **kwargs,
+        )
 
     def embed(self, texts: list[str]) -> list[list[float]]:
         """生成文本嵌入向量（RAG 语义检索用）

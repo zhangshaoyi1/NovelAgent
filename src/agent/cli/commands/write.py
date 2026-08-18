@@ -27,14 +27,22 @@ def write(
              "维度 blocking 会触发重写；默认开启（每章默认审查）。"
              "如需跳过审查可加 --no-strict-review",
     ),
+    mode: str = typer.Option(
+        "auto", "--mode",
+        help="写章引擎模式：auto(默认,自主 Agentic Loop) / heavy(更严) / "
+             "light(更轻) / pipeline(旧版 M5 硬编码七步)。",
+    ),
 ) -> None:
-    """M5 章节创作 - 生成下一章正文
+    """章节创作 - 生成下一章正文
 
-    基于已确认架构 + 大纲 + 角色设计，按压力曲线生成下一章：
-      1. 7 步上下文加载（world→subline→route→relations→characters→foreshadows→题材规则）
-      2. LLM 生成章节正文
-      3. LLM 质量校验（9 项通用层规则），未通过自动修订（≤2 次）
-      4. 持久化 chapters/ch<NNN>.md + 更新进度指针
+    默认走 **自主 Agentic Loop**（--mode auto）：Writer Agent 在工具驱动的循环中
+    自主调工具、自评、提交，外环 Critic（九项 LLM 审稿）门禁 + 修订，质量不低于旧 M5。
+
+    可用 --mode 切换引擎：
+      - auto（默认）：自主 Agentic Loop，全自主写章
+      - heavy：更严（更多修订轮次）
+      - light：更轻（仅首稿 + 单次自检，不修订）
+      - pipeline：旧版 M5 硬编码七步（回退/对照用）
 
     状态转换：CHARACTER_DESIGN → WRITING（首次）/ WRITING → WRITING（后续）
 
@@ -74,19 +82,44 @@ def write(
     # 统一门禁：当前阶段是否允许 /write（来自 command_router / StateMachine）
     enforce_gate(str(project_path), "write", json_mode=json_output)
 
-    # E3 前置式冲突检测门禁：注入冲突仲裁器（生成前拦截高严重度冲突）
-    # --json 时把仲裁器与 M5 的 rich 输出导向 stderr，避免污染 stdout 的 JSON
+    # --mode 引擎选择：pipeline 走旧版 M5 硬编码七步；其余走自主 Agentic Loop
     workflow_console = make_quiet_console() if json_output else console
-    conflict_arbiter = ConflictArbiter(project_dir=project_path, console=workflow_console)
-    # E2 题材动态注入：注入题材包注册表（运行时加载套路到 M5）
-    genre_registry = GenrePackRegistry()
-    workflow = M5WriteChapterWorkflow(
-        project_dir=project_path,
-        conflict_arbiter=conflict_arbiter,
-        genre_registry=genre_registry,
-        console=workflow_console,
-        strict_review=strict_review,
-    )
+    if mode == "pipeline":
+        # E3 前置式冲突检测门禁：注入冲突仲裁器（生成前拦截高严重度冲突）
+        # --json 时把仲裁器与 M5 的 rich 输出导向 stderr，避免污染 stdout 的 JSON
+        conflict_arbiter = ConflictArbiter(project_dir=project_path, console=workflow_console)
+        # E2 题材动态注入：注入题材包注册表（运行时加载套路到 M5）
+        genre_registry = GenrePackRegistry()
+        workflow = M5WriteChapterWorkflow(
+            project_dir=project_path,
+            conflict_arbiter=conflict_arbiter,
+            genre_registry=genre_registry,
+            console=workflow_console,
+            strict_review=strict_review,
+        )
+    elif mode in ("auto", "heavy", "light"):
+        from agent.workflows.agentic_write import AgenticWriteWorkflow
+
+        workflow = AgenticWriteWorkflow(
+            project_dir=project_path,
+            console=workflow_console,
+            tier=mode,
+        )
+    else:
+        if json_output:
+            emit_result(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "bad_mode",
+                        "message": f"非法 --mode: {mode}，可选 auto/heavy/light/pipeline",
+                    },
+                },
+                json_mode=True,
+            )
+        else:
+            console.print(f"[bold red]✗[/bold red] 非法 --mode: {mode}，可选 auto/heavy/light/pipeline")
+        raise typer.Exit(code=2)
     try:
         result = workflow.run()
         if json_output:
@@ -111,8 +144,9 @@ def write(
             )
             return
         status = "通过" if result.quality_passed else "未完全通过"
+        engine_label = "Agentic" if mode != "pipeline" else "M5"
         console.print(
-            f"\n[bold green]✓ M5 完成[/bold green] "
+            f"\n[bold green]✓ {engine_label} 写章完成[/bold green] "
             f"第 {result.chapter_num} 章 · {result.word_count} 字 · "
             f"质量{status} · 修订 {result.revision_attempts} 次"
         )
