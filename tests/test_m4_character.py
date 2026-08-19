@@ -514,7 +514,7 @@ class TestHappyPath:
         assert sm.state == State.CHARACTER_DESIGN
 
     def test_empty_characters_fallback(self, tmp_path: Path) -> None:
-        """LLM 返回空列表时不要崩"""
+        """LLM 返回空列表时不要崩，且按 G3/P1-1 至少渲染 1 个 M4 模板占位角色"""
         d = _build_minimal_project(tmp_path)
         modified = dict(M4_LLM_OUTPUT)
         modified["characters"] = []
@@ -523,12 +523,17 @@ class TestHappyPath:
         modified["foreshadows"] = []
         wf = M4CharacterWorkflow(project_dir=d, llm_client=_build_mock_llm(modified))
         r = wf.run()
-        # 至少文件都创建了
+        # 其余 4 类产物仍正常生成
         assert r.protagonist_route_file.exists()
         assert r.graph_file.exists()
         assert r.foreshadows_file.exists()
         assert r.golden_finger_file.exists()
-        assert r.character_files == []
+        # G3（T3）：空角色集不再产出空壳，而是渲染 ≥1 个占位角色（M4 模板字段齐全）
+        assert len(r.character_files) >= 1
+        ph = r.character_files[0]
+        ph_txt = ph.read_text(encoding="utf-8")
+        assert "核心动机" in ph_txt
+        assert "语言指纹" in ph_txt
         # 伏笔表有默认示例
         txt = r.foreshadows_file.read_text(encoding="utf-8")
         assert "F-01" in txt

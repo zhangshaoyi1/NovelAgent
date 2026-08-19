@@ -14,11 +14,13 @@ import pytest
 from agent.core.confirmation import is_architecture_confirmed
 
 # 不应再直接 import m14_architecture 的工作流（T-4 解耦目标）
+# 注意：agent 包实际位于 <repo_root>/src/agent（pytest pythonpath=["src"]），
+# 故相对路径需加 src/ 前缀，避免双写 agent 目录导致 FileNotFoundError。
 _DECOUPLED_WORKFLOWS = [
-    "agent/workflows/m3_outline.py",
-    "agent/workflows/m4_character.py",
-    "agent/workflows/m5_write_chapter.py",
-    "agent/workflows/m6_adjust.py",
+    "src/agent/workflows/m3_outline.py",
+    "src/agent/workflows/m4_character.py",
+    "src/agent/workflows/m5_write_chapter.py",
+    "src/agent/workflows/m6_adjust.py",
 ]
 
 

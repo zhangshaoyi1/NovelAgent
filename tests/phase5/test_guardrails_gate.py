@@ -158,6 +158,27 @@ def test_pipeline_advisory_mode_does_not_block(tmp_path):
 
     gr = Guardrails(banned_words=["违规词"])
     mem = _StubMemory()
+    # G3：预置完整规划产物，使编排器幂等跳过真实规划（离线，无 LLM），聚焦护栏逻辑。
+    (tmp_path / "world.md").write_text(
+        "# 测试书\n\n题材：xiuxian\n体量：短篇\n", encoding="utf-8"
+    )
+    (tmp_path / "discussion.md").write_text(
+        "# 脉络讨论（测试占位）\n", encoding="utf-8"
+    )
+    (tmp_path / "architecture.md").write_text(
+        "---\nconfirmed: true\ntheme: 测试\ncore_conflict: 测试\nworld_building: 测试\n"
+        "power_system: 测试\nmajor_plotlines: 测试\ncharacter_arcs: 测试\n"
+        "pacing: 测试\ntone: 测试\n---\n\n# 故事架构（测试）\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "outline.md").write_text(
+        "---\nsublines: []\n---\n\n# 故事大纲（测试）\n", encoding="utf-8"
+    )
+    chars_dir = tmp_path / "characters"
+    chars_dir.mkdir(parents=True, exist_ok=True)
+    (chars_dir / "主角.md").write_text(
+        "# 主角\n\n- identity: 测试\n- core_motivation: 测试\n", encoding="utf-8"
+    )
     wf = AgenticPipelineWorkflow(
         project_dir=tmp_path,
         llm_client=None,

@@ -16,7 +16,10 @@ from agent.cli._shared import *  # enforce_gate / emit_result / make_quiet_conso
 from agent.core.state_machine import State
 
 
-@command(allowed_states=(State.CHARACTER_DESIGN, State.WRITING))
+@command(allowed_states=(
+    State.INIT, State.CONFIGURING, State.DISCUSSING, State.ARCHITECTING,
+    State.ARCH_CONFIRMED, State.OUTLINING, State.CHARACTER_DESIGN, State.WRITING,
+))
 def autowrite(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"
@@ -57,16 +60,13 @@ def autowrite(
         os.environ["NOVEL_AGENT_DOTENV"] = env_file
 
     project_path = Path(project_dir)
+    # 零前置（仅给 brief）不再硬拒：交给 pipeline 内部编排自主生成 world.md（拍板 #6）。
+    # 仅在非 JSON 模式给出一句提示，避免污染 --json 的 stdout 信封。
     if not (project_path / "world.md").exists():
-        if json_output:
-            emit_result(
-                {"success": False, "error": {"code": "no_world",
-                                             "message": f"{project_path / 'world.md'} 不存在，请先运行 start"}},
-                json_mode=True,
+        if not json_output:
+            console.print(
+                "[cyan]未检测到 world.md，autowrite 将自主规划生成设定集/架构/大纲/角色[/cyan]"
             )
-        else:
-            console.print(f"[bold red]✗[/bold red] {project_path / 'world.md'} 不存在，请先运行 start")
-        raise typer.Exit(code=1)
 
     enforce_gate(str(project_path), "autowrite", json_mode=json_output)
 

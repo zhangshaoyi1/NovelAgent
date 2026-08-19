@@ -94,6 +94,10 @@ class TracedLLMClient:
                         **kwargs: Any) -> Any:
         return self._wrap(use, "chat_structured", messages, schema, **kwargs)
 
+    def chat_creative(self, messages: Any, **kwargs: Any) -> Any:
+        """镜像方法：供 M1/M2/M14/M3/M4 调用的创作模型入口。"""
+        return self._wrap("creative", "chat_creative", messages, **kwargs)
+
     def chat_utility(self, messages: Any, **kwargs: Any) -> Any:
         return self._wrap("utility", "chat_utility", messages, **kwargs)
 

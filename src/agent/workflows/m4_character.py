@@ -116,6 +116,23 @@ class M4CharacterWorkflow:
 
         protagonist_route = m4.get("protagonist_route") or {}
         characters = m4.get("characters") or []
+        # 若 LLM 未产出任何角色，渲染一个 M4 模板占位角色（对齐 P1-1：G2 Evaluator
+        # 需有可校验对象），而非产出空壳（根因 E 双重保险）。
+        if not characters:
+            characters = [{
+                "name": "主角（自主规划占位）",
+                "role": "protagonist",
+                "identity": "（占位）待规划补全",
+                "core_motivation": "（占位）",
+                "arc": {"start": "（占位）", "end": "（占位）"},
+                "language_fingerprint": {
+                    "catchphrase": "",
+                    "sentence_style": "",
+                    "vocabulary": "",
+                    "banned_words": [],
+                },
+                "relations": "（占位）",
+            }]
         relation_graph = m4.get("relation_graph") or {}
         foreshadows = m4.get("foreshadows") or []
         golden_finger = m4.get("golden_finger_registration") or {}
@@ -256,9 +273,16 @@ class M4CharacterWorkflow:
             max_tokens=8000,
             enable_thinking=False,
         )
-        data = parse_llm_json(raw.text)
+        # 解析容错：对齐 M1/M14/M3 的 ValueError 降级策略，绝不硬编码抛错（根因 E）。
+        try:
+            data = parse_llm_json(raw.text)
+        except ValueError:
+            data = {}
         if not isinstance(data, dict):
-            raise RuntimeError(f"M4 LLM 返回不是 JSON 对象：{type(data)}")
+            data = {}
+        # 缺角色列表时降级为空结构（非 dict 不抛），由上游编排决定是否重试/占位。
+        if not data.get("characters"):
+            data["characters"] = []
         return data
 
     # ============================================================

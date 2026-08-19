@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -27,7 +28,7 @@ from typing import Any, Callable, Optional
 from rich.console import Console
 
 from agent.core.llm_client import LLMClient
-from agent.core.state_machine import State, StateMachine
+from agent.core.state_machine import Event, State, StateMachine, TRANSITIONS
 from agent.core.setting_manager import SettingManager
 from agent.core.confirmation import is_architecture_confirmed
 import frontmatter
@@ -67,6 +68,27 @@ WriterWorkflow = Any
 EditorLike = Any
 EvaluatorLike = Any
 PlannerLike = Any
+
+
+@dataclass
+class _PlanStepResult:
+    """单步规划结果（供 ``_safe_step`` 返回）。"""
+
+    ok: bool
+    value: Any = None
+
+
+# 状态规范链（用于 ``_advance_state_to`` 单向推进）。
+_CANON = [
+    State.INIT, State.CONFIGURING, State.DISCUSSING, State.ARCHITECTING,
+    State.ARCH_CONFIRMED, State.OUTLINING, State.CHARACTER_DESIGN,
+    State.WRITING, State.PAUSED, State.COMPLETED, State.ARCH_REVISION,
+]
+_EVENTS = [
+    Event.START, Event.DISCUSS, Event.GENERATE_ARCHITECTURE,
+    Event.CONFIRM_ARCHITECTURE, Event.GENERATE_OUTLINE,
+    Event.DESIGN_CHARACTERS, Event.WRITE,
+]
 
 
 def build_rewrite_hint(report: Any, chapter_nums: list[int]) -> str:
@@ -151,6 +173,11 @@ class AgenticPipelineWorkflow:
         self.guardrails = guardrails
         self.gate_mode = gate_mode
         self.console = console or Console()
+
+        # 自主规划（G3）状态：关键前置失败则阻塞，交给 run() 安全退出、不进写章。
+        self._plan_blocked = False
+        self._plan_block_reason = ""
+        self._traced_llm_cache: Any = None
 
         # Memory：默认按项目新建（持久化到 .state/memory/）
         if memory is not None:
@@ -254,102 +281,284 @@ class AgenticPipelineWorkflow:
             pass
         return 100
 
-    # ---------------------------------------------------------------- 设定集自检/引导
+    # ---------------------------------------------------------------- 设定集自检/引导（G3）
     def _ensure_setting_set(self) -> None:
-        """自主模式引导：若设定集/架构/支线缺失，从 brief + MasterPlan 自动补齐，
-        使下游 M5 ``_load_context`` 不再因缺文件而抛错（修复 bug2）。
-
-        仅补齐「缺失项」，已存在的设定/架构/支线不动；幂等、可安全重复调用。
-        ``_load_context`` 仅在 world.md 与 subline.md 缺失时硬抛错，其余项
-        （路线/关系网/角色/伏笔/压力曲线）缺失均优雅降级为空串——故最小补齐
-        即 world.md + 一个主支线 + 已确认架构，并把状态机置为可写状态。
+        """自主模式引导（G3 薄壳）：委托 ``_autoplan_full_book`` 串联真实
+        M1→M2→M14→M3→M4 复用规划工作流，使下游 M5 ``_load_context`` 不再因缺文件
+        而抛错。保留公开签名（``run`` 仍调用），幂等、不崩。
         """
+        self._plan_blocked = False
+        self._plan_block_reason = ""
+        self._autoplan_full_book()
+
+    # ---------------------------------------------------------------- G3 自主规划编排器
+    def _autoplan_full_book(self) -> None:
+        """自主规划整本书：串联真实 M1→M2→M14→M3→M4，复用同一
+        ``llm_client / state_machine / SettingManager / console``（设计 §1.1）。
+
+        每步「产物已存在且有效则跳过」（幂等，§2.2），从任意半残态续跑均安全。
+        关键前置（M1 world / M14 架构确认）失败 → 置 ``_plan_blocked`` 并提前
+        return（安全退出，不进写章，拍板 #2）；非关键（M2/M3/M4）失败 →
+        ``_safe_step`` 重试（默认 2 次）后降级占位继续。
+        """
+        from agent.workflows.m1_config import M1ConfigWorkflow, M1Input
+        from agent.workflows.m2_discuss import M2DiscussWorkflow, M2Input
+        from agent.workflows.m14_architecture import M14ArchitectureWorkflow
+        from agent.workflows.m3_outline import M3OutlineWorkflow
+        from agent.workflows.m4_character import M4CharacterWorkflow
+
+        # 自动模式：显式设定 auto 档（设计 §9 #5），使下游交互默认跳过。
+        # 注意：必须先 load() 再 set_mode，否则会用内存默认 INIT 覆盖既有状态/进度。
+        try:
+            self.state_machine.load()
+            self.state_machine.set_mode("auto")
+        except Exception:  # noqa: BLE001
+            pass
+
         sm = SettingManager(self.project_dir)
-        world = sm.load_world()
-        arch_confirmed = is_architecture_confirmed(self.project_dir)
-        sublines = sm.list_sublines()
-        if world["exists"] and arch_confirmed and sublines:
-            return  # 设定齐备，跳过
+        llm = self._traced_llm()
 
-        # 取已有/刚生成的 MasterPlan 用于充实设定内容
-        plan = None
-        if self.brief:
-            try:
-                planner = self._ensure_planner()
-                plan = planner.load_plan() or planner.run(self.brief)
-            except Exception:  # noqa: BLE001
-                plan = None
+        def wf(cls: type, **extra: Any) -> Any:
+            return cls(
+                self.project_dir,
+                llm_client=llm,
+                setting_manager=sm,
+                state_machine=self.state_machine,
+                console=self.console,
+                **extra,
+            )
 
-        if not world["exists"]:
-            self._bootstrap_world(plan)
-        if not arch_confirmed:
-            self._bootstrap_architecture(plan)
-        if not sm.list_sublines():
-            self._bootstrap_subline(plan)
+        # ---- M1 配置（关键前置）----
+        if (self.project_dir / "world.md").exists():
+            self._advance_state_to(State.DISCUSSING)
+        else:
+            m1_input = M1Input(
+                title=(self.brief[:30] or "未命名作品").strip(),
+                scope="long",
+                genre=os.getenv("G3_GENRE", "xiuxian"),
+                story_core=self.brief or "（未提供创作思路，请基于默认值自主生成）",
+            )
+            ok = self._safe_step(
+                key=True, name="M1 世界观生成",
+                fn=lambda: wf(M1ConfigWorkflow).run(m1_input),
+            ).ok
+            if not ok:
+                self._plan_blocked = True
+                self._plan_block_reason = "M1 世界观生成失败（关键前置），已安全退出，不进入写章。"
+                return
+            self._advance_state_to(State.DISCUSSING)
 
-        # 状态机置为可写（CHARACTER_DESIGN/WRITING），并初始化进度
+        # ---- M2 脉络讨论（非关键，非交互）----
+        if (self.project_dir / "discussion.md").exists():
+            self._advance_state_to(State.ARCHITECTING)
+        else:
+            m2_input = M2Input(
+                max_rounds=int(os.getenv("G3_M2_ROUNDS", "1")),
+                preset_answers=[
+                    self.brief or "（请基于世界观直接收敛主线与关键冲突）"
+                ],
+            )
+            self._safe_step(
+                key=False, name="M2 脉络讨论",
+                fn=lambda: wf(M2DiscussWorkflow).run(m2_input),
+            )
+            self._advance_state_to(State.ARCHITECTING)
+
+        # ---- M14 架构生成 + 确认（关键前置）----
+        if is_architecture_confirmed(self.project_dir):
+            self._advance_state_to(State.ARCH_CONFIRMED)
+        else:
+            m14 = wf(M14ArchitectureWorkflow)
+            if not (self.project_dir / "architecture.md").exists():
+                gen_ok = self._safe_step(
+                    key=True, name="M14 架构生成",
+                    fn=lambda: m14.generate(),
+                ).ok
+                if not gen_ok:
+                    self._plan_blocked = True
+                    self._plan_block_reason = "M14 架构生成失败（关键前置），已安全退出，不进入写章。"
+                    return
+            conf_ok = self._safe_step(
+                key=True, name="M14 架构确认",
+                fn=lambda: m14.with_confirm_yes(True).confirm(),
+            ).ok
+            if not conf_ok:
+                self._plan_blocked = True
+                self._plan_block_reason = "M14 架构确认失败（关键前置），已安全退出，不进入写章。"
+                return
+            self._advance_state_to(State.ARCH_CONFIRMED)
+
+        # ---- M3 大纲生成（非关键）----
+        if (self.project_dir / "outline.md").exists():
+            self._advance_state_to(State.OUTLINING)
+        else:
+            self._safe_step(
+                key=False, name="M3 大纲生成",
+                fn=lambda: wf(M3OutlineWorkflow).run(),
+                degrade=self._write_placeholder_outline,
+            )
+            self._advance_state_to(State.OUTLINING)
+
+        # ---- M4 角色设计（非关键）----
+        if self._m4_done():
+            self._advance_state_to(State.CHARACTER_DESIGN)
+        else:
+            self._safe_step(
+                key=False, name="M4 角色设计",
+                fn=lambda: wf(M4CharacterWorkflow).run(),
+                degrade=self._write_placeholder_characters,
+            )
+            self._advance_state_to(State.CHARACTER_DESIGN)
+
+        # 规划完成：推进到 WRITING（对齐拍板 #6），写章循环在 CHARACTER_DESIGN/WRITING 下运行。
+        self._advance_state_to(State.WRITING)
+
+    def _m4_done(self) -> bool:
+        """判断 M4 产物是否已齐备（幂等跳过的依据，§2.2）。"""
+        chars_dir = self.project_dir / "characters"
+        if chars_dir.exists() and any(chars_dir.glob("*.md")):
+            return True
+        if (self.project_dir / "protagonist_route.md").exists():
+            return True
+        return False
+
+    def _advance_state_to(self, target: State) -> None:
+        """状态调和器：沿规范链单向推进到 ``target``（处理「产物存在但状态落后」的续跑态）。
+
+        已越过 target（如 WRITING 续写场景）则保持不变，绝不降级状态。
+        """
         self.state_machine.load()
-        if self.state_machine.state not in (State.CHARACTER_DESIGN, State.WRITING):
-            self.state_machine.state = State.WRITING
-            self.state_machine.progress = self.state_machine.progress or {"total_written": 0}
-            self.state_machine.save()
-        self.console.print("[cyan]已自动补齐设定集/架构/支线（自主模式引导）[/cyan]")
+        for _ in range(len(_EVENTS) + 1):
+            cur = self.state_machine.state
+            if cur == target or _CANON.index(cur) >= _CANON.index(target):
+                break
+            advanced = False
+            for ev in _EVENTS:
+                if (cur, ev) in TRANSITIONS:
+                    try:
+                        self.state_machine.transition(ev)
+                        self.state_machine.save()
+                        advanced = True
+                        break
+                    except ValueError:
+                        break
+            if not advanced:
+                break
 
-    def _bootstrap_world(self, plan: Any) -> None:
-        sm = SettingManager(self.project_dir)
-        title = (getattr(plan, "title", "") or "") if plan else ""
-        genre = (getattr(plan, "genre", "") or "modern") if plan else "modern"
-        synopsis = (getattr(plan, "brief", "") or "（自主生成）") if plan else "（自主生成）"
-        metadata = {
-            "title": title or "未命名作品",
-            "genre": genre or "modern",
-            "scope": "autonomous",
-            "style": {
-                "tone": "热血/治愈",
-                "pov": "第三人称有限视角",
-                "rhythm": "紧凑",
-                "chapter_length": 3000,
-                "info_density": "中",
-                "banned_elements": [],
+    def _safe_step(
+        self,
+        *,
+        key: bool,
+        name: str,
+        fn: Callable[[], Any],
+        retries: int = 2,
+        degrade: Callable[[], None] | None = None,
+    ) -> _PlanStepResult:
+        """包装单步规划调用（失败不阻断，拍板 #2）。
+
+        Args:
+            key: True=关键前置（耗尽重试后安全退出，置 ``_plan_blocked``）；
+                 False=非关键（耗尽重试后调用 ``degrade`` 占位并继续）。
+            fn: 单步执行函数。
+            retries: 统一重试上限（默认 2，即最多尝试 3 次）。
+            degrade: 非关键最终失败时的降级占位回调（可选）。
+        """
+        last: Exception | None = None
+        for attempt in range(retries + 1):
+            try:
+                return _PlanStepResult(ok=True, value=fn())
+            except Exception as e:  # noqa: BLE001
+                last = e
+                self.console.print(
+                    f"[yellow]⚠ 规划步骤[{name}] 第{attempt + 1}次失败：{e}[/yellow]"
+                )
+                self._alert_cost(name)
+        if key:
+            return _PlanStepResult(ok=False)
+        if degrade is not None:
+            try:
+                degrade()
+            except Exception:  # noqa: BLE001
+                pass
+        return _PlanStepResult(ok=False)
+
+    # ---------------------------------------------------------------- 降级占位（非关键失败）
+    def _write_placeholder_outline(self) -> None:
+        """M3 耗尽重试后的降级：写最小 outline.md，使 M4._load_outline 不崩。"""
+        f = self.project_dir / "outline.md"
+        f.write_text(
+            "---\nsublines: []\n---\n\n# 故事大纲（自主规划降级占位）\n\n"
+            "## 故事简介\n（大纲生成失败，已降级占位；请手动 /outline 补生成）\n",
+            encoding="utf-8",
+        )
+
+    def _write_placeholder_characters(self) -> None:
+        """M4 耗尽重试后的降级：用 M4 模板渲染最小占位角色集，使 G2 Evaluator 有对象可读。"""
+        from agent.workflows.m4_character import M4CharacterWorkflow
+
+        wf = M4CharacterWorkflow(
+            self.project_dir,
+            llm_client=self._traced_llm(),
+            setting_manager=SettingManager(self.project_dir),
+            state_machine=self.state_machine,
+            console=self.console,
+        )
+        placeholder = [{
+            "name": "主角（自主规划占位）",
+            "role": "protagonist",
+            "identity": "（占位）待规划补全",
+            "core_motivation": "（占位）",
+            "arc": {"start": "（占位）", "end": "（占位）"},
+            "language_fingerprint": {
+                "catchphrase": "", "sentence_style": "",
+                "vocabulary": "", "banned_words": [],
             },
-        }
-        content = (
-            "# 世界观设定（自主生成）\n\n"
-            f"## 故事简介\n{synopsis}\n\n"
-            "## 境界体系\n（依剧情需要设定）\n\n"
-            "## 金手指登记\n（依剧情需要设定）\n"
-        )
-        sm.save_world(metadata, content)
+            "relations": "（占位）",
+        }]
+        try:
+            title = ""
+            try:
+                title = (
+                    SettingManager(self.project_dir).load_world()["metadata"].get("title", "")
+                )
+            except Exception:  # noqa: BLE001
+                title = ""
+            wf._render_characters(placeholder, title)
+            wf._render_graph({})
+            wf._render_foreshadows([])
+            wf._render_golden_finger({})
+            wf._render_route({})
+        except Exception:  # noqa: BLE001
+            pass
 
-    def _bootstrap_architecture(self, plan: Any) -> None:
-        arch_file = self.project_dir / "architecture.md"
-        arch_file.parent.mkdir(parents=True, exist_ok=True)
-        post = frontmatter.Post(
-            "# 故事架构（自主生成）\n\n由 AgenticPipeline 自主引导生成，已进入可写状态。\n",
-            confirmed=True,
-        )
-        arch_file.write_text(frontmatter.dumps(post), encoding="utf-8")
+    # ---------------------------------------------------------------- P1-2 成本可观测 + 单步超时
+    def _traced_llm(self) -> Any:
+        """返回包着 ``self.llm`` 的 ``TracedLLMClient``（注入同 tracer，供 M1~M4 调用）。"""
+        if self._traced_llm_cache is None:
+            from agent.core.llmops import TraceStore, TracedLLMClient, set_tracer
 
-    def _bootstrap_subline(self, plan: Any) -> None:
-        sm = SettingManager(self.project_dir)
-        name = "主线"
-        goal = "故事主线推进"
-        if plan is not None:
-            arcs = getattr(plan, "episode_tree", None) or []
-            if arcs:
-                first = arcs[0]
-                name = getattr(first, "name", "") or "主线"
-                goal = getattr(first, "goal", "") or "主线推进"
-        subline_id = "S01_主线"
-        metadata = {"subline_name": name, "characters": []}
-        content = (
-            f"# 支线：{name}\n\n"
-            f"## 支线目标\n{goal}\n\n"
-            "## 剧集压力曲线\n"
-            "| 阶段 | 章节 | 张力等级 |\n|---|---|---|\n| 铺垫 | 1-100 | 低 |\n\n"
-            "## 出场角色\n（待角色档案补充）\n"
-        )
-        sm.save_subline(subline_id, metadata, content)
+            try:
+                set_tracer(TraceStore(self.project_dir))
+            except Exception:  # noqa: BLE001
+                pass
+            self._traced_llm_cache = TracedLLMClient(self.llm, model="creative-strong")
+        return self._traced_llm_cache
+
+    def _alert_cost(self, step: str) -> None:
+        """成本告警（仅提示不拦截，拍板 #3；硬熔断归 G4）。"""
+        try:
+            from agent.core.llmops.cost import CostModel
+            from agent.core.llmops.trace import get_tracer
+
+            tracer = get_tracer()
+            totals = tracer.totals()
+            used = totals.get("tokens_total", 0)
+            model = CostModel()
+            msg = model.alert_if_over(used, "balanced", self._resolve_target())
+            if msg:
+                self.console.print(f"[yellow]{msg}（步骤：{step}）[/yellow]")
+        except Exception:  # noqa: BLE001
+            pass
 
     # ---------------------------------------------------------------- 主流程
     def run(self) -> PipelineResult:
@@ -369,8 +578,23 @@ class AgenticPipelineWorkflow:
             except Exception as e:  # noqa: BLE001 - 规划失败不阻断写作
                 self.console.print(f"[yellow]Planner 失败（{e}），跳过规划[/yellow]")
 
-        # 1.5) 自主模式引导：补齐缺失的设定集/架构/支线（修复 bug2，使写章不再因缺文件抛错）
-        self._ensure_setting_set()
+        # 1.5) 自主模式引导：复用真实 M1~M4 自主规划（G3）。失败不阻断写章；
+        #      关键前置失败则安全退出（不进入半残写章，拍板 #2）。
+        try:
+            self._ensure_setting_set()
+        except Exception as e:  # noqa: BLE001
+            self.console.print(f"[red]自主规划阶段异常：{e}[/red]")
+            result.blocked = True
+            result.block_reason = f"规划阶段异常：{e}"
+            return result
+        if getattr(self, "_plan_blocked", False):
+            result.blocked = True
+            result.block_reason = self._plan_block_reason
+            self.console.print(
+                f"[red]自主规划关键前置失败，已安全退出（不进入写章）："
+                f"{self._plan_block_reason}[/red]"
+            )
+            return result
 
         # 2) 逐章写作 + 编辑 + 记忆回写
         writer = self._ensure_writer()

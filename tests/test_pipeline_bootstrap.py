@@ -16,6 +16,7 @@ from agent.core.confirmation import is_architecture_confirmed
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import State
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+from tests._g3_fakes import _FakeLLM
 
 
 class _StubPlanner:
@@ -46,6 +47,7 @@ def test_ensure_setting_set_bootstraps_missing_files(tmp_path: Path) -> None:
         project_dir=tmp_path,
         brief="测试思路",
         planner=_StubPlanner(_make_plan()),
+        llm_client=_FakeLLM(),
     )
     pipeline._ensure_setting_set()
 
@@ -66,14 +68,16 @@ def test_ensure_setting_set_is_idempotent(tmp_path: Path) -> None:
     """已齐备的项目不应被覆盖/重复生成。"""
     # 先用一次引导生成全套
     p1 = AgenticPipelineWorkflow(
-        project_dir=tmp_path, brief="b", planner=_StubPlanner(_make_plan())
+        project_dir=tmp_path, brief="b", planner=_StubPlanner(_make_plan()),
+        llm_client=_FakeLLM(),
     )
     p1._ensure_setting_set()
     world_text_1 = (tmp_path / "world.md").read_text(encoding="utf-8")
 
     # 再调用一次（模拟续写/重入）
     p2 = AgenticPipelineWorkflow(
-        project_dir=tmp_path, brief="b", planner=_StubPlanner(_make_plan())
+        project_dir=tmp_path, brief="b", planner=_StubPlanner(_make_plan()),
+        llm_client=_FakeLLM(),
     )
     p2._ensure_setting_set()
     world_text_2 = (tmp_path / "world.md").read_text(encoding="utf-8")
@@ -105,7 +109,8 @@ def test_ensure_setting_set_preserves_existing_progress(tmp_path: Path) -> None:
     st.save()
 
     p = AgenticPipelineWorkflow(
-        project_dir=tmp_path, brief="b", planner=_StubPlanner(_make_plan())
+        project_dir=tmp_path, brief="b", planner=_StubPlanner(_make_plan()),
+        llm_client=_FakeLLM(),
     )
     p._ensure_setting_set()
     p.state_machine.load()

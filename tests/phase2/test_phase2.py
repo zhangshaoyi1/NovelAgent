@@ -57,6 +57,38 @@ def _make_project(tmp_path: Path, n_chapters: int = 0, foreshadows: str = "") ->
     return tmp_path
 
 
+def _seed_planning(tmp_path: Path) -> None:
+    """预置完整规划产物，使 G3 编排器幂等跳过真实规划（离线测试用，避免触发真实 LLM）。
+
+    仅用于单元测试：让 AgenticPipelineWorkflow 跳过 M1~M4 规划阶段，
+    直接验证写章/护栏等下游逻辑。G3 改造后 ``_ensure_setting_set`` 不再写 stub，
+    而是串联真实工作流；本函数模拟「规划已完成的半残/完整项目」，对齐新语义。
+    """
+    (tmp_path / "world.md").write_text(
+        "# 测试书\n\n题材：xiuxian\n体量：短篇\n", encoding="utf-8"
+    )
+    (tmp_path / "discussion.md").write_text(
+        "# 脉络讨论（测试占位）\n", encoding="utf-8"
+    )
+    (tmp_path / "architecture.md").write_text(
+        "---\n"
+        "confirmed: true\n"
+        "theme: 测试\ncore_conflict: 测试\nworld_building: 测试\n"
+        "power_system: 测试\nmajor_plotlines: 测试\ncharacter_arcs: 测试\n"
+        "pacing: 测试\ntone: 测试\n"
+        "---\n\n# 故事架构（测试）\n",
+        encoding="utf-8",
+    )
+    (tmp_path / "outline.md").write_text(
+        "---\nsublines: []\n---\n\n# 故事大纲（测试）\n", encoding="utf-8"
+    )
+    chars_dir = tmp_path / "characters"
+    chars_dir.mkdir(parents=True, exist_ok=True)
+    (chars_dir / "主角.md").write_text(
+        "# 主角\n\n- identity: 测试\n- core_motivation: 测试\n", encoding="utf-8"
+    )
+
+
 # ============================================================
 # 1. Memory Layer
 # ============================================================
@@ -327,6 +359,7 @@ class _StubEvaluator:
 
 def test_pipeline_full_run_with_stubs(tmp_path):
     proj = _make_project(tmp_path, n_chapters=0)
+    _seed_planning(proj)
     ml = MemoryLayer(tmp_path)
     planner = PlannerAgent(tmp_path, memory=ml, decide=_planner_decide)
     editor = EditorAgent(tmp_path, consistency_fn=lambda p, t, c: [], memory=ml)
@@ -359,6 +392,7 @@ def test_pipeline_full_run_with_stubs(tmp_path):
 
 def test_pipeline_skips_plan_when_no_brief(tmp_path):
     proj = _make_project(tmp_path, n_chapters=0)
+    _seed_planning(proj)
     ml = MemoryLayer(tmp_path)
     editor = EditorAgent(tmp_path, consistency_fn=lambda p, t, c: [], memory=ml)
     from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
