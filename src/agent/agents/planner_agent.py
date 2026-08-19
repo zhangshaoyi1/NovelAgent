@@ -37,8 +37,9 @@ class QualityTargets(BaseModel):
     character_stability_high: int = Field(default=0, description="人设硬伤高严重度数，=0 不可放宽")
     setting_consistency_high: int = Field(default=0, description="设定一致性高严重度冲突，=0 不可放宽")
     foreshadow_recycle_rate: float = Field(default=0.90, description="伏笔回收率下限，默认 90%")
-    coherence: float = Field(default=80.0, description="连贯性自评下限（/100）")
-    readability: float = Field(default=75.0, description="追读力综合评分下限（/100）")
+    # G2 收紧 80→85 / 75→80（与 evaluator_agent.qt 默认、_PLANNER_SYSTEM 三处同步）
+    coherence: float = Field(default=85.0, description="连贯性自评下限（/100）")
+    readability: float = Field(default=80.0, description="追读力综合评分下限（/100）")
     pacing_abnormal: float = Field(default=0.03, description="异常章节（注水/赶进度）比例上限")
     logic_holes: int = Field(default=0, description="逻辑漏洞（死亡复活/道具凭空），=0 不可放宽")
 
@@ -91,7 +92,8 @@ _PLANNER_SYSTEM = (
     "episode_tree（剧集树，每弧含章节区间与目标）/ character_skeleton（角色骨架）/\n"
     "foreshadow_plan（伏笔规划，含预计埋设与回收章节）/ quality_targets（七维不崩合格线）。\n"
     "若用户提供设定集上下文，请尊重其中的世界观/角色/支线，不要与之冲突。\n"
-    "quality_targets 默认值：foreshadow_recycle_rate=0.90, coherence=80, readability=75,\n"
+    # G2 收紧 coherence=80→85 / readability=75→80（与 evaluator_agent.qt 默认、QualityTargets 默认三处同步）
+    "quality_targets 默认值：foreshadow_recycle_rate=0.90, coherence=85, readability=80,\n"
     "pacing_abnormal=0.03，其余硬指标（人设/设定硬伤、逻辑漏洞）必须为 0。"
 )
 

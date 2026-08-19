@@ -33,9 +33,9 @@ from agent.utils import parse_llm_json
 # ============================================================
 # Evaluator 维度评分（单维，要求 LLM 给一个数值）
 _EVAL_DIM_LABELS = {
-    "character_stability_high": "人设稳定性（角色言行/动机是否前后矛盾，统计明显崩坏处数量）",
-    "setting_consistency_high": "设定一致性（境界/金手指/世界观规则是否被打破，统计明显冲突数量）",
-    "logic_holes": "逻辑漏洞（情节硬伤/因果不成立，统计明显漏洞数量）",
+    "character_stability_high": "人设稳定性（角色言行/动机是否前后矛盾，逐项列举崩坏处数量）",
+    "setting_consistency_high": "设定一致性（境界/金手指/世界观规则是否被打破，逐项列举冲突数量）",
+    "logic_holes": "逻辑漏洞（情节硬伤/因果不成立，逐项列举漏洞数量）",
     "coherence": "连贯性（章节衔接/叙事流畅度，0-100 评分）",
     "readability": "追读力/可读性（让人想继续读的欲望，0-100 评分）",
 }
@@ -59,12 +59,17 @@ APPEAL_WEIGHTS = {
     "emotion_curve": 0.15,
 }
 
+# G2 计数类维度集合（以 issues 重算 value）；评分类维度用自报 value。
+COUNT_DIMS = {"character_stability_high", "setting_consistency_high", "logic_holes"}
+# 计入硬门禁的 severity 集合（high 必计、mid 计入以收紧；low 仅上报，不计入门禁）。
+SEVERITY_GATE = {"high", "mid"}
+
 _EVAL_SYSTEM_PROMPT = """你是一位苛刻的网文总编，负责用真实标准给小说维度打分。
 只输出 JSON，不要任何解释文字。格式：
-{"value": <数字>, "rationale": "<一句话理由>"}
-- 计数类维度（人设稳定/设定一致/逻辑漏洞）：value 是该维度在给定文本中检测到的「明显问题数量」（整数，0 表示无）。
-- 评分类维度（连贯性/追读力）：value 是 0-100 的整数评分。
-严格客观，不给水分为满分，确有问题时给低分。"""
+{"value": <数字>, "rationale": "<一句话理由>", "issues": [{"type": "人设|设定|逻辑", "severity": "high|mid|low", "desc": "<逐条描述>"}]}
+- 计数类维度（人设稳定/设定一致/逻辑漏洞）：对文本中每一个独立的硬伤/漏洞分别列举一条 issue，逐项列举、不得合并多条为一条；不得因"情节需要/伏笔/铺垫/人设成长"等理由豁免；凡确凿的设定/人设/因果冲突均计入（移除"明显"限定）。value 必须等于 issues 中计入门禁的条数（severity 为 high 或 mid 计入，low 仅上报）。
+- 评分类维度（连贯性/追读力）：value 是 0-100 的整数评分；仅在确凿流畅、有追更欲时给 80+，衔接生硬/平铺直叙不得给高分；给出分数须有依据，不给水分为满分。
+严格客观，确有问题时给低分。"""
 
 _APPEAL_SYSTEM_PROMPT = """你是一位资深网文编辑兼重度读者，评估这一章「读者会不会爱看」。
 只输出 JSON，不要任何解释文字。格式：
@@ -177,6 +182,8 @@ class ReaderAppealScorer:
     ) -> None:
         self._llm = llm_client
         self.console = console or Console()
+        # G2：保存各维度最近一次结构化评分结果（含 issues/rationale），供报告展示。
+        self._last_eval: dict[str, dict] = {}
 
     @property
     def llm(self) -> LLMClient:
@@ -188,6 +195,9 @@ class ReaderAppealScorer:
     def score(self, dimension: str, project_dir: str | Path) -> float:
         """兼容 ``EvaluatorAgent.score_fn``：对单维做真 LLM 评分。
 
+        G2：计数类维度以 LLM 列举的 ``issues`` 为准重算 value（忽略自报，
+        封堵"报 0 实则列举 N 条"的漏判）；评分维无 issues 时回退自报 value。
+        结果（value/rationale/issues）存入 ``self._last_eval[dimension]``。
         LLM 不可用时回退 Evaluator 安全默认（硬计数维 0、评分维满分）。
         """
         try:
@@ -198,22 +208,39 @@ class ReaderAppealScorer:
                 f"请评估以下小说片段在「{_EVAL_DIM_LABELS.get(dimension, dimension)}」"
                 f"维度上的表现。\n\n{text[:8000]}"
             )
+            # G2：计数维需枚举 issue，提升 max_tokens 至 1500；评分维保持 400。
             resp = self.llm.chat_utility(
                 messages=[
                     {"role": "system", "content": _EVAL_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.2,
-                max_tokens=400,
+                max_tokens=1500 if dimension in COUNT_DIMS else 400,
                 enable_thinking=False,
             )
             data = parse_llm_json(resp.text)
-            val = float(data.get("value", 0))
+            issues = data.get("issues") or []
+            if dimension in COUNT_DIMS and issues:
+                # 以 issues 为准重算：仅计入 severity ∈ SEVERITY_GATE 的条数，忽略 LLM 自报 value。
+                val = float(sum(
+                    1 for it in issues
+                    if str(it.get("severity", "")).lower() in SEVERITY_GATE
+                ))
+            else:
+                # 评分维或无 issues：回退 LLM 自报 value（向后兼容、行为不变）。
+                val = float(data.get("value", 0))
         except Exception as e:  # noqa: BLE001 - LLM 不可达/解析失败：降级默认
             if self.console is not None:
                 self.console.print(f"[yellow]⚠ 维度 {dimension} 评分降级为默认：{e}[/yellow]")
             return self._default_for(dimension)
-        return self._clamp(dimension, val)
+        value = self._clamp(dimension, val)
+        # G2：结构化结果落 _last_eval（issues/rationale），不扩展 score_fn 返回协议。
+        self._last_eval[dimension] = {
+            "value": value,
+            "rationale": data.get("rationale", ""),
+            "issues": issues,
+        }
+        return value
 
     @staticmethod
     def _default_for(dimension: str) -> float:
@@ -226,7 +253,8 @@ class ReaderAppealScorer:
     def _clamp(dimension: str, val: float) -> float:
         if dimension in ("coherence", "readability"):
             return max(0.0, min(100.0, val))
-        return max(0.0, val)  # 计数类维：非负
+        # G2：计数类维非负整数化（float(int(max(0, val)))），吸收 LLM 噪声与小数。
+        return float(int(max(0, val)))
 
     def _gather_for_eval(self, dimension: str, project_dir: str) -> str:
         """收集评分所需文本（最新 1-3 章正文 + 世界观简介）。"""

@@ -7,8 +7,8 @@
   1. 人设稳定  character_stability_high  = 0（不可放宽）
   2. 设定一致  setting_consistency_high  = 0（不可放宽）
   3. 伏笔闭环  foreshadow_recycle_rate    ≥ 0.90（默认，可配置）
-  4. 连贯性    coherence                  ≥ 80/100（可配置）
-  5. 追读力    readability                ≥ 75/100（可配置）
+  4. 连贯性    coherence                  ≥ 85/100（G2 收紧 80→85，可配置）
+  5. 追读力    readability                ≥ 80/100（G2 收紧 75→80，可配置）
   6. 节奏      pacing_abnormal            ≤ 0.03（可配置）
   7. 逻辑漏洞  logic_holes                = 0（不可放宽）
 
@@ -54,12 +54,15 @@ class DimensionResult:
     direction: str  # ">=" 或 "<="（value 与 threshold 的关系）
     required: bool  # 不可放宽（硬指标）
     source: str = ""  # computed | llm | default
+    # G2 容差带：硬门禁恒 0；仅 coherence（0-100 量纲）用 5 吸收 LLM 噪声，其余保持严格。
+    soft_margin: float = 0.0
 
     @property
     def passed(self) -> bool:
+        # G2：引入容差带 soft_margin，边界合格章节不被误杀；劣质章节（远低于阈值）仍被抓。
         if self.direction == ">=":
-            return self.value >= self.threshold - 1e-9
-        return self.value <= self.threshold + 1e-9
+            return self.value >= self.threshold - self.soft_margin - 1e-9
+        return self.value <= self.threshold + self.soft_margin + 1e-9
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -70,8 +73,23 @@ class DimensionResult:
             "direction": self.direction,
             "required": self.required,
             "source": self.source,
+            "soft_margin": self.soft_margin,
             "passed": self.passed,
         }
+
+
+# G2 soft_margin 注入映射：构造 DimensionResult 时按维度名查表注入容差带。
+# 主理人拍板：仅 coherence（0-100 量纲）用 5.0 吸收 LLM 噪声；
+# readability 与确定性维度（[0,1] 量纲）、三硬门禁一律 0.0，避免门禁被静默关闭。
+_SOFT_MARGIN = {
+    "character_stability_high": 0.0,  # 硬门禁（不可放宽）
+    "setting_consistency_high": 0.0,  # 硬门禁
+    "logic_holes": 0.0,  # 硬门禁
+    "coherence": 5.0,  # 0-100 评分维（吸收 LLM 噪声）
+    "readability": 0.0,  # 0-100 评分维（主理人拍板：保持严格）
+    "foreshadow_recycle_rate": 0.0,  # 确定性 0-1 维（保持严格）
+    "pacing_abnormal": 0.0,  # 确定性 0-1 维
+}
 
 
 @dataclass
@@ -194,8 +212,9 @@ class EvaluatorAgent:
             "character_stability_high": float(qt.get("character_stability_high", 0)),
             "setting_consistency_high": float(qt.get("setting_consistency_high", 0)),
             "foreshadow_recycle_rate": float(qt.get("foreshadow_recycle_rate", 0.90)),
-            "coherence": float(qt.get("coherence", 80.0)),
-            "readability": float(qt.get("readability", 75.0)),
+            # G2 收紧 80→85 / 75→80（与 planner_agent.QualityTargets 默认、_PLANNER_SYSTEM 三处同步）
+            "coherence": float(qt.get("coherence", 85.0)),
+            "readability": float(qt.get("readability", 80.0)),
             "pacing_abnormal": float(qt.get("pacing_abnormal", 0.03)),
             "logic_holes": float(qt.get("logic_holes", 0)),
         }
@@ -273,13 +292,41 @@ class EvaluatorAgent:
         readability = self._score("readability")
 
         dims = [
-            DimensionResult("character_stability_high", "人设稳定", char_high, self.qt["character_stability_high"], "<=", True, "llm/default"),
-            DimensionResult("setting_consistency_high", "设定一致", setting_high, self.qt["setting_consistency_high"], "<=", True, "llm/default"),
-            DimensionResult("foreshadow_recycle_rate", "伏笔闭环", recycle, self.qt["foreshadow_recycle_rate"], ">=", False, "computed", ),
-            DimensionResult("coherence", "连贯性", coherence, self.qt["coherence"], ">=", False, "llm/default"),
-            DimensionResult("readability", "追读力", readability, self.qt["readability"], ">=", False, "llm/default"),
-            DimensionResult("pacing_abnormal", "节奏异常", pacing, self.qt["pacing_abnormal"], "<=", False, "computed"),
-            DimensionResult("logic_holes", "逻辑漏洞", logic, self.qt["logic_holes"], "<=", True, "llm/default"),
+            DimensionResult(
+                "character_stability_high", "人设稳定", char_high,
+                self.qt["character_stability_high"], "<=", True, "llm/default",
+                soft_margin=_SOFT_MARGIN.get("character_stability_high", 0.0),
+            ),
+            DimensionResult(
+                "setting_consistency_high", "设定一致", setting_high,
+                self.qt["setting_consistency_high"], "<=", True, "llm/default",
+                soft_margin=_SOFT_MARGIN.get("setting_consistency_high", 0.0),
+            ),
+            DimensionResult(
+                "foreshadow_recycle_rate", "伏笔闭环", recycle,
+                self.qt["foreshadow_recycle_rate"], ">=", False, "computed",
+                soft_margin=_SOFT_MARGIN.get("foreshadow_recycle_rate", 0.0),
+            ),
+            DimensionResult(
+                "coherence", "连贯性", coherence,
+                self.qt["coherence"], ">=", False, "llm/default",
+                soft_margin=_SOFT_MARGIN.get("coherence", 0.0),
+            ),
+            DimensionResult(
+                "readability", "追读力", readability,
+                self.qt["readability"], ">=", False, "llm/default",
+                soft_margin=_SOFT_MARGIN.get("readability", 0.0),
+            ),
+            DimensionResult(
+                "pacing_abnormal", "节奏异常", pacing,
+                self.qt["pacing_abnormal"], "<=", False, "computed",
+                soft_margin=_SOFT_MARGIN.get("pacing_abnormal", 0.0),
+            ),
+            DimensionResult(
+                "logic_holes", "逻辑漏洞", logic,
+                self.qt["logic_holes"], "<=", True, "llm/default",
+                soft_margin=_SOFT_MARGIN.get("logic_holes", 0.0),
+            ),
         ]
         for d in dims:
             if d.name in ("foreshadow_recycle_rate", "pacing_abnormal"):
