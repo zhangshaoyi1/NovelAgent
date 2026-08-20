@@ -11,11 +11,20 @@ from __future__ import annotations
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 from agent.cli._app import app, command, console, typer
 from agent.cli._shared import *  # enforce_gate / emit_result / make_quiet_console
 from agent.core.state_machine import State
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+
+
+def _cli_value(v: Any, default: Any) -> Any:
+    """归一化 CLI 参数：经 typer 真实调用时值为转换后的标量；
+    直接函数调用（测试）时默认值是 typer.OptionInfo，取 .default 还原为标量。"""
+    if hasattr(v, "default"):
+        return v.default
+    return v
 
 
 @command(allowed_states=(
@@ -74,6 +83,40 @@ def autowrite(
     appeal_window: int = typer.Option(
         1, "--appeal-window", help="迷爱看评测末 N 章（默认 1，仅末章）"
     ),
+    # ---- G6 新增：三闸 CLI（拍板 #6，与 --appeal-* 并列独立）----
+    golden_three_gate: bool = typer.Option(
+        True, "--golden-three-gate", help="开启黄金三章门禁（B4，默认开）"
+    ),
+    no_golden_three_gate: bool = typer.Option(
+        False, "--no-golden-three-gate", help="关闭黄金三章门禁"
+    ),
+    golden_three_threshold: int = typer.Option(
+        60, "--golden-three-threshold", help="黄金三章综合分合格线（默认 60，复用 G5 档位）"
+    ),
+    golden_three_floor: int = typer.Option(
+        40, "--golden-three-floor", help="黄金三章单维触底线（默认 40）"
+    ),
+    ai_gate: bool = typer.Option(
+        True, "--ai-gate", help="开启去 AI 味护栏（B5，默认开）"
+    ),
+    no_ai_gate: bool = typer.Option(
+        False, "--no-ai-gate", help="关闭去 AI 味护栏（不注入 guardrails，行为与 G4 一致）"
+    ),
+    ai_gate_mode: str = typer.Option(
+        "advisory", "--ai-gate-mode", help="AI 味门禁模式：advisory（标红不阻断）/ block（拒落盘）"
+    ),
+    ai_flavor_words: str = typer.Option(
+        None, "--ai-flavor-words", help="追加 AI 味词（逗号分隔，P1）"
+    ),
+    padding_gate: bool = typer.Option(
+        True, "--padding-gate", help="开启防注水门禁（B6，默认开）"
+    ),
+    no_padding_gate: bool = typer.Option(
+        False, "--no-padding-gate", help="关闭防注水门禁"
+    ),
+    padding_threshold: float = typer.Option(
+        0.30, "--padding-threshold", help="重复句占比阈值（默认 0.30）"
+    ),
 ) -> None:
     """全流程自主写作 - Planner→写作→编辑→记忆→评测+自动回溯
 
@@ -114,6 +157,25 @@ def autowrite(
         elif phase == "evaluating":
             console.print("[cyan]评测中...[/cyan]")
 
+    # G6（拍板 #4/#6 + 补充边界 3）：B5 接线 —— 默认注入 build_guardrails() + gate_mode；
+    # --no-ai-gate 不注入（guardrails=None，行为与 G4 一致）；--ai-flavor-words 追加词表。
+    # 注意：直接函数调用（测试）时默认值为 typer.OptionInfo，先归一化为标量（_cli_value）。
+    _golden_gate = bool(_cli_value(golden_three_gate, True)) and not bool(_cli_value(no_golden_three_gate, False))
+    _padding_gate = bool(_cli_value(padding_gate, True)) and not bool(_cli_value(no_padding_gate, False))
+    guardrails_obj = None
+    gate_mode = "advisory"
+    if bool(_cli_value(ai_gate, True)) and not bool(_cli_value(no_ai_gate, False)):
+        from agent.core.guardrails import build_guardrails
+
+        gr = build_guardrails()
+        if _cli_value(ai_flavor_words, None):
+            gr.ai_flavor_words.extend(
+                w.strip() for w in _cli_value(ai_flavor_words, "").split(",") if w.strip()
+            )
+        guardrails_obj = gr
+        gate_mode = _cli_value(ai_gate_mode, "advisory")
+        gate_mode = gate_mode if gate_mode in ("advisory", "block") else "advisory"
+
     pipeline = AgenticPipelineWorkflow(
         project_dir=project_path,
         tier=mode if mode in ("auto", "heavy", "light") else "auto",
@@ -133,6 +195,14 @@ def autowrite(
         appeal_gate=appeal_gate and not no_appeal_gate,
         appeal_threshold=appeal_threshold,
         appeal_window=appeal_window,
+        # ---- G6 新增：B5 接线 + B4/B6 三闸透传 ----
+        guardrails=guardrails_obj,                 # 修复 B5-2 空白（此前恒 None）
+        gate_mode=gate_mode,
+        golden_three_gate=_golden_gate,
+        golden_three_threshold=int(_cli_value(golden_three_threshold, 60)),
+        golden_three_floor=int(_cli_value(golden_three_floor, 40)),
+        padding_gate=_padding_gate,
+        padding_threshold=float(_cli_value(padding_threshold, 0.30)),
     )
 
     try:

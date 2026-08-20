@@ -50,6 +50,8 @@ class PipelineResult:
     # G4 新增字段
     tripped: bool = False  # 熔断标志
     schema_degraded: bool = False  # Schema 降级标志
+    # G6 新增字段（B5-3 修复：Guardrails 结果进结构化结果，供 --json 审计）
+    guardrails: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -64,6 +66,7 @@ class PipelineResult:
             "engine": self.engine,
             "tripped": self.tripped,
             "schema_degraded": self.schema_degraded,
+            "guardrails": self.guardrails,
         }
 
 
@@ -176,6 +179,12 @@ class AgenticPipelineWorkflow:
         appeal_gate: bool = True,
         appeal_threshold: int = 60,
         appeal_window: int = 1,
+        # ---- G6 新增参数 ----
+        golden_three_gate: bool = True,
+        golden_three_threshold: int = 60,
+        golden_three_floor: int = 40,
+        padding_gate: bool = True,
+        padding_threshold: float = 0.30,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client
@@ -202,6 +211,15 @@ class AgenticPipelineWorkflow:
         self.appeal_gate = appeal_gate
         self.appeal_threshold = max(1, appeal_threshold)
         self.appeal_window = max(1, appeal_window)
+
+        # G6：B4/B6 三闸
+        self.golden_three_gate = golden_three_gate
+        self.golden_three_threshold = max(1, golden_three_threshold)
+        self.golden_three_floor = max(1, golden_three_floor)
+        self.padding_gate = padding_gate
+        self.padding_threshold = max(0.0, min(1.0, padding_threshold))
+        # G6：写章循环 Guardrails 命中收集（B5-3 修复：结果进报告，不只 console）
+        self._guardrail_hits: list[dict[str, Any]] = []
 
         # 自主规划（G3）状态：关键前置失败则阻塞，交给 run() 安全退出、不进写章。
         self._plan_blocked = False
@@ -284,6 +302,8 @@ class AgenticPipelineWorkflow:
                     appeal_scorer = ReaderAppealScorer(llm_client=self.llm)
                 except Exception:  # noqa: BLE001
                     appeal_scorer = None
+            # G6：B4 golden_scorer 复用同一六维评分器实例（评前三章与评末章可共用，拍板 §12-3）
+            golden_scorer = appeal_scorer if self.golden_three_gate else None
             self.evaluator = EvaluatorAgent(
                 self.project_dir,
                 console=self.console,
@@ -296,6 +316,13 @@ class AgenticPipelineWorkflow:
                 appeal_gate=self.appeal_gate,
                 appeal_threshold=self.appeal_threshold,
                 appeal_window=self.appeal_window,
+                # ---- G6 透传 ----
+                golden_scorer=golden_scorer,
+                golden_three_gate=self.golden_three_gate,
+                golden_three_threshold=self.golden_three_threshold,
+                golden_three_floor=self.golden_three_floor,
+                padding_gate=self.padding_gate,
+                padding_threshold=self.padding_threshold,
             )
         # 把回溯事件写进 Memory
         try:
@@ -791,6 +818,15 @@ class AgenticPipelineWorkflow:
                 try:
                     if str(self.gate_mode).lower() == "block":
                         gr = self.guardrails.gate(ch_text, mode="block")
+                        # G6（B5-3 修复）：收集 ai_flavor 命中明细（block 命中同样进报告）
+                        for v in gr.violations:
+                            if v.get("rule_id") == "ai_flavor":
+                                self._guardrail_hits.append({
+                                    "chapter": ch_num,
+                                    "rule_id": v.get("rule_id"),
+                                    "severity": v.get("severity"),
+                                    "message": v.get("message", ""),
+                                })
                         if not gr.passed:
                             self.console.print(
                                 f"[red]第 {ch_num} 章硬门禁未过："
@@ -808,6 +844,15 @@ class AgenticPipelineWorkflow:
                                 f"[red]第 {ch_num} 章护栏告警："
                                 f"{len(gr.errors)} 项错误（{', '.join(v.rule_id for v in gr.errors)}）[/red]"
                             )
+                        # G6（B5-3 修复）：收集 ai_flavor 命中明细（warn 标红进报告，不只 console）
+                        for v in gr.violations:
+                            if v.rule_id == "ai_flavor":
+                                self._guardrail_hits.append({
+                                    "chapter": ch_num,
+                                    "rule_id": v.rule_id,
+                                    "severity": v.severity,
+                                    "message": v.message,
+                                })
                 except Exception:  # noqa: BLE001
                     pass
 
@@ -864,6 +909,20 @@ class AgenticPipelineWorkflow:
                 report = None
 
             if report is not None:
+                # G6：B5 结果写入 PipelineResult.guardrails + health_report.ai_flavor 子块（拍板 4）
+                ai_flavor_hits = list(self._guardrail_hits)
+                result.guardrails = {
+                    "mode": str(self.gate_mode),
+                    "ai_flavor_hits": ai_flavor_hits,
+                    "ai_flavor_count": len(ai_flavor_hits),
+                    "blocked": result.blocked,
+                }
+                if ai_flavor_hits:
+                    report.ai_flavor = {
+                        "mode": str(self.gate_mode),
+                        "hits": ai_flavor_hits,
+                        "count": len(ai_flavor_hits),
+                    }
                 result.health_report = report.to_dict()
                 result.escalated = report.escalated
                 result.escalated_reason = report.escalated_reason

@@ -42,6 +42,17 @@ _DEFAULT_COMPLIANCE_WORDS: list[str] = [
     "作者注", "作者按",  # 作者备注残留（未清理）
 ]
 
+# ---- G6：AI 味规则（主理人拍板 #4：确定性词/句式表，默认 warn 标红不阻断）----
+AI_FLAVOR_RULE_ID: str = "ai_flavor"
+# 默认词表：只收「高置信 AI 腔」组合式（短语级），不收单字高频词（仿佛/缓缓/不禁 等），
+# 防误杀古风/严肃文风。实际词表由部署方通过 .state/guardrails.json 的 ai_flavor_words 覆盖。
+_DEFAULT_AI_FLAVOR_WORDS: list[str] = [
+    "不禁微微一笑", "嘴角勾起一抹弧度", "嘴角微微上扬", "眼底闪过一丝",
+    "眼中闪过一抹", "喃喃自语", "轻声呢喃", "心中一动", "微微一怔",
+    "不由一愣", "勾唇一笑", "眸色一沉", "唇角微勾", "若有所思",
+    "缓缓开口", "语气平静",
+]
+
 # 默认配置路径
 DEFAULT_GUARDRAIL_CONFIG_PATH = ".state/guardrails.json"
 
@@ -125,6 +136,8 @@ class Guardrails:
         max_chars: int | None = None,
         min_chars: int | None = None,
         allow_warnings: bool = True,
+        ai_flavor_words: list[str] | None = None,   # G6：AI 味词表（默认 _DEFAULT_AI_FLAVOR_WORDS）
+        ai_flavor_severity: str = "warn",           # G6：命中 severity（warn 标红 / error 阻断）
     ) -> None:
         self.banned_words = list(banned_words if banned_words is not None else _DEFAULT_BANNED)
         self.placeholder_patterns = [
@@ -134,6 +147,9 @@ class Guardrails:
         self.max_chars = max_chars
         self.min_chars = min_chars
         self.allow_warnings = allow_warnings
+        # G6：AI 味词表与 severity（拍板 #4：默认 warn 标红不阻断）
+        self.ai_flavor_words = list(ai_flavor_words if ai_flavor_words is not None else _DEFAULT_AI_FLAVOR_WORDS)
+        self.ai_flavor_severity = ai_flavor_severity if ai_flavor_severity in ("warn", "error") else "warn"
 
     # ---------------------------------------------------------------- 文本校验
     def check_text(
@@ -188,6 +204,19 @@ class Guardrails:
                         f"检测到草稿占位残留：{m.group(0)}",
                     )
                 )
+
+        # 5) AI 味（G6）：命中组合式 AI 腔词句 → 默认 warn（advisory 标红不阻断）；
+        #    同一词多次命中合并为一条（附次数），防报告刷屏。
+        if self.ai_flavor_words:
+            hits: dict[str, int] = {}
+            for w in self.ai_flavor_words:
+                if w and w in t:
+                    hits[w] = t.count(w)
+            for w, cnt in sorted(hits.items(), key=lambda kv: -kv[1]):
+                violations.append(GuardrailViolation(
+                    AI_FLAVOR_RULE_ID, self.ai_flavor_severity,
+                    f"命中 AI 腔词句「{w}」（{cnt} 次）",
+                ))
 
         return GuardrailResult(violations)
 
@@ -291,7 +320,11 @@ class Guardrails:
         )
 
         if mode is GateMode.BLOCK:
-            passed = result.passed  # error 级（空/禁用词/超长/缺字段）一律拒绝
+            # G6：block 模式下 AI 味命中（默认 warn）提升为 error，纳入拒绝发布判定（拍板 #4）
+            for v in result.violations:
+                if v.rule_id == AI_FLAVOR_RULE_ID and v.severity == "warn":
+                    v.severity = "error"
+            passed = result.passed  # error 级（空/禁用词/超长/缺字段/AI 味）一律拒绝
         else:
             passed = result.passed
 
@@ -345,6 +378,8 @@ def load_guardrail_config(path: str | Path | None = None) -> dict[str, Any]:
         "max_chars": None,
         "min_chars": None,
         "allow_warnings": True,
+        "ai_flavor_words": list(_DEFAULT_AI_FLAVOR_WORDS),   # G6
+        "ai_flavor_severity": "warn",                        # G6
     }
     if path is None:
         return cfg
@@ -365,6 +400,10 @@ def load_guardrail_config(path: str | Path | None = None) -> dict[str, Any]:
         cfg["min_chars"] = raw["min_chars"]
     if "allow_warnings" in raw:
         cfg["allow_warnings"] = bool(raw["allow_warnings"])
+    if isinstance(raw.get("ai_flavor_words"), list):
+        cfg["ai_flavor_words"] = raw["ai_flavor_words"] or list(_DEFAULT_AI_FLAVOR_WORDS)
+    if raw.get("ai_flavor_severity") in ("warn", "error"):
+        cfg["ai_flavor_severity"] = raw["ai_flavor_severity"]
     return cfg
 
 
@@ -376,4 +415,6 @@ def build_guardrails(path: str | Path | None = None) -> "Guardrails":
         max_chars=cfg["max_chars"],
         min_chars=cfg["min_chars"],
         allow_warnings=cfg["allow_warnings"],
+        ai_flavor_words=cfg["ai_flavor_words"],        # G6
+        ai_flavor_severity=cfg["ai_flavor_severity"],  # G6
     )

@@ -24,6 +24,13 @@ from typing import Any
 
 from rich.console import Console
 
+from agent.core.chapters import (  # G6：公共章节读取 helper（消除根因 B6-3 重复实现）
+    iter_chapter_texts,
+    list_chapter_files,
+    read_chapters_text,
+    strip_frontmatter,
+    take_chapter_files,
+)
 from agent.core.llm_client import LLMClient
 from agent.utils import parse_llm_json
 
@@ -72,6 +79,12 @@ APPEAL_LABELS: dict[str, str] = {     # 短中文标签（展示 + is_pass 失�
     "emotion_curve": "情绪曲线",
 }
 
+# ---- G6：黄金三章门禁常量（主理人拍板 #3：复用 G5 阈值 60/40，可被 CLI 覆盖）----
+GOLDEN_PASS_LINE: int = 60          # 三章拼接综合分合格线（--golden-three-threshold 覆盖）
+GOLDEN_DIM_FLOOR: int = 40          # 单维触底线（--golden-three-floor 覆盖）
+GOLDEN_GATE_PREFIX: str = "golden_" # golden_* DimensionResult 名前缀
+GOLDEN_JOIN_CHAR_LIMIT: int = 10000 # 与 score_chapter 截断（行 315）对齐；超长 fallback 每章独立评分
+
 # G2 计数类维度集合（以 issues 重算 value）；评分类维度用自报 value。
 COUNT_DIMS = {"character_stability_high", "setting_consistency_high", "logic_holes"}
 # 计入硬门禁的 severity 集合（high 必计、mid 计入以收紧；low 仅上报，不计入门禁）。
@@ -116,6 +129,10 @@ class ReaderAppealReport:
     error: str = ""
     # G5：评分来源标记（"llm" 真评测 / "offline" 离线降级占位）
     source: str = "llm"
+    # G6：本次评分实际评的章节数（拼接=1，fallback=3）
+    chapters_scored: int = 1
+    # G6：True=超长回退为每章独立评分取最差
+    fallback: bool = False
     # 维度中文标签（展示用）
     labels: dict[str, str] = field(default_factory=lambda: {
         "hook_strength": "钩子强度",
@@ -275,7 +292,6 @@ class ReaderAppealScorer:
     def _gather_for_eval(self, dimension: str, project_dir: str) -> str:
         """收集评分所需文本（最新 1-3 章正文 + 世界观简介）。"""
         d = Path(project_dir)
-        chapters_dir = d / "chapters"
         parts: list[str] = []
         # 世界观简介
         world = d / "world.md"
@@ -284,14 +300,13 @@ class ReaderAppealScorer:
             idx = content.find("## 故事简介")
             if idx >= 0:
                 parts.append("【世界观简介】" + content[idx: idx + 400])
-        # 最新章节（最多 3 章）
-        if chapters_dir.exists():
-            files = sorted(chapters_dir.glob("ch*.md"))[-3:]
-            for f in files:
-                text = f.read_text(encoding="utf-8")
-                if text.startswith("---"):
-                    text = text.split("---", 2)[-1]
-                parts.append(f"【{f.stem}】\n{text.strip()[:2500]}")
+        # 最新章节（最多 3 章）——复用公共 helper（G6，消除根因 B6-3 重复实现）
+        for f in take_chapter_files(list_chapter_files(project_dir), side="last", n=3):
+            try:
+                text = strip_frontmatter(f.read_text(encoding="utf-8")).strip()
+            except OSError:
+                continue
+            parts.append(f"【{f.stem}】\n{text[:2500]}")
         return "\n\n".join(parts)
 
     # ---------------------------------------------------------- 路径 2：迷爱看 6 维
@@ -396,11 +411,10 @@ def gate_chapter(
     无 chapters 目录或 LLM 不可达时返回 llm_used=False 占位报告（不抛异常）；
     synopsis 为空时尝试从 project_dir/world.md 的『## 故事简介』段提取
     （复用 _gather_for_eval 风格）。章节文件匹配 ch*.md，去 frontmatter
-    （以 '---' 开头则切掉首段）。
+    （以 '---' 开头则切掉首段）。G6：读取改走公共 helper（行为零变化）。
     """
     d = Path(project_dir)
-    chapters_dir = d / "chapters"
-    if not chapters_dir.exists():
+    if not list_chapter_files(project_dir):
         # 无章节可评：返回离线占位（不抛异常），由调用方短路为通过。
         return ReaderAppealReport(
             dimensions={k: 0 for k in APPEAL_DIMENSIONS},
@@ -411,16 +425,7 @@ def gate_chapter(
             error="no chapters dir",
             source="offline",
         )
-    texts: list[str] = []
-    for f in sorted(chapters_dir.glob("ch*.md"))[-max(1, window):]:
-        try:
-            text = f.read_text(encoding="utf-8")
-        except OSError:
-            continue
-        # 去 frontmatter（以 '---' 开头则切掉首段）
-        if text.startswith("---"):
-            text = text.split("---", 2)[-1]
-        texts.append(text.strip())
+    texts = read_chapters_text(project_dir, side="last", n=window)
     chapter_text = "\n\n".join(texts)
 
     # synopsis 为空时尝试从 world.md 的『## 故事简介』段提取（复用 _gather_for_eval 风格）
@@ -437,4 +442,61 @@ def gate_chapter(
 
     return scorer.score_chapter(
         chapter_text, title=title, genre=genre, synopsis=synopsis
+    )
+
+
+def gate_first_chapters(
+    scorer: "ReaderAppealScorer",
+    project_dir: str | Path,
+    n: int = 3,
+    *,
+    title: str = "",
+    genre: str = "",
+    synopsis: str = "",
+) -> "ReaderAppealReport":
+    """B4 黄金三章门禁评分：读前 n 章（默认 3）正文。
+
+    评测方式（拍板 #3，C 拼接一次评分默认）：
+    - 三章正文拼接为一段 → scorer.score_chapter 一次评分（成本 = 终审多 1 次 LLM 调用）；
+    - 拼接长度超 GOLDEN_JOIN_CHAR_LIMIT(10000)（score_chapter 内部会截断，等价于只评了开头）
+      → **fallback 每章独立评分取最差**：对每章分别 score_chapter，逐维取 min、
+      total_score 取 min，llm_used = 任一在线（all 在线才 True），并置 fallback=True。
+    离线（LLM 不可用）时各次 score_chapter 返回 llm_used=False 占位，由 Evaluator 短路为通过。
+    无章节可评返回 llm_used=False 占位（不抛异常，仿 gate_chapter 行 403-413）。
+    """
+    files = take_chapter_files(list_chapter_files(project_dir), side="first", n=n)
+    if not files:
+        return ReaderAppealReport(
+            dimensions={k: 0 for k in APPEAL_DIMENSIONS},
+            total_score=0, one_liner="无章节可评", suggestions=[],
+            llm_used=False, error="no chapters dir", source="offline",
+        )
+    texts = read_chapters_text(project_dir, side="first", n=n)
+    joined = "\n\n".join(texts)
+
+    if len(joined) <= GOLDEN_JOIN_CHAR_LIMIT:
+        report = scorer.score_chapter(joined, title=title, genre=genre, synopsis=synopsis)
+        report.chapters_scored = 1
+        return report
+
+    # fallback：超长 → 每章独立评分取最差（拍板 #3）
+    worst: dict[str, int] = {k: 100 for k in APPEAL_DIMENSIONS}
+    worst_total = 100
+    any_online = False
+    for t in texts:
+        r = scorer.score_chapter(t, title=title, genre=genre, synopsis=synopsis)
+        if r.llm_used:
+            any_online = True
+        for k in APPEAL_DIMENSIONS:
+            worst[k] = min(worst.get(k, 100), r.dimensions.get(k, 0))
+        worst_total = min(worst_total, r.total_score)
+    return ReaderAppealReport(
+        dimensions=worst,
+        total_score=worst_total,
+        one_liner="三章拼接超长，已按每章独立评分取最差",
+        suggestions=[],
+        llm_used=any_online,
+        source="llm" if any_online else "offline",
+        chapters_scored=n,
+        fallback=True,
     )
