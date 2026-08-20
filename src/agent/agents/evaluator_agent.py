@@ -38,6 +38,16 @@ from rich.console import Console
 
 from agent.core.state_machine import StateMachine
 from agent.workflows.m10_rollback import M10RollbackWorkflow
+from agent.core.reader_appeal import (  # G5：迷爱看六维双闸
+    ReaderAppealScorer,
+    APPEAL_DIMENSIONS,
+    APPEAL_PASS_LINE,
+    APPEAL_DIM_FLOOR,
+    APPEAL_GATE_PREFIX,
+    APPEAL_LABELS,
+    gate_chapter,
+    _verdict,
+)
 
 
 # ============================================================
@@ -123,6 +133,8 @@ class NovelHealthReport:
     escalated_reason: str = ""
     repair: Optional[RepairPlan] = None
     notes: list[str] = field(default_factory=list)
+    # G5：迷爱看（读者吸引力）六维子块（不崩与迷爱看双闸分离展示）
+    appeal: Optional[dict] = None
 
     def dimension(self, name: str) -> Optional[DimensionResult]:
         return next((d for d in self.dimensions if d.name == name), None)
@@ -138,6 +150,7 @@ class NovelHealthReport:
             "escalated_reason": self.escalated_reason,
             "repair": self.repair.to_dict() if self.repair else None,
             "notes": list(self.notes),
+            "appeal": self.appeal,
         }
 
     def to_markdown(self) -> str:
@@ -167,6 +180,36 @@ class NovelHealthReport:
             )
         for n in self.notes:
             lines.append(f"- {n}")
+        # ---- G5：迷爱看小节（仅当 appeal 子块存在）----
+        if self.appeal is not None:
+            a = self.appeal
+            lines.append("")
+            if a.get("source") == "offline":
+                lines.append("## 迷爱看（离线通过，未实测）")
+                lines.append(
+                    "> LLM 不可用，六维门禁按「降级不阻断」判通过；"
+                    "配置真实 LLM 后才会真实评估读者吸引力。"
+                )
+            else:
+                lines.append("## 迷爱看（读者吸引力六维）")
+                verdict = a.get("verdict", "")
+                lines.append(
+                    f"- **综合分**：{a.get('total_score', 0)}/{a.get('threshold', 60)}"
+                    f"（{verdict}）　**达标**：{'✓' if a.get('passed') else '✗'}"
+                )
+                lines.append("")
+                lines.append("| 维度 | 得分 | 触底线 | 达标 |")
+                lines.append("|---|---|---|---|")
+                dims = a.get("dimensions", {})
+                for k, v in dims.items():
+                    ok = v.get("score", 0) >= v.get("floor", 40)
+                    mark = "✓" if ok else "✗"
+                    lines.append(
+                        f"| {APPEAL_LABELS.get(k, k)} | {v.get('score', 0)} "
+                        f"| {v.get('floor', 40)} | {mark} |"
+                    )
+                if a.get("one_liner"):
+                    lines.append(f"> {a.get('one_liner')}")
         return "\n".join(lines)
 
 
@@ -198,6 +241,11 @@ class EvaluatorAgent:
         max_rollback_attempts: int = 3,
         auto_rollback: bool = True,
         quality_targets: dict[str, float] | None = None,
+        # ---- G5 新增：迷爱看六维双闸注入 ----
+        appeal_scorer: "ReaderAppealScorer" | None = None,
+        appeal_gate: bool = True,
+        appeal_threshold: int = 60,
+        appeal_window: int = 1,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.console = console or Console()
@@ -218,6 +266,14 @@ class EvaluatorAgent:
             "pacing_abnormal": float(qt.get("pacing_abnormal", 0.03)),
             "logic_holes": float(qt.get("logic_holes", 0)),
         }
+        # G5：迷爱看六维双闸
+        self.appeal_scorer = appeal_scorer
+        self.appeal_gate = appeal_gate
+        self.appeal_threshold = max(1, appeal_threshold)
+        self.appeal_window = max(1, appeal_window)
+        # G5：最近一次六维评分缓存（供 NovelHealthReport.appeal 子块填充，修正点 B）
+        self._last_appeal_report = None
+        self._last_appeal_source = "llm"
 
     # ---------------------------------------------------------------- 指标
     def _score(self, name: str) -> float:
@@ -332,6 +388,46 @@ class EvaluatorAgent:
             if d.name in ("foreshadow_recycle_rate", "pacing_abnormal"):
                 d.source = "computed"
 
+        # ---- G5：迷爱看六维门禁（方案 A，并入 overall_pass）----
+        self._last_appeal_report = None
+        self._last_appeal_source = "llm"
+        if self.appeal_gate and self.appeal_scorer is not None:
+            try:
+                _ar = gate_chapter(
+                    self.appeal_scorer, self.project_dir, self.appeal_window
+                )
+                self._last_appeal_report = _ar
+                if not _ar.llm_used:
+                    # 离线降级短路（主理人拍板 #5 / 风险 1 / 修正点 A）：
+                    # 六维每个 DimensionResult 的 value 必须设为 APPEAL_DIM_FLOOR(40)，
+                    # 综合维 value 设 APPEAL_PASS_LINE(60)，保证全部 passed=True，禁止触发回溯。
+                    self._last_appeal_source = "offline"
+                    for _k in APPEAL_DIMENSIONS:
+                        dims.append(DimensionResult(
+                            f"{APPEAL_GATE_PREFIX}{_k}", f"迷·{APPEAL_LABELS.get(_k, _k)}",
+                            float(APPEAL_DIM_FLOOR), float(APPEAL_DIM_FLOOR),
+                            ">=", False, "offline", soft_margin=0.0,
+                        ))
+                    dims.append(DimensionResult(
+                        "appeal_total", "迷·综合", float(APPEAL_PASS_LINE),
+                        float(self.appeal_threshold), ">=", False, "offline", soft_margin=0.0,
+                    ))
+                else:
+                    self._last_appeal_source = "llm"
+                    for _k in APPEAL_DIMENSIONS:
+                        dims.append(DimensionResult(
+                            f"{APPEAL_GATE_PREFIX}{_k}", f"迷·{APPEAL_LABELS.get(_k, _k)}",
+                            float(_ar.dimensions.get(_k, 0)), float(APPEAL_DIM_FLOOR),
+                            ">=", False, "llm", soft_margin=0.0,
+                        ))
+                    dims.append(DimensionResult(
+                        "appeal_total", "迷·综合", float(_ar.total_score),
+                        float(self.appeal_threshold), ">=", False, "llm", soft_margin=0.0,
+                    ))
+            except Exception as e:  # noqa: BLE001 - 六维评分异常降级不阻断（G3）
+                if self.console is not None:
+                    self.console.print(f"[yellow]⚠ 迷爱看门禁评分失败，跳过：{e}[/yellow]")
+
         failed = [d for d in dims if not d.passed]
         hard_failed = [d for d in failed if d.required]
         overall = len(failed) == 0
@@ -339,6 +435,9 @@ class EvaluatorAgent:
         # 综合分：各维归一化后平均
         norm = []
         for d in dims:
+            # G5：迷爱看六维不计入「不崩」综合分，避免综合分漂移（零回归）
+            if d.name.startswith(APPEAL_GATE_PREFIX):
+                continue
             if d.direction == ">=":
                 norm.append(min(1.0, d.value / d.threshold) if d.threshold else 1.0)
             else:
@@ -349,6 +448,26 @@ class EvaluatorAgent:
         score = (sum(norm) / len(norm)) * 100 if norm else 100.0
 
         report = NovelHealthReport(overall_pass=overall, score=score, dimensions=dims)
+        # ---- G5：填充迷爱看子块（修正点 B：六维详情从 self._last_appeal_report 取，
+        #      绝不可误用 NovelHealthReport 的 report 本身不具备的字段）----
+        if getattr(self, "_last_appeal_report", None) is not None:
+            _ar = self._last_appeal_report
+            report.appeal = {
+                "source": self._last_appeal_source,          # "llm" | "offline"
+                "total_score": _ar.total_score,               # 综合分（离线为 0）
+                "threshold": self.appeal_threshold,           # 综合合格线
+                "floor": APPEAL_DIM_FLOOR,                    # 单维触底线
+                "verdict": _verdict(_ar.total_score),         # 读者感受档位
+                "dimensions": {                               # 六维明细
+                    k: {"score": _ar.dimensions.get(k, 0), "floor": APPEAL_DIM_FLOOR}
+                    for k in APPEAL_DIMENSIONS
+                },
+                "passed": all(
+                    d.passed for d in dims if d.name.startswith(APPEAL_GATE_PREFIX)
+                ),
+                "one_liner": _ar.one_liner,
+                "suggestions": list(_ar.suggestions),
+            }
         report.notes.append(
             f"伏笔：已回收 {fstat['resolved']} / 未结 {fstat['unresolved']}；"
             f"节奏：{pstat['chapters']} 章中异常 {pstat['abnormal']} 章"

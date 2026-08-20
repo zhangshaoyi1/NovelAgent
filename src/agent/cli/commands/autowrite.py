@@ -62,6 +62,18 @@ def autowrite(
     llm_timeout: int = typer.Option(
         None, "--llm-timeout", help="单调用超时（秒，覆盖 .env 的 LLM_TIMEOUT）"
     ),
+    appeal_gate: bool = typer.Option(
+        True, "--appeal-gate", help="开启迷爱看双闸终门禁（默认开）"
+    ),
+    no_appeal_gate: bool = typer.Option(
+        False, "--no-appeal-gate", help="关闭迷爱看双闸终门禁"
+    ),
+    appeal_threshold: int = typer.Option(
+        60, "--appeal-threshold", help="迷爱看综合分合格线（默认 60）"
+    ),
+    appeal_window: int = typer.Option(
+        1, "--appeal-window", help="迷爱看评测末 N 章（默认 1，仅末章）"
+    ),
 ) -> None:
     """全流程自主写作 - Planner→写作→编辑→记忆→评测+自动回溯
 
@@ -117,6 +129,10 @@ def autowrite(
         budget_margin=budget_margin,
         llm_timeout=llm_timeout,
         on_progress=on_progress,
+        # G5：迷爱看六维双闸透传
+        appeal_gate=appeal_gate and not no_appeal_gate,
+        appeal_threshold=appeal_threshold,
+        appeal_window=appeal_window,
     )
 
     try:

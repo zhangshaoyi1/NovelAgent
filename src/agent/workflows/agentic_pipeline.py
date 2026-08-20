@@ -172,6 +172,10 @@ class AgenticPipelineWorkflow:
         budget_margin: float = 1.0,
         llm_timeout: int | None = None,
         on_progress: Callable[[str, int, int], None] | None = None,
+        # G5 新增参数（迷爱看六维双闸）
+        appeal_gate: bool = True,
+        appeal_threshold: int = 60,
+        appeal_window: int = 1,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client
@@ -193,6 +197,11 @@ class AgenticPipelineWorkflow:
         self._start_time: float = 0.0  # 起始时间（墙钟计时）
         self._schema_degraded: bool = False  # Schema 降级标志（从 Planner 读取）
         self.on_progress = on_progress  # 进度回调（T4 CLI 订阅）
+
+        # G5：迷爱看六维双闸
+        self.appeal_gate = appeal_gate
+        self.appeal_threshold = max(1, appeal_threshold)
+        self.appeal_window = max(1, appeal_window)
 
         # 自主规划（G3）状态：关键前置失败则阻塞，交给 run() 安全退出、不进写章。
         self._plan_blocked = False
@@ -267,6 +276,14 @@ class AgenticPipelineWorkflow:
                 score_fn = ReaderAppealScorer(llm_client=self.llm).score
             except Exception:  # noqa: BLE001
                 score_fn = None
+            appeal_scorer = None
+            if self.appeal_gate:
+                try:
+                    from agent.core.reader_appeal import ReaderAppealScorer
+
+                    appeal_scorer = ReaderAppealScorer(llm_client=self.llm)
+                except Exception:  # noqa: BLE001
+                    appeal_scorer = None
             self.evaluator = EvaluatorAgent(
                 self.project_dir,
                 console=self.console,
@@ -274,6 +291,11 @@ class AgenticPipelineWorkflow:
                 max_rollback_attempts=self.max_rollback_attempts,
                 quality_targets=qt or None,
                 score_fn=score_fn,
+                # G5：迷爱看六维双闸透传
+                appeal_scorer=appeal_scorer,
+                appeal_gate=self.appeal_gate,
+                appeal_threshold=self.appeal_threshold,
+                appeal_window=self.appeal_window,
             )
         # 把回溯事件写进 Memory
         try:

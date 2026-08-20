@@ -59,6 +59,19 @@ APPEAL_WEIGHTS = {
     "emotion_curve": 0.15,
 }
 
+# G5 门禁合格线（主理人拍板 #3：综合线 + 单维触底兜底）
+APPEAL_PASS_LINE: int = 60        # 综合分合格线（可被 --appeal-threshold 覆盖）
+APPEAL_DIM_FLOOR: int = 40        # 单维触底兜底线
+APPEAL_GATE_PREFIX: str = "appeal_"   # 六维 DimensionResult 名前缀
+APPEAL_LABELS: dict[str, str] = {     # 短中文标签（展示 + is_pass 失败维命名）
+    "hook_strength": "钩子强度",
+    "payoff_density": "爽点密度",
+    "immersion": "代入感",
+    "character_arc": "人物弧光",
+    "world_novelty": "世界观新颖度",
+    "emotion_curve": "情绪曲线",
+}
+
 # G2 计数类维度集合（以 issues 重算 value）；评分类维度用自报 value。
 COUNT_DIMS = {"character_stability_high", "setting_consistency_high", "logic_holes"}
 # 计入硬门禁的 severity 集合（high 必计、mid 计入以收紧；low 仅上报，不计入门禁）。
@@ -101,6 +114,8 @@ class ReaderAppealReport:
     suggestions: list[str]
     llm_used: bool = True
     error: str = ""
+    # G5：评分来源标记（"llm" 真评测 / "offline" 离线降级占位）
+    source: str = "llm"
     # 维度中文标签（展示用）
     labels: dict[str, str] = field(default_factory=lambda: {
         "hook_strength": "钩子强度",
@@ -126,6 +141,7 @@ class ReaderAppealReport:
             "suggestions": list(self.suggestions),
             "llm_used": self.llm_used,
             "error": self.error,
+            "source": self.source,
         }
 
     def to_markdown(self) -> str:
@@ -319,6 +335,7 @@ class ReaderAppealScorer:
                 suggestions=[],
                 llm_used=False,
                 error=str(e),
+                source="offline",
             )
 
     def _parse_appeal(self, raw: str) -> ReaderAppealReport:
@@ -341,3 +358,83 @@ class ReaderAppealScorer:
             suggestions=suggestions,
             llm_used=True,
         )
+
+
+# ============================================================
+# G5 门禁判定 + 按章节取末章评分助手
+# ============================================================
+def is_pass(
+    report: "ReaderAppealReport",
+    threshold: int = APPEAL_PASS_LINE,
+    floor: int = APPEAL_DIM_FLOOR,
+) -> tuple[bool, list[str]]:
+    """综合分 >= threshold 且 每个单维 >= floor 才通过。
+
+    Returns:
+        (passed, failed_dims)：passed=True 当且仅当
+        综合 total_score >= threshold 且 每个维度 >= floor；
+        failed_dims 为不达标维度（单维触底）的中文标签列表。
+    """
+    failed_dims = [
+        APPEAL_LABELS.get(k, k) for k, v in report.dimensions.items() if v < floor
+    ]
+    passed = (report.total_score >= threshold) and (len(failed_dims) == 0)
+    return passed, failed_dims
+
+
+def gate_chapter(
+    scorer: "ReaderAppealScorer",
+    project_dir: str | Path,
+    window: int = 1,
+    *,
+    title: str = "",
+    genre: str = "",
+    synopsis: str = "",
+) -> "ReaderAppealReport":
+    """读末 window 章正文拼接，调 scorer.score_chapter 得迷爱看报告。
+
+    无 chapters 目录或 LLM 不可达时返回 llm_used=False 占位报告（不抛异常）；
+    synopsis 为空时尝试从 project_dir/world.md 的『## 故事简介』段提取
+    （复用 _gather_for_eval 风格）。章节文件匹配 ch*.md，去 frontmatter
+    （以 '---' 开头则切掉首段）。
+    """
+    d = Path(project_dir)
+    chapters_dir = d / "chapters"
+    if not chapters_dir.exists():
+        # 无章节可评：返回离线占位（不抛异常），由调用方短路为通过。
+        return ReaderAppealReport(
+            dimensions={k: 0 for k in APPEAL_DIMENSIONS},
+            total_score=0,
+            one_liner="无章节可评",
+            suggestions=[],
+            llm_used=False,
+            error="no chapters dir",
+            source="offline",
+        )
+    texts: list[str] = []
+    for f in sorted(chapters_dir.glob("ch*.md"))[-max(1, window):]:
+        try:
+            text = f.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        # 去 frontmatter（以 '---' 开头则切掉首段）
+        if text.startswith("---"):
+            text = text.split("---", 2)[-1]
+        texts.append(text.strip())
+    chapter_text = "\n\n".join(texts)
+
+    # synopsis 为空时尝试从 world.md 的『## 故事简介』段提取（复用 _gather_for_eval 风格）
+    if not synopsis:
+        world = d / "world.md"
+        if world.exists():
+            try:
+                content = world.read_text(encoding="utf-8")
+                idx = content.find("## 故事简介")
+                if idx >= 0:
+                    synopsis = content[idx: idx + 300]
+            except OSError:
+                pass
+
+    return scorer.score_chapter(
+        chapter_text, title=title, genre=genre, synopsis=synopsis
+    )
