@@ -79,6 +79,10 @@ def test_cli_exit_code_blocked(tmp_path: Path) -> None:
                 cost_tier="balanced",
                 budget_margin=1.0,
                 llm_timeout=None,
+                appeal_gate=True,
+                no_appeal_gate=False,
+                appeal_threshold=60,
+                appeal_window=1,
             )
         assert exc_info.value.exit_code != 0, "blocked 时退出码应非 0"
         assert exc_info.value.exit_code == 1, "blocked 时退出码应为 1"
@@ -104,6 +108,10 @@ def test_cli_exit_code_blocked_direct(tmp_path: Path) -> None:
                 cost_tier="balanced",
                 budget_margin=1.0,
                 llm_timeout=None,
+                appeal_gate=True,
+                no_appeal_gate=False,
+                appeal_threshold=60,
+                appeal_window=1,
             )
         assert exc_info.value.exit_code != 0, "blocked 时退出码应非 0"
         assert exc_info.value.exit_code == 1, "blocked 时退出码应为 1"
@@ -129,6 +137,10 @@ def test_cli_exit_code_tripped(tmp_path: Path) -> None:
                 cost_tier="balanced",
                 budget_margin=1.0,
                 llm_timeout=None,
+                appeal_gate=True,
+                no_appeal_gate=False,
+                appeal_threshold=60,
+                appeal_window=1,
             )
         assert exc_info.value.exit_code != 0, "tripped 时退出码应非 0"
         assert exc_info.value.exit_code == 1, "tripped 时退出码应为 1"
@@ -154,6 +166,10 @@ def test_cli_exit_code_escalated(tmp_path: Path) -> None:
                 cost_tier="balanced",
                 budget_margin=1.0,
                 llm_timeout=None,
+                appeal_gate=True,
+                no_appeal_gate=False,
+                appeal_threshold=60,
+                appeal_window=1,
             )
         assert exc_info.value.exit_code == 2, "escalated 时退出码应为 2"
 
@@ -178,6 +194,10 @@ def test_cli_exit_code_success(tmp_path: Path) -> None:
             cost_tier="balanced",
             budget_margin=1.0,
             llm_timeout=None,
+            appeal_gate=True,
+            no_appeal_gate=False,
+            appeal_threshold=60,
+            appeal_window=1,
         )
     # 若未抛出 typer.Exit，则测试通过
 
@@ -204,6 +224,10 @@ def test_cli_json_success_false_when_blocked(tmp_path: Path, capsys) -> None:
             cost_tier="balanced",
             budget_margin=1.0,
             llm_timeout=None,
+            appeal_gate=True,
+            no_appeal_gate=False,
+            appeal_threshold=60,
+            appeal_window=1,
         )
 
     captured = capsys.readouterr()
@@ -235,6 +259,10 @@ def test_cli_json_success_false_when_tripped(tmp_path: Path, capsys) -> None:
             cost_tier="balanced",
             budget_margin=1.0,
             llm_timeout=None,
+            appeal_gate=True,
+            no_appeal_gate=False,
+            appeal_threshold=60,
+            appeal_window=1,
         )
 
     captured = capsys.readouterr()
@@ -263,6 +291,10 @@ def test_cli_json_success_true_when_ok(tmp_path: Path, capsys) -> None:
             cost_tier="balanced",
             budget_margin=1.0,
             llm_timeout=None,
+            appeal_gate=True,
+            no_appeal_gate=False,
+            appeal_threshold=60,
+            appeal_window=1,
         )
 
     captured = capsys.readouterr()
@@ -305,6 +337,10 @@ def test_cli_progress_callback_stderr(tmp_path: Path, capsys, monkeypatch) -> No
         cost_tier="balanced",
         budget_margin=1.0,
         llm_timeout=None,
+        appeal_gate=True,
+        no_appeal_gate=False,
+        appeal_threshold=60,
+        appeal_window=1,
     )
 
     captured = capsys.readouterr()
@@ -351,6 +387,10 @@ def test_cli_progress_callback_stdout_for_non_json(tmp_path: Path, capsys, monke
         cost_tier="balanced",
         budget_margin=1.0,
         llm_timeout=None,
+        appeal_gate=True,
+        no_appeal_gate=False,
+        appeal_threshold=60,
+        appeal_window=1,
     )
 
     captured = capsys.readouterr()
@@ -392,6 +432,10 @@ def test_cli_max_time_param(tmp_path: Path, monkeypatch) -> None:
         cost_tier="balanced",
         budget_margin=1.0,
         llm_timeout=None,
+        appeal_gate=True,
+        no_appeal_gate=False,
+        appeal_threshold=60,
+        appeal_window=1,
     )
 
     assert captured_kwargs.get("max_time") == 3600, (
@@ -430,6 +474,10 @@ def test_cli_cost_tier_param(tmp_path: Path, monkeypatch) -> None:
         cost_tier="quality",
         budget_margin=1.0,
         llm_timeout=None,
+        appeal_gate=True,
+        no_appeal_gate=False,
+        appeal_threshold=60,
+        appeal_window=1,
     )
 
     assert captured_kwargs.get("cost_tier") == "quality"
@@ -466,6 +514,10 @@ def test_cli_budget_margin_param(tmp_path: Path, monkeypatch) -> None:
         cost_tier="balanced",
         budget_margin=2.5,
         llm_timeout=None,
+        appeal_gate=True,
+        no_appeal_gate=False,
+        appeal_threshold=60,
+        appeal_window=1,
     )
 
     assert captured_kwargs.get("budget_margin") == 2.5
@@ -502,6 +554,10 @@ def test_cli_llm_timeout_param(tmp_path: Path, monkeypatch) -> None:
         cost_tier="balanced",
         budget_margin=1.0,
         llm_timeout=60,
+        appeal_gate=True,
+        no_appeal_gate=False,
+        appeal_threshold=60,
+        appeal_window=1,
     )
 
     assert captured_kwargs.get("llm_timeout") == 60
@@ -532,6 +588,10 @@ def test_cli_json_error_envelope(tmp_path: Path, capsys, monkeypatch) -> None:
             cost_tier="balanced",
             budget_margin=1.0,
             llm_timeout=None,
+            appeal_gate=True,
+            no_appeal_gate=False,
+            appeal_threshold=60,
+            appeal_window=1,
         )
     assert exc_info.value.exit_code == 1
 

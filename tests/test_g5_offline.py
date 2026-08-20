@@ -23,6 +23,7 @@ from agent.core.reader_appeal import (
     ReaderAppealReport,
     ReaderAppealScorer,
 )
+from tests.test_g5_gate import _make_g5_project
 
 
 class _StubAppealScorerOffline(ReaderAppealScorer):
@@ -66,7 +67,7 @@ class _StubAppealScorerOnline(ReaderAppealScorer):
 def test_g5_offline_short_circuit_values(tmp_path: Path) -> None:
     stub = _StubAppealScorerOffline()
     ev = EvaluatorAgent(
-        tmp_path, appeal_scorer=stub, appeal_gate=True,
+        _make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True,
         appeal_threshold=60, appeal_window=1,
     )
     report = ev._evaluate_once()
@@ -91,7 +92,7 @@ def test_g5_offline_short_circuit_values(tmp_path: Path) -> None:
 # ============================================================
 def test_g5_offline_appeal_subblock(tmp_path: Path) -> None:
     stub = _StubAppealScorerOffline()
-    ev = EvaluatorAgent(tmp_path, appeal_scorer=stub, appeal_gate=True)
+    ev = EvaluatorAgent(_make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True)
     report = ev._evaluate_once()
     assert report.appeal is not None
     a = report.appeal
@@ -111,7 +112,7 @@ def test_g5_offline_appeal_subblock(tmp_path: Path) -> None:
 # ============================================================
 def test_g5_offline_no_rollback_triggered(tmp_path: Path) -> None:
     stub = _StubAppealScorerOffline()
-    ev = EvaluatorAgent(tmp_path, appeal_scorer=stub, appeal_gate=True)
+    ev = EvaluatorAgent(_make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True)
     called: list[list[int]] = []
 
     def rewriter(chapter_nums: list[int]) -> None:
@@ -129,7 +130,7 @@ def test_g5_offline_no_rollback_triggered(tmp_path: Path) -> None:
 # ============================================================
 def test_g5_offline_markdown_degraded(tmp_path: Path) -> None:
     stub = _StubAppealScorerOffline()
-    ev = EvaluatorAgent(tmp_path, appeal_scorer=stub, appeal_gate=True)
+    ev = EvaluatorAgent(_make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True)
     report = ev._evaluate_once()
     md = report.to_markdown()
     assert "迷爱看（离线通过，未实测）" in md
@@ -141,7 +142,7 @@ def test_g5_offline_markdown_degraded(tmp_path: Path) -> None:
 # ============================================================
 def test_g5_online_not_short_circuited(tmp_path: Path) -> None:
     stub = _StubAppealScorerOnline()
-    ev = EvaluatorAgent(tmp_path, appeal_scorer=stub, appeal_gate=True)
+    ev = EvaluatorAgent(_make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True)
     report = ev._evaluate_once()
     adims = [d for d in report.dimensions if d.name.startswith(APPEAL_GATE_PREFIX)]
     for d in adims:

@@ -17,6 +17,7 @@ from typing import Any
 
 from agent.agents.evaluator_agent import EvaluatorAgent, NovelHealthReport
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+from tests.test_g5_gate import _make_g5_project
 
 
 class _StubEvaluator:
@@ -103,7 +104,7 @@ def test_g5_cli_threshold_75(tmp_path: Path) -> None:
 
     # threshold=60：65≥60 → 通过
     ev60 = EvaluatorAgent(
-        tmp_path, appeal_scorer=StubScorer(), appeal_gate=True,
+        _make_g5_project(tmp_path), appeal_scorer=StubScorer(), appeal_gate=True,
         appeal_threshold=60, appeal_window=1,
     )
     rep60 = ev60._evaluate_once()
@@ -112,7 +113,7 @@ def test_g5_cli_threshold_75(tmp_path: Path) -> None:
 
     # threshold=75：65<75 → 综合维失败
     ev75 = EvaluatorAgent(
-        tmp_path, appeal_scorer=StubScorer(), appeal_gate=True,
+        _make_g5_project(tmp_path), appeal_scorer=StubScorer(), appeal_gate=True,
         appeal_threshold=75, appeal_window=1,
     )
     rep75 = ev75._evaluate_once()

@@ -52,6 +52,24 @@ def _appeal_dims(report) -> list:
     return [d for d in report.dimensions if d.name.startswith("appeal_")]
 
 
+def _make_g5_project(tmp_path: Path) -> Path:
+    """造一个带章节正文的最小项目，让 gate_chapter 能读到文本并调用 stub.score_chapter。
+
+    没有 chapters/ 时 gate_chapter 会走"无章节→离线占位"分支（llm_used=False），
+    stub 的在线报告永远不会被调用 —— 所有在线断言会因离线短路而"假通过"。
+    """
+    ch = tmp_path / "chapters"
+    ch.mkdir(parents=True, exist_ok=True)
+    (ch / "ch01.md").write_text(
+        "---\ntitle: 第一章\n---\n主角醒来，发现身处陌生房间。",
+        encoding="utf-8",
+    )
+    (tmp_path / "world.md").write_text(
+        "## 故事简介\n一个用于测试的小世界。", encoding="utf-8"
+    )
+    return tmp_path
+
+
 # ============================================================
 # 1. 低分（综合 < 60）→ 六维全失败 → overall_pass=False
 # ============================================================
@@ -59,7 +77,7 @@ def test_g5_gate_low_total_fails(tmp_path: Path) -> None:
     dims = {k: 30 for k in APPEAL_DIMENSIONS}  # 综合=30 < 60 且每维 < 40
     stub = _StubAppealScorer(_make_report(dims))
     ev = EvaluatorAgent(
-        tmp_path, appeal_scorer=stub, appeal_gate=True,
+        _make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True,
         appeal_threshold=60, appeal_window=1,
     )
     report = ev._evaluate_once()
@@ -77,7 +95,7 @@ def test_g5_gate_high_passes(tmp_path: Path) -> None:
     dims = {k: 80 for k in APPEAL_DIMENSIONS}  # 综合=80 ≥ 60 且每维 ≥ 40
     stub = _StubAppealScorer(_make_report(dims))
     ev = EvaluatorAgent(
-        tmp_path, appeal_scorer=stub, appeal_gate=True, appeal_threshold=60,
+        _make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True, appeal_threshold=60,
     )
     report = ev._evaluate_once()
     adims = _appeal_dims(report)
@@ -90,7 +108,7 @@ def test_g5_gate_high_passes(tmp_path: Path) -> None:
 def test_g5_gate_high_no_rollback(tmp_path: Path) -> None:
     dims = {k: 80 for k in APPEAL_DIMENSIONS}
     stub = _StubAppealScorer(_make_report(dims))
-    ev = EvaluatorAgent(tmp_path, appeal_scorer=stub, appeal_gate=True)
+    ev = EvaluatorAgent(_make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True)
     called: list[list[int]] = []
 
     def rewriter(chapter_nums: list[int]) -> None:
@@ -109,7 +127,7 @@ def test_g5_gate_single_dim_floor_triggers(tmp_path: Path) -> None:
     dims = {k: 80 for k in APPEAL_DIMENSIONS}
     dims["hook_strength"] = 30  # 某维 < 40；其余高 → 综合 ≈ 70 ≥ 60
     stub = _StubAppealScorer(_make_report(dims))
-    ev = EvaluatorAgent(tmp_path, appeal_scorer=stub, appeal_gate=True)
+    ev = EvaluatorAgent(_make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True)
     report = ev._evaluate_once()
     hook = report.dimension("appeal_hook_strength")
     assert hook is not None and hook.passed is False, "钩子强度 < 40 应判失败"
@@ -124,13 +142,13 @@ def test_g5_gate_threshold_override(tmp_path: Path) -> None:
     stub = _StubAppealScorer(_make_report(dims))
     # 默认 60：65 ≥ 60 → 通过
     ev_default = EvaluatorAgent(
-        tmp_path, appeal_scorer=stub, appeal_gate=True, appeal_threshold=60,
+        _make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True, appeal_threshold=60,
     )
     rep_def = ev_default._evaluate_once()
     assert rep_def.overall_pass is True
     # 更严 75：65 < 75 → 综合维失败 → 不通过
     ev_strict = EvaluatorAgent(
-        tmp_path, appeal_scorer=stub, appeal_gate=True, appeal_threshold=75,
+        _make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True, appeal_threshold=75,
     )
     rep_strict = ev_strict._evaluate_once()
     total_dim = rep_strict.dimension("appeal_total")
@@ -144,7 +162,7 @@ def test_g5_gate_threshold_override(tmp_path: Path) -> None:
 def test_g5_gate_disabled_no_appeal(tmp_path: Path) -> None:
     dims = {k: 0 for k in APPEAL_DIMENSIONS}  # 若门禁开必失败
     stub = _StubAppealScorer(_make_report(dims))
-    ev = EvaluatorAgent(tmp_path, appeal_scorer=stub, appeal_gate=False)
+    ev = EvaluatorAgent(_make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=False)
     report = ev._evaluate_once()
     adims = _appeal_dims(report)
     assert adims == [], "关闭门禁不应注入六维 DimensionResult"
