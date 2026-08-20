@@ -13,6 +13,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 # 档位策略（§1.4）：以 300 章为基准的整本 token 消耗区间（输入+输出混合）。
@@ -124,3 +125,59 @@ class CostModel:
                 f"{high/1_000_000:.2f}M（超出 {over/1_000_000:.2f}M）"
             )
         return None
+
+
+# ============================================================
+# G7 成本汇总 helper（拍板 4/5 + 补充边界 2：纯复用同源，异常降级占位不阻断）
+# ============================================================
+def build_cost_summary(
+    project_dir: str | Path,
+    tier: str = "balanced",
+    chapters: int | None = None,
+) -> dict:
+    """成本汇总（G7 新增）：纯复用 TraceStore.totals() + CostModel.baseline_tokens/alert_if_over。
+
+    与 G4 熔断同一数据源（agentic_pipeline._check_budget 用 get_tracer().totals()
+    + CostModel.baseline_tokens）：优先 get_tracer().totals()（若当前已 set_tracer(TraceStore)），
+    fallback TraceStore(project_dir).totals()。不新增统计口径（补充边界 2）。
+    chapters 为 None 时按当前章节文件数，无则 300（对齐 cost 命令行默认）。
+    金额口径（拍板 5）：仅 token + 基线 + 告警；不折算 USD、不补记 cost_per_call（R3-4）。
+    内部 except Exception 降级返回「无追踪数据」占位，不阻断主流程（仿 _check_budget）。
+    """
+    from agent.core.chapters import list_chapter_files
+    from agent.core.llmops.trace import TraceStore, get_tracer
+
+    try:
+        tracer = get_tracer()
+        totals = (
+            tracer.totals()
+            if hasattr(tracer, "totals")
+            else TraceStore(project_dir).totals()
+        )
+        if chapters is None:
+            n = len(list_chapter_files(project_dir))
+            chapters = n if n > 0 else 300
+        model = CostModel()
+        low, high = model.baseline_tokens(tier, chapters)
+        alert = model.alert_if_over(totals.get("tokens_total", 0), tier, chapters)
+        return {
+            "calls": totals.get("calls", 0),
+            "tokens_in": totals.get("tokens_in", 0),
+            "tokens_out": totals.get("tokens_out", 0),
+            "tokens_total": totals.get("tokens_total", 0),
+            "failures": totals.get("failures", 0),
+            "avg_latency_ms": totals.get("avg_latency_ms", 0.0),
+            "cost": totals.get("cost", 0.0),          # 恒 0（占位价，拍板 5：不默认展示金额）
+            "baseline_low": low,
+            "baseline_high": high,
+            "alert": alert,
+            "tracked": True,
+        }
+    except Exception:  # noqa: BLE001 - 降级占位不阻断（仿 _check_budget）
+        return {
+            "calls": 0, "tokens_in": 0, "tokens_out": 0, "tokens_total": 0,
+            "failures": 0, "avg_latency_ms": 0.0, "cost": 0.0,
+            "baseline_low": 0.0, "baseline_high": 0.0, "alert": None,
+            "tracked": False,
+            "note": "本次调用未追踪（仅统计已有记录）",
+        }

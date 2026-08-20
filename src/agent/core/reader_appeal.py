@@ -142,6 +142,8 @@ class ReaderAppealReport:
         "world_novelty": "世界观新颖度",
         "emotion_curve": "情绪曲线",
     })
+    # ---- G7：人话总结行（主理人拍板 2：表格前插入总结段；离线分支原样已有人话）----
+    summary_lines: list[str] = field(default_factory=list)
 
     @staticmethod
     def _compute_total(dims: dict[str, int]) -> int:
@@ -159,6 +161,8 @@ class ReaderAppealReport:
             "llm_used": self.llm_used,
             "error": self.error,
             "source": self.source,
+            # ---- G7（只增不删）：人话总结行 ----
+            "summary_lines": list(self.summary_lines),
         }
 
     def to_markdown(self) -> str:
@@ -169,6 +173,12 @@ class ReaderAppealReport:
                 "配置真实 LLM（把 .env_ai 复制为 .env）后即可获得真实读者吸引力评分。"
             )
         lines = ["# 迷爱看评分报告", ""]
+        # ---- G7：人话总结段（表格前插入；summary_lines 为空则跳过，离线分支原样）----
+        if self.summary_lines:
+            lines.append("## 一句话总结")
+            for ln in self.summary_lines:
+                lines.append(f"- {ln}")
+            lines.append("")
         verdict = _verdict(self.total_score)
         lines.append(f"**总评分**：{self.total_score}/100 （{verdict}）")
         lines.append(f"> {self.one_liner}")
@@ -195,6 +205,42 @@ def _verdict(score: int) -> str:
     if score >= 45:
         return "勉强能看"
     return "容易弃书"
+
+
+# ============================================================
+# G7 人话总结行（主理人拍板 1/2：确定性拼装、零 LLM；表格前插总结段）
+# ============================================================
+def build_appeal_summary_lines(report: "ReaderAppealReport") -> list[str]:
+    """确定性拼装迷爱看人话总结行（零 LLM，素材全取自 ReaderAppealReport）。
+
+    失败维判定与 is_pass（行 381-397）同源：单维 < APPEAL_DIM_FLOOR(40) 或
+    综合 total_score < APPEAL_PASS_LINE(60)。建议来源：LLM suggestions 优先 + 维度模板兜底。
+    离线（llm_used=False）返回 []（to_markdown 离线分支已有人话，不重复）。
+    """
+    if not report.llm_used:
+        return []
+    lines: list[str] = []
+    total = report.total_score
+    if total < APPEAL_PASS_LINE:
+        lines.append(
+            f"综合分 {total}/100 未达合格线 {APPEAL_PASS_LINE}"
+            f"（{_verdict(total)}）——读者吸引力整体偏弱，建议按下方建议提升。"
+        )
+    for k, v in report.dimensions.items():
+        if v < APPEAL_DIM_FLOOR:
+            label = APPEAL_LABELS.get(k, k)
+            gap = APPEAL_DIM_FLOOR - v
+            lines.append(
+                f"{label}：实测 {v} ＜ 触底线 {APPEAL_DIM_FLOOR}（差 {gap}）"
+            )
+    # 下一步建议：LLM suggestions 优先（注明来源），无则维度级模板兜底
+    if report.suggestions:
+        lines.append("下一步建议（来自 LLM）：")
+        for i, s in enumerate(report.suggestions[:5], 1):
+            lines.append(f"  {i}. {s}")
+    else:
+        lines.append("下一步建议（模板）：请针对上述未达触底线的维度逐项优化。")
+    return lines
 
 
 # ============================================================

@@ -103,3 +103,30 @@ def emit_result(
     elif rich_render is not None:
         rich_render()
 
+
+def print_cost_summary(cost: dict, *, json_mode: bool = False) -> None:
+    """非 JSON 模式打印成本汇总（G7 拍板 4：调用次数/token/失败/延迟/基线/告警）。
+
+    三命令（autowrite/evaluate/appeal）收尾复用；``tracked=False`` 或空字典时打印
+    「本次调用未追踪」占位而非静默 0（拍板 5 / 共享知识 #7，不阻断主流程）。
+    """
+    if not cost or cost.get("tracked") is False:
+        console.print("[dim]本次调用未追踪（仅统计已有记录）[/dim]")
+        return
+    console.print("\n[bold cyan]本次运行成本[/bold cyan]")
+    console.print(
+        f"调用 {cost.get('calls', 0)} 次 · token in {cost.get('tokens_in', 0):,}"
+        f" / out {cost.get('tokens_out', 0):,} / total {cost.get('tokens_total', 0):,}"
+    )
+    console.print(
+        f"失败 {cost.get('failures', 0)} · 平均延迟 {cost.get('avg_latency_ms', 0)} ms"
+    )
+    console.print(
+        f"成本基线（tier/chapters）：{cost.get('baseline_low', 0)/1_000_000:.2f}M"
+        f"–{cost.get('baseline_high', 0)/1_000_000:.2f}M tokens"
+    )
+    if cost.get("alert"):
+        console.print(f"[yellow]{cost['alert']}[/yellow]")
+    else:
+        console.print("[green]成本在基线内[/green]")
+

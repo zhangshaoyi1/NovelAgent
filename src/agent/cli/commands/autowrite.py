@@ -117,6 +117,13 @@ def autowrite(
     padding_threshold: float = typer.Option(
         0.30, "--padding-threshold", help="重复句占比阈值（默认 0.30）"
     ),
+    # ---- G7 新增：展示开关（拍板 6：默认全开，可关）----
+    no_human_summary: bool = typer.Option(
+        False, "--no-human-summary", help="关闭人话总结段（保留既有表格）"
+    ),
+    no_cost: bool = typer.Option(
+        False, "--no-cost", help="关闭成本汇总输出（--json 时 cost 置 null）"
+    ),
 ) -> None:
     """全流程自主写作 - Planner→写作→编辑→记忆→评测+自动回溯
 
@@ -203,6 +210,8 @@ def autowrite(
         golden_three_floor=int(_cli_value(golden_three_floor, 40)),
         padding_gate=_padding_gate,
         padding_threshold=float(_cli_value(padding_threshold, 0.30)),
+        # ---- G7 新增：人话总结层展示开关（拍板 6：默认开，--no-human-summary 关闭）----
+        human_summary=not bool(_cli_value(no_human_summary, False)),
     )
 
     try:
@@ -212,6 +221,9 @@ def autowrite(
         success = not (result.blocked or result.tripped or result.escalated)
 
         if json_output:
+            # G7（拍板 6）：--no-cost 时把 cost 置 null（emit 调用本身不改，to_dict 已含 cost）
+            if bool(_cli_value(no_cost, False)):
+                result.cost = None
             emit_result({"success": success, **result.to_dict()}, json_mode=True)
             return
 
@@ -229,6 +241,10 @@ def autowrite(
                 console.print(f"[bold red]✗ 阻塞失败：{result.block_reason}[/bold red]")
             elif result.escalated:
                 console.print(f"[bold yellow]⚠ 上报人工：{result.escalated_reason}[/bold yellow]")
+
+        # G7（拍板 4）：非 JSON 收尾成本汇总（--no-cost 跳过）
+        if not bool(_cli_value(no_cost, False)):
+            print_cost_summary(result.cost)
 
         # 退出码映射：blocked/tripped/escalated 非 0（T5）
         if not success:

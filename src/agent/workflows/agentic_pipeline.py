@@ -52,6 +52,8 @@ class PipelineResult:
     schema_degraded: bool = False  # Schema 降级标志
     # G6 新增字段（B5-3 修复：Guardrails 结果进结构化结果，供 --json 审计）
     guardrails: Optional[dict[str, Any]] = None
+    # G7 新增字段（成本透明，拍板 4）：run 收尾填充；--no-cost 时 CLI 置 None
+    cost: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -67,6 +69,8 @@ class PipelineResult:
             "tripped": self.tripped,
             "schema_degraded": self.schema_degraded,
             "guardrails": self.guardrails,
+            # ---- G7（只增不删）：成本汇总 ----
+            "cost": self.cost,
         }
 
 
@@ -185,6 +189,8 @@ class AgenticPipelineWorkflow:
         golden_three_floor: int = 40,
         padding_gate: bool = True,
         padding_threshold: float = 0.30,
+        # ---- G7 新增参数（人话总结层展示开关；--no-human-summary 关闭）----
+        human_summary: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client
@@ -218,6 +224,8 @@ class AgenticPipelineWorkflow:
         self.golden_three_floor = max(1, golden_three_floor)
         self.padding_gate = padding_gate
         self.padding_threshold = max(0.0, min(1.0, padding_threshold))
+        # G7：人话总结层展示开关（透传给 EvaluatorAgent）
+        self.human_summary = human_summary
         # G6：写章循环 Guardrails 命中收集（B5-3 修复：结果进报告，不只 console）
         self._guardrail_hits: list[dict[str, Any]] = []
 
@@ -323,6 +331,8 @@ class AgenticPipelineWorkflow:
                 golden_three_floor=self.golden_three_floor,
                 padding_gate=self.padding_gate,
                 padding_threshold=self.padding_threshold,
+                # ---- G7 透传：人话总结层展示开关 ----
+                human_summary=self.human_summary,
             )
         # 把回溯事件写进 Memory
         try:
@@ -735,6 +745,17 @@ class AgenticPipelineWorkflow:
                 pass
 
     # ---------------------------------------------------------------- 主流程
+    def _finalize_cost(self, result: PipelineResult) -> None:
+        """G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）。"""
+        try:
+            from agent.core.llmops import build_cost_summary
+
+            result.cost = build_cost_summary(
+                self.project_dir, self._cost_tier, self._resolve_target()
+            )
+        except Exception:  # noqa: BLE001 - 成本汇总失败不阻断主流程（G3）
+            result.cost = None
+
     def run(self) -> PipelineResult:
         import time
 
@@ -765,6 +786,7 @@ class AgenticPipelineWorkflow:
             self.console.print(f"[red]自主规划阶段异常：{e}[/red]")
             result.blocked = True
             result.block_reason = f"规划阶段异常：{e}"
+            self._finalize_cost(result)
             return result
         if getattr(self, "_plan_blocked", False):
             result.blocked = True
@@ -775,6 +797,7 @@ class AgenticPipelineWorkflow:
                 f"[red]自主规划关键前置失败，已安全退出（不进入写章）："
                 f"{self._plan_block_reason}[/red]"
             )
+            self._finalize_cost(result)
             return result
 
         # 2) 逐章写作 + 编辑 + 记忆回写
@@ -877,6 +900,7 @@ class AgenticPipelineWorkflow:
         # G4: 熔断后跳过评测（拍板 #5）
         if result.tripped:
             self.console.print("[red]✗ 熔断已触发，跳过评测直接返回[/red]")
+            self._finalize_cost(result)
             return result
 
         # 3) 评测 + 自动回溯修复
@@ -886,6 +910,7 @@ class AgenticPipelineWorkflow:
                 result.tripped = True
                 result.block_reason = "Token 预算超限或墙钟超时熔断（评测阶段）"
                 self.console.print(f"[red]✗ 熔断中止：{result.block_reason}[/red]")
+                self._finalize_cost(result)
                 return result
             self._emit_progress("evaluating", 0, 100)
             evaluator = self._ensure_evaluator()
@@ -932,4 +957,6 @@ class AgenticPipelineWorkflow:
                 except Exception:  # noqa: BLE001
                     pass
 
+        # ---- G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）----
+        self._finalize_cost(result)
         return result

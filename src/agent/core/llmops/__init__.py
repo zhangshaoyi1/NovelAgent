@@ -7,7 +7,13 @@ EvalHarness（评测回归）、TracedLLMClient（可追踪 LLM 包装）。
 
 from __future__ import annotations
 
-from agent.core.llmops.cost import DEFAULT_MODEL_PRICES, TIER_BASELINE_TOKENS_300, CostModel, CostEstimate
+from agent.core.llmops.cost import (
+    DEFAULT_MODEL_PRICES,
+    TIER_BASELINE_TOKENS_300,
+    CostModel,
+    CostEstimate,
+    build_cost_summary,  # G7：成本汇总 helper（三命令/报告复用，与 G4 熔断同源）
+)
 from agent.core.llmops.eval_harness import EvalHarness, EvalRun, RegressionIssue
 from agent.core.llmops.prompt_version import PromptRegistry
 from agent.core.llmops.trace import (
@@ -29,6 +35,7 @@ __all__ = [
     "CostEstimate",
     "DEFAULT_MODEL_PRICES",
     "TIER_BASELINE_TOKENS_300",
+    "build_cost_summary",
     "PromptRegistry",
     "EvalHarness",
     "EvalRun",

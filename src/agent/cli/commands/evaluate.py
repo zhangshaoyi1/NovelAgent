@@ -46,6 +46,13 @@ def evaluate(
              "替代离线满分默认；--no-real-score 强制离线（CI/测试）。"
              "LLM 不可用时自动降级为离线安全默认。"
     ),
+    # ---- G7 新增：展示开关（拍板 6：默认全开，可关）----
+    no_human_summary: bool = typer.Option(
+        False, "--no-human-summary", help="关闭人话总结段（保留既有表格）"
+    ),
+    no_cost: bool = typer.Option(
+        False, "--no-cost", help="关闭成本汇总输出（--json 时 cost 置 null）"
+    ),
 ) -> None:
     """全书「不崩」体检 - 七维量化报告 + 可选自动回溯修复
 
@@ -74,12 +81,18 @@ def evaluate(
     workflow_console = make_quiet_console() if json_output else console
     from agent.agents.evaluator_agent import EvaluatorAgent
 
+    # ---- G7（补充边界 3，修复 R3-3）：接线 tracer —— 复用 agent_service.py 行 80-82 模式 ----
+    from agent.core.llm_client import LLMClient
+    from agent.core.llmops import TraceStore, TracedLLMClient, set_tracer
+
+    set_tracer(TraceStore(project_path))
+    traced_llm = TracedLLMClient(LLMClient(), model="creative-strong")
+
     score_fn = None
     if real_score:
-        from agent.core.llm_client import LLMClient
         from agent.core.reader_appeal import ReaderAppealScorer
 
-        score_fn = ReaderAppealScorer(llm_client=LLMClient()).score
+        score_fn = ReaderAppealScorer(llm_client=traced_llm).score   # 改：裸 LLMClient → traced_llm
 
     evaluator = EvaluatorAgent(
         project_path,
@@ -88,6 +101,8 @@ def evaluate(
         rollback_window=rollback_window,
         max_rollback_attempts=max_rollback,
         score_fn=score_fn,
+        # G7：人话总结层展示开关（拍板 6：默认开，--no-human-summary 关闭）
+        human_summary=not bool(getattr(no_human_summary, "default", no_human_summary)),
     )
 
     try:
@@ -104,9 +119,22 @@ def evaluate(
             report = evaluator.evaluate()
 
         if json_output:
-            emit_result({"success": True, "report": report.to_dict()}, json_mode=True)
+            # G7（拍板 4/6）：--json 信封增 cost（--no-cost 置 null；summary 已随 report.to_dict()）
+            from agent.core.llmops import build_cost_summary
+
+            payload = {"success": True, "report": report.to_dict()}
+            if bool(getattr(no_cost, "default", no_cost)):
+                payload["cost"] = None
+            else:
+                payload["cost"] = build_cost_summary(project_path, "balanced", None)
+            emit_result(payload, json_mode=True)
             return
         console.print(report.to_markdown())
+        # G7（拍板 4）：非 JSON 收尾成本汇总（--no-cost 跳过）
+        if not bool(getattr(no_cost, "default", no_cost)):
+            from agent.core.llmops import build_cost_summary
+
+            print_cost_summary(build_cost_summary(project_path, "balanced", None))
     except Exception as e:
         if json_output:
             emit_result({"success": False, "error": {"code": "evaluate_failed", "message": str(e)}},

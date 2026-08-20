@@ -18,7 +18,7 @@ from pathlib import Path
 
 import frontmatter
 from agent.cli._app import app, command, console, typer
-from agent.cli._shared import emit_result, make_quiet_console
+from agent.cli._shared import emit_result, make_quiet_console, print_cost_summary
 from agent.core.state_machine import State
 
 
@@ -38,6 +38,13 @@ def appeal(
     ),
     env_file: str = typer.Option(
         None, "--env", help="指定 .env 文件（透传下游 LLMClient）"
+    ),
+    # ---- G7 新增：展示开关（拍板 6：默认全开，可关）----
+    no_human_summary: bool = typer.Option(
+        False, "--no-human-summary", help="关闭人话总结段（保留既有表格）"
+    ),
+    no_cost: bool = typer.Option(
+        False, "--no-cost", help="关闭成本汇总输出（--json 时 cost 置 null）"
     ),
 ) -> None:
     """迷爱看评分 - 真 LLM 读者吸引力 6 维（钩子/爽点/代入感/弧光/新颖度/情绪曲线）
@@ -88,16 +95,41 @@ def appeal(
     from agent.core.llm_client import LLMClient
     from agent.core.reader_appeal import ReaderAppealScorer
 
+    # ---- G7（补充边界 3，修复 R3-3）：接线 tracer —— 复用 agent_service.py 行 80-82 模式 ----
+    from agent.core.llmops import TraceStore, TracedLLMClient, set_tracer
+
+    set_tracer(TraceStore(project_path))
+    traced_llm = TracedLLMClient(LLMClient(), model="creative-strong")
+
     workflow_console = make_quiet_console() if json_output else console
-    scorer = ReaderAppealScorer(llm_client=LLMClient(), console=workflow_console)
+    scorer = ReaderAppealScorer(llm_client=traced_llm, console=workflow_console)   # 改：裸 LLMClient → traced_llm
     report = scorer.score_chapter(
         text, title=str(title), genre=str(genre), synopsis=str(synopsis)
     )
 
+    # ---- G7：人话总结行填充（拍板 2；--no-human-summary 时不填充 → 展示层跳过）----
+    if not bool(getattr(no_human_summary, "default", no_human_summary)):
+        from agent.core.reader_appeal import build_appeal_summary_lines
+
+        report.summary_lines = build_appeal_summary_lines(report)
+
     if json_output:
-        emit_result({"success": True, "report": report.to_dict()}, json_mode=True)
+        # G7（拍板 4/6）：--json 信封增 cost（--no-cost 置 null；summary_lines 已随 report.to_dict()）
+        from agent.core.llmops import build_cost_summary
+
+        payload = {"success": True, "report": report.to_dict()}
+        if bool(getattr(no_cost, "default", no_cost)):
+            payload["cost"] = None
+        else:
+            payload["cost"] = build_cost_summary(project_path, "balanced", None)
+        emit_result(payload, json_mode=True)
         return
     console.print(report.to_markdown())
+    # G7（拍板 4）：非 JSON 收尾成本汇总（--no-cost 跳过）
+    if not bool(getattr(no_cost, "default", no_cost)):
+        from agent.core.llmops import build_cost_summary
+
+        print_cost_summary(build_cost_summary(project_path, "balanced", None))
 
 
 def _fail(json_output: bool, code: str, message: str) -> None:

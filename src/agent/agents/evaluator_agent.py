@@ -142,6 +142,8 @@ class NovelHealthReport:
     golden_three: Optional[dict] = None   # B4：黄金三章（source/mode/total/verdict/六维明细）
     ai_flavor: Optional[dict] = None      # B5：AI 味命中（由 pipeline 在评测后回填）
     padding: Optional[dict] = None        # B6：防注水（重复度 + 信息密度）
+    # ---- G7：人话总结层（主理人拍板 1/2：确定性模板拼装，零 LLM；表格前插总结段）----
+    summary: Optional[dict] = None
 
     def dimension(self, name: str) -> Optional[DimensionResult]:
         return next((d for d in self.dimensions if d.name == name), None)
@@ -161,6 +163,8 @@ class NovelHealthReport:
             "golden_three": self.golden_three,
             "ai_flavor": self.ai_flavor,
             "padding": self.padding,
+            # ---- G7（只增不删）：人话总结层 ----
+            "summary": self.summary,
         }
 
     def to_markdown(self) -> str:
@@ -174,6 +178,22 @@ class NovelHealthReport:
         if self.escalated:
             lines.append(f"- **上报原因**：{self.escalated_reason}")
         lines.append("")
+        # ---- G7：人话总结段（主理人拍板 2：表格前插入；不重构既有表格与 G5/G6 子块）----
+        if self.summary is not None:
+            s = self.summary
+            lines.append("")
+            lines.append("## 一句话总结")
+            lines.append(f"- **{s.get('headline', '')}**")
+            for f in s.get("failures", []):
+                lines.append(f"- {f.get('line', '')}（{f.get('reason', '')}）")
+                src = f.get("suggestion_source", "")
+                if f.get("suggestion"):
+                    lines.append(
+                        f"  - 建议（{'来自 LLM' if src == 'llm' else '模板'}）：{f.get('suggestion')}"
+                    )
+            for ns in s.get("next_steps", []):
+                lines.append(f"- 下一步：{ns}")
+            lines.append("")
         lines.append("| 维度 | 指标 | 实测 | 合格线 | 达标 |")
         lines.append("|---|---|---|---|---|")
         for d in self.dimensions:
@@ -326,6 +346,8 @@ class EvaluatorAgent:
         golden_three_floor: int = 40,                       # 单维触底线（--golden-three-floor）
         padding_gate: bool = True,                          # B6 开关（默认开）
         padding_threshold: float = 0.30,                    # 重复句占比阈值（--padding-threshold）
+        # ---- G7 新增：人话总结层展示开关（默认开；--no-human-summary 关闭）----
+        human_summary: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.console = console or Console()
@@ -366,6 +388,117 @@ class EvaluatorAgent:
         self._last_golden_source = "llm"
         # G6：最近一次防注水统计缓存（供 padding 子块填充）
         self._last_padding_stats = None
+        # G7：人话总结层展示开关（_evaluate_once 末尾决定是否填充 report.summary）
+        self.human_summary = human_summary
+
+    # ---------------------------------------------------------------- G7 人话总结层
+    # 主理人拍板 1/2 + 补充边界 4：确定性模板拼装、零 LLM、措辞保守。
+    # 素材全部取自既有结构化数据（失败维 DimensionResult + appeal/golden 子块 suggestions）。
+    _SUMMARY_REASONS = {
+        "character_stability_high": "人设出现前后矛盾，建议核对角色档案并统一言行/动机",
+        "setting_consistency_high": "设定被打破，建议回查世界观设定并修复冲突",
+        "foreshadow_recycle_rate": "伏笔回收率不足，建议安排已埋伏笔的回收或标注废弃",
+        "coherence": "连贯性偏低，建议检查章节衔接与叙事流畅度",
+        "readability": "追读力不足，建议在章末加强悬念/钩子",
+        "pacing_abnormal": "异常章节比例偏高（注水/赶进度），建议平衡章节篇幅",
+        "logic_holes": "存在逻辑漏洞，建议修复因果硬伤",
+        "appeal_hook_strength": "章末钩子强度不足，建议加强章末悬念/反转",
+        "appeal_payoff_density": "爽点密度偏低，建议增加打脸/反转/成长兑现",
+        "appeal_immersion": "代入感不足，建议稳定视角、增加细节可信度",
+        "appeal_character_arc": "人物弧光弱，建议给角色成长/转变",
+        "appeal_world_novelty": "世界观新颖度不足，建议强化设定记忆点",
+        "appeal_emotion_curve": "情绪曲线平，建议制造节奏起伏",
+        "golden_hook_strength": "前三章章末钩子强度不足，建议加强开局悬念/反转",
+        "golden_payoff_density": "前三章爽点密度偏低，建议开局即有兑现",
+        "golden_immersion": "前三章代入感不足，建议稳定视角、增加细节可信度",
+        "golden_character_arc": "前三章人物弧光弱，建议给角色成长/转变",
+        "golden_world_novelty": "前三章世界观新颖度不足，建议强化设定记忆点",
+        "golden_emotion_curve": "前三章情绪曲线平，建议制造节奏起伏",
+        "padding_repetition_abnormal": "重复句占比偏高，建议删减车轱辘话/合并相似句",
+    }
+
+    def _build_summary(self, report: NovelHealthReport) -> dict:
+        """把既有结构化数据翻译成人话总结：一句话总评 + 仅失败维归因 + 差多少 + 下一步。
+
+        素材全部取自既有数据：report.dimensions 失败维（label/value/threshold/direction）、
+        report.appeal/golden_three 子块（one_liner + suggestions）、report.padding 子块。
+        零 LLM、零网络（拍板 1）；量化差距严格按 direction 与表格同源（补充边界 4）。
+        """
+        failed = [d for d in report.dimensions if not d.passed]
+        # 离线/全通过分支（拍板 2：给「全部达标（离线通过未实测）」一句话，不制造恐慌）
+        if not failed:
+            offline = any(
+                getattr(d, "source", "") == "offline" for d in report.dimensions
+            )
+            return {
+                "headline": "全部达标（离线通过未实测）" if offline else "全部达标",
+                "failures": [],
+                "next_steps": [],
+                "offline": offline,
+                "all_passed": True,
+            }
+
+        failures: list[dict] = []
+        for d in failed:
+            gap = self._summary_gap(d)                        # §2.3：按 direction 严格计算
+            reason = self._summary_reason(d)                  # 维度级归因模板
+            suggestion, src = self._summary_suggestion(d, report)  # LLM 优先 + 模板兜底
+            arrow = "＞" if d.direction == "<=" else "＜"
+            failures.append({
+                "dimension": d.name,
+                "label": d.label,
+                "value": d.value,
+                "threshold": d.threshold,
+                "direction": d.direction,
+                "gap": gap,
+                "line": f"{d.label}：实测 {d.value} {arrow} 合格线 {d.threshold}（差 {gap}）",
+                "reason": reason,
+                "suggestion": suggestion,
+                "suggestion_source": src,
+                "source": d.source,
+            })
+
+        # 下一步建议汇总：LLM suggestions 优先（appeal/golden 子块），无则模板；去重、限 5 条
+        next_steps: list[str] = []
+        for f in failures:
+            s = f["suggestion"]
+            if s and s not in next_steps:
+                next_steps.append(s)
+        next_steps = next_steps[:5]
+
+        return {
+            "headline": f"全书不达标：{len(failures)} 个维度未过线（综合分 {report.score:.1f}/100）",
+            "failures": failures,
+            "next_steps": next_steps,
+            "offline": False,
+            "all_passed": False,
+        }
+
+    @staticmethod
+    def _summary_gap(d: DimensionResult) -> float:
+        """量化差距（与表格同源）：direction 语义正确。
+        ">=" 越高越好：未达标 = value < threshold，差 = threshold - value（>0）；
+        "<=" 越低越好：未达标 = value > threshold，差 = value - threshold（>0）。
+        已达标维不进 failures，故 gap 恒 > 0。"""
+        if d.direction == ">=":
+            return round(max(0.0, d.threshold - d.value), 4)
+        return round(max(0.0, d.value - d.threshold), 4)
+
+    def _summary_reason(self, d: DimensionResult) -> str:
+        """维度级归因模板（措辞保守：「未达标」非「崩了」）。"""
+        return self._SUMMARY_REASONS.get(d.name, f"{d.label}未达标")
+
+    def _summary_suggestion(self, d: DimensionResult, report: NovelHealthReport) -> tuple[str, str]:
+        """建议来源：LLM suggestions 优先（appeal/golden 子块，注明 source=llm）；无则模板兜底。"""
+        llm_pool: list[str] = []
+        for sub in (report.appeal, report.golden_three):
+            if sub and sub.get("suggestions"):
+                llm_pool.extend(str(s) for s in sub["suggestions"])
+        if llm_pool:
+            return llm_pool[0], "llm"
+        # 模板兜底：维度级（§2.3 表）；padding 子块无 suggestions → 走模板
+        tpl = self._SUMMARY_REASONS.get(d.name)
+        return tpl if tpl else f"建议针对「{d.label}」优化", "template"
 
     # ---------------------------------------------------------------- 指标
     def _score(self, name: str) -> float:
@@ -728,6 +861,9 @@ class EvaluatorAgent:
             report.notes.append(
                 "硬指标不达标（不可放宽）：" + "、".join(d.label for d in hard_failed)
             )
+        # ---- G7：人话总结层（拍板 2：确定性拼装；--no-human-summary 时不填充 → 展示层跳过）----
+        if self.human_summary:
+            report.summary = self._build_summary(report)
         return report
 
     # ---------------------------------------------------------------- 回溯
