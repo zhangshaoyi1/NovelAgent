@@ -156,6 +156,10 @@ def build_rewrite_hint(report: Any, chapter_nums: list[int]) -> str:
     return "\n".join(lines)
 
 
+# G10（拍板 3）：预算档位降档方向 quality→balanced→economy（模块级，供测试引用）
+_DOWNGRADE_ORDER: list[str] = ["quality", "balanced", "economy"]
+
+
 class AgenticPipelineWorkflow:
     """全流程自主写作流水线。
 
@@ -187,12 +191,15 @@ class AgenticPipelineWorkflow:
         evaluator: EvaluatorLike = None,
         memory: Any = None,
         guardrails: Any = None,
-        gate_mode: str = "advisory",
+        gate_mode: str = "block",  # G10（拍板 5）：默认 block（AI 味命中拒落盘；--ai-gate-mode advisory 显式放宽）
         console: Console | None = None,
         # G4 新增参数（T4 CLI 透传）
         max_time: int | None = None,
         cost_tier: str = "balanced",
         budget_margin: float = 1.0,
+        # G10（拍板 6）：auto_downgrade 默认 False（G4 直接调用/测试零回归；CLI 默认 True）
+        auto_downgrade: bool = False,
+        budget_plan: dict | None = None,  # G10（拍板 6）：.state/budget.json 解析结果（--budget-plan 注入）
         llm_timeout: int | None = None,
         on_progress: Callable[[str, int, int], None] | None = None,
         # G5 新增参数（迷爱看六维双闸）
@@ -232,6 +239,9 @@ class AgenticPipelineWorkflow:
         self._max_time = max_time  # 整轮墙钟上限（秒）
         self._cost_tier = cost_tier  # 预算档位
         self._budget_margin = budget_margin  # 预算安全系数
+        # G10（拍板 3/6）：自动降档（CLI 默认 True；直接构造/测试默认 False = G4 行为）
+        self._auto_downgrade = bool(auto_downgrade)
+        self.budget_plan = budget_plan or {}  # G10（拍板 6）：预算计划配置（仅回显/键覆盖，hard_limit_tokens 不参与判定）
         self._llm_timeout = llm_timeout  # 单调用超时（覆盖 .env）
         self._start_time: float = 0.0  # 起始时间（墙钟计时）
         self._schema_degraded: bool = False  # Schema 降级标志（从 Planner 读取）
@@ -264,6 +274,7 @@ class AgenticPipelineWorkflow:
         self._event_bus = ProgressEventBus(
             on_event=on_event,
             progress_file=progress_file,
+            cost_provider=self._current_cost_fields,  # G10（拍板 2）：每事件附加成本字段
         )
         self._chapter_t0: float = 0.0  # 本章起点（墙钟，供 chapter_elapsed_s/ETA）
 
@@ -773,6 +784,78 @@ class AgenticPipelineWorkflow:
 
         return False
 
+    # ================================================================
+    # G10：写中成本视图 + 超预算自动降档（拍板 2/3/4，只增不改）
+    # ================================================================
+    def _current_cost_fields(self) -> dict[str, Any]:
+        """G10（拍板 2）：当前成本视图（tokens_used/budget/remaining）。
+
+        数据源与 _check_budget **同源**（不新造统计）：used = get_tracer().totals()["tokens_total"]；
+        budget = baseline_tokens(tier, target)[1] * budget_margin；
+        remaining = budget - used（保留原始差值，可为负；渲染层钳制 ≥0）。
+        全 try/except：任何异常返回 {}（事件不带成本字段，不阻断发射）。
+        """
+        try:
+            from agent.core.llmops.cost import CostModel
+            from agent.core.llmops.trace import get_tracer
+
+            tracer = get_tracer()
+            used = float((tracer.totals().get("tokens_total", 0) or 0))
+            model = CostModel()
+            _, token_limit = model.baseline_tokens(self._cost_tier, self._resolve_target())
+            budget = token_limit * self._budget_margin
+            return {
+                "tokens_used": used,
+                "tokens_budget": budget,
+                "tokens_remaining": budget - used,
+            }
+        except Exception:  # noqa: BLE001 - 成本视图失败降级 {}，不阻断
+            return {}
+
+    def _maybe_downgrade_tier(self) -> bool:
+        """G10（拍板 3/4）：超预算降档判定（纯确定性，全 try/except 降级不阻断）。
+
+        Returns:
+            True  = 本次检查点**已降档** → 外层继续写章（不熔断）
+            False = 不应/不能降档 → 外层走既有 G4 熔断（tripped=True + break）
+
+        返回语义是零回归关键：仅「已降档」返回 True；其余（token 预算内 / 最低档 /
+        未知档位 / 墙钟超时 / auto 关 / 异常）一律 False → 保证 test_breaker_*
+        （monkeypatch _check_budget=True 模拟墙钟超时）仍走 G4 熔断。
+        """
+        try:
+            if not self._auto_downgrade:
+                return False  # --no-auto-downgrade：G4 行为
+            from agent.core.llmops.cost import CostModel
+            from agent.core.llmops.trace import get_tracer
+
+            used = float(get_tracer().totals().get("tokens_total", 0) or 0)
+            model = CostModel()
+            _, token_limit = model.baseline_tokens(self._cost_tier, self._resolve_target())
+            token_limit *= self._budget_margin
+            if used <= token_limit:
+                return False  # token 预算内 → 超限来自墙钟 → 熔断
+            if self._cost_tier not in _DOWNGRADE_ORDER:
+                return False  # 未知档位 → 熔断（保守）
+            idx = _DOWNGRADE_ORDER.index(self._cost_tier)
+            if idx >= len(_DOWNGRADE_ORDER) - 1:
+                return False  # 最低档仍超限 → 既有 G4 熔断
+            old_tier = self._cost_tier
+            new_tier = _DOWNGRADE_ORDER[idx + 1]
+            self._cost_tier = new_tier  # 仅改预算档位，writer tier 不动（拍板 3）
+            self._emit_event(
+                "cost_downgrade",
+                from_tier=old_tier,
+                to_tier=new_tier,
+                reason=f"Token 预算超限：{used / 1_000_000:.2f}M > {token_limit / 1_000_000:.2f}M",
+            )
+            self.console.print(
+                f"[yellow]已自动降档至 {new_tier}，后续按新预算续跑（此前 {old_tier}）[/yellow]"
+            )
+            return True  # 已降档 → 继续写章
+        except Exception:  # noqa: BLE001 - 降档判定异常 → 保守走 G4 熔断，不静默超支
+            return False
+
     def _emit_progress(self, phase: str, current: int, total: int) -> None:
         """触发进度回调（若订阅）。
 
@@ -1041,21 +1124,23 @@ class AgenticPipelineWorkflow:
 
         wrote = 0
         while self._current_total() < target:
-            # G4 熔断检查点：写章前
-            if self._check_budget("write_chapter"):
+            # ── G10 检查点顺序（拍板 4）：_check_budget → G8 决策点 → 降档判定 → 事件 ──
+            # 1) G4 熔断检查点（判定逻辑零改动，727-774）
+            budget_over = self._check_budget("write_chapter")
+            # 2) G8 决策点（顺序前提至降档判定之前；逻辑零改动）
+            if self.ending_gate:
+                self._maybe_enter_ending_mode(target)
+            if self.mainline_gate:
+                self._maybe_advance_mainline(target)
+            # 3) G10 降档判定：超限且非最低档 → 自动降档继续；否则走既有 G4 熔断
+            if budget_over and not self._maybe_downgrade_tier():
                 result.tripped = True
                 result.block_reason = "Token 预算超限或墙钟超时熔断（写章阶段）"
                 self.console.print(f"[red]✗ 熔断中止：{result.block_reason}[/red]")
                 # ---- G9：failure 事件（写章熔断，warn；既有 break 语义零改动）----
                 self._emit_failure("budget_trip", result.block_reason, severity="warn")
                 break
-            # ---- G8：结局模式触发点（T3，每章前；拍板 2/4：一旦进入不退出）----
-            if self.ending_gate:
-                self._maybe_enter_ending_mode(target)
-            # ---- G8：支线推进决策点（T2，每 mainline_window 章；拍板 1 + 补充边界 2）----
-            if self.mainline_gate:
-                self._maybe_advance_mainline(target)
-            # G4 进度回调：写章阶段
+            # 4) 进度回调 + 事件（chapter_start 含成本字段，经 bus cost_provider）
             self._emit_progress("writing", self._current_total(), target)
             # ---- G9：chapter_start（插桩顺序：检查点 → G8 决策点 → 进度回调 → 事件）----
             self._chapter_t0 = time.monotonic()

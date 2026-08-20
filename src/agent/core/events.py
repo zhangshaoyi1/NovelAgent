@@ -54,15 +54,19 @@ class ProgressEventBus:
     Args:
         on_event: 订阅回调（CLI 渲染等）；None 表示未订阅（零开销，行为与现状一致）。
         progress_file: progress.json 路径；None 表示不落盘（--no-progress）。
+        cost_provider: G10 可选成本视图回调（返回 {tokens_used/budget/remaining}）；
+            None 表示不附加成本字段（G9 行为逐字节一致，零改动保护）。
     """
 
     def __init__(
         self,
         on_event: Callable[[dict[str, Any]], None] | None = None,
         progress_file: str | Path | None = ".state/progress.json",
+        cost_provider: Callable[[], dict[str, Any]] | None = None,  # G10（拍板 2）
     ) -> None:
         self.on_event = on_event
         self.progress_file = Path(progress_file) if progress_file else None
+        self.cost_provider = cost_provider  # G10：未接线 None 时零开销
         self.events: list[dict[str, Any]] = []
         self.seq = 0
         self._t0 = time.monotonic()
@@ -88,6 +92,12 @@ class ProgressEventBus:
                 "elapsed_s": round(time.monotonic() - self._t0),
             }
             event.update(fields)
+            # G10（拍板 2）：每事件统一附加成本字段（未接线 cost_provider=None 时零开销）
+            if self.cost_provider is not None:
+                try:
+                    event.update(self.cost_provider() or {})
+                except Exception:  # noqa: BLE001 - provider 异常不丢事件
+                    pass
             self.events.append(event)
             if self.on_event is not None:
                 self.on_event(event)  # 回调异常不外抛（下方 except 兜底）
@@ -149,7 +159,7 @@ NEXT_STEPS_MAP: dict[str, list[str]] = {
     # step -> 建议命令模板（{dir} 占位符 = 项目目录）；命令全部为真实存在的 CLI 命令
     "plan_block":      ["novel-agent doctor -d {dir}", "novel-agent status -d {dir}"],
     "budget_trip":     ["novel-agent status -d {dir}",
-                        "novel-agent autowrite -d {dir} --cost-tier economy"],
+                        "novel-agent cost-plan -d {dir}"],  # G10：降档语义（原 --cost-tier economy 重跑）
     "write_chapter":   ["novel-agent doctor -d {dir}", "novel-agent write -d {dir}"],
     "eval":            ["novel-agent doctor -d {dir}", "novel-agent autowrite -d {dir}"],
     "gate":            ["novel-agent status -d {dir}", "novel-agent write -d {dir}"],
@@ -212,6 +222,13 @@ def build_run_summary(events: list[dict[str, Any]], result: Any = None) -> dict[
         d = done[0]
         flags = [k for k in ("blocked", "tripped", "escalated") if d.get(k)]
         lines.append("结局：" + ("、".join(flags) if flags else "正常完成"))
+    # G10（拍板 3）：降档行独立 append-only（cost_downgrade 不计入 failures，G9 文本不变）
+    downgrades = [e for e in events if e.get("type") == "cost_downgrade"]
+    for dg in downgrades:
+        lines.append(
+            f"- 已自动降档：{dg.get('from_tier', '?')} → {dg.get('to_tier', '?')}"
+            f"（{dg.get('reason', '')}）"
+        )
     chapters = result.chapters_written if result is not None else None
     return {
         "text": "\n".join(lines),

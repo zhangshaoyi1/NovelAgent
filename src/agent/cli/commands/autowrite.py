@@ -185,7 +185,7 @@ def autowrite(
         False, "--no-ai-gate", help="关闭去 AI 味护栏（不注入 guardrails，行为与 G4 一致）"
     ),
     ai_gate_mode: str = typer.Option(
-        "advisory", "--ai-gate-mode", help="AI 味门禁模式：advisory（标红不阻断）/ block（拒落盘）"
+        "block", "--ai-gate-mode", help="AI 味门禁模式：advisory（标红不阻断）/ block（拒落盘，默认）"
     ),
     ai_flavor_words: str = typer.Option(
         None, "--ai-flavor-words", help="追加 AI 味词（逗号分隔，P1）"
@@ -225,6 +225,13 @@ def autowrite(
     ),
     no_stream: bool = typer.Option(
         False, "--no-stream", help="关闭逐段渲染（退化为整块打印；章内子阶段事件保留）"
+    ),
+    # ---- G10 新增：预算计划 + 自动降档（拍板 6；--no-auto-downgrade 行为与 G4 现状一致）----
+    no_auto_downgrade: bool = typer.Option(
+        False, "--no-auto-downgrade", help="关闭超预算自动降档（超限直接 G4 熔断）"
+    ),
+    budget_plan: str = typer.Option(
+        None, "--budget-plan", help="预算计划配置文件路径（默认 .state/budget.json；缺失/损坏降级默认）"
     ),
 ) -> None:
     """全流程自主写作 - Planner→写作→编辑→记忆→评测+自动回溯
@@ -272,7 +279,7 @@ def autowrite(
     _golden_gate = bool(_cli_value(golden_three_gate, True)) and not bool(_cli_value(no_golden_three_gate, False))
     _padding_gate = bool(_cli_value(padding_gate, True)) and not bool(_cli_value(no_padding_gate, False))
     guardrails_obj = None
-    gate_mode = "advisory"
+    gate_mode = "block"  # G10（拍板 5）：默认 block（AI 味命中拒落盘）；--ai-gate-mode advisory 显式放宽
     if bool(_cli_value(ai_gate, True)) and not bool(_cli_value(no_ai_gate, False)):
         from agent.core.guardrails import build_guardrails
 
@@ -282,8 +289,50 @@ def autowrite(
                 w.strip() for w in _cli_value(ai_flavor_words, "").split(",") if w.strip()
             )
         guardrails_obj = gr
-        gate_mode = _cli_value(ai_gate_mode, "advisory")
-        gate_mode = gate_mode if gate_mode in ("advisory", "block") else "advisory"
+        gate_mode = _cli_value(ai_gate_mode, "block")
+        gate_mode = gate_mode if gate_mode in ("advisory", "block") else "block"  # 非法值回退默认治理
+
+    # ---- G10：预算计划解析（拍板 6：--no-auto-downgrade 最高 → --budget-plan 文件存在时键覆盖 CLI 默认 → CLI 默认）----
+    from agent.core.budget_plan import load_budget_plan
+
+    _bp_path = Path(_cli_value(budget_plan, None)) if _cli_value(budget_plan, None) else (
+        project_path / ".state" / "budget.json"
+    )
+    bp = load_budget_plan(_bp_path)
+    _bp_exists = _bp_path.exists()  # 无 budget.json 时 bp 为默认值，不得覆盖 CLI 显式参数（G4 兼容）
+    _auto_downgrade = not bool(_cli_value(no_auto_downgrade, False))
+    if _bp_exists and bp.get("auto_downgrade") is False:
+        _auto_downgrade = False  # budget.json 显式关（--no-auto-downgrade 同级优先）
+    _cost_tier_final = (
+        str(bp.get("tier")) if _bp_exists and bp.get("tier") else _cli_value(cost_tier, "balanced")
+    )
+    _budget_margin_final = float(
+        bp.get("budget_margin")
+        if _bp_exists and bp.get("budget_margin")
+        else _cli_value(budget_margin, 1.0)
+    )
+
+    # ---- G10（拍板 1）：开写前成本预估引导（非 JSON 一行 + 可复制命令；JSON 模式静默）----
+    if not json_output:
+        try:
+            from agent.cli.commands.cost_plan import build_cost_plan  # 跨命令复用（设计 §12 #9）
+
+            _plan = build_cost_plan(project_path)  # chapters 走缺省链
+            _est = next(
+                (t for t in (_plan.get("tiers") or []) if t.get("tier") == _cost_tier_final),
+                {},
+            )
+            console.print(
+                f"[cyan]本次档位 {_cost_tier_final} · 全书（{_plan.get('chapters', '?')} 章）预估 "
+                f"{_est.get('tokens_low', '?')}–{_est.get('tokens_high', '?')} tokens · "
+                f"预算上限 {_budget_margin_final:.1f}×[/cyan]"
+            )
+            console.print(
+                f"[dim]预算计划：cost-plan -d {project_path} 查看三档明细；"
+                f"--budget-plan 加载 .state/budget.json；--no-auto-downgrade 关闭自动降档[/dim]"
+            )
+        except Exception:  # noqa: BLE001 - 预估引导失败降级，不阻断开写
+            pass
 
     # ---- G9：事件订阅（JSON 模式 JSONL 走 stderr；非 JSON 渲染进度条/事件行/正文流式）----
     on_event, stream_meta = _make_on_event(
@@ -304,8 +353,10 @@ def autowrite(
         console=workflow_console,
         # G4 新增参数（T4）：透传到 pipeline
         max_time=max_time if max_time and max_time > 0 else None,
-        cost_tier=cost_tier,
-        budget_margin=budget_margin,
+        cost_tier=_cost_tier_final,  # G10：预算计划键覆盖 CLI 默认（拍板 6）
+        budget_margin=_budget_margin_final,  # G10：同上
+        auto_downgrade=_auto_downgrade,  # G10（拍板 6）：CLI 默认 True；--no-auto-downgrade/budget.json 可关
+        budget_plan=bp,  # G10（拍板 6）：预算计划配置（hard_limit_tokens 仅回显不参与判定）
         llm_timeout=llm_timeout,
         on_progress=on_progress,
         # G5：迷爱看六维双闸透传
@@ -360,7 +411,16 @@ def autowrite(
                 result.progress_file = str((project_path / _pf).resolve())
             if bool(_cli_value(no_stream, False)):
                 result.stream = None
-            emit_result({"success": success, **result.to_dict()}, json_mode=True)
+            # G10（拍板 1/6）：信封只增 cost_plan（写前预估）/ budget_plan（预算配置）字段
+            _env = result.to_dict()
+            try:
+                from agent.cli.commands.cost_plan import build_cost_plan  # 跨命令复用
+
+                _env["cost_plan"] = build_cost_plan(project_path)  # 三档预估表（异常降级占位）
+            except Exception:  # noqa: BLE001 - 预估异常信封置空占位
+                _env["cost_plan"] = {"chapters": 0, "tiers": [], "guidance": ""}
+            _env["budget_plan"] = bp  # 预算计划配置回显（hard_limit_tokens 仅回显不参与判定）
+            emit_result({"success": success, **_env}, json_mode=True)
             return
 
         if success:

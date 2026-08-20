@@ -1,7 +1,7 @@
 """G6 CLI 参数透传测试（T7，P1-1 验收，纯离线）
 
 覆盖（对齐设计 §8 关键断言）：
-- 三闸默认开：golden_three_gate=True / padding_gate=True / guardrails 注入 / gate_mode="advisory"。
+- 三闸默认开：golden_three_gate=True / padding_gate=True / guardrails 注入 / gate_mode="block"（G10 默认治理翻转）。
 - --no-* 关闭：--no-golden-three-gate / --no-padding-gate / --no-ai-gate（guardrails=None）。
 - 阈值覆盖：--golden-three-threshold / --golden-three-floor / --padding-threshold 透传生效。
 - --ai-gate-mode block → gate_mode="block"；--ai-flavor-words 追加词表。
@@ -77,7 +77,7 @@ def test_g6_cli_defaults(tmp_path: Path, monkeypatch) -> None:
     assert captured["golden_three_floor"] == 40
     assert captured["padding_gate"] is True
     assert captured["padding_threshold"] == 0.30
-    assert captured["gate_mode"] == "advisory"
+    assert captured["gate_mode"] == "block"  # G10：默认治理 block（拍板 5）
     gr = captured["guardrails"]
     assert gr is not None, "默认应注入 build_guardrails()"
     assert gr.ai_flavor_words == list(_DEFAULT_AI_FLAVOR_WORDS)
@@ -148,7 +148,7 @@ def test_g6_cli_invalid_gate_mode_falls_back(tmp_path: Path, monkeypatch) -> Non
     captured: dict[str, Any] = {}
     _capture_pipeline_run(monkeypatch, captured, PipelineResult(planned=True))
     _call_autowrite(project_dir=str(tmp_path), ai_gate_mode="bogus")
-    assert captured["gate_mode"] == "advisory"
+    assert captured["gate_mode"] == "block"  # G10：默认治理 block（拍板 5）
 
 
 # ============================================================

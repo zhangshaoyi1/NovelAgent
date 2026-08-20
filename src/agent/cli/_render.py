@@ -97,6 +97,25 @@ class RenderStreamer:
                 pass
             return {"mode": "block", "batches": 1, "chars": len(text)}
 
+    def _cost_segment(self, ev: dict[str, Any]) -> str:
+        """G10（拍板 2）：成本段「已花 X / 预算 Y · 剩余 Z」（M 单位）。
+
+        只读 ev 中新增字段；事件无 tokens_used/budget/remaining 任一 → 返回空串
+        （G9 事件不带成本字段 → 输出逐字节一致，零改动保护）。
+        """
+        try:
+            used = ev.get("tokens_used")
+            budget = ev.get("tokens_budget")
+            remaining = ev.get("tokens_remaining")
+            if used is None or budget is None or remaining is None:
+                return ""
+            return (
+                f" · 已花 {used / 1_000_000:.1f}M / 预算 {budget / 1_000_000:.1f}M"
+                f" · 剩余 {max(0.0, remaining) / 1_000_000:.1f}M tokens"
+            )
+        except Exception:  # noqa: BLE001 - 成本段渲染异常退化（不阻断）
+            return ""
+
     def progress_line(
         self,
         ev: dict[str, Any],
@@ -125,6 +144,7 @@ class RenderStreamer:
                     line += f" · {subline}"
                 if last_eta_s is not None:
                     line += f" · 预计剩余 {_fmt_clock(int(last_eta_s))}"
+                line += self._cost_segment(ev)  # G10：成本段
                 sys.stderr.write("\r" + line + "   ")
             elif t == "chapter_substage":
                 stage_names = {"generate": "生成中", "quality_check": "质检中", "revise": "修订中"}
@@ -136,6 +156,7 @@ class RenderStreamer:
                 )
                 if last_eta_s is not None:
                     line += f" · 预计剩余 {_fmt_clock(int(last_eta_s))}"
+                line += self._cost_segment(ev)  # G10：成本段
                 sys.stderr.write("\r" + line + "   ")
             elif t == "chapter_done" and final:
                 words = int(ev.get("words", 0) or 0)
@@ -149,6 +170,7 @@ class RenderStreamer:
                 if eta is not None:
                     line += f" · 预计剩余 {_fmt_clock(int(eta))}"
                 line += "）"
+                line += self._cost_segment(ev)  # G10：成本段（"）"后追加，示例见设计 §3.4）
                 sys.stderr.write("\r" + line + "\n")
         except Exception:  # noqa: BLE001 - 进度条渲染异常退化（不阻断）
             pass
