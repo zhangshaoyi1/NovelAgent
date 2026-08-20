@@ -47,6 +47,9 @@ class PipelineResult:
     blocked: bool = False
     block_reason: str = ""
     engine: str = "Agentic"
+    # G4 新增字段
+    tripped: bool = False  # 熔断标志
+    schema_degraded: bool = False  # Schema 降级标志
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -59,6 +62,8 @@ class PipelineResult:
             "blocked": self.blocked,
             "block_reason": self.block_reason,
             "engine": self.engine,
+            "tripped": self.tripped,
+            "schema_degraded": self.schema_degraded,
         }
 
 
@@ -161,6 +166,12 @@ class AgenticPipelineWorkflow:
         guardrails: Any = None,
         gate_mode: str = "advisory",
         console: Console | None = None,
+        # G4 新增参数（T4 CLI 透传）
+        max_time: int | None = None,
+        cost_tier: str = "balanced",
+        budget_margin: float = 1.0,
+        llm_timeout: int | None = None,
+        on_progress: Callable[[str, int, int], None] | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client
@@ -174,9 +185,19 @@ class AgenticPipelineWorkflow:
         self.gate_mode = gate_mode
         self.console = console or Console()
 
+        # G4 新增字段：熔断相关（T1 + T4 CLI 透传）
+        self._max_time = max_time  # 整轮墙钟上限（秒）
+        self._cost_tier = cost_tier  # 预算档位
+        self._budget_margin = budget_margin  # 预算安全系数
+        self._llm_timeout = llm_timeout  # 单调用超时（覆盖 .env）
+        self._start_time: float = 0.0  # 起始时间（墙钟计时）
+        self._schema_degraded: bool = False  # Schema 降级标志（从 Planner 读取）
+        self.on_progress = on_progress  # 进度回调（T4 CLI 订阅）
+
         # 自主规划（G3）状态：关键前置失败则阻塞，交给 run() 安全退出、不进写章。
         self._plan_blocked = False
         self._plan_block_reason = ""
+        self._plan_tripped = False  # G4: 规划阶段熔断标志
         self._traced_llm_cache: Any = None
 
         # Memory：默认按项目新建（持久化到 .state/memory/）
@@ -307,6 +328,9 @@ class AgenticPipelineWorkflow:
         from agent.workflows.m3_outline import M3OutlineWorkflow
         from agent.workflows.m4_character import M4CharacterWorkflow
 
+        # G4 进度回调（T4）：规划阶段
+        self._emit_progress("planning", 0, 100)
+
         # 自动模式：显式设定 auto 档（设计 §9 #5），使下游交互默认跳过。
         # 注意：必须先 load() 再 set_mode，否则会用内存默认 INIT 覆盖既有状态/进度。
         try:
@@ -342,6 +366,12 @@ class AgenticPipelineWorkflow:
                 key=True, name="M1 世界观生成",
                 fn=lambda: wf(M1ConfigWorkflow).run(m1_input),
             ).ok
+            # G4 熔断检查点：规划每步后
+            if self._check_budget("plan_step"):
+                self._plan_tripped = True
+                self._plan_blocked = True
+                self._plan_block_reason = "Token 预算超限或墙钟超时熔断（规划阶段）"
+                return
             if not ok:
                 self._plan_blocked = True
                 self._plan_block_reason = "M1 世界观生成失败（关键前置），已安全退出，不进入写章。"
@@ -362,6 +392,12 @@ class AgenticPipelineWorkflow:
                 key=False, name="M2 脉络讨论",
                 fn=lambda: wf(M2DiscussWorkflow).run(m2_input),
             )
+            # G4 熔断检查点：规划每步后
+            if self._check_budget("plan_step"):
+                self._plan_tripped = True
+                self._plan_blocked = True
+                self._plan_block_reason = "Token 预算超限或墙钟超时熔断（规划阶段）"
+                return
             self._advance_state_to(State.ARCHITECTING)
 
         # ---- M14 架构生成 + 确认（关键前置）----
@@ -374,6 +410,12 @@ class AgenticPipelineWorkflow:
                     key=True, name="M14 架构生成",
                     fn=lambda: m14.generate(),
                 ).ok
+                # G4 熔断检查点：规划每步后
+                if self._check_budget("plan_step"):
+                    self._plan_tripped = True
+                    self._plan_blocked = True
+                    self._plan_block_reason = "Token 预算超限或墙钟超时熔断（规划阶段）"
+                    return
                 if not gen_ok:
                     self._plan_blocked = True
                     self._plan_block_reason = "M14 架构生成失败（关键前置），已安全退出，不进入写章。"
@@ -382,6 +424,12 @@ class AgenticPipelineWorkflow:
                 key=True, name="M14 架构确认",
                 fn=lambda: m14.with_confirm_yes(True).confirm(),
             ).ok
+            # G4 熔断检查点：规划每步后
+            if self._check_budget("plan_step"):
+                self._plan_tripped = True
+                self._plan_blocked = True
+                self._plan_block_reason = "Token 预算超限或墙钟超时熔断（规划阶段）"
+                return
             if not conf_ok:
                 self._plan_blocked = True
                 self._plan_block_reason = "M14 架构确认失败（关键前置），已安全退出，不进入写章。"
@@ -397,6 +445,12 @@ class AgenticPipelineWorkflow:
                 fn=lambda: wf(M3OutlineWorkflow).run(),
                 degrade=self._write_placeholder_outline,
             )
+            # G4 熔断检查点：规划每步后
+            if self._check_budget("plan_step"):
+                self._plan_tripped = True
+                self._plan_blocked = True
+                self._plan_block_reason = "Token 预算超限或墙钟超时熔断（规划阶段）"
+                return
             self._advance_state_to(State.OUTLINING)
 
         # ---- M4 角色设计（非关键）----
@@ -408,6 +462,12 @@ class AgenticPipelineWorkflow:
                 fn=lambda: wf(M4CharacterWorkflow).run(),
                 degrade=self._write_placeholder_characters,
             )
+            # G4 熔断检查点：规划每步后
+            if self._check_budget("plan_step"):
+                self._plan_tripped = True
+                self._plan_blocked = True
+                self._plan_block_reason = "Token 预算超限或墙钟超时熔断（规划阶段）"
+                return
             self._advance_state_to(State.CHARACTER_DESIGN)
 
         # 规划完成：推进到 WRITING（对齐拍板 #6），写章循环在 CHARACTER_DESIGN/WRITING 下运行。
@@ -560,9 +620,79 @@ class AgenticPipelineWorkflow:
         except Exception:  # noqa: BLE001
             pass
 
+    def _check_budget(self, step: str) -> bool:
+        """检查预算/墙钟是否超限。
+
+        G4 熔断检查：从 G3 _alert_cost 升级，复用 CostModel.baseline_tokens + get_tracer().totals()。
+
+        Args:
+            step: 检查点名称（用于日志）。
+
+        Returns:
+            True 表示超限，应熔断中止；False 表示预算内。
+        """
+        import time
+
+        try:
+            from agent.core.llmops.cost import CostModel
+            from agent.core.llmops.trace import get_tracer
+
+            tracer = get_tracer()
+            totals = tracer.totals()
+            used_tokens = totals.get("tokens_total", 0)
+
+            # 1) Token 检查
+            model = CostModel()
+            _, token_limit = model.baseline_tokens(self._cost_tier, self._resolve_target())
+            token_limit *= self._budget_margin
+
+            if used_tokens > token_limit:
+                self.console.print(
+                    f"[red]✗ Token 预算超限熔断（{used_tokens/1_000_000:.2f}M > {token_limit/1_000_000:.2f}M）"
+                    f"（步骤：{step}）[/red]"
+                )
+                return True
+
+            # 2) 墙钟检查
+            if self._max_time and self._start_time > 0:
+                elapsed = time.monotonic() - self._start_time
+                if elapsed > self._max_time:
+                    self.console.print(
+                        f"[red]✗ 墙钟超时熔断（{elapsed:.0f}s > {self._max_time}s）"
+                        f"（步骤：{step}）[/red]"
+                    )
+                    return True
+
+        except Exception:  # noqa: BLE001
+            # 检查失败不阻断（避免熔断本身异常）
+            pass
+
+        return False
+
+    def _emit_progress(self, phase: str, current: int, total: int) -> None:
+        """触发进度回调（若订阅）。
+
+        G4 进度可见性骨架：由 CLI 订阅并在 stderr 输出（避免污染 stdout JSON 信封）。
+
+        Args:
+            phase: 阶段名称（"planning"/"writing"/"evaluating"）。
+            current: 当前进度。
+            total: 总量。
+        """
+        if self.on_progress:
+            try:
+                self.on_progress(phase, current, total)
+            except Exception:  # noqa: BLE001
+                pass
+
     # ---------------------------------------------------------------- 主流程
     def run(self) -> PipelineResult:
+        import time
+
         result = PipelineResult(engine="Agentic")
+
+        # G4 记录起始时间（墙钟计时）
+        self._start_time = time.monotonic()
 
         # 1) 规划（若提供 planner 且尚未有计划文件）
         planner = self._ensure_planner()
@@ -590,6 +720,8 @@ class AgenticPipelineWorkflow:
         if getattr(self, "_plan_blocked", False):
             result.blocked = True
             result.block_reason = self._plan_block_reason
+            if getattr(self, "_plan_tripped", False):
+                result.tripped = True
             self.console.print(
                 f"[red]自主规划关键前置失败，已安全退出（不进入写章）："
                 f"{self._plan_block_reason}[/red]"
@@ -604,6 +736,14 @@ class AgenticPipelineWorkflow:
 
         wrote = 0
         while self._current_total() < target:
+            # G4 熔断检查点：写章前
+            if self._check_budget("write_chapter"):
+                result.tripped = True
+                result.block_reason = "Token 预算超限或墙钟超时熔断（写章阶段）"
+                self.console.print(f"[red]✗ 熔断中止：{result.block_reason}[/red]")
+                break
+            # G4 进度回调：写章阶段
+            self._emit_progress("writing", self._current_total(), target)
             try:
                 wf_result = writer.run()
             except Exception as e:  # noqa: BLE001 - 单章失败不阻断，记录并跳出
@@ -667,8 +807,20 @@ class AgenticPipelineWorkflow:
         result.chapters_written = wrote
         result.final_chapter = self._current_total()
 
+        # G4: 熔断后跳过评测（拍板 #5）
+        if result.tripped:
+            self.console.print("[red]✗ 熔断已触发，跳过评测直接返回[/red]")
+            return result
+
         # 3) 评测 + 自动回溯修复
         if self.eval_enabled:
+            # G4 熔断检查点：评测前
+            if self._check_budget("eval"):
+                result.tripped = True
+                result.block_reason = "Token 预算超限或墙钟超时熔断（评测阶段）"
+                self.console.print(f"[red]✗ 熔断中止：{result.block_reason}[/red]")
+                return result
+            self._emit_progress("evaluating", 0, 100)
             evaluator = self._ensure_evaluator()
 
             def rewriter(chapter_nums: list[int]) -> None:

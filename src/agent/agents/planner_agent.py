@@ -21,11 +21,12 @@ import json
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 from rich.console import Console
 
 from agent.core.llm_client import LLMClient
 from agent.core.setting_manager import SettingManager
+from agent.core.structured_output import StructuredOutputError
 
 
 # ============================================================
@@ -126,6 +127,9 @@ class PlannerAgent:
         self._decide_async = decide_async
         self.plan_file = self.project_dir / ".state" / "plan.json"
 
+        # G4 新增：Schema 降级标志（供 pipeline 读取）
+        self._schema_degraded: bool = False
+
     # ---------------------------------------------------------------- 上下文
     def _load_setting_context(self) -> str:
         """读取现有设定集（world/角色/支线）作为 Planner 的参考上下文。"""
@@ -161,6 +165,7 @@ class PlannerAgent:
                 temperature=0.7,
                 max_tokens=4000,
                 enable_thinking=False,
+                strict=True,  # G4 开启 strict=True 强校验
             )
             return data
 
@@ -181,6 +186,7 @@ class PlannerAgent:
                 temperature=0.7,
                 max_tokens=4000,
                 enable_thinking=False,
+                strict=True,  # G4 开启 strict=True 强校验
             )
             return data
 
@@ -204,25 +210,28 @@ class PlannerAgent:
             "请产出 Master Plan。"
         )
         decide = self._make_decide()
+        messages = [
+            {"role": "system", "content": _PLANNER_SYSTEM},
+            {"role": "user", "content": user_msg},
+        ]
         try:
-            data = decide(
-                [
-                    {"role": "system", "content": _PLANNER_SYSTEM},
-                    {"role": "user", "content": user_msg},
-                ]
-            )
-            # 优先严格构造；结构化输出若部分字段缺失/类型不符导致校验失败，
-            # 退而求其次做「宽松重建」保留有效部分（修复 bug1：避免整体退化为空计划）。
-            try:
-                if isinstance(data, MasterPlan):
-                    plan = data
-                else:
-                    plan = MasterPlan(**(data if isinstance(data, dict) else dict(data)))
-            except Exception as ve:  # noqa: BLE001
-                self.console.print(
-                    f"[yellow]Planner 结构化输出字段校验不严，宽松重建（{ve}）[/yellow]"
-                )
-                plan = self._build_plan_lenient(data, brief)
+            data = decide(messages)
+            # G4 修复：关键字段缺失（默认值不触发 ValidationError）显式检测 → 走分级策略
+            if self._explicit_missing_critical(data):
+                plan = self._validate_masterplan(data, brief, None, messages=messages)
+            else:
+                # 优先严格构造；结构化输出若部分字段缺失/类型不符导致校验失败，
+                # 走 G4 分级策略（关键字段重试 → 安全降级；非关键字段按条目降级）。
+                try:
+                    if isinstance(data, MasterPlan):
+                        plan = data
+                    else:
+                        plan = MasterPlan(**(data if isinstance(data, dict) else dict(data)))
+                except (ValidationError, StructuredOutputError) as ve:  # noqa: BLE001 - G4 精确捕获
+                    self.console.print(
+                        f"[yellow]Planner 结构化输出字段校验失败，启动分级策略（{ve}）[/yellow]"
+                    )
+                    plan = self._validate_masterplan(data, brief, ve, messages=messages)
         except Exception as e:  # noqa: BLE001 - 决策彻底失败才降级为空计划（仍落盘，不阻断）
             self.console.print(f"[yellow]Planner 决策失败（{e}），使用空计划[/yellow]")
             plan = MasterPlan(brief=brief)
@@ -239,23 +248,26 @@ class PlannerAgent:
             f"【现有设定集上下文】\n{setting_ctx}\n\n请产出 Master Plan。"
         )
         decide_async = await self._make_decide_async()
+        messages = [
+            {"role": "system", "content": _PLANNER_SYSTEM},
+            {"role": "user", "content": user_msg},
+        ]
         try:
-            data = await decide_async(
-                [
-                    {"role": "system", "content": _PLANNER_SYSTEM},
-                    {"role": "user", "content": user_msg},
-                ]
-            )
-            try:
-                if isinstance(data, MasterPlan):
-                    plan = data
-                else:
-                    plan = MasterPlan(**(data if isinstance(data, dict) else dict(data)))
-            except Exception as ve:  # noqa: BLE001
-                self.console.print(
-                    f"[yellow]Planner 结构化输出字段校验不严，宽松重建（{ve}）[/yellow]"
-                )
-                plan = self._build_plan_lenient(data, brief)
+            data = await decide_async(messages)
+            # G4 修复：关键字段缺失（默认值不触发 ValidationError）显式检测 → 走分级策略
+            if self._explicit_missing_critical(data):
+                plan = self._validate_masterplan(data, brief, None, messages=messages)
+            else:
+                try:
+                    if isinstance(data, MasterPlan):
+                        plan = data
+                    else:
+                        plan = MasterPlan(**(data if isinstance(data, dict) else dict(data)))
+                except (ValidationError, StructuredOutputError) as ve:  # noqa: BLE001 - G4 精确捕获
+                    self.console.print(
+                        f"[yellow]Planner 结构化输出字段校验失败，启动分级策略（{ve}）[/yellow]"
+                    )
+                    plan = self._validate_masterplan(data, brief, ve, messages=messages)
         except Exception as e:  # noqa: BLE001
             self.console.print(f"[yellow]Planner 决策失败（{e}），使用空计划[/yellow]")
             plan = MasterPlan(brief=brief)
@@ -264,24 +276,30 @@ class PlannerAgent:
         self._write_memory(plan)
         return plan
 
-    # ---------------------------------------------------------------- 宽松重建
-    def _build_plan_lenient(self, data: Any, brief: str) -> "MasterPlan":
-        """宽松重建 Master Plan。
+    # ---------------------------------------------------------------- 宽松重建（G4 收敛：返回丢弃字段清单）
+    def _build_plan_lenient(self, data: Any, brief: str) -> dict[str, Any]:
+        """宽松重建 Master Plan（G4 收敛：仅非关键字段降级）。
 
         结构化输出偶尔会返回字段缺失或类型不符的 dict（嵌套必填项如
         ``CharacterSketch.name`` 缺失），直接 ``MasterPlan(**data)`` 会抛
         ``ValidationError`` 并连带丢光整份规划。这里逐模型挑出合法字段、
         跳过非法条目，尽可能保留有效部分（修复 bug1）。
 
+        G4 收敛：返回值改为字典，包含丢弃字段清单（用于日志）。
+
         Args:
             data: ``chat_structured`` 返回的（可能不规范的）dict。
             brief: 用户思路（始终保留）。
 
         Returns:
-            尽可能完整的 ``MasterPlan``；``data`` 非 dict 时退回仅含 brief 的计划。
+            {"plan": MasterPlan, "discarded_characters": list[str], "discarded_foreshadows": list[str]}
         """
         if not isinstance(data, dict):
-            return MasterPlan(brief=brief)
+            return {
+                "plan": MasterPlan(brief=brief),
+                "discarded_characters": [],
+                "discarded_foreshadows": [],
+            }
 
         def _keep(model: type, raw: Any):
             if not isinstance(raw, dict):
@@ -313,28 +331,74 @@ class PlannerAgent:
             if isinstance(data.get("episode_tree"), list)
             else []
         )
+
+        # G4 收敛：记录被丢弃的非关键字段（角色/伏笔）
+        discarded_chars: list[str] = []
+        discarded_foreshadows: list[str] = []
+
+        def _keep_char(raw: Any):
+            if not isinstance(raw, dict):
+                discarded_chars.append(f"非字典类型: {type(raw)}")
+                return None
+            try:
+                c = CharacterSketch(**{k: v for k, v in raw.items() if k in CharacterSketch.model_fields})
+                # G4 收敛：缺 name 字段时丢弃该条目并记录
+                if not c.name:
+                    discarded_chars.append(f"缺 name 字段: {raw}")
+                    return None
+                return c
+            except Exception as e:
+                discarded_chars.append(f"校验失败: {e}")
+                return None
+
+        def _keep_fore(raw: Any):
+            if not isinstance(raw, dict):
+                discarded_foreshadows.append(f"非字典类型: {type(raw)}")
+                return None
+            try:
+                f = PlannedForeshadow(**{k: v for k, v in raw.items() if k in PlannedForeshadow.model_fields})
+                # G4 收敛：缺 id 字段时丢弃该条目并记录
+                if not f.id:
+                    discarded_foreshadows.append(f"缺 id 字段: {raw}")
+                    return None
+                return f
+            except Exception as e:
+                discarded_foreshadows.append(f"校验失败: {e}")
+                return None
+
         chars = (
-            [c for c in (_keep(CharacterSketch, x) for x in data.get("character_skeleton") or []) if isinstance(c, CharacterSketch)]
+            [c for c in (_keep_char(x) for x in data.get("character_skeleton") or []) if c]
             if isinstance(data.get("character_skeleton"), list)
             else []
         )
         fs = (
-            [f for f in (_keep(PlannedForeshadow, x) for x in data.get("foreshadow_plan") or []) if isinstance(f, PlannedForeshadow)]
+            [f for f in (_keep_fore(x) for x in data.get("foreshadow_plan") or []) if f]
             if isinstance(data.get("foreshadow_plan"), list)
             else []
         )
 
-        return MasterPlan(
-            brief=brief,
-            genre=genre,
-            title=title,
-            total_chapters=total,
-            episode_tree=arcs,
-            character_skeleton=chars,
-            foreshadow_plan=fs,
-            quality_targets=_keep(QualityTargets, data.get("quality_targets")) or QualityTargets(),
-            notes=notes,
-        )
+        # G4 收敛：打印被丢弃字段清单（占位）
+        if discarded_chars or discarded_foreshadows:
+            self.console.print(
+                f"[yellow]非关键字段降级：丢弃 {len(discarded_chars)} 个角色、"
+                f"{len(discarded_foreshadows)} 个伏笔[/yellow]"
+            )
+
+        return {
+            "plan": MasterPlan(
+                brief=brief,
+                genre=genre,
+                title=title,
+                total_chapters=total,
+                episode_tree=arcs,
+                character_skeleton=chars,
+                foreshadow_plan=fs,
+                quality_targets=_keep(QualityTargets, data.get("quality_targets")) or QualityTargets(),
+                notes=notes,
+            ),
+            "discarded_characters": discarded_chars,
+            "discarded_foreshadows": discarded_foreshadows,
+        }
 
     # ---------------------------------------------------------------- 落盘
     def _save(self, plan: MasterPlan) -> None:
@@ -388,7 +452,156 @@ class PlannerAgent:
         self._save(plan)
         if self.memory is not None:
             try:
-                self.memory.consolidate(last_consolidated_chapter=current_chapter)
+                    self.memory.consolidate(last_consolidated_chapter=current_chapter)
             except Exception:  # noqa: BLE001
                 pass
         return plan
+
+    # ---------------------------------------------------------------- G4 T7 落地：分级校验策略
+    def _explicit_missing_critical(self, data: Any) -> list[str]:
+        """显式检查关键字段是否缺失/非法（G4 修复）。
+
+        ``MasterPlan`` 中 ``brief/genre/title/total_chapters/episode_tree`` 均有默认值，
+        缺失时不会触发 ``ValidationError``，导致“关键字段缺失→重试”的分级策略形同虚设。
+        故单独显式检查，使 PRD 拍板 #2（关键字段硬拒重试→失败安全降级）真正生效。
+        """
+        if not isinstance(data, dict):
+            return ["brief", "genre", "title", "total_chapters", "episode_tree"]
+        miss: list[str] = []
+        if not str(data.get("brief") or "").strip():
+            miss.append("brief")
+        if not str(data.get("genre") or "").strip():
+            miss.append("genre")
+        if not str(data.get("title") or "").strip():
+            miss.append("title")
+        tc = data.get("total_chapters")
+        if not isinstance(tc, int) or isinstance(tc, bool) or tc <= 0:
+            miss.append("total_chapters")
+        et = data.get("episode_tree")
+        if not isinstance(et, list) or len(et) == 0:
+            miss.append("episode_tree")
+        return miss
+
+    def _validate_masterplan(
+        self,
+        data: Any,
+        brief: str,
+        last_error: Exception,
+        retries: int = 2,
+        messages: list[dict[str, str]] | None = None,
+    ) -> MasterPlan:
+        """强校验 + 分级策略（G4 T7 落地）。
+
+        1) 关键字段缺失/类型非法 → 硬拒，重试 N 次（retries 默认 2，即最多 3 次）。
+        2) 非关键字段 → 按条目降级，记日志。
+        3) 重试耗尽仍未修复关键字段 → 安全降级为 minimal MasterPlan(brief)，
+           标记 self._schema_degraded = True。
+
+        Args:
+            data: chat_structured 返回的（可能不规范）数据。
+            brief: 用户思路（始终保留）。
+            last_error: 上次 ValidationError（用于判断关键字段）。
+            retries: 重试上限（默认 2）。
+            messages: 原始消息列表（用于重试）。
+
+        Returns:
+            MasterPlan（尽可能完整，或 minimal 占位）。
+        """
+        # 步骤 1: 判断关键字段是否缺失/非法
+        missing_critical = self._extract_missing_critical_fields(last_error)
+        # G4 修复：默认值字段缺失不触发 ValidationError，显式检查补全关键字段判定
+        missing_critical += self._explicit_missing_critical(data)
+        missing_critical = list(dict.fromkeys(missing_critical))
+        if missing_critical:
+            # 关键字段缺失，重试
+            if retries > 0:
+                self.console.print(
+                    f"[yellow]关键字段缺失 {missing_critical}，重试（剩余 {retries} 次）[/yellow]"
+                )
+                hint = (
+                    f"【校验失败提示】上次返回缺失关键字段："
+                    f"{', '.join(missing_critical)}，请补全。"
+                )
+                new_data = self._retry_with_hint(messages, hint)
+                # 重新校验新数据，得到真实错误（关键字段可能仍缺失）
+                new_error: Exception | None = None
+                try:
+                    MasterPlan(**(new_data if isinstance(new_data, dict) else dict(new_data)))
+                except (ValidationError, StructuredOutputError) as ve:
+                    new_error = ve
+                return self._validate_masterplan(
+                    new_data, brief, new_error, retries - 1, messages
+                )
+            else:
+                # 重试耗尽，安全降级
+                self.console.print(
+                    f"[red]关键字段重试耗尽，安全降级为 minimal MasterPlan[/red]"
+                )
+                self._schema_degraded = True
+                return MasterPlan(brief=brief)
+
+        # 步骤 2: 非关键字段按条目降级
+        result = self._build_plan_lenient(data, brief)
+        discarded_chars = result.get("discarded_characters", [])
+        discarded_foreshadows = result.get("discarded_foreshadows", [])
+        if discarded_chars or discarded_foreshadows:
+            self.console.print(
+                f"[yellow]非关键字段降级：丢弃 {len(discarded_chars)} 个角色、"
+                f"{len(discarded_foreshadows)} 个伏笔[/yellow]"
+            )
+        return result["plan"]
+
+    @staticmethod
+    def _extract_missing_critical_fields(error: Exception) -> list[str]:
+        """从 ValidationError 提取缺失的关键字段名。
+
+        Args:
+            error: ValidationError 实例。
+
+        Returns:
+            缺失的关键字段名列表（如 ["title", "total_chapters"]）。
+        """
+        if not isinstance(error, ValidationError):
+            return []
+        missing: list[str] = []
+        for err in error.errors():
+            field = err["loc"][0] if err["loc"] else None
+            if field in {"brief", "genre", "title", "total_chapters", "episode_tree"}:
+                missing.append(field)
+        return missing
+
+    def _retry_with_hint(
+        self,
+        messages: list[dict[str, str]] | None,
+        hint: str,
+        max_retries: int = 2,
+    ) -> dict[str, Any]:
+        """用 hint 重试 chat_structured(strict=True)。
+
+        Args:
+            messages: 原始消息列表。
+            hint: 提示信息。
+            max_retries: 最大重试次数。
+
+        Returns:
+            新的 LLM 响应数据（dict）。
+
+        Raises:
+            Exception: 重试耗尽时抛出异常，让外环走安全降级。
+        """
+        decide = self._make_decide()
+        # 构建带 hint 的消息
+        retry_messages = list(messages) if messages else []
+        retry_messages.append({"role": "user", "content": hint})
+
+        last_error: Exception | None = None
+        for attempt in range(max_retries):
+            try:
+                data = decide(retry_messages)
+                return data
+            except Exception as e:
+                last_error = e
+                self.console.print(
+                    f"[yellow]重试第 {attempt + 1}/{max_retries} 次失败：{e}[/yellow]"
+                )
+        raise last_error or RuntimeError("重试耗尽")

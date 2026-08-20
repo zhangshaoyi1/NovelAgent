@@ -9,11 +9,13 @@
 from __future__ import annotations
 
 import os
+import sys
 from pathlib import Path
 
 from agent.cli._app import app, command, console, typer
 from agent.cli._shared import *  # enforce_gate / emit_result / make_quiet_console
 from agent.core.state_machine import State
+from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
 
 
 @command(allowed_states=(
@@ -48,6 +50,18 @@ def autowrite(
     max_rollback: int = typer.Option(
         3, "--max-rollback", help="最大回溯次数，超过则上报人工（默认 3）"
     ),
+    max_time: int = typer.Option(
+        None, "--max-time", help="整轮墙钟上限（秒，0=不限制）"
+    ),
+    cost_tier: str = typer.Option(
+        "balanced", "--cost-tier", help="预算档位：economy / balanced / quality"
+    ),
+    budget_margin: float = typer.Option(
+        1.0, "--budget-margin", help="预算安全系数（默认 1.0）"
+    ),
+    llm_timeout: int = typer.Option(
+        None, "--llm-timeout", help="单调用超时（秒，覆盖 .env 的 LLM_TIMEOUT）"
+    ),
 ) -> None:
     """全流程自主写作 - Planner→写作→编辑→记忆→评测+自动回溯
 
@@ -73,6 +87,21 @@ def autowrite(
     workflow_console = make_quiet_console() if json_output else console
     from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
 
+    # G4 进度回调（T4）：stderr 输出避免污染 JSON 信封
+    def on_progress(phase: str, current: int, total: int) -> None:
+        """进度回调（stderr 输出避免污染 JSON）。"""
+        if json_output:
+            # JSON 模式：stderr 输出进度，避免污染 stdout 信封
+            sys.stderr.write(f"[progress] {phase}: {current}/{total}\n")
+            return
+        # 非 JSON 模式：直接 console.print
+        if phase == "planning":
+            console.print("[cyan]规划中...[/cyan]")
+        elif phase == "writing":
+            console.print(f"[dim]写章进度：{current}/{total}[/dim]")
+        elif phase == "evaluating":
+            console.print("[cyan]评测中...[/cyan]")
+
     pipeline = AgenticPipelineWorkflow(
         project_dir=project_path,
         tier=mode if mode in ("auto", "heavy", "light") else "auto",
@@ -82,22 +111,52 @@ def autowrite(
         rollback_window=rollback_window,
         max_rollback_attempts=max_rollback,
         console=workflow_console,
+        # G4 新增参数（T4）：透传到 pipeline
+        max_time=max_time if max_time and max_time > 0 else None,
+        cost_tier=cost_tier,
+        budget_margin=budget_margin,
+        llm_timeout=llm_timeout,
+        on_progress=on_progress,
     )
 
     try:
         result = pipeline.run()
+
+        # G4 判断是否成功（T5）：含 blocked/tripped/escalated
+        success = not (result.blocked or result.tripped or result.escalated)
+
         if json_output:
-            emit_result({"success": True, **result.to_dict()}, json_mode=True)
+            emit_result({"success": success, **result.to_dict()}, json_mode=True)
             return
-        console.print(
-            f"\n[bold green]✓ 全流程自主写作完成[/bold green] "
-            f"新写 {result.chapters_written} 章 · 末章 {result.final_chapter}"
-            + (f" · 已上报人工：{result.escalated_reason}" if result.escalated else "")
-        )
+
+        if success:
+            console.print(
+                f"\n[bold green]✓ 全流程自主写作完成[/bold green] "
+                f"新写 {result.chapters_written} 章 · 末章 {result.final_chapter}"
+                + (f" · 已上报人工：{result.escalated_reason}" if result.escalated else "")
+            )
+        else:
+            # 打印失败原因（T5）
+            if result.tripped:
+                console.print(f"[bold red]✗ 熔断中止：{result.block_reason}[/bold red]")
+            elif result.blocked:
+                console.print(f"[bold red]✗ 阻塞失败：{result.block_reason}[/bold red]")
+            elif result.escalated:
+                console.print(f"[bold yellow]⚠ 上报人工：{result.escalated_reason}[/bold yellow]")
+
+        # 退出码映射：blocked/tripped/escalated 非 0（T5）
+        if not success:
+            exit_code = 1 if (result.blocked or result.tripped) else 2
+            raise typer.Exit(code=exit_code)
+
+    except typer.Exit:
+        raise  # 不吞 typer.Exit，保留设计退出码（blocked/tripped→1，escalated→2）
     except Exception as e:
         if json_output:
-            emit_result({"success": False, "error": {"code": "autowrite_failed", "message": str(e)}},
-                        json_mode=True)
+            emit_result(
+                {"success": False, "error": {"code": "autowrite_failed", "message": str(e)}},
+                json_mode=True
+            )
         else:
             console.print(f"[bold red]✗ 全流程自主写作失败[/bold red] {e}")
         raise typer.Exit(code=1) from e

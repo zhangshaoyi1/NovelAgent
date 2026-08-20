@@ -30,7 +30,8 @@ def test_build_plan_lenient_keeps_valid_parts(tmp_path: Path) -> None:
         ],
         "quality_targets": {"coherence": 82},  # 部分字段，其余取默认
     }
-    plan = agent._build_plan_lenient(raw, "逆袭人生")
+    result = agent._build_plan_lenient(raw, "逆袭人生")
+    plan = result["plan"]
 
     assert plan.brief == "逆袭人生"
     assert plan.title == "进度条人生"
@@ -45,10 +46,14 @@ def test_build_plan_lenient_keeps_valid_parts(tmp_path: Path) -> None:
     # 部分质量目标保留，其余默认
     assert plan.quality_targets.coherence == 82
     assert plan.quality_targets.foreshadow_recycle_rate == 0.90
+    # G4: 丢弃字段清单（含校验失败的角色）
+    assert len(result["discarded_characters"]) == 1
+    assert "缺名字的角色" in result["discarded_characters"][0]
 
 
 def test_build_plan_lenient_handles_non_dict(tmp_path: Path) -> None:
     agent = PlannerAgent(tmp_path)
-    plan = agent._build_plan_lenient(None, "兜底")
+    result = agent._build_plan_lenient(None, "兜底")
+    plan = result["plan"]
     assert plan.brief == "兜底"
     assert plan.total_chapters == 100  # 默认

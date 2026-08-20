@@ -24,12 +24,14 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Optional
 
+from pydantic import ValidationError
 from rich.console import Console
 
 from agent.core.agent_loop import AgentAction, AgentLoop
 from agent.core.llm_client import LLMClient
 from agent.core.tools import registry as default_registry
 from agent.core.tools.base import Tool, ToolRegistry, ToolResult
+from agent.core.structured_output import StructuredOutputError
 
 # 写作人设（与 M5 创作系统提示同源，保证风格一致）
 _WRITER_BASE = (
@@ -122,15 +124,24 @@ class WriterAgent:
         llm = self.llm
 
         def decide(messages: list[dict[str, str]]) -> AgentAction:
-            data = llm.chat_structured(
-                messages,
-                AgentAction,
-                use="creative",
-                temperature=0.82,
-                max_tokens=6000,
-                enable_thinking=False,
-            )
-            return AgentAction(**data)
+            try:
+                data = llm.chat_structured(
+                    messages,
+                    AgentAction,
+                    use="creative",
+                    temperature=0.82,
+                    max_tokens=6000,
+                    enable_thinking=False,
+                    strict=True,  # G4 开启 strict=True 强校验
+                )
+                return AgentAction(**data)
+            except (ValidationError, StructuredOutputError) as ve:  # noqa: BLE001 - G4 精确捕获
+                # Writer 的 AgentAction 为关键字段（action 必填），重试或抛
+                self.console.print(
+                    f"[yellow]Writer 结构化输出校验失败（{ve}），重试[/yellow]"
+                )
+                # 占位实现：抛异常，让外环重试（T3 验收：不破坏 G3 降级不阻断）
+                raise
 
         return decide
 
@@ -142,15 +153,24 @@ class WriterAgent:
         llm = self.llm
 
         async def decide_async(messages: list[dict[str, str]]) -> AgentAction:
-            data = await llm.chat_structured_async(
-                messages,
-                AgentAction,
-                use="creative",
-                temperature=0.82,
-                max_tokens=6000,
-                enable_thinking=False,
-            )
-            return AgentAction(**data)
+            try:
+                data = await llm.chat_structured_async(
+                    messages,
+                    AgentAction,
+                    use="creative",
+                    temperature=0.82,
+                    max_tokens=6000,
+                    enable_thinking=False,
+                    strict=True,  # G4 开启 strict=True 强校验
+                )
+                return AgentAction(**data)
+            except (ValidationError, StructuredOutputError) as ve:  # noqa: BLE001 - G4 精确捕获
+                # Writer 的 AgentAction 为关键字段（action 必填），重试或抛
+                self.console.print(
+                    f"[yellow]Writer 结构化输出校验失败（{ve}），重试[/yellow]"
+                )
+                # 占位实现：抛异常，让外环重试（T3 验收：不破坏 G3 降级不阻断）
+                raise
 
         return decide_async
 
