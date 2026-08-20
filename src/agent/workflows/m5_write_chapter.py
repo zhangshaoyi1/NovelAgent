@@ -18,7 +18,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 import frontmatter
 from rich.console import Console
@@ -91,6 +91,8 @@ class M5WriteChapterWorkflow:
         genre_registry: GenrePackRegistry | None = None,
         enable_structured_qc: bool = False,
         strict_review: bool = False,
+        # ---- G9 新增参数：章内子阶段事件（默认 None 零开销；由 pipeline 注入）----
+        event_emitter: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client or LLMClient()
@@ -112,6 +114,25 @@ class M5WriteChapterWorkflow:
         self.strict_review = strict_review
         # D：质量校验器实例（惰性持有 LLM 维度规则，供 LLMBackedChecker 合并驱动）
         self._qc = QualityChecker(self.project_dir, self.llm)
+        # G9：章内子阶段事件发射器（pipeline 注入；None 时零开销）
+        self.event_emitter = event_emitter
+
+    def _emit_substage(self, substage: str, chapter: int) -> None:
+        """G9：章内子阶段事件（真实阶段边界，M5 精确）；未注入 emitter 时零开销。
+
+        Args:
+            substage: generate / quality_check / revise。
+            chapter: 当前章节号。
+        """
+        if self.event_emitter is not None:
+            try:
+                self.event_emitter({
+                    "type": "chapter_substage",
+                    "chapter": chapter,
+                    "substage": substage,
+                })
+            except Exception:  # noqa: BLE001 - 子阶段事件异常不阻断写章（拍板 3）
+                pass
 
     @property
     def mode_controller(self) -> "ModeController":
@@ -182,6 +203,8 @@ class M5WriteChapterWorkflow:
             f"\n[cyan]正在生成第 {ctx['chapter_num']} 章"
             f"（{ctx['subline_id']} · {ctx['pressure_stage']}）...[/cyan]"
         )
+        # ---- G9：章内子阶段事件（生成）----
+        self._emit_substage("generate", ctx["chapter_num"])
         chapter_text = self._generate_chapter(
             ctx, injected_tropes_text=injected_tropes_text
         )
@@ -198,6 +221,8 @@ class M5WriteChapterWorkflow:
         )
 
         # ------ 3. 质量校验 + 自动修订 ------
+        # ---- G9：章内子阶段事件（质量校验）----
+        self._emit_substage("quality_check", ctx["chapter_num"])
         quality_report, revision_attempts, final_text = self._quality_check_and_revise(
             ctx, chapter_text
         )
@@ -829,6 +854,8 @@ class M5WriteChapterWorkflow:
 
             # 未通过 → 修订
             if attempt < MAX_REVISIONS:
+                # ---- G9：章内子阶段事件（修订）----
+                self._emit_substage("revise", ctx["chapter_num"])
                 self.console.print(
                     f"  [yellow]质量校验未通过（第 {attempt + 1} 次修订）...[/yellow]"
                 )

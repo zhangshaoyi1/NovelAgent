@@ -21,6 +21,27 @@ def _get_registry() -> Any:
     return _SKILL_REGISTRY
 
 
+def with_next_steps(error: dict, step: str, project_dir: str) -> dict:
+    """失败信封只增 next_steps（不动既有 code/message 键）。
+
+    G9（拍板 5）：建议命令来自 NEXT_STEPS_MAP（确定性零 LLM，真实 CLI 命令）；
+    供 enforce_gate 与各失败调用方（autowrite/adjust_relation 等）复用。
+
+    Args:
+        error: 既有失败信封（含 code/message）。
+        step: 失败步骤名（NEXT_STEPS_MAP 键；未知回退 doctor+status）。
+        project_dir: 项目目录（用于命令占位符替换）。
+
+    Returns:
+        只增 next_steps 的新信封（原 error 不变）。
+    """
+    from agent.core.events import next_steps_for
+
+    out = dict(error)
+    out["next_steps"] = next_steps_for(step, project_dir)
+    return out
+
+
 def enforce_gate(project_dir: str, command: str, *, json_mode: bool = False) -> None:
     """统一门禁（来自 command_router / StateMachine）
 
@@ -55,15 +76,20 @@ def enforce_gate(project_dir: str, command: str, *, json_mode: bool = False) -> 
     sm.load()
     if not sm.is_command_allowed(cmd):
         if json_mode:
+            # G9（拍板 5）：门禁拒绝信封 error 内只增 next_steps（既有 code/message 不变）
             emit_result(
                 {
                     "success": False,
-                    "error": {
-                        "code": "gate_rejected",
-                        "message": (
-                            f"命令 {cmd} 在当前阶段 ({sm.state.value}) 不可用"
-                        ),
-                    },
+                    "error": with_next_steps(
+                        {
+                            "code": "gate_rejected",
+                            "message": (
+                                f"命令 {cmd} 在当前阶段 ({sm.state.value}) 不可用"
+                            ),
+                        },
+                        "gate",
+                        project_dir,
+                    ),
                 },
                 json_mode=True,
             )

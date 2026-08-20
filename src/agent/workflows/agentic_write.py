@@ -24,7 +24,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 from rich.console import Console
 
@@ -84,6 +84,8 @@ class AgenticWriteWorkflow:
         console: Console | None = None,
         tier: str = "auto",
         max_drafts: int | None = None,
+        # ---- G9 新增参数：章内子阶段事件（默认 None 零开销；由 pipeline 注入）----
+        event_emitter: Callable[[dict[str, Any]], None] | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client or LLMClient()
@@ -91,6 +93,20 @@ class AgenticWriteWorkflow:
         self.tier = tier
         self.max_drafts = max_drafts
         self.state_machine = StateMachine(self.project_dir)
+        # G9：章内子阶段事件发射器（pipeline 注入；None 时零开销）
+        self.event_emitter = event_emitter
+
+    def _emit_substage(self, substage: str, chapter: int) -> None:
+        """G9：章内子阶段事件（时序略滞后可接受，见共享知识 #10）；未注入零开销。"""
+        if self.event_emitter is not None:
+            try:
+                self.event_emitter({
+                    "type": "chapter_substage",
+                    "chapter": chapter,
+                    "substage": substage,
+                })
+            except Exception:  # noqa: BLE001 - 子阶段事件异常不阻断写章（拍板 3）
+                pass
 
     # ------------------------------------------------------------------
     # 门禁（与 M5 一致）
@@ -196,6 +212,8 @@ class AgenticWriteWorkflow:
             console=self.console,
             conflict_arbiter=None,
             pre_validate=False,
+            # G9：透传同一 event_emitter（复用 M5 无副作用方法时不另发事件）
+            event_emitter=self.event_emitter,
         )
         ctx = m5._load_context()
 
@@ -222,7 +240,13 @@ class AgenticWriteWorkflow:
         self.console.print(
             f"[cyan]Agentic 写章（tier={self.tier}）第 {ctx['chapter_num']} 章...[/cyan]"
         )
+        # ---- G9：章内子阶段事件（生成；quality_check/revise 在 writer.run 返回后补发）----
+        self._emit_substage("generate", ctx["chapter_num"])
         text, revision_attempts, quality_passed = writer.run(task, ctx)
+        # ---- G9：章内子阶段事件（质量校验；门禁在 WriterAgent 内已完成，时序略滞后，§14-6）----
+        self._emit_substage("quality_check", ctx["chapter_num"])
+        if revision_attempts > 0:
+            self._emit_substage("revise", ctx["chapter_num"])
 
         # 落盘（复用 M5 方法，保证产物兼容）
         title = m5._extract_title(text, ctx)

@@ -57,6 +57,11 @@ class PipelineResult:
     # ---- G8 新增字段（主线推进 + 结局模式，拍板 6）：run 收尾填充；关闭开关置 None ----
     mainline: Optional[dict[str, Any]] = None
     ending: Optional[dict[str, Any]] = None
+    # ---- G9 新增字段（进度事件流 + 失败自助恢复，拍板 2/5/6）：run 收尾填充 ----
+    progress_file: Optional[str] = None        # progress.json 绝对路径；--no-progress 置 null
+    failures: list[dict[str, Any]] = field(default_factory=list)
+    stream: Optional[dict[str, Any]] = None    # 渲染元信息；--no-stream 置 null
+    summary: Optional[dict[str, Any]] = None   # build_run_summary 结果（运行摘要）
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -77,6 +82,11 @@ class PipelineResult:
             # ---- G8（只增不删）：主线推进 + 结局模式 ----
             "mainline": self.mainline,
             "ending": self.ending,
+            # ---- G9（只增不删）：进度事件流 + 失败自助恢复 ----
+            "progress_file": self.progress_file,
+            "failures": self.failures,
+            "stream": self.stream,
+            "summary": self.summary,
         }
 
 
@@ -202,6 +212,9 @@ class AgenticPipelineWorkflow:
         ending_ratio: float = 0.25,
         mainline_gate: bool = True,
         ending_gate: bool = True,
+        # ---- G9 新增参数（进度事件流，拍板 2 + 补充边界 1：on_progress 旧签名不动）----
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+        progress_file: str | Path = ".state/progress.json",
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client
@@ -245,6 +258,15 @@ class AgenticPipelineWorkflow:
         # G6：写章循环 Guardrails 命中收集（B5-3 修复：结果进报告，不只 console）
         self._guardrail_hits: list[dict[str, Any]] = []
 
+        # ---- G9：事件总线（未订阅 on_event / progress_file=None 时零落盘开销）----
+        from agent.core.events import ProgressEventBus
+
+        self._event_bus = ProgressEventBus(
+            on_event=on_event,
+            progress_file=progress_file,
+        )
+        self._chapter_t0: float = 0.0  # 本章起点（墙钟，供 chapter_elapsed_s/ETA）
+
         # 自主规划（G3）状态：关键前置失败则阻塞，交给 run() 安全退出、不进写章。
         self._plan_blocked = False
         self._plan_block_reason = ""
@@ -286,6 +308,8 @@ class AgenticPipelineWorkflow:
 
             self.writer_workflow = AgenticWriteWorkflow(
                 self.project_dir, llm_client=self.llm, console=self.console, tier=self.tier,
+                # ---- G9：章内子阶段事件注入（默认 None 零开销）----
+                event_emitter=self._emit_substage,
             )
         return self.writer_workflow
 
@@ -765,6 +789,97 @@ class AgenticPipelineWorkflow:
             except Exception:  # noqa: BLE001
                 pass
 
+    # ---------------------------------------------------------------- G9 事件发射（只读观察层）
+    def _emit_event(self, type_: str, **fields: Any) -> None:
+        """G9：发射事件（全 try/except，bus 内兜底；不阻断主流程）。"""
+        try:
+            self._event_bus.emit(type_, **fields)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _emit_substage(self, partial: dict[str, Any]) -> None:
+        """G9：writer 层子阶段事件入口（注入给 m5/agentic_write 的 event_emitter）。"""
+        try:
+            self._event_bus.emit_partial(partial)
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _emit_failure(self, step: str, reason: str, severity: str = "error") -> None:
+        """G9：发射 failure 事件（含 next_steps；确定性零 LLM，不阻断主流程）。"""
+        try:
+            from agent.core.events import next_steps_for
+
+            self._emit_event(
+                "failure",
+                step=step,
+                reason=reason,
+                severity=severity,
+                next_steps=next_steps_for(step, self.project_dir),
+            )
+        except Exception:  # noqa: BLE001
+            pass
+
+    def _compute_eta_s(self, target: int) -> Optional[int]:
+        """G9：ETA = 已写章平均耗时 × 剩余章数（拍板 4；无可计算时 None）。"""
+        try:
+            from agent.core.events import compute_eta_s
+
+            return compute_eta_s(self._event_bus.events, target, self._current_total())
+        except Exception:  # noqa: BLE001 - ETA 计算失败降级 None，不阻断
+            return None
+
+    def _prev_pressure_stage(self) -> str:
+        """G9：best-effort 读上一章 frontmatter 的 pressure_stage（首章/缺失置 ""）。
+
+        共享知识 #11：pipeline 写前无法精确得知本章压力阶段；取上一章
+        chapters/ch{total_written}.md frontmatter（缺失/首章置 ""），
+        精确值随 chapter_substage（writer 层 ctx 已知）出现。
+        """
+        try:
+            total = self._current_total()
+            if total <= 0:
+                return ""
+            f = self.project_dir / "chapters" / f"ch{total:03d}.md"
+            if not f.exists():
+                return ""
+            post = frontmatter.load(f)
+            return str(post.metadata.get("pressure_stage", "") or "")
+        except Exception:  # noqa: BLE001 - 读取失败降级为空串，不阻断
+            return ""
+
+    def _finalize_g9(self, result: PipelineResult) -> None:
+        """G9：填充 result.failures / progress_file / summary + done 事件 + 最终落盘。
+
+        纯读 bus，降级占位不阻断（G3 哲学）；done 事件先入 events，
+        build_run_summary 再聚合（含 done 的总耗时/结局标志）。
+        """
+        try:
+            import time
+
+            from agent.core.events import build_run_summary
+
+            result.failures = [
+                e for e in self._event_bus.events if e.get("type") == "failure"
+            ]
+            result.progress_file = (
+                str(self._event_bus.progress_file)
+                if self._event_bus.progress_file is not None
+                else None
+            )
+            # done 事件（含 chapters_written/blocked/tripped/escalated/total_elapsed_s）
+            self._emit_event(
+                "done",
+                chapters_written=result.chapters_written,
+                blocked=result.blocked,
+                tripped=result.tripped,
+                escalated=result.escalated,
+                total_elapsed_s=round(time.monotonic() - self._start_time),
+            )
+            result.summary = build_run_summary(self._event_bus.events, result)
+            self._event_bus.flush(result.summary)
+        except Exception:  # noqa: BLE001 - 摘要失败不阻断主流程（G3 哲学）
+            pass
+
     # ---------------------------------------------------------------- 主流程
     def _finalize_cost(self, result: PipelineResult) -> None:
         """G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）。"""
@@ -799,6 +914,8 @@ class AgenticPipelineWorkflow:
                 self.console.print(
                     f"[cyan]进入结局模式：第 {chapter} 章起（最后 {int(self.ending_ratio * 100)}%）[/cyan]"
                 )
+                # ---- G9（补充边界 6）：记录型事件（只记录不反写，G8 语义零改动）----
+                self._emit_event("ending_mode", chapter=chapter, ending_ratio=self.ending_ratio)
         except Exception:  # noqa: BLE001 - 触发异常降级不阻断写章
             pass
 
@@ -821,6 +938,7 @@ class AgenticPipelineWorkflow:
             if not new_subline:
                 return
             progress = dict(self.state_machine.progress or {})
+            from_subline = str(progress.get("current_subline", "") or "")  # G9：事件记录旧支线
             progress["current_subline"] = new_subline
             visited = list(progress.get("mainline_visited", []) or [])
             if new_subline not in visited:
@@ -831,6 +949,14 @@ class AgenticPipelineWorkflow:
             self.console.print(
                 f"[cyan]主线推进：第 {chapter} 章起切至支线 {new_subline}"
                 f"（已访问 {len(visited)} 条）[/cyan]"
+            )
+            # ---- G9（补充边界 6）：记录型事件（只记录不反写，G8 语义零改动）----
+            self._emit_event(
+                "mainline_advance",
+                chapter=chapter,
+                from_subline=from_subline,
+                to_subline=new_subline,
+                visited=len(visited),
             )
         except Exception:  # noqa: BLE001 - 决策异常降级不阻断（G3 哲学）
             pass
@@ -879,13 +1005,18 @@ class AgenticPipelineWorkflow:
 
         # 1.5) 自主模式引导：复用真实 M1~M4 自主规划（G3）。失败不阻断写章；
         #      关键前置失败则安全退出（不进入半残写章，拍板 #2）。
+        # G9：规划开始事件（规划前插桩）
+        self._emit_event("planning")
         try:
             self._ensure_setting_set()
         except Exception as e:  # noqa: BLE001
             self.console.print(f"[red]自主规划阶段异常：{e}[/red]")
             result.blocked = True
             result.block_reason = f"规划阶段异常：{e}"
+            # ---- G9：failure 事件（规划异常，error）----
+            self._emit_failure("plan_block", f"规划阶段异常：{e}", severity="error")
             self._finalize_cost(result)
+            self._finalize_g9(result)
             return result
         if getattr(self, "_plan_blocked", False):
             result.blocked = True
@@ -896,7 +1027,10 @@ class AgenticPipelineWorkflow:
                 f"[red]自主规划关键前置失败，已安全退出（不进入写章）："
                 f"{self._plan_block_reason}[/red]"
             )
+            # ---- G9：failure 事件（规划阻塞，error）----
+            self._emit_failure("plan_block", self._plan_block_reason, severity="error")
             self._finalize_cost(result)
+            self._finalize_g9(result)
             return result
 
         # 2) 逐章写作 + 编辑 + 记忆回写
@@ -912,6 +1046,8 @@ class AgenticPipelineWorkflow:
                 result.tripped = True
                 result.block_reason = "Token 预算超限或墙钟超时熔断（写章阶段）"
                 self.console.print(f"[red]✗ 熔断中止：{result.block_reason}[/red]")
+                # ---- G9：failure 事件（写章熔断，warn；既有 break 语义零改动）----
+                self._emit_failure("budget_trip", result.block_reason, severity="warn")
                 break
             # ---- G8：结局模式触发点（T3，每章前；拍板 2/4：一旦进入不退出）----
             if self.ending_gate:
@@ -921,10 +1057,21 @@ class AgenticPipelineWorkflow:
                 self._maybe_advance_mainline(target)
             # G4 进度回调：写章阶段
             self._emit_progress("writing", self._current_total(), target)
+            # ---- G9：chapter_start（插桩顺序：检查点 → G8 决策点 → 进度回调 → 事件）----
+            self._chapter_t0 = time.monotonic()
+            self._emit_event(
+                "chapter_start",
+                chapter=self._current_total() + 1,
+                total=target,
+                subline=str((self.state_machine.progress or {}).get("current_subline", "") or ""),
+                pressure_stage=self._prev_pressure_stage(),
+            )
             try:
                 wf_result = writer.run()
             except Exception as e:  # noqa: BLE001 - 单章失败不阻断，记录并跳出
                 self.console.print(f"[red]写章失败：{e}[/red]")
+                # ---- G9：failure 事件（写章失败，error）----
+                self._emit_failure("write_chapter", str(e), severity="error")
                 break
             ch_num = int(getattr(wf_result, "chapter_num", 0))
             ch_text = str(getattr(wf_result, "chapter_text", ""))
@@ -964,6 +1111,8 @@ class AgenticPipelineWorkflow:
                             result.block_reason = "; ".join(
                                 v.get("message", v.get("rule_id", "")) for v in gr.violations
                             )
+                            # ---- G9：failure 事件（硬门禁拒绝，error；break 语义零改动）----
+                            self._emit_failure("gate", result.block_reason, severity="error")
                             break  # 硬门禁：拒绝发布非合规内容，交由人工/修订
                     else:
                         gr = self.guardrails.check(ch_text)
@@ -992,6 +1141,15 @@ class AgenticPipelineWorkflow:
 
             wrote += 1
             self.console.print(f"[green]✓ 第 {ch_num} 章完成（{len(ch_text)} 字）[/green]")
+            # ---- G9：chapter_done（words/quality_passed/chapter_elapsed_s/eta_s）----
+            self._emit_event(
+                "chapter_done",
+                chapter=ch_num,
+                words=len(ch_text),
+                quality_passed=bool(getattr(wf_result, "quality_passed", True)),
+                chapter_elapsed_s=round(time.monotonic() - self._chapter_t0),
+                eta_s=self._compute_eta_s(target),
+            )
             # 防御：避免无限循环（target 必须有限且 writer 必须推进进度）
             if self._current_total() <= start_total + wrote - 1 and wrote >= 1:
                 # 进度未推进（stub/异常）→ 强制退出，避免死循环
@@ -1005,7 +1163,10 @@ class AgenticPipelineWorkflow:
         # G4: 熔断后跳过评测（拍板 #5）
         if result.tripped:
             self.console.print("[red]✗ 熔断已触发，跳过评测直接返回[/red]")
+            # ---- G9：failure 事件（熔断跳过评测，warn）----
+            self._emit_failure("budget_trip", result.block_reason, severity="warn")
             self._finalize_cost(result)
+            self._finalize_g9(result)
             return result
 
         # 3) 评测 + 自动回溯修复
@@ -1015,9 +1176,14 @@ class AgenticPipelineWorkflow:
                 result.tripped = True
                 result.block_reason = "Token 预算超限或墙钟超时熔断（评测阶段）"
                 self.console.print(f"[red]✗ 熔断中止：{result.block_reason}[/red]")
+                # ---- G9：failure 事件（评测熔断，warn）----
+                self._emit_failure("budget_trip", result.block_reason, severity="warn")
                 self._finalize_cost(result)
+                self._finalize_g9(result)
                 return result
             self._emit_progress("evaluating", 0, 100)
+            # ---- G9：评测开始事件 ----
+            self._emit_event("evaluating")
             evaluator = self._ensure_evaluator()
 
             def rewriter(chapter_nums: list[int]) -> None:
@@ -1036,6 +1202,8 @@ class AgenticPipelineWorkflow:
                 report = evaluator.evaluate_with_repair(rewriter)
             except Exception as e:  # noqa: BLE001
                 self.console.print(f"[red]评测失败：{e}[/red]")
+                # ---- G9：failure 事件（评测失败，warn；不阻断继续）----
+                self._emit_failure("eval", str(e), severity="warn")
                 report = None
 
             if report is not None:
@@ -1056,6 +1224,9 @@ class AgenticPipelineWorkflow:
                 result.health_report = report.to_dict()
                 result.escalated = report.escalated
                 result.escalated_reason = report.escalated_reason
+                # ---- G9：failure 事件（上报人工，warn）----
+                if result.escalated:
+                    self._emit_failure("eval", result.escalated_reason, severity="warn")
                 self.console.print(report.to_markdown())
                 try:
                     self.memory.log("eval", "全书体检完成", report.to_dict())
@@ -1066,4 +1237,6 @@ class AgenticPipelineWorkflow:
         self._finalize_cost(result)
         # ---- G8（拍板 6）：主线推进/结局模式摘要（纯读 state，异常降级占位不阻断）----
         self._finalize_g8(result)
+        # ---- G9（补充边界 3）：运行摘要 + failures 进 PipelineResult + 最终落盘 ----
+        self._finalize_g9(result)
         return result

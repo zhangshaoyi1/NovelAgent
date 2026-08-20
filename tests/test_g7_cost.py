@@ -172,7 +172,12 @@ def test_pipeline_result_to_dict_cost() -> None:
         assert key in d, f"既有键 {key} 必须保留（只增不删）"
     # G8（拍板 6）：PipelineResult.to_dict 只增 mainline/ending 两键（设计 §5.2）
     assert "mainline" in d and "ending" in d, "G8 只增 mainline/ending（只增不删）"
-    assert len(d) == 15, "既有 12 键 + cost + mainline + ending = 15"
+    # G9（拍板 6）：PipelineResult.to_dict 再增 progress_file/failures/stream/summary 四键
+    #（设计 §7.2：to_dict 只增 4 键；既有 12 键 + cost + mainline + ending + G9×4 = 19）
+    assert "progress_file" in d and "failures" in d and "stream" in d and "summary" in d, (
+        "G9 只增 progress_file/failures/stream/summary（只增不删）"
+    )
+    assert len(d) == 19, "既有 12 键 + cost + mainline + ending + G9×4 = 19"
 
 
 # ============================================================

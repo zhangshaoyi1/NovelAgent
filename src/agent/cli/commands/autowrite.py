@@ -27,6 +27,88 @@ def _cli_value(v: Any, default: Any) -> Any:
     return v
 
 
+def _stream_chapter_text(project_dir: Path, ev: dict, streamer: Any) -> dict[str, Any] | None:
+    """G9：读刚落盘的章节文件并逐段渲染正文（stdout；失败静默跳过）。
+
+    chapter_done 事件不携带正文（schema 固定），正文在 chapters/ch<NNN>.md；
+    读取/渲染异常一律静默降级（跳过/整块），绝不阻断主流程（拍板 3）。
+    """
+    try:
+        import frontmatter
+
+        ch = int(ev.get("chapter", 0) or 0)
+        f = project_dir / "chapters" / f"ch{ch:03d}.md"
+        if not f.exists():
+            return None
+        post = frontmatter.load(f)
+        return streamer.stream_text(str(post.content or ""))
+    except Exception:  # noqa: BLE001 - 渲染异常退化，不阻断
+        return None
+
+
+def _make_on_event(json_output: bool, no_progress: bool, no_stream: bool, project_dir: Path):
+    """构造 on_event 订阅：JSON 模式事件 JSONL 走 stderr（G4 隔离）；非 JSON 渲染进度条/事件行。
+
+    Returns:
+        (on_event, stream_meta)：on_event 为订阅回调；stream_meta 收集逐段渲染元信息
+        （供收尾填充 result.stream）。
+    """
+    from agent.cli._render import RenderStreamer
+
+    streamer = RenderStreamer(console)  # 非 JSON 专用（JSON 模式不渲染正文）
+    stream_meta: list[dict[str, Any]] = []
+    last_eta_s: Any = None
+    cur_total: int = 0
+
+    def on_event(ev: dict) -> None:
+        nonlocal last_eta_s, cur_total
+        if json_output:
+            # JSON 模式：事件以 JSONL 写 stderr（沿用 G4 行 170 stderr 隔离，不污染 stdout 信封）
+            import json as _json
+
+            sys.stderr.write(_json.dumps(ev, ensure_ascii=False) + "\n")
+            return
+        if no_progress:
+            return  # --no-progress：不渲染进度条/事件行（运行摘要保留，§13-4）
+        t = ev.get("type")
+        if t == "chapter_start":
+            cur_total = int(ev.get("total", 0) or 0)
+            streamer.progress_line(ev, last_eta_s=last_eta_s, total=cur_total)
+        elif t == "chapter_substage":
+            streamer.progress_line(ev, last_eta_s=last_eta_s, total=cur_total)
+        elif t == "chapter_done":
+            streamer.progress_line(ev, final=True, last_eta_s=last_eta_s, total=cur_total)
+            last_eta_s = ev.get("eta_s")
+            if not no_stream:
+                meta = _stream_chapter_text(project_dir, ev, streamer)
+                if meta:
+                    stream_meta.append(meta)
+        elif t == "mainline_advance":
+            console.print(f"[cyan]主线推进：第 {ev['chapter']} 章起切至 {ev['to_subline']}[/cyan]")
+        elif t == "ending_mode":
+            console.print(f"[cyan]进入结局模式：第 {ev['chapter']} 章起[/cyan]")
+        elif t == "failure":
+            console.print(
+                f"[bold red]失败[{ev['step']}]（{ev['severity']}）：{ev['reason']}[/bold red]"
+            )
+            for cmd in ev.get("next_steps", []):
+                console.print(f"  [dim]下一步：[/dim][bold cyan]{cmd}[/bold cyan]")
+        elif t == "done":
+            pass  # 运行摘要收尾统一打印（§5.3）
+
+    return on_event, stream_meta
+
+
+def _render_run_summary(summary: dict[str, Any]) -> None:
+    """G9：非 JSON 收尾打印运行摘要（rich 引导命令可复制；异常退化不阻断）。"""
+    try:
+        from agent.cli._render import RenderStreamer
+
+        RenderStreamer(console).render_run_summary(summary)
+    except Exception:  # noqa: BLE001 - 摘要渲染异常不阻断
+        pass
+
+
 @command(allowed_states=(
     State.INIT, State.CONFIGURING, State.DISCUSSING, State.ARCHITECTING,
     State.ARCH_CONFIRMED, State.OUTLINING, State.CHARACTER_DESIGN, State.WRITING,
@@ -137,6 +219,13 @@ def autowrite(
     no_ending_gate: bool = typer.Option(
         False, "--no-ending-gate", help="关闭结局收敛门禁（不触发结局模式不注入 ending_convergence 维度）"
     ),
+    # ---- G9 新增：进度/流式开关（拍板 6：默认全开，可关；关闭后行为与 G8 现状一致）----
+    no_progress: bool = typer.Option(
+        False, "--no-progress", help="关闭进度事件流（不落盘 progress.json、不渲染进度条/事件行）"
+    ),
+    no_stream: bool = typer.Option(
+        False, "--no-stream", help="关闭逐段渲染（退化为整块打印；章内子阶段事件保留）"
+    ),
 ) -> None:
     """全流程自主写作 - Planner→写作→编辑→记忆→评测+自动回溯
 
@@ -196,6 +285,14 @@ def autowrite(
         gate_mode = _cli_value(ai_gate_mode, "advisory")
         gate_mode = gate_mode if gate_mode in ("advisory", "block") else "advisory"
 
+    # ---- G9：事件订阅（JSON 模式 JSONL 走 stderr；非 JSON 渲染进度条/事件行/正文流式）----
+    on_event, stream_meta = _make_on_event(
+        json_output=bool(json_output),
+        no_progress=bool(_cli_value(no_progress, False)),
+        no_stream=bool(_cli_value(no_stream, False)),
+        project_dir=project_path,
+    )
+
     pipeline = AgenticPipelineWorkflow(
         project_dir=project_path,
         tier=mode if mode in ("auto", "heavy", "light") else "auto",
@@ -230,6 +327,13 @@ def autowrite(
         ending_ratio=max(0.0, min(0.5, float(_cli_value(ending_ratio, 0.25)))),
         mainline_gate=not bool(_cli_value(no_mainline_gate, False)),
         ending_gate=not bool(_cli_value(no_ending_gate, False)),
+        # ---- G9 新增：进度事件流（拍板 2/6：默认开；--no-progress 关闭落盘+进度条渲染）----
+        on_event=on_event,
+        progress_file=(
+            None
+            if bool(_cli_value(no_progress, False))
+            else str(project_path / ".state" / "progress.json")
+        ),
     )
 
     try:
@@ -247,6 +351,15 @@ def autowrite(
                 result.mainline = None
             if bool(_cli_value(no_ending_gate, False)):
                 result.ending = None
+            # ---- G9（拍板 6）：--json 只增 progress_file/failures/summary/stream；关闭后置 null ----
+            if bool(_cli_value(no_progress, False)):
+                result.progress_file = None
+            else:
+                # progress_file 绝对路径（§13-5：resolve()，脚本可直接读取）
+                _pf = result.progress_file or ".state/progress.json"
+                result.progress_file = str((project_path / _pf).resolve())
+            if bool(_cli_value(no_stream, False)):
+                result.stream = None
             emit_result({"success": success, **result.to_dict()}, json_mode=True)
             return
 
@@ -269,6 +382,14 @@ def autowrite(
         if not bool(_cli_value(no_cost, False)):
             print_cost_summary(result.cost)
 
+        # ---- G9：逐段渲染元信息进 result.stream（--no-stream 已置 null）----
+        if not bool(_cli_value(no_stream, False)) and stream_meta:
+            result.stream = stream_meta[-1]  # 最近一章的渲染元信息 {"mode","batches","chars"}
+
+        # ---- G9（补充边界 3）：非 JSON 收尾打印运行摘要 + rich 引导命令（--no-progress 保留）----
+        if result.summary:
+            _render_run_summary(result.summary)
+
         # 退出码映射：blocked/tripped/escalated 非 0（T5）
         if not success:
             exit_code = 1 if (result.blocked or result.tripped) else 2
@@ -279,7 +400,14 @@ def autowrite(
     except Exception as e:
         if json_output:
             emit_result(
-                {"success": False, "error": {"code": "autowrite_failed", "message": str(e)}},
+                {
+                    "success": False,
+                    "error": with_next_steps(
+                        {"code": "autowrite_failed", "message": str(e)},
+                        "autowrite_failed",
+                        str(project_path),
+                    ),
+                },
                 json_mode=True
             )
         else:
