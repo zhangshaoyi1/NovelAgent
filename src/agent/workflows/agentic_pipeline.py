@@ -54,6 +54,9 @@ class PipelineResult:
     guardrails: Optional[dict[str, Any]] = None
     # G7 新增字段（成本透明，拍板 4）：run 收尾填充；--no-cost 时 CLI 置 None
     cost: Optional[dict[str, Any]] = None
+    # ---- G8 新增字段（主线推进 + 结局模式，拍板 6）：run 收尾填充；关闭开关置 None ----
+    mainline: Optional[dict[str, Any]] = None
+    ending: Optional[dict[str, Any]] = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -71,6 +74,9 @@ class PipelineResult:
             "guardrails": self.guardrails,
             # ---- G7（只增不删）：成本汇总 ----
             "cost": self.cost,
+            # ---- G8（只增不删）：主线推进 + 结局模式 ----
+            "mainline": self.mainline,
+            "ending": self.ending,
         }
 
 
@@ -191,6 +197,11 @@ class AgenticPipelineWorkflow:
         padding_threshold: float = 0.30,
         # ---- G7 新增参数（人话总结层展示开关；--no-human-summary 关闭）----
         human_summary: bool = True,
+        # ---- G8 新增参数（主线推进 + 结局模式，拍板 1/2/6）----
+        mainline_window: int = 5,
+        ending_ratio: float = 0.25,
+        mainline_gate: bool = True,
+        ending_gate: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client
@@ -226,6 +237,11 @@ class AgenticPipelineWorkflow:
         self.padding_threshold = max(0.0, min(1.0, padding_threshold))
         # G7：人话总结层展示开关（透传给 EvaluatorAgent）
         self.human_summary = human_summary
+        # G8：主线推进 + 结局模式（钳制语义：window≥1，ratio∈[0,0.5]）
+        self.mainline_window = max(1, int(mainline_window))
+        self.ending_ratio = max(0.0, min(0.5, float(ending_ratio)))
+        self.mainline_gate = bool(mainline_gate)
+        self.ending_gate = bool(ending_gate)
         # G6：写章循环 Guardrails 命中收集（B5-3 修复：结果进报告，不只 console）
         self._guardrail_hits: list[dict[str, Any]] = []
 
@@ -333,6 +349,11 @@ class AgenticPipelineWorkflow:
                 padding_threshold=self.padding_threshold,
                 # ---- G7 透传：人话总结层展示开关 ----
                 human_summary=self.human_summary,
+                # ---- G8 透传：验收维度开关 + 口径参数 ----
+                mainline_gate=self.mainline_gate,
+                ending_gate=self.ending_gate,
+                mainline_window=self.mainline_window,
+                ending_ratio=self.ending_ratio,
             )
         # 把回溯事件写进 Memory
         try:
@@ -756,6 +777,84 @@ class AgenticPipelineWorkflow:
         except Exception:  # noqa: BLE001 - 成本汇总失败不阻断主流程（G3）
             result.cost = None
 
+    # ---------------------------------------------------------------- G8 主线推进 + 结局模式
+    def _maybe_enter_ending_mode(self, target: int) -> None:
+        """结局模式触发（拍板 2：chapter > target*(1-ending_ratio)）。
+
+        一旦进入不退出（拍板 4）：`progress.ending_mode=true` 持久化到 state.json，
+        回溯重写（G1）后 M5/AgenticWrite 仍读到 true → 重写仍在结局模式。
+        ending_ratio 已在 __init__ 钳制到 [0, 0.5]。
+        """
+        try:
+            self.state_machine.load()
+            progress = dict(self.state_machine.progress or {})
+            if progress.get("ending_mode"):
+                return  # 不退出（拍板 4）
+            chapter = int(progress.get("total_written", 0)) + 1
+            if chapter > target * (1 - self.ending_ratio):
+                progress["ending_mode"] = True
+                progress["ending_mode_at"] = chapter
+                self.state_machine.progress = progress
+                self.state_machine.save()
+                self.console.print(
+                    f"[cyan]进入结局模式：第 {chapter} 章起（最后 {int(self.ending_ratio * 100)}%）[/cyan]"
+                )
+        except Exception:  # noqa: BLE001 - 触发异常降级不阻断写章
+            pass
+
+    def _maybe_advance_mainline(self, target: int) -> None:
+        """每 mainline_window 章执行一次确定性支线推进决策（拍板 1/补充边界 2）。
+
+        决策点写 `progress.current_subline` + `progress.mainline_visited`（去重），
+        合并写入（load → dict 副本 → 改 → save），保留既有键。
+        """
+        try:
+            self.state_machine.load()
+            chapter = int((self.state_machine.progress or {}).get("total_written", 0)) + 1
+            if chapter <= 1 or (chapter - 1) % self.mainline_window != 0:
+                return  # 第 1 章前不决策；此后每 window 章一次
+            from agent.workflows.mainline import decide_mainline_advance
+
+            new_subline = decide_mainline_advance(
+                self.project_dir, self.state_machine, self.mainline_window
+            )
+            if not new_subline:
+                return
+            progress = dict(self.state_machine.progress or {})
+            progress["current_subline"] = new_subline
+            visited = list(progress.get("mainline_visited", []) or [])
+            if new_subline not in visited:
+                visited.append(new_subline)
+            progress["mainline_visited"] = visited
+            self.state_machine.progress = progress
+            self.state_machine.save()
+            self.console.print(
+                f"[cyan]主线推进：第 {chapter} 章起切至支线 {new_subline}"
+                f"（已访问 {len(visited)} 条）[/cyan]"
+            )
+        except Exception:  # noqa: BLE001 - 决策异常降级不阻断（G3 哲学）
+            pass
+
+    def _finalize_g8(self, result: PipelineResult) -> None:
+        """G8：填充 result.mainline / result.ending（读 state.json progress，降级占位）。"""
+        try:
+            sm = StateMachine(self.project_dir)
+            sm.load()
+            progress = sm.progress or {}
+            result.mainline = {
+                "current_subline": progress.get("current_subline"),
+                "mainline_visited": list(progress.get("mainline_visited", []) or []),
+                "mainline_window": self.mainline_window,
+            } if self.mainline_gate else None
+            result.ending = {
+                "ending_mode": bool(progress.get("ending_mode", False)),
+                "ending_mode_at": progress.get("ending_mode_at"),
+                "ending_ratio": self.ending_ratio,
+            } if self.ending_gate else None
+        except Exception:  # noqa: BLE001 - 摘要失败不阻断主流程
+            result.mainline = None
+            result.ending = None
+
     def run(self) -> PipelineResult:
         import time
 
@@ -814,6 +913,12 @@ class AgenticPipelineWorkflow:
                 result.block_reason = "Token 预算超限或墙钟超时熔断（写章阶段）"
                 self.console.print(f"[red]✗ 熔断中止：{result.block_reason}[/red]")
                 break
+            # ---- G8：结局模式触发点（T3，每章前；拍板 2/4：一旦进入不退出）----
+            if self.ending_gate:
+                self._maybe_enter_ending_mode(target)
+            # ---- G8：支线推进决策点（T2，每 mainline_window 章；拍板 1 + 补充边界 2）----
+            if self.mainline_gate:
+                self._maybe_advance_mainline(target)
             # G4 进度回调：写章阶段
             self._emit_progress("writing", self._current_total(), target)
             try:
@@ -959,4 +1064,6 @@ class AgenticPipelineWorkflow:
 
         # ---- G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）----
         self._finalize_cost(result)
+        # ---- G8（拍板 6）：主线推进/结局模式摘要（纯读 state，异常降级占位不阻断）----
+        self._finalize_g8(result)
         return result

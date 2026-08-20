@@ -62,7 +62,10 @@ def _low_density_chapter() -> str:
 
 
 def _make_evaluator(project: Path, **kwargs) -> EvaluatorAgent:
-    return EvaluatorAgent(project, appeal_scorer=None, **kwargs)
+    # G8（拍板 6）：G6 防注水仅测 padding 门禁；G8 验收维度默认开 → 本测试默认关闭
+    return EvaluatorAgent(
+        project, appeal_scorer=None, mainline_gate=False, ending_gate=False, **kwargs
+    )
 
 
 # ============================================================

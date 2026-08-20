@@ -183,6 +183,7 @@ def test_g6_golden_high_passes_zero_rollback(tmp_path: Path) -> None:
     ev = EvaluatorAgent(
         _make_g6_project(tmp_path), appeal_scorer=None,
         golden_scorer=stub, golden_three_gate=True,
+        mainline_gate=False, ending_gate=False,  # G8（拍板 6）：G6 仅测 golden 门禁
     )
     called: list[list[int]] = []
 
@@ -210,6 +211,7 @@ def test_g6_golden_offline_short_circuit(tmp_path: Path) -> None:
         _make_g6_project(tmp_path), appeal_scorer=None,
         golden_scorer=stub, golden_three_gate=True,
         golden_three_threshold=75, golden_three_floor=45,  # CLI 覆盖后离线仍须通过
+        mainline_gate=False, ending_gate=False,  # G8（拍板 6）：G6 仅测 golden 门禁
     )
     report = ev.evaluate_with_repair(lambda chapters: None)
     gdims = [d for d in report.dimensions if d.name.startswith("golden_")]
@@ -283,6 +285,7 @@ def test_g6_golden_gate_disabled(tmp_path: Path) -> None:
     ev = EvaluatorAgent(
         _make_g6_project(tmp_path), appeal_scorer=None,
         golden_scorer=stub, golden_three_gate=False,
+        mainline_gate=False, ending_gate=False,  # G8（拍板 6）：G6 仅测 golden 门禁
     )
     report = ev._evaluate_once()
     gdims = [d for d in report.dimensions if d.name.startswith("golden_")]
@@ -301,6 +304,7 @@ def test_g6_golden_threshold_override(tmp_path: Path) -> None:
     ev_default = EvaluatorAgent(
         _make_g6_project(tmp_path), appeal_scorer=None,
         golden_scorer=stub, golden_three_gate=True, golden_three_threshold=60,
+        mainline_gate=False, ending_gate=False,  # G8（拍板 6）：G6 仅测 golden 门禁
     )
     rep_def = ev_default._evaluate_once()
     assert rep_def.dimension("golden_total").passed is True
@@ -309,6 +313,7 @@ def test_g6_golden_threshold_override(tmp_path: Path) -> None:
     ev_strict = EvaluatorAgent(
         _make_g6_project(tmp_path), appeal_scorer=None,
         golden_scorer=stub, golden_three_gate=True, golden_three_threshold=75,
+        mainline_gate=False, ending_gate=False,  # G8（拍板 6）：G6 仅测 golden 门禁
     )
     rep_strict = ev_strict._evaluate_once()
     assert rep_strict.dimension("golden_total").passed is False

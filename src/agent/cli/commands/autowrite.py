@@ -124,6 +124,19 @@ def autowrite(
     no_cost: bool = typer.Option(
         False, "--no-cost", help="关闭成本汇总输出（--json 时 cost 置 null）"
     ),
+    # ---- G8 新增：主线推进 + 结局模式开关（拍板 6：默认全开，可关）----
+    mainline_window: int = typer.Option(
+        5, "--mainline-window", help="支线推进决策窗口（章，默认 5，≥1）"
+    ),
+    ending_ratio: float = typer.Option(
+        0.25, "--ending-ratio", help="结局模式触发比例（0-0.5，默认 0.25，越界钳制）"
+    ),
+    no_mainline_gate: bool = typer.Option(
+        False, "--no-mainline-gate", help="关闭主线推进门禁（不决策不注入 mainline_progress 维度）"
+    ),
+    no_ending_gate: bool = typer.Option(
+        False, "--no-ending-gate", help="关闭结局收敛门禁（不触发结局模式不注入 ending_convergence 维度）"
+    ),
 ) -> None:
     """全流程自主写作 - Planner→写作→编辑→记忆→评测+自动回溯
 
@@ -212,6 +225,11 @@ def autowrite(
         padding_threshold=float(_cli_value(padding_threshold, 0.30)),
         # ---- G7 新增：人话总结层展示开关（拍板 6：默认开，--no-human-summary 关闭）----
         human_summary=not bool(_cli_value(no_human_summary, False)),
+        # ---- G8 新增：主线推进 + 结局模式（钳制语义：window≥1，ratio∈[0,0.5]）----
+        mainline_window=max(1, int(_cli_value(mainline_window, 5))),
+        ending_ratio=max(0.0, min(0.5, float(_cli_value(ending_ratio, 0.25)))),
+        mainline_gate=not bool(_cli_value(no_mainline_gate, False)),
+        ending_gate=not bool(_cli_value(no_ending_gate, False)),
     )
 
     try:
@@ -224,6 +242,11 @@ def autowrite(
             # G7（拍板 6）：--no-cost 时把 cost 置 null（emit 调用本身不改，to_dict 已含 cost）
             if bool(_cli_value(no_cost, False)):
                 result.cost = None
+            # ---- G8（拍板 6）：--json 只增 mainline/ending 字段；关闭后置 null ----
+            if bool(_cli_value(no_mainline_gate, False)):
+                result.mainline = None
+            if bool(_cli_value(no_ending_gate, False)):
+                result.ending = None
             emit_result({"success": success, **result.to_dict()}, json_mode=True)
             return
 

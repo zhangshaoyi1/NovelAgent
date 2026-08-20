@@ -170,7 +170,9 @@ def test_pipeline_result_to_dict_cost() -> None:
                 "escalated", "escalated_reason", "blocked", "block_reason", "engine",
                 "tripped", "schema_degraded", "guardrails"):
         assert key in d, f"既有键 {key} 必须保留（只增不删）"
-    assert len(d) == 13, "既有 12 键 + 新增 cost = 13"
+    # G8（拍板 6）：PipelineResult.to_dict 只增 mainline/ending 两键（设计 §5.2）
+    assert "mainline" in d and "ending" in d, "G8 只增 mainline/ending（只增不删）"
+    assert len(d) == 15, "既有 12 键 + cost + mainline + ending = 15"
 
 
 # ============================================================

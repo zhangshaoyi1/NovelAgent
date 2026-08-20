@@ -36,6 +36,8 @@ from agent.prompts import (
     M5_GENERATE_USER_TEMPLATE,
     M5_QUALITY_CHECK_SYSTEM_PROMPT,
     M5_QUALITY_CHECK_USER_TEMPLATE,
+    G8_ENDING_INSTRUCTION_TEMPLATE,  # G8（补充边界 4）：结局阶段指令（含架构 ending）
+    G8_ENDING_FALLBACK_INSTRUCTION,  # G8（补充边界 4）：ending 为空降级「收尾」通用指令
 )
 from agent.utils import parse_llm_json
 from agent.workflows.m5_write_chapter import (
@@ -110,7 +112,7 @@ class AgenticWriteWorkflow:
         wi = ctx["world_info"]
         rag_context_text = format_rag_context(ctx.get("rag_context", []))
         open_debts_text = format_open_debts(ctx.get("open_debts", []))
-        return M5_GENERATE_USER_TEMPLATE.format(
+        task = M5_GENERATE_USER_TEMPLATE.format(
             title=wi["title"],
             tone=wi["tone"],
             pov=wi["pov"],
@@ -139,6 +141,18 @@ class AgenticWriteWorkflow:
             rag_context=rag_context_text,
             open_debts=open_debts_text,
         )
+        # ---- G8（补充边界 4）：结局模式指令注入（ending 为空降级「收尾」通用指令，不阻断）----
+        if ctx.get("ending_mode"):
+            ending = (ctx.get("ending") or "").strip()
+            if ending:
+                task += G8_ENDING_INSTRUCTION_TEMPLATE.format(
+                    subline_id=ctx.get("subline_id", ""),
+                    mainline="、".join(ctx.get("mainline", []) or []) or "—",
+                    ending=ending,
+                )
+            else:
+                task += G8_ENDING_FALLBACK_INSTRUCTION
+        return task
 
     # ------------------------------------------------------------------
     # 外环 Critic：复用 M5 九项 LLM 审稿作为门禁（与 M5 同等质量基线）

@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+import json
 import re
 import statistics
 from dataclasses import dataclass, field
@@ -102,6 +103,9 @@ _SOFT_MARGIN = {
     "readability": 0.0,  # 0-100 评分维（主理人拍板：保持严格）
     "foreshadow_recycle_rate": 0.0,  # 确定性 0-1 维（保持严格）
     "pacing_abnormal": 0.0,  # 确定性 0-1 维
+    # ---- G8：确定性计数/收敛维（保持严格，不吸收容差）----
+    "mainline_progress": 0.0,  # G8 确定性计数维（保持严格，不吸收容差）
+    "ending_convergence": 0.0,  # G8 确定性收敛维（保持严格）
 }
 
 
@@ -348,6 +352,11 @@ class EvaluatorAgent:
         padding_threshold: float = 0.30,                    # 重复句占比阈值（--padding-threshold）
         # ---- G7 新增：人话总结层展示开关（默认开；--no-human-summary 关闭）----
         human_summary: bool = True,
+        # ---- G8 新增：主线推进 + 结局收敛验收维度（拍板 3/6，默认全开可关）----
+        mainline_gate: bool = True,
+        ending_gate: bool = True,
+        mainline_window: int = 5,
+        ending_ratio: float = 0.25,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.console = console or Console()
@@ -390,6 +399,11 @@ class EvaluatorAgent:
         self._last_padding_stats = None
         # G7：人话总结层展示开关（_evaluate_once 末尾决定是否填充 report.summary）
         self.human_summary = human_summary
+        # G8：主线推进 + 结局收敛（钳制语义：window≥1，ratio∈[0,0.5]）
+        self.mainline_gate = bool(mainline_gate)
+        self.ending_gate = bool(ending_gate)
+        self.mainline_window = max(1, int(mainline_window))
+        self.ending_ratio = max(0.0, min(0.5, float(ending_ratio)))
 
     # ---------------------------------------------------------------- G7 人话总结层
     # 主理人拍板 1/2 + 补充边界 4：确定性模板拼装、零 LLM、措辞保守。
@@ -415,6 +429,9 @@ class EvaluatorAgent:
         "golden_world_novelty": "前三章世界观新颖度不足，建议强化设定记忆点",
         "golden_emotion_curve": "前三章情绪曲线平，建议制造节奏起伏",
         "padding_repetition_abnormal": "重复句占比偏高，建议删减车轱辘话/合并相似句",
+        # ---- G8（补充边界 6）：主线推进 + 结局收敛归因（只增不删）----
+        "mainline_progress": "支线推进不足：已访问支线数未达下限，建议推进/切换更多支线后再收尾",
+        "ending_convergence": "结局收敛不达标：未进入结局模式或结局段伏笔回收不足，建议末段集中回收伏笔并向架构结局收束",
     }
 
     def _build_summary(self, report: NovelHealthReport) -> dict:
@@ -772,6 +789,20 @@ class EvaluatorAgent:
                 if self.console is not None:
                     self.console.print(f"[yellow]⚠ 黄金三章门禁评分失败，跳过：{e}[/yellow]")
 
+        # ---- G8（拍板 3）：主线推进 + 结局收敛验收维度（确定性 computed，并入 overall_pass）----
+        if self.mainline_gate:
+            try:
+                dims.append(self._dim_mainline_progress())
+            except Exception as e:  # noqa: BLE001 - 降级不阻断（G3 哲学）
+                if self.console is not None:
+                    self.console.print(f"[yellow]⚠ mainline_progress 计算失败，跳过：{e}[/yellow]")
+        if self.ending_gate:
+            try:
+                dims.append(self._dim_ending_convergence())
+            except Exception as e:  # noqa: BLE001
+                if self.console is not None:
+                    self.console.print(f"[yellow]⚠ ending_convergence 计算失败，跳过：{e}[/yellow]")
+
         failed = [d for d in dims if not d.passed]
         hard_failed = [d for d in failed if d.required]
         overall = len(failed) == 0
@@ -781,7 +812,9 @@ class EvaluatorAgent:
         for d in dims:
             # G5：迷爱看六维不计入「不崩」综合分；G6：golden_*/padding_* 同样跳过，
             #     防止新量纲漂移综合分（零回归，共享知识 #10）
-            if d.name.startswith((APPEAL_GATE_PREFIX, GOLDEN_GATE_PREFIX, "padding_")):
+            #     G8：mainline_*/ending_* 同样跳过（计数/比例量纲不可混算，仿先例）
+            if d.name.startswith((APPEAL_GATE_PREFIX, GOLDEN_GATE_PREFIX, "padding_",
+                                  "mainline_", "ending_")):
                 continue
             if d.direction == ">=":
                 norm.append(min(1.0, d.value / d.threshold) if d.threshold else 1.0)
@@ -946,6 +979,21 @@ class EvaluatorAgent:
                     "请人工重写第 1-3 章。明细：\n" + detail
                 )
                 return report
+            # ---- G8（拍板 3）：mainline_*/ending_* 失败直通 escalated（仿 G6 golden，禁止末窗回退）----
+            g8_failed = [
+                d for d in report.dimensions
+                if d.name.startswith(("mainline_", "ending_")) and not d.passed
+            ]
+            if g8_failed:
+                report.escalated = True
+                report.rollback_attempts = attempts
+                detail = self._g8_structural_escalation_detail(report)
+                report.escalated_reason = (
+                    "全局结构门禁失败（" + "、".join(d.label for d in g8_failed) + "）："
+                    "支线推进不足或结局收敛不达标是全局结构问题，末窗回退窗口修不到，"
+                    "已禁止无效回退并上报人工。明细：\n" + detail
+                )
+                return report
             if attempts >= self.max_rollback_attempts:
                 report.escalated = True
                 report.rollback_attempts = attempts
@@ -986,6 +1034,156 @@ class EvaluatorAgent:
             lines.append(f"- {APPEAL_LABELS.get(k, k)}：{v}/100（触底 {self.golden_three_floor}）{mark}")
         lines.append(f"- 评分方式：{'三章拼接一次' if not gr.fallback else '每章独立取最差'} · source={self._last_golden_source}")
         return "\n".join(lines)
+
+    # ---------------------------------------------------------------- G8：主线推进 + 结局收敛维度
+    def _dim_mainline_progress(self) -> DimensionResult:
+        """已访问支线数 ≥ min(3, 支线总数) 才达标（direction=">="）。
+
+        1 条支线恒达标（threshold=min(3,1)=1），不误杀短书（PRD §7 风险 6）。
+        0 条支线 threshold=0，恒达标（无支线可走，不误杀）。
+        """
+        visited, total = self._mainline_stats()
+        threshold = float(min(3, total)) if total > 0 else 0.0
+        return DimensionResult(
+            "mainline_progress", "主线推进", float(len(visited)),
+            threshold, ">=", False, "computed",
+            soft_margin=_SOFT_MARGIN.get("mainline_progress", 0.0),
+        )
+
+    def _mainline_stats(self) -> tuple[set[str], int]:
+        """双保险统计（补充边界 3）：progress.mainline_visited ∪ 章 frontmatter subline 反推。"""
+        import frontmatter as _fm
+        from agent.core.setting_manager import SettingManager
+
+        sm = StateMachine(self.project_dir)
+        try:
+            sm.load()
+            progress = sm.progress or {}
+        except Exception:  # noqa: BLE001
+            progress = {}
+        visited: set[str] = set(progress.get("mainline_visited", []) or [])
+        # 双保险：章 frontmatter subline 反推
+        try:
+            ch_dir = self.project_dir / "chapters"
+            if ch_dir.exists():
+                for f in sorted(ch_dir.glob("ch*.md")):
+                    post = _fm.load(f)
+                    sub = post.metadata.get("subline", "")
+                    if sub:
+                        visited.add(str(sub))
+        except Exception:  # noqa: BLE001 - 反推失败不影响主记录
+            pass
+        try:
+            total = len(SettingManager(self.project_dir).list_sublines())
+        except Exception:  # noqa: BLE001
+            total = 0
+        if total > 0:
+            visited &= set(SettingManager(self.project_dir).list_sublines())  # 只统计本书支线
+        return visited, total
+
+    def _dim_ending_convergence(self) -> DimensionResult:
+        """三条件：ending_mode==true 且 末章存在 且 结局段回收率 ≥0.90。
+
+        三条件任一不满足 → value 归零（必不达标，进 overall_pass 失败 + escalated）；
+        满足则 value=真实结局段回收率（报告可见真实值，明细见 _g8_structural_escalation_detail）。
+        无伏笔（open_at_start==0）→ rate=1.0 恒达标（不误杀）。
+        ending 为空时口径不变（本口径不含关键词匹配，退化路径不引入额外约束，拍板 3）。
+        """
+        rate, st = self._ending_recycle_rate()
+        ok_mode = self._ending_mode_active()
+        ok_last = self._last_chapter_exists()
+        value = rate if (ok_mode and ok_last) else 0.0
+        return DimensionResult(
+            "ending_convergence", "结局收敛", value,
+            0.90, ">=", False, "computed",
+            soft_margin=_SOFT_MARGIN.get("ending_convergence", 0.0),
+        )
+
+    def _ending_mode_active(self) -> bool:
+        sm = StateMachine(self.project_dir)
+        try:
+            sm.load()
+            return bool((sm.progress or {}).get("ending_mode", False))
+        except Exception:  # noqa: BLE001
+            return False
+
+    def _last_chapter_exists(self) -> bool:
+        target = self._resolve_target()  # 与 pipeline 同源（plan.json→100）
+        return (self.project_dir / "chapters" / f"ch{target:03d}.md").exists()
+
+    def _ending_recycle_rate(self) -> tuple[float, dict[str, Any]]:
+        """结局段回收率 = 结局段内回收数 / 结局段开始时未回收数。
+
+        因 foreshadows.md 无 resolved_at 列，用 planted_at（埋设章号）+ 最终 state 近似：
+          - 结局段开始 = floor(target*(1-ending_ratio)) + 1
+          - 「结局段开始时未回收」≈ 结局段开始前已埋（planted_ch < ending_start）且
+            最终 state ∈ {未埋, 已埋, 已回收} 的条数（含已回收——回收发生在结局段内）
+          - 「结局段内回收」≈ 结局段开始前已埋 且 最终 state == 已回收 的条数
+        无伏笔（denom==0）→ rate=1.0（不误杀）。与 _metric_foreshadow_recycle（行 517-537）同源解析。
+        """
+        target = self._resolve_target()
+        ending_start = int(target * (1 - self.ending_ratio)) + 1
+        f_file = self.project_dir / "foreshadows.md"
+        open_at_start = 0
+        resolved_in_ending = 0
+        if f_file.exists():
+            for line in f_file.read_text(encoding="utf-8").splitlines():
+                line = line.strip()
+                if not line.startswith("|") or line.startswith("|---") or line.startswith("| ID"):
+                    continue
+                cells = [c.strip() for c in line.split("|")[1:-1]]
+                if len(cells) < 5:
+                    continue
+                planted_raw = cells[2]
+                m = re.search(r"ch(\d+)", planted_raw)
+                if not m or int(m.group(1)) >= ending_start:
+                    continue  # 结局段开始后才埋（短线）→ 不计入分母
+                state = cells[4]
+                if state == "已回收":
+                    resolved_in_ending += 1
+                    open_at_start += 1
+                elif state not in ("已废弃",):
+                    open_at_start += 1
+        rate = (resolved_in_ending / open_at_start) if open_at_start > 0 else 1.0
+        return rate, {
+            "ending_start": ending_start, "open_at_start": open_at_start,
+            "resolved_in_ending": resolved_in_ending, "rate": round(rate, 4),
+        }
+
+    def _resolve_target(self) -> int:
+        """与 pipeline._resolve_target（行 352-362）同源：plan.json total_chapters → 100。"""
+        try:
+            plan_file = self.project_dir / ".state" / "plan.json"
+            if plan_file.exists():
+                data = json.loads(plan_file.read_text(encoding="utf-8"))
+                if data.get("total_chapters"):
+                    return int(data["total_chapters"])
+        except Exception:  # noqa: BLE001
+            pass
+        return 100
+
+    def _g8_structural_escalation_detail(self, report: NovelHealthReport) -> str:
+        """mainline/ending 失败明细（人工可据此调整推进节奏/收束策略）。"""
+        lines: list[str] = []
+        mp = report.dimension("mainline_progress")
+        if mp is not None and not mp.passed:
+            visited, total = self._mainline_stats()
+            need = min(3, total) if total > 0 else 0
+            lines.append(
+                f"· 主线推进：已访问 {len(visited)}/{total} 条支线"
+                f"（{sorted(visited)}），需 ≥ {need} 条才达标"
+            )
+        ec = report.dimension("ending_convergence")
+        if ec is not None and not ec.passed:
+            rate, st = self._ending_recycle_rate()
+            lines.append(
+                f"· 结局收敛：ending_mode={self._ending_mode_active()}，"
+                f"末章存在={self._last_chapter_exists()}，"
+                f"结局段回收率 {st['rate']:.2f}"
+                f"（回收 {st['resolved_in_ending']}/{st['open_at_start']}，"
+                f"结局段自第 {st['ending_start']} 章起）"
+            )
+        return "\n".join(lines) if lines else "（无明细）"
 
     # 可选：把回溯事件写进 Memory（由 Pipeline 注入）
     memory_log: Optional[Callable[[str, str, Any], Any]] = None

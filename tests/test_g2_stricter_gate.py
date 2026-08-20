@@ -100,7 +100,8 @@ def test_poor_sample_fails(tmp_path: Path) -> None:
 
 def test_good_sample_passes_no_rollback(tmp_path: Path) -> None:
     """合格样例（计数维=0、coherence=90、readability=88）→ overall_pass True 且 rolled_back False。"""
-    ev = EvaluatorAgent(tmp_path, score_fn=_good_scores)
+    # G8（拍板 6）：G2 仅测七维基座，G8 验收维度默认开 → 本测试关闭（不注入 mainline/ending）
+    ev = EvaluatorAgent(tmp_path, score_fn=_good_scores, mainline_gate=False, ending_gate=False)
     report = ev._evaluate_once()
     assert report.overall_pass is True
     assert report.rolled_back is False
@@ -150,6 +151,7 @@ def test_only_score_dim_triggered(tmp_path: Path) -> None:
 
 def test_all_pass(tmp_path: Path) -> None:
     """全部通过：整体通过。"""
-    ev = EvaluatorAgent(tmp_path, score_fn=_good_scores)
+    # G8（拍板 6）：G2 仅测七维基座，G8 验收维度默认开 → 本测试关闭（不注入 mainline/ending）
+    ev = EvaluatorAgent(tmp_path, score_fn=_good_scores, mainline_gate=False, ending_gate=False)
     report = ev._evaluate_once()
     assert report.overall_pass is True

@@ -184,7 +184,8 @@ def test_markdown_summary_none_skips_section(tmp_path: Path) -> None:
 # 4. _evaluate_once 接线 + human_summary 开关
 # ============================================================
 def test_evaluate_once_fills_summary_by_default(tmp_path: Path) -> None:
-    ev = EvaluatorAgent(tmp_path, human_summary=True)
+    # G8（拍板 6）：G7 人话总结仅测 summary 层；G8 验收维度默认开 → 本测试关闭
+    ev = EvaluatorAgent(tmp_path, human_summary=True, mainline_gate=False, ending_gate=False)
     report = ev._evaluate_once()
     assert report.summary is not None
     assert report.summary["all_passed"] is True

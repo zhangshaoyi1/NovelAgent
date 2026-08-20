@@ -252,7 +252,8 @@ def test_evaluator_pacing_abnormal(tmp_path):
 def test_evaluator_overall_pass_with_safe_defaults(tmp_path):
     proj = _make_project(tmp_path, n_chapters=2,
                           foreshadows="| ID | 内容 | 埋设 | 预期 | 状态 |\n|---|---|---|---|---|\n|F-01|a|ch001|ch002|已回收|\n")
-    ev = EvaluatorAgent(proj)  # 无 score_fn → 默认通过型
+    # G8（拍板 6）：本测试仅测七维 safe-defaults；G8 验收维度默认开 → 关闭
+    ev = EvaluatorAgent(proj, mainline_gate=False, ending_gate=False)  # 无 score_fn → 默认通过型
     rep = ev.evaluate()
     assert rep.overall_pass is True
     assert rep.score >= 0
@@ -302,7 +303,9 @@ def test_evaluator_escalates_when_repair_fails(tmp_path):
             return 0.0
         return 0.0
 
-    ev = EvaluatorAgent(proj, score_fn=bad_score, rollback_window=5, max_rollback_attempts=2)
+    # G8（拍板 6）：本测试仅测 G1 回溯超限 escalated；G8 验收维度默认开 → 关闭
+    ev = EvaluatorAgent(proj, score_fn=bad_score, rollback_window=5, max_rollback_attempts=2,
+                        mainline_gate=False, ending_gate=False)
 
     def noop_rewriter(nums):
         return None  # 重写不修复

@@ -41,6 +41,8 @@ from agent.prompts import (
     M5_QUALITY_CHECK_USER_TEMPLATE,
     M5_REVISE_SYSTEM_PROMPT,
     M5_REVISE_USER_TEMPLATE,
+    G8_ENDING_INSTRUCTION_TEMPLATE,  # G8（补充边界 4）：结局阶段指令（含架构 ending）
+    G8_ENDING_FALLBACK_INSTRUCTION,  # G8（补充边界 4）：ending 为空降级「收尾」通用指令
 )
 from agent.utils import parse_llm_json
 
@@ -400,7 +402,26 @@ class M5WriteChapterWorkflow:
             "open_debts": open_debts,
             "learnings": learnings,
             "learnings_text": learnings_text,
+            # ---- G8（补充边界 4）：结局/主线上下文注入 ----
+            "ending": self._load_architecture_ending(),  # architecture.md frontmatter（空串=降级）
+            "ending_mode": bool(progress.get("ending_mode", False)),  # 是否结局模式
+            "mainline": list(progress.get("mainline_visited", []) or []),  # 已访问支线
         }
+
+    def _load_architecture_ending(self) -> str:
+        """读 architecture.md frontmatter 的 architecture.ending（m14 行 447/460 写入）。
+
+        读失败/缺失 → 返回 ""（降级不阻断，拍板 2/补充边界 4）。
+        """
+        try:
+            f = self.project_dir / "architecture.md"
+            if not f.exists():
+                return ""
+            post = frontmatter.load(f)
+            arch = post.metadata.get("architecture", {}) or {}
+            return str(arch.get("ending", "") or "").strip()
+        except Exception:  # noqa: BLE001 - 读失败降级为空
+            return ""
 
     def _extract_world_info(self, world_data: dict[str, Any]) -> dict[str, Any]:
         metadata = world_data.get("metadata", {}) or {}
@@ -561,6 +582,24 @@ class M5WriteChapterWorkflow:
         text = f_file.read_text(encoding="utf-8")
         chapter_num = progress.get("total_written", 0) + 1
 
+        # ---- G8（拍板 5）：结局段「回收优先 + 禁新埋长线」 ----
+        if progress.get("ending_mode"):
+            open_items: list[str] = []
+            for line in text.splitlines():
+                if line.startswith("| F-"):
+                    parts = [p.strip() for p in line.split("|")]
+                    # 同源解析：状态列 = parts[5]（split 后第 6 个元素），
+                    # 与 evaluator_agent._metric_foreshadow_recycle（cells[4]）同表同列语义（共享知识 #12）
+                    if len(parts) >= 7 and parts[5] in ("未埋", "已埋"):
+                        open_items.append(
+                            f"  可回收 {parts[1]}：{parts[2]}（预期回收：{parts[4]}）"
+                        )
+            tasks = ["  ★ 结局阶段：本章强制回收 ≥1 条未回收伏笔"]
+            tasks.extend(open_items[:3])  # 最多列 3 条，避免 prompt 膨胀
+            tasks.append("  ★ 结局阶段：禁止新埋长线伏笔；短线（1-2 章内可自然回收）允许。")
+            return "本章伏笔任务：\n" + "\n".join(tasks)
+
+        # ---- 非结局段：既有逻辑原样（每 10 章强制埋/回收）----
         # 找本章应埋的伏笔（planted_at 包含当前章节号）
         tasks: list[str] = []
         for line in text.splitlines():
@@ -692,6 +731,18 @@ class M5WriteChapterWorkflow:
                 "不要生硬堆砌）】\n"
                 + learnings_text
             )
+
+        # ---- G8（补充边界 4）：结局模式指令注入（ending 为空降级「收尾」通用指令，不阻断）----
+        if ctx.get("ending_mode"):
+            ending = (ctx.get("ending") or "").strip()
+            if ending:
+                system_prompt = system_prompt + G8_ENDING_INSTRUCTION_TEMPLATE.format(
+                    subline_id=ctx.get("subline_id", ""),
+                    mainline="、".join(ctx.get("mainline", []) or []) or "—",
+                    ending=ending,
+                )
+            else:
+                system_prompt = system_prompt + G8_ENDING_FALLBACK_INSTRUCTION
 
         resp = self.llm.chat_creative(
             messages=[
@@ -1059,13 +1110,28 @@ class M5WriteChapterWorkflow:
     # 7. 更新进度
     # ============================================================
     def _update_progress(self, ctx: dict[str, Any]) -> None:
-        """更新 state.json 的 progress 字段"""
-        self.state_machine.progress = {
+        """更新 state.json 的 progress 字段。
+
+        G8（拍板 4/补充边界 1）关键兼容点：**合并写入**（progress.update），
+        保留 mainline_visited / ending_mode / mainline_* / ending_* 等既有键；
+        禁止全新 dict 覆盖（否则 G8 状态每次写章被抹掉）。
+        """
+        self.state_machine.load()
+        progress = dict(self.state_machine.progress or {})
+        progress.update({
             "current_subline": ctx["subline_id"],
             "current_chapter": ctx["chapter_num"],
             "total_written": ctx["chapter_num"],
             "last_written_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        }
+        })
+        # G8：mainline_visited 双保险初始化（未记录时以当前支线打底；已存在则保留）
+        visited = progress.get("mainline_visited")
+        if not isinstance(visited, list):
+            visited = []
+        if ctx["subline_id"] and ctx["subline_id"] not in visited:
+            visited.append(ctx["subline_id"])
+        progress["mainline_visited"] = visited
+        self.state_machine.progress = progress
         self.state_machine.save()
 
     # ============================================================

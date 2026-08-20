@@ -94,8 +94,10 @@ def test_g5_gate_low_total_fails(tmp_path: Path) -> None:
 def test_g5_gate_high_passes(tmp_path: Path) -> None:
     dims = {k: 80 for k in APPEAL_DIMENSIONS}  # 综合=80 ≥ 60 且每维 ≥ 40
     stub = _StubAppealScorer(_make_report(dims))
+    # G8（拍板 6）：G5 仅测六维双闸，G8 验收维度默认开 → 本测试关闭
     ev = EvaluatorAgent(
         _make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True, appeal_threshold=60,
+        mainline_gate=False, ending_gate=False,
     )
     report = ev._evaluate_once()
     adims = _appeal_dims(report)
@@ -108,7 +110,10 @@ def test_g5_gate_high_passes(tmp_path: Path) -> None:
 def test_g5_gate_high_no_rollback(tmp_path: Path) -> None:
     dims = {k: 80 for k in APPEAL_DIMENSIONS}
     stub = _StubAppealScorer(_make_report(dims))
-    ev = EvaluatorAgent(_make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True)
+    ev = EvaluatorAgent(
+        _make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True,
+        mainline_gate=False, ending_gate=False,
+    )
     called: list[list[int]] = []
 
     def rewriter(chapter_nums: list[int]) -> None:
@@ -143,12 +148,14 @@ def test_g5_gate_threshold_override(tmp_path: Path) -> None:
     # 默认 60：65 ≥ 60 → 通过
     ev_default = EvaluatorAgent(
         _make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True, appeal_threshold=60,
+        mainline_gate=False, ending_gate=False,
     )
     rep_def = ev_default._evaluate_once()
     assert rep_def.overall_pass is True
     # 更严 75：65 < 75 → 综合维失败 → 不通过
     ev_strict = EvaluatorAgent(
         _make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True, appeal_threshold=75,
+        mainline_gate=False, ending_gate=False,
     )
     rep_strict = ev_strict._evaluate_once()
     total_dim = rep_strict.dimension("appeal_total")
@@ -162,7 +169,10 @@ def test_g5_gate_threshold_override(tmp_path: Path) -> None:
 def test_g5_gate_disabled_no_appeal(tmp_path: Path) -> None:
     dims = {k: 0 for k in APPEAL_DIMENSIONS}  # 若门禁开必失败
     stub = _StubAppealScorer(_make_report(dims))
-    ev = EvaluatorAgent(_make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=False)
+    ev = EvaluatorAgent(
+        _make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=False,
+        mainline_gate=False, ending_gate=False,
+    )
     report = ev._evaluate_once()
     adims = _appeal_dims(report)
     assert adims == [], "关闭门禁不应注入六维 DimensionResult"

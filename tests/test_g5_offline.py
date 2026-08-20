@@ -69,6 +69,7 @@ def test_g5_offline_short_circuit_values(tmp_path: Path) -> None:
     ev = EvaluatorAgent(
         _make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True,
         appeal_threshold=60, appeal_window=1,
+        mainline_gate=False, ending_gate=False,  # G8（拍板 6）：G5 仅测六维
     )
     report = ev._evaluate_once()
     adims = [d for d in report.dimensions if d.name.startswith(APPEAL_GATE_PREFIX)]
@@ -112,7 +113,10 @@ def test_g5_offline_appeal_subblock(tmp_path: Path) -> None:
 # ============================================================
 def test_g5_offline_no_rollback_triggered(tmp_path: Path) -> None:
     stub = _StubAppealScorerOffline()
-    ev = EvaluatorAgent(_make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True)
+    ev = EvaluatorAgent(
+        _make_g5_project(tmp_path), appeal_scorer=stub, appeal_gate=True,
+        mainline_gate=False, ending_gate=False,  # G8（拍板 6）：G5 仅测六维
+    )
     called: list[list[int]] = []
 
     def rewriter(chapter_nums: list[int]) -> None:

@@ -372,6 +372,21 @@ M5_GENERATE_USER_TEMPLATE = """【小说信息】
 
 请撰写第 {chapter_num} 章正文。直接输出正文内容，不要标题。"""
 
+# ---- G8（补充边界 4）：结局阶段指令（ending 为空降级「收尾」通用指令，不阻断）----
+G8_ENDING_INSTRUCTION_TEMPLATE = (
+    "\n\n# 结局阶段指令\n"
+    "当前已进入结局阶段，请在本章内："
+    "① 推进并回收主线伏笔（{subline_id}）；"
+    "② 收束进行中支线（已走完：{mainline}）；"
+    "③ 向架构结局『{ending}』收敛。"
+)
+
+G8_ENDING_FALLBACK_INSTRUCTION = (
+    "\n\n# 结局阶段指令（收尾）\n"
+    "当前已进入结局阶段，请在本章内："
+    "① 推进并回收主线伏笔；② 收束进行中支线；③ 完成收尾，不留新开的故事线。"
+)
+
 M5_QUALITY_CHECK_SYSTEM_PROMPT = """你是严格的小说质量审稿编辑。按以下 9 项规则审查章节，输出 JSON。
 
 规则：
