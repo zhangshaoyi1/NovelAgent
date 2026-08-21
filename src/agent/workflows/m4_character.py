@@ -36,6 +36,7 @@ from agent.core.llm_client import LLMClient
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import Event, State, StateMachine
 from agent.core.confirmation import is_architecture_confirmed
+from agent.core.genre_pack import first_genre
 from agent.prompts import M4_SYSTEM_PROMPT, M4_USER_PROMPT_TEMPLATE
 from agent.utils import parse_llm_json
 
@@ -216,7 +217,7 @@ class M4CharacterWorkflow:
         return {
             "title": metadata.get("title", ""),
             "scope": metadata.get("scope", ""),
-            "genre": metadata.get("genre", ""),
+            "genre": first_genre(metadata),
             "tone": style.get("tone", "") if isinstance(style, dict) else str(style),
             "golden_finger_info": golden_finger_info,
         }

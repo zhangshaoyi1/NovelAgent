@@ -28,6 +28,7 @@ from rich.prompt import Prompt
 from agent.core.llm_client import LLMClient
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import Event, State, StateMachine
+from agent.core.genre_pack import first_genre
 from agent.prompts import M2_SYSTEM_PROMPT, M2_USER_PROMPT_TEMPLATE
 
 
@@ -187,7 +188,7 @@ class M2DiscussWorkflow:
         return {
             "title": metadata.get("title", ""),
             "scope": metadata.get("scope", ""),
-            "genre": metadata.get("genre", ""),
+            "genre": first_genre(metadata),
             "story_core": story_synopsis or metadata.get("title", ""),
             "style": str(metadata.get("style", {})),
         }

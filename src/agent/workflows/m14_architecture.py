@@ -30,6 +30,7 @@ from rich.prompt import Confirm, Prompt
 from agent.core.llm_client import LLMClient
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import Event, State, StateMachine
+from agent.core.genre_pack import first_genre
 from agent.prompts import (
     M14_ITERATE_SYSTEM_PROMPT,
     M14_ITERATE_USER_PROMPT_TEMPLATE,
@@ -338,7 +339,7 @@ class M14ArchitectureWorkflow:
         return {
             "title": metadata.get("title", ""),
             "scope": metadata.get("scope", ""),
-            "genre": metadata.get("genre", ""),
+            "genre": first_genre(metadata),
             "tone": style.get("tone", "") if isinstance(style, dict) else str(style),
             "synopsis": synopsis,
         }

@@ -27,7 +27,7 @@ from rich.panel import Panel
 from agent.core.conflict_service import ConflictArbiter, ConflictReport
 from agent.core.evidence_chain import EvidenceChain, EvidenceRef
 from agent.core.exceptions import PreValidationBlocked
-from agent.core.genre_pack import GenrePackRegistry
+from agent.core.genre_pack import GenrePackRegistry, first_genre
 from agent.core.quality_checker import QualityChecker, LLMBackedChecker, Severity
 from agent.core.injected_trope_store import InjectedTropeStore
 from agent.core.llm_client import LLMClient
@@ -510,7 +510,8 @@ class M5WriteChapterWorkflow:
         return {
             "title": metadata.get("title", ""),
             "scope": metadata.get("scope", ""),
-            "genre": metadata.get("genre", ""),
+            "genre": first_genre(metadata),
+            "genres": list(metadata.get("genres") or []),
             "tone": style.get("tone", ""),
             "pov": style.get("pov", ""),
             "rhythm": style.get("rhythm", ""),
@@ -886,20 +887,25 @@ class M5WriteChapterWorkflow:
             )
 
             # T-3：追加题材层质量规则（取自题材包 quality-rules.md），强化题材专属校验
-            genre = wi.get("genre", "")
-            if genre:
+            # 多题材：逐个题材包加载并拼接（world.md 元数据为 genres 列表，兼容旧 genre 单值）
+            genre_list = wi.get("genres") or (
+                [wi["genre"]] if wi.get("genre") else []
+            )
+            if genre_list:
                 if self._genre_registry is None:
                     self._genre_registry = GenrePackRegistry()
-                try:
-                    genre_rules_text = self._genre_registry.load(genre).quality_rules
-                except ValueError:
-                    genre_rules_text = ""
-                if genre_rules_text:
-                    check_prompt = (
-                        check_prompt
-                        + "\n\n【题材层质量规则（" + genre + "）】\n"
-                        + genre_rules_text
-                    )
+                rules_parts: list[str] = []
+                for g in genre_list:
+                    try:
+                        genre_rules_text = self._genre_registry.load(g).quality_rules
+                    except ValueError:
+                        genre_rules_text = ""
+                    if genre_rules_text:
+                        rules_parts.append(
+                            f"【题材层质量规则（{g}）】\n{genre_rules_text}"
+                        )
+                if rules_parts:
+                    check_prompt = check_prompt + "\n\n" + "\n\n".join(rules_parts)
             resp = self.llm.chat_utility(
                 messages=[
                     {"role": "system", "content": M5_QUALITY_CHECK_SYSTEM_PROMPT},
@@ -1122,16 +1128,32 @@ class M5WriteChapterWorkflow:
         if self._genre_registry is None:
             self._genre_registry = GenrePackRegistry()
 
-        genre = self.sm.load_world()["metadata"].get("genre", "") or ctx["world_info"].get(
-            "genre", ""
-        )
+        # 多题材：world_info.genres 为列表；兼容旧 world_info.genre 单值与元数据兜底
+        wi = ctx["world_info"]
+        genres: list[str] = list(wi.get("genres") or [])
+        if not genres and wi.get("genre"):
+            genres = [wi["genre"]]
+        if not genres:
+            md = self.sm.load_world()["metadata"]
+            genres = list(md.get("genres") or [])
+            if not genres and md.get("genre"):
+                genres = [md["genre"]]
+
         parts: list[str] = []
         for name in trope_names:
-            try:
-                trope = self._genre_registry.load_trope(genre, name)
-                parts.append(f"### {trope.name}\n{trope.text}")
-            except ValueError as e:
-                self.console.print(f"[yellow]⚠ 注入套路失败（{name}）：{e}[/yellow]")
+            found = False
+            for g in genres:
+                try:
+                    trope = self._genre_registry.load_trope(g, name)
+                    parts.append(f"### {trope.name}\n{trope.text}")
+                    found = True
+                    break
+                except ValueError:
+                    continue
+            if not found:
+                self.console.print(
+                    f"[yellow]⚠ 注入套路失败（{name}）：未在题材 {genres or ['(未声明)']} 中找到[/yellow]"
+                )
         return "\n\n".join(parts)
 
     # ============================================================
@@ -1148,7 +1170,7 @@ class M5WriteChapterWorkflow:
             f"成长预期：{ctx['route_main_growth']}\n"
             f"涉及角色：{wi.get('title', '')}\n"
             f"伏笔任务：{ctx['foreshadow_task']}\n"
-            f"题材：{wi.get('genre', '')}"
+            f"题材：{' / '.join(wi.get('genres') or ([wi['genre']] if wi.get('genre') else ['未声明']))}"
         )
 
     def _pre_validation(self, ctx: dict[str, Any]) -> PreValidationResult:

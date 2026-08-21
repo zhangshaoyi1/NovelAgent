@@ -55,16 +55,36 @@ def inject_genre(
         )
         raise typer.Exit(code=1)
 
-    # 解析题材（默认取 world.md 的 genre 字段）
+    # 解析题材：显式 --genre 优先；否则遍历 world.md 的 genres 列表（兼容旧 genre 单值）
+    # 找到第一个包含该套路的题材包即采用——多题材项目不再固定回退 xiuxian
     sm_setting = SettingManager(project_path)
-    genre_name = genre or sm_setting.load_world()["metadata"].get("genre", "") or "xiuxian"
+    md = sm_setting.load_world()["metadata"]
+    candidates: list[str] = []
+    if genre:
+        candidates = [genre]
+    else:
+        candidates = list(md.get("genres") or [])
+        if not candidates and md.get("genre"):
+            candidates = [md["genre"]]
+        if not candidates:
+            candidates = ["xiuxian"]
 
     registry = GenrePackRegistry()
-    try:
-        trope = registry.load_trope(genre_name, name)
-    except ValueError as e:
-        console.print(f"[bold red]✗[/bold red] {e}")
-        raise typer.Exit(code=1) from e
+    trope = None
+    genre_name = ""
+    for g in candidates:
+        try:
+            trope = registry.load_trope(g, name)
+            genre_name = g
+            break
+        except ValueError:
+            continue
+    if trope is None:
+        console.print(
+            f"[bold red]✗[/bold red] 套路『{name}』未在题材 {candidates} 中找到，"
+            "可检查套路名或用 --genre 指定题材包"
+        )
+        raise typer.Exit(code=1)
 
     # 累积注入（去重）
     current = store.add(trope.name)

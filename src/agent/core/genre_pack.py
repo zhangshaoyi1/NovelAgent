@@ -211,6 +211,18 @@ def _normalize_heading(heading: str) -> str:
     return s.strip()
 
 
+def first_genre(metadata: dict) -> str:
+    """从 world.md 元数据取主题材 id（多题材取列表首个），兼容旧单数 ``genre`` 字段。
+
+    多题材重构后 world.md 元数据只写 ``genres``（列表）；旧项目可能仍为 ``genre``
+    单值。所有「读单个题材名」的上下文构建应统一走本函数，避免取到空值。
+    """
+    genres = metadata.get("genres") or []
+    if genres:
+        return str(genres[0])
+    return str(metadata.get("genre", ""))
+
+
 def extract_trope_section(tropes_text: str, trope_name: str) -> tuple[str, str]:
     """从 tropes.md 文本中提取指定套路的内容段
 
