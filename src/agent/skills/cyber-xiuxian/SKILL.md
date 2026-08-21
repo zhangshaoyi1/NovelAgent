@@ -1,5 +1,7 @@
 ---
 name: cyber-xiuxian
+label: 赛博修仙
+
 version: 0.1.0
 type: genre
 description: 赛博修仙（现代修仙）（赛博修仙题材包 - 现代/赛博设定的修真体系（宗门KPI/渡劫保险/灵石贷款））

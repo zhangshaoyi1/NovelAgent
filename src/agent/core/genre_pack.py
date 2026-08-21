@@ -51,6 +51,7 @@ class GenreManifest:
     name: str
     version: str = "0.1.0"
     description: str = ""
+    label: str = ""  # 中文显示名（如 "修仙"），缺省回退 name
     hooks: list[str] = field(default_factory=list)
     dependencies: list[str] = field(default_factory=list)
     independent: bool = False
@@ -59,6 +60,11 @@ class GenreManifest:
     @property
     def genre_id(self) -> str:
         return self.name
+
+    @property
+    def display_name(self) -> str:
+        """中文显示名，缺省回退到 name"""
+        return self.label or self.name
 
 
 @dataclass
@@ -162,6 +168,7 @@ def load_genre_manifest(skill_dir: Path) -> GenreManifest:
         name=name,
         version=str(meta.get("version", "0.1.0")),
         description=str(meta.get("description", "")),
+        label=str(meta.get("label", "")),
         hooks=list(meta.get("hooks") or []),
         dependencies=list(meta.get("dependencies") or []),
         independent=bool(meta.get("independent", False)),
@@ -286,8 +293,37 @@ class GenrePackRegistry:
                 continue
         return names
 
+    def list_genres_light(self) -> list[dict[str, str]]:
+        """渐进式披露：仅读取每个题材包 SKILL.md 的 frontmatter（name/label/description），
+
+        不加载任何完整内容（world-template/tropes/terms 等），成本极低。
+        返回 [{id, label, description}]，供 UI 多选与列表展示（中文 label）。
+
+        注意：这是 Web UI 与新建项目表单应优先使用的列举接口。
+        不要用 list_available()，它会一次性全量加载所有题材包，成本高。
+        """
+        result: list[dict[str, str]] = []
+        for name in self.list_genres():
+            try:
+                manifest = load_genre_manifest(self.skills_dir / name)
+            except ValueError:
+                continue
+            result.append(
+                {
+                    "id": manifest.name,
+                    "label": manifest.display_name,
+                    "description": manifest.description,
+                }
+            )
+        return result
+
     def list_available(self) -> list[dict[str, str]]:
-        """列出所有可用题材包的详细信息"""
+        """[已弃用] 列出所有可用题材包的详细信息。
+
+        ⚠️ 此接口会对每个题材包调用 load()，**一次性全量加载所有题材内容**，
+        成本高（内存 + 上下文膨胀）。请改用 list_genres_light() 做列举，
+        仅对选中题材调用 load()。
+        """
         result: list[dict[str, str]] = []
         for name in self.list_genres():
             try:

@@ -27,3 +27,9 @@ env/
 
 # G11：skill 导出产物（不入库）
 dist/skills/
+
+# 小说项目运行时数据（不入库）
+/projects/
+/.workbuddy/
+# 测试密钥（.env_ai 含测试用 API Key，同样不入库）
+.env_ai

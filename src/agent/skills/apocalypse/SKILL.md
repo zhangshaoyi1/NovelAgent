@@ -1,5 +1,7 @@
 ---
 name: apocalypse
+label: 末世
+
 version: 0.1.0
 type: genre
 description: 末世生存/基建（末世生存题材包 - 末世降临/囤货/基地基建/异能丧尸体系）

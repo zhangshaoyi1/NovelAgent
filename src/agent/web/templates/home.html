@@ -58,11 +58,13 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  // 填充题材下拉
+  // 填充题材下拉（中文 label，值仍为题材 id）
   fetch('/api/genres').then(r => r.json()).then(g => {
     const sel = document.getElementById('genre-select');
-    (g.length ? g : ['xiuxian']).forEach(x => {
-      const o = document.createElement('option'); o.value = x; o.textContent = x; sel.appendChild(o);
+    const list = (g && g.length) ? g : [{id: 'xiuxian', label: '修仙'}];
+    list.forEach(x => {
+      const o = document.createElement('option');
+      o.value = x.id; o.textContent = x.label || x.id; sel.appendChild(o);
     });
   });
   document.getElementById('create-form').addEventListener('submit', e => {

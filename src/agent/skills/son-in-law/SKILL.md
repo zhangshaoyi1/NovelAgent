@@ -1,5 +1,7 @@
 ---
 name: son-in-law
+label: 赘婿逆袭
+
 version: 0.1.0
 type: genre
 description: 赘婿逆袭/战神（赘婿逆袭题材包 - 隐忍赘婿/实力显露/豪门打脸/战神归来）

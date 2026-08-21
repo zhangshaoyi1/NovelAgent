@@ -1,5 +1,7 @@
 ---
 name: xiuxian
+label: 修仙
+
 version: 0.1.0
 type: genre
 description: 修仙题材包 - 境界体系/爽点套路/术语表/战斗模板/题材层质量规则

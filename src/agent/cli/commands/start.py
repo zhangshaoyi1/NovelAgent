@@ -17,7 +17,10 @@ def start(
         "long", "--scope", help="体量: short(短篇) | medium(中篇) | long(长篇)"
     ),
     genre: str = typer.Option(
-        "xiuxian", "--genre", help="题材（需与题材包名一致，如 xiuxian）"
+        "xiuxian", "--genre", help="题材（单值，向后兼容；多题材请用 --genres）"
+    ),
+    genres: str = typer.Option(
+        "", "--genres", help="题材（可多选，逗号分隔，如 xiuxian,wuxia；需与题材包名一致）"
     ),
     story_core: str = typer.Option(
         "", "--story-core", help="故事核心（一句话）"
@@ -28,12 +31,14 @@ def start(
     交互式收集标题/体量/题材/风格/故事核心，
     调用 LLM 生成世界观，渲染并保存 world.md。
     提供 --title 等选项可走非交互模式（Web UI / 脚本调用）。
+    支持多题材混搭：--genres xiuxian,wuxia（题材设定将自动合并，冲突可经 /merge-genres 裁决）。
 
     Args:
         project_dir: 小说项目工作区目录
         title: 标题（非空触发非交互）
         scope: 体量
-        genre: 题材
+        genre: 题材（单值，向后兼容）
+        genres: 题材（多值，逗号分隔）
         story_core: 故事核心
     """
     from pathlib import Path
@@ -44,11 +49,19 @@ def start(
     enforce_gate(str(project_path), "start")
     project_path.mkdir(parents=True, exist_ok=True)
 
+    # 解析题材：--genres 优先，否则回退 --genre，最终默认 [xiuxian]
+    if genres.strip():
+        genre_list = [g.strip() for g in genres.replace("，", ",").split(",") if g.strip()]
+    elif genre.strip():
+        genre_list = [genre.strip()]
+    else:
+        genre_list = ["xiuxian"]
+
     workflow = M1ConfigWorkflow(project_dir=project_path)
     try:
         if title:
             user_input = M1Input(
-                title=title, scope=scope, genre=genre, story_core=story_core
+                title=title, scope=scope, genres=genre_list, story_core=story_core
             )
             result = workflow.run(user_input=user_input)
         else:

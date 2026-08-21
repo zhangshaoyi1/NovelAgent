@@ -157,11 +157,14 @@ def get_command_meta() -> list[dict[str, Any]]:
     ]
 
 
-def list_genres() -> list[str]:
-    """列出已注册题材包名称（开新书表单用）。"""
+def list_genres() -> list[dict[str, Any]]:
+    """列出已注册题材包（渐进式：仅 id/中文 label/简介，供 UI 多选与表单）。
+
+    返回 [{id, label, description}]，不加载全量内容（成本可控）。
+    """
     from agent.core.genre_pack import GenrePackRegistry
 
     try:
-        return GenrePackRegistry().list_genres() or []
+        return GenrePackRegistry().list_genres_light() or []
     except Exception:
         return []

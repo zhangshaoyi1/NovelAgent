@@ -1,5 +1,7 @@
 ---
 name: female-suspense
+label: 女频悬疑
+
 version: 0.1.0
 type: genre
 description: 女性悬疑/无CP（女性悬疑题材包 - 女主探案/心理惊悚/反转复仇/清醒反杀（无CP））

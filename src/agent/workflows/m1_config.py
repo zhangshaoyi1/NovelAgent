@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -27,6 +28,7 @@ from rich.prompt import Confirm, Prompt
 from agent import __version__
 from agent.core.llm_client import LLMClient
 from agent.core.genre_pack import GenrePackRegistry
+from agent.core.genre_merger import GenreMerger, save_conflicts
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import Event, State, StateMachine
 from agent.prompts import M1_SYSTEM_PROMPT, M1_USER_PROMPT_TEMPLATE
@@ -56,7 +58,7 @@ class M1Input:
 
     title: str = ""
     scope: str = "long"  # short | medium | long
-    genre: str = "xiuxian"
+    genres: list[str] = field(default_factory=lambda: ["xiuxian"])  # 题材（可多选混搭）
     style: dict[str, Any] = field(default_factory=dict)
     story_core: str = ""
 
@@ -132,10 +134,15 @@ class M1ConfigWorkflow:
             f"({self.SCOPE_LABELS.get(user_input.scope, user_input.scope)})"
         )
 
-        # 2. 加载题材包模板（T-2：经 GenrePackRegistry 动态获取，不再硬编码）
+        # 2. 加载并合并题材包模板（支持多题材混搭 + 冲突裁决）
         self._genre_registry = GenrePackRegistry()
-        self._current_genre = user_input.genre
-        realm_system = self._load_genre_template(user_input.genre)
+        self._current_genres = list(user_input.genres)
+        realm_system, merge_conflicts = self._load_merged_genre_template(self._current_genres)
+        if merge_conflicts:
+            self.console.print(
+                f"[yellow]⚠ 检测到 {len(merge_conflicts)} 处题材设定冲突，"
+                "已以主题材优先合并并记录，可用 /merge-genres 复核裁决。[/yellow]"
+            )
 
         # 3. 调用 LLM 生成世界观
         self.console.print("\n[cyan]正在生成世界观...[/cyan]")
@@ -148,12 +155,13 @@ class M1ConfigWorkflow:
         # T-3：题材包 hooks 真实执行（注册 world 模板 / 题材层质量规则等）。
         # 在 save_world 之后分发：此时 world.md 已存在，load_genre_template hook
         # 会自动跳过写入，避免与 M1 自身渲染冲突（否则触发冻结字段校验）。
-        try:
-            genre_pack = self._genre_registry.load(self._current_genre)
-        except ValueError:
-            genre_pack = None
-        if genre_pack is not None:
-            dispatch_genre_hooks(self.project_dir, self._current_genre, genre_pack)
+        # 所有选中题材均分发，使其质量规则等都能注册。
+        for g in self._current_genres:
+            try:
+                genre_pack = self._genre_registry.load(g)
+            except ValueError:
+                continue
+            dispatch_genre_hooks(self.project_dir, g, genre_pack)
 
         # 5. 显示给用户
         self._present(world_file, metadata, content)
@@ -184,11 +192,19 @@ class M1ConfigWorkflow:
         # 题材选项由 GenrePackRegistry 动态生成（T-2：去硬编码 xiuxian）
         genre_registry = GenrePackRegistry()
         available_genres = genre_registry.list_genres() or ["xiuxian"]
-        genre = Prompt.ask(
-            "[bold]题材[/bold]",
-            choices=available_genres,
+        genre_input = Prompt.ask(
+            "[bold]题材[/bold]（可多选，逗号分隔；如 修仙,武侠）",
             default=available_genres[0],
         )
+        genres = [
+            g.strip() for g in genre_input.replace("，", ",").split(",") if g.strip()
+        ]
+        unknown = [g for g in genres if g not in available_genres]
+        if unknown:
+            self.console.print(f"[yellow]提示：未知题材 {unknown}，已忽略。[/yellow]")
+            genres = [g for g in genres if g in available_genres]
+        if not genres:
+            genres = [available_genres[0]]
 
         story_core = Prompt.ask(
             "[bold]故事核心（一句话）[/bold]\n  例如：废柴少年偶得神秘传承，踏上逆天修仙路",
@@ -202,7 +218,7 @@ class M1ConfigWorkflow:
         return M1Input(
             title=title,
             scope=scope,
-            genre=genre,
+            genres=genres,
             style=style,
             story_core=story_core,
         )
@@ -260,20 +276,33 @@ class M1ConfigWorkflow:
                 user_input.style.setdefault(k, v)
         return user_input
 
-    # ------ 题材包模板 ------
-    def _load_genre_template(self, genre: str) -> str:
-        """加载指定题材包的 world-template.md（境界体系等冻结字段）
+    # ------ 题材包模板（多题材合并）------
+    def _load_merged_genre_template(self, genres: list[str]) -> tuple[str, list]:
+        """加载并合并多个题材包的 world-template（渐进式：仅 load 选中包）。
 
-        T-2：经 GenrePackRegistry 动态获取，不再硬编码 xiuxian 路径。
-        新增题材只需在 skills/<genre>/ 放置 SKILL.md + world-template.md，
-        无需修改本文件（单一扩展点）。
+        Returns:
+            (merged_world_template, conflicts) —— conflicts 为 GenreMerger 的
+            MergeConflict 列表（已写入 .state/merge_conflicts.json 供复核裁决）。
         """
         registry = getattr(self, "_genre_registry", None) or GenrePackRegistry()
+        packs = []
+        for g in genres:
+            try:
+                packs.append(registry.load(g))
+            except ValueError:
+                self.console.print(f"[yellow]题材包不存在，已跳过：{g}[/yellow]")
+                continue
+        if not packs:
+            return "", []
+        if len(packs) == 1:
+            return packs[0].world_template, []
+        merger = GenreMerger()
+        result = merger.merge(packs)
         try:
-            pack = registry.load(genre)
-        except ValueError:
-            return ""
-        return pack.world_template
+            save_conflicts(self.project_dir, result)
+        except Exception:
+            pass
+        return result.world_template, result.conflicts
 
     # ------ LLM 生成 ------
     def _generate_world(self, user_input: M1Input) -> dict[str, Any]:
@@ -330,10 +359,19 @@ class M1ConfigWorkflow:
         from datetime import datetime
 
         style = user_input.style
+        # 中文题材标签（用于元数据与展示）
+        try:
+            _reg = GenrePackRegistry()
+            genre_label = " / ".join(
+                _reg.load(g).manifest.display_name for g in user_input.genres
+            )
+        except Exception:
+            genre_label = " / ".join(user_input.genres)
         metadata = {
             "title": user_input.title,
             "scope": user_input.scope,
-            "genre": user_input.genre,
+            "genres": user_input.genres,
+            "genre_label": genre_label,
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "format_version": "0.1.0",
             "frozen_fields": ["realm_system", "golden_finger_limits"],
@@ -345,7 +383,8 @@ class M1ConfigWorkflow:
         content = template.render(
             title=user_input.title,
             scope=user_input.scope,
-            genre=user_input.genre,
+            genres=json.dumps(user_input.genres, ensure_ascii=False),
+            genre_label=genre_label,
             created_at=metadata["created_at"],
             style=style,
             synopsis=world_data.get("synopsis", ""),

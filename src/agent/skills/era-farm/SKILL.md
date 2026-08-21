@@ -1,5 +1,7 @@
 ---
 name: era-farm
+label: 年代种田
+
 version: 0.1.0
 type: genre
 description: 年代重生/种田（年代种田题材包 - 重生年代/种田致富/养娃/家庭温情/非遗美食体系）

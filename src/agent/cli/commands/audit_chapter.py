@@ -40,10 +40,12 @@ def audit_chapter(
         raise typer.Exit(code=1)
 
     post = frontmatter.load(chapter_file)
-    # 读取题材
+    # 读取题材（兼容多题材：优先 genre_label，否则取首个题材 id）
     sm = SettingManager(project_path)
     world_data = sm.load_world()
-    genre = str(world_data["metadata"].get("genre", "xiuxian"))
+    _meta = world_data.get("metadata", {}) or {}
+    _genres = _meta.get("genres") or []
+    genre = str(_meta.get("genre_label") or (_genres[0] if _genres else "xiuxian"))
 
     auditor = ContentAuditor(
         project_path, llm=LLMClient(), console=console, violence_policy=policy

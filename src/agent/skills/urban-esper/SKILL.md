@@ -1,5 +1,7 @@
 ---
 name: urban-esper
+label: 都市异能
+
 version: 0.1.0
 type: genre
 description: 都市脑洞/异能（都市异能题材包 - 异能觉醒/反套路/鉴宝读心/都市爽文体系）

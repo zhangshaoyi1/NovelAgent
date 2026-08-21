@@ -1,5 +1,7 @@
 ---
 name: infinite-flow
+label: 无限流
+
 version: 0.1.0
 type: genre
 description: 规则怪谈/无限流（无限流/规则怪谈题材包 - 规则解谜/时空循环/生存博弈/智斗体系）

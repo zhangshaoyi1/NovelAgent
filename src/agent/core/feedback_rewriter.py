@@ -317,9 +317,10 @@ class FeedbackRewriter:
         next_head = self._neighbor_anchor(chapter_num + 1, head=True)
 
         learnings = self._load_learnings()
+        genre_val = meta.get("genre_label") or (meta.get("genres") or ["通用"])[0]
 
         return {
-            "genre": meta.get("genre", "通用"),
+            "genre": genre_val,
             "tone": style.get("tone", "通用"),
             "rhythm": style.get("rhythm", "通用"),
             "chapter_length": style.get("chapter_length", 3000),

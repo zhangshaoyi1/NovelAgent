@@ -1,5 +1,7 @@
 ---
 name: rebirth
+label: 重生
+
 version: 0.1.0
 type: genre
 description: 重生复仇（重生复仇题材包 - 重生/先知/弥补遗憾/逆袭体系）

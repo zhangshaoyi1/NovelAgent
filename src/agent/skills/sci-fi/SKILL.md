@@ -1,5 +1,7 @@
 ---
 name: sci-fi
+label: 科幻
+
 version: 0.1.0
 type: genre
 description: 硬核科幻（硬核科幻题材包 - 硬核设定/星际文明/赛博朋克/高智叙事体系）

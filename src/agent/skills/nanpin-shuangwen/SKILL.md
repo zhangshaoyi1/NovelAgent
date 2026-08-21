@@ -1,5 +1,7 @@
 ---
 name: nanpin-shuangwen
+label: 男频爽文
+
 version: 0.1.0
 type: genre
 description: 男频爽文（通用爽点引擎题材包 - 扮猪吃虎/废柴逆袭/系统流/神豪/重生/装逼打脸，强调爽点密度、情绪曲线、期待感管理与无虐主节奏）

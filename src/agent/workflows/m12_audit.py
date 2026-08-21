@@ -538,10 +538,11 @@ class ContextLoader:
         metadata = world_data.get("metadata", {}) or {}
         content = world_data.get("content", "")
         style = metadata.get("style", {}) or {}
+        genre_label = metadata.get("genre_label") or " / ".join(metadata.get("genres") or [])
 
         parts = [
             f"书名：{metadata.get('title', '')}",
-            f"题材：{metadata.get('genre', '')}",
+            f"题材：{genre_label}",
             f"体量：{metadata.get('scope', '')}",
         ]
         if style:

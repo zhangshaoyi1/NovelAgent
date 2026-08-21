@@ -29,7 +29,7 @@ from typing import Any, Callable
 from rich.console import Console
 
 from agent.core.llm_client import LLMClient
-from agent.core.state_machine import State, StateMachine
+from agent.core.state_machine import Event, State, StateMachine
 from agent.core.tools.builtins import set_project_context
 from agent.core.writer_agent import WriterAgent
 from agent.prompts import (
@@ -257,6 +257,9 @@ class AgenticWriteWorkflow:
             # G12：爽点/情绪开关透传（_load_context 读取 payoff_script.json）
             payoff_enabled=self.payoff_enabled,
         )
+        # 修复（P0，2026-08-21）：M5 实例的 state_machine 需先从磁盘 load()，
+        # 否则 _load_context 里 progress 恒空 → chapter_num 恒为 1、支线恒取第一条。
+        m5.state_machine.load()
         ctx = m5._load_context()
 
         task = self._build_task(ctx)
@@ -304,6 +307,11 @@ class AgenticWriteWorkflow:
             evidence_chain,
         )
         m5._update_progress(ctx)
+
+        # 修复（P0，2026-08-21）：与 M5 run() 对齐，首次写章后 CHARACTER_DESIGN → WRITING，
+        # 否则磁盘状态一直停在 CHARACTER_DESIGN（门禁/看板/状态展示均受影响）。
+        if m5.state_machine.state == State.CHARACTER_DESIGN:
+            m5.state_machine.transition(Event.WRITE)
 
         # 尽力而为：对新章做 RAG 索引（供后续章节召回；失败不阻断）
         self._maybe_index(chapter_file)

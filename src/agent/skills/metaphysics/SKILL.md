@@ -1,5 +1,7 @@
 ---
 name: metaphysics
+label: 玄学鉴宝
+
 version: 0.1.0
 type: genre
 description: 玄学鉴宝/神医风水（玄学鉴宝题材包 - 玄学/鉴宝/神医/风水/相术体系）
