@@ -58,6 +58,56 @@ TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
 
 
 # ============================================================
+# P1 修复（2026-08-21）：LLM 调用 + JSON 解析，失败自动重试一次
+# 截断多为瞬时故障，重试常可恢复；供 M6AdjustRouteWorkflow 与
+# M6AdjustRelationWorkflow 共用（模块级函数，避免重复实现）。
+# ============================================================
+def _chat_parse_with_retry(
+    llm,
+    console,
+    system: str,
+    user: str,
+    *,
+    temperature: float,
+    max_tokens: int,
+    label: str,
+    utility: bool = False,
+) -> dict[str, Any]:
+    """调用 LLM 并解析 JSON；解析失败自动重试一次。
+
+    Returns:
+        解析后的 dict
+
+    Raises:
+        ValueError: 重试后仍无法解析为 JSON 对象
+    """
+    last_text = ""
+    for attempt in range(2):
+        chat = llm.chat_utility if utility else llm.chat_creative
+        raw = chat(
+            messages=[
+                {"role": "system", "content": system},
+                {"role": "user", "content": user},
+            ],
+            temperature=temperature,
+            max_tokens=max_tokens,
+            enable_thinking=False,
+        )
+        last_text = raw.text
+        try:
+            data = parse_llm_json(last_text)
+            if not isinstance(data, dict):
+                raise ValueError("LLM 返回不是 JSON 对象")
+            return data
+        except ValueError:
+            if attempt == 0:
+                console.print(
+                    f"[yellow]⚠ {label} JSON 解析失败，自动重试一次...[/yellow]"
+                )
+    raise ValueError(f"{label}：无法解析为 JSON（已自动重试一次仍失败）")
+
+
+# ============================================================
 # 结果数据类
 # ============================================================
 @dataclass
@@ -272,18 +322,10 @@ class M6AdjustRouteWorkflow:
             current_node_idx=current_node_idx,
             user_intent=user_intent,
         )
-        raw = self.llm.chat_creative(
-            messages=[
-                {"role": "system", "content": M6_ADJUST_ROUTE_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.7,
-            max_tokens=6000,
-            enable_thinking=False,
+        data = _chat_parse_with_retry(
+            self.llm, self.console, M6_ADJUST_ROUTE_SYSTEM_PROMPT, user_prompt,
+            temperature=0.7, max_tokens=6000, label="M6 路线调整",
         )
-        data = parse_llm_json(raw.text)
-        if not isinstance(data, dict):
-            raise RuntimeError(f"M6 路线调整：LLM 返回不是 JSON 对象：{type(data)}")
         if "nodes" not in data:
             raise RuntimeError("M6 路线调整：LLM 返回缺少 nodes 字段")
         return data
@@ -359,17 +401,12 @@ class M6AdjustRouteWorkflow:
             relations_snippet=relations_snippet or "（关系调整时填充）",
             written_chapters=written_chapters,
         )
-        raw = self.llm.chat_utility(
-            messages=[
-                {"role": "system", "content": M6_IMPACT_REPORT_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.2,
-            max_tokens=3000,
-            enable_thinking=False,
-        )
-        data = parse_llm_json(raw.text)
-        if not isinstance(data, dict):
+        try:
+            data = _chat_parse_with_retry(
+                self.llm, self.console, M6_IMPACT_REPORT_SYSTEM_PROMPT, user_prompt,
+                temperature=0.2, max_tokens=3000, label="M6 影响报告", utility=True,
+            )
+        except ValueError:
             return M6ImpactReport(
                 recommendations=[
                     {
@@ -377,7 +414,7 @@ class M6AdjustRouteWorkflow:
                         "detail": "自动报告生成失败，请人工核对一致性",
                     }
                 ],
-                raw_report={"_raw": raw.text},
+                raw_report={"_raw": "(解析失败，已自动重试)"},
             )
         return M6ImpactReport(
             field_conflicts=data.get("field_conflicts", []) or [],
@@ -687,18 +724,10 @@ class M6AdjustRelationWorkflow:
             current_chapter=current_chapter,
             user_intent=user_intent,
         )
-        raw = self.llm.chat_creative(
-            messages=[
-                {"role": "system", "content": M6_ADJUST_RELATION_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.7,
-            max_tokens=5000,
-            enable_thinking=False,
+        data = _chat_parse_with_retry(
+            self.llm, self.console, M6_ADJUST_RELATION_SYSTEM_PROMPT, user_prompt,
+            temperature=0.7, max_tokens=5000, label="M6 关系调整",
         )
-        data = parse_llm_json(raw.text)
-        if not isinstance(data, dict):
-            raise RuntimeError(f"M6 关系调整：LLM 返回不是 JSON 对象：{type(data)}")
         return data
 
     # ------ 内部：渲染 graph.md ------
@@ -799,17 +828,12 @@ class M6AdjustRelationWorkflow:
             relations_snippet=relations_snippet,
             written_chapters=written_chapters,
         )
-        raw = self.llm.chat_utility(
-            messages=[
-                {"role": "system", "content": M6_IMPACT_REPORT_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.2,
-            max_tokens=3000,
-            enable_thinking=False,
-        )
-        data = parse_llm_json(raw.text)
-        if not isinstance(data, dict):
+        try:
+            data = _chat_parse_with_retry(
+                self.llm, self.console, M6_IMPACT_REPORT_SYSTEM_PROMPT, user_prompt,
+                temperature=0.2, max_tokens=3000, label="M6 影响报告", utility=True,
+            )
+        except ValueError:
             return M6ImpactReport(
                 recommendations=[
                     {
@@ -817,7 +841,7 @@ class M6AdjustRelationWorkflow:
                         "detail": "自动报告生成失败，请人工核对一致性",
                     }
                 ],
-                raw_report={"_raw": raw.text},
+                raw_report={"_raw": "(解析失败，已自动重试)"},
             )
         return M6ImpactReport(
             field_conflicts=data.get("field_conflicts", []) or [],

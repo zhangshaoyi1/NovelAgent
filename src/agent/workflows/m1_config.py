@@ -58,9 +58,15 @@ class M1Input:
 
     title: str = ""
     scope: str = "long"  # short | medium | long
-    genres: list[str] = field(default_factory=lambda: ["xiuxian"])  # 题材（可多选混搭）
+    genres: list[str] | None = None  # 题材（可多选混搭）；None 时在 __post_init__ 归一化
+    genre: str | None = None  # 向后兼容：显式传 genre 且未给 genres 时，折叠为单元素列表
     style: dict[str, Any] = field(default_factory=dict)
     story_core: str = ""
+
+    def __post_init__(self) -> None:
+        # 归一化：genres 显式给定则用其值（忽略 genre）；否则由 genre 折叠；都缺省回退 [xiuxian]
+        if self.genres is None:
+            self.genres = [self.genre] if self.genre else ["xiuxian"]
 
 
 @dataclass

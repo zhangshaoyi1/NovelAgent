@@ -5,7 +5,7 @@ from agent.cli._shared import *
 
 from agent.core.state_machine import State
 
-@command(allowed_states=(State.ARCH_CONFIRMED,))
+@command(allowed_states=(State.ARCH_CONFIRMED, State.OUTLINING))
 def outline(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"
@@ -13,6 +13,7 @@ def outline(
 ) -> None:
     """M3 大纲生成 - 故事简介 + 顶层支线任务列表
 
+    支持在 OUTLINING 状态重跑（此前生成降级/截断时重新生成大纲）。
     基于已确认架构生成 outline.md，并为每条支线创建 subline.md。
     架构未确认时拒绝执行（F14 门禁）。
 

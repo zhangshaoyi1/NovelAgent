@@ -215,27 +215,36 @@ class M3OutlineWorkflow:
                     )
             except Exception:  # noqa: BLE001 - 模板读取失败降级，不阻断大纲生成
                 pass
-        resp = self.llm.chat_creative(
-            messages=[
-                {"role": "system", "content": M3_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.75,
-            max_tokens=3000,
-            enable_thinking=False,
-        )
-        try:
-            data = parse_llm_json(resp.text)
-            # 兜底：sublines 为空时放一条空结构
-            if not data.get("sublines"):
-                data["sublines"] = [self._empty_subline("未命名支线")]
-            return data
-        except ValueError:
-            # JSON 解析失败：降级为纯文本简介 + 空支线结构
-            return {
-                "synopsis": resp.text[:300],
-                "sublines": [self._empty_subline("架构拆解失败，请手动补充")],
-            }
+        # P1 修复（2026-08-21）：JSON 解析失败自动重试一次（截断多为瞬时，重试常可恢复），
+        # 重试仍失败才降级占位（不再让用户被迫手动重建大纲）。
+        last_text = ""
+        for attempt in range(2):
+            resp = self.llm.chat_creative(
+                messages=[
+                    {"role": "system", "content": M3_SYSTEM_PROMPT},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.75,
+                max_tokens=3000,
+                enable_thinking=False,
+            )
+            last_text = resp.text
+            try:
+                data = parse_llm_json(resp.text)
+                # 兜底：sublines 为空时放一条空结构
+                if not data.get("sublines"):
+                    data["sublines"] = [self._empty_subline("未命名支线")]
+                return data
+            except ValueError:
+                if attempt == 0:
+                    self.console.print(
+                        "[yellow]⚠ 大纲 JSON 解析失败，自动重试一次...[/yellow]"
+                    )
+        # JSON 解析失败（重试后）：降级为纯文本简介 + 空支线结构
+        return {
+            "synopsis": last_text[:300],
+            "sublines": [self._empty_subline("架构拆解失败，请手动补充")],
+        }
 
     @staticmethod
     def _empty_subline(name: str) -> dict[str, Any]:

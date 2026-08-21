@@ -74,8 +74,8 @@ def test_m1_wuxia_injects_wuxia_template(
     assert "炼气" not in content
     assert "筑基" not in content
     assert "金丹" not in content
-    # 记录当前题材（T-2：run 中建立 registry 并记 _current_genre）
-    assert wf._current_genre == "wuxia"
+    # 记录当前题材（T-2：run 中建立 registry 并记 _current_genres，多题材为列表）
+    assert wf._current_genres == ["wuxia"]
 
 
 def test_m1_xiuxian_still_injects_xiuxian_template(
