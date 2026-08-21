@@ -18,7 +18,11 @@
         <option value="long" selected>长篇（30万字+）</option>
       </select>
     </label>
-    <label>题材<select name="genre" id="genre-select"></select></label>
+    <label class="full">题材（可多选混搭）
+      <div class="genre-chips" id="genre-chips"></div>
+      <input type="hidden" name="genres" id="genres-input" value="" />
+      <span class="muted small">已选：<span id="genre-summary">—</span> · 多题材设定将自动合并，冲突可在「冲突裁决」页逐条处理</span>
+    </label>
     <label class="full">故事核心（一句话）
       <input name="story_core" placeholder="废柴少年偶得神秘传承，踏上逆天修仙路" />
     </label>
@@ -58,14 +62,39 @@
 {% endblock %}
 {% block scripts %}
 <script>
-  // 填充题材下拉（中文 label，值仍为题材 id）
-  fetch('/api/genres').then(r => r.json()).then(g => {
-    const sel = document.getElementById('genre-select');
-    const list = (g && g.length) ? g : [{id: 'xiuxian', label: '修仙'}];
+  // 多选题材 chips（中文 label，隐藏域提交逗号分隔的题材 id）
+  let selectedGenres = [];
+  let genreMeta = {};
+  function syncGenres() {
+    document.getElementById('genres-input').value = selectedGenres.join(',');
+    const names = selectedGenres.map(id => genreMeta[id] || id);
+    document.getElementById('genre-summary').textContent = names.length ? names.join('、') : '—';
+  }
+  function renderChips() {
+    const chips = document.getElementById('genre-chips');
+    chips.innerHTML = '';
+    const list = Object.keys(genreMeta).length
+      ? Object.entries(genreMeta).map(([id, label]) => ({id, label}))
+      : [{id: 'xiuxian', label: '修仙'}];
     list.forEach(x => {
-      const o = document.createElement('option');
-      o.value = x.id; o.textContent = x.label || x.id; sel.appendChild(o);
+      const chip = document.createElement('button');
+      chip.type = 'button';
+      chip.className = 'chip' + (selectedGenres.includes(x.id) ? ' on' : '');
+      chip.textContent = x.label || x.id;
+      chip.title = x.description || x.id;
+      chip.onclick = () => {
+        const i = selectedGenres.indexOf(x.id);
+        if (i >= 0) selectedGenres.splice(i, 1); else selectedGenres.push(x.id);
+        renderChips(); syncGenres();
+      };
+      chips.appendChild(chip);
     });
+  }
+  fetch('/api/genres').then(r => r.json()).then(g => {
+    (g && g.length ? g : [{id: 'xiuxian', label: '修仙'}]).forEach(x => { genreMeta[x.id] = x.label || x.id; });
+    renderChips();
+    if (!selectedGenres.length && genreMeta['xiuxian']) selectedGenres.push('xiuxian');
+    syncGenres();
   });
   document.getElementById('create-form').addEventListener('submit', e => {
     e.preventDefault();

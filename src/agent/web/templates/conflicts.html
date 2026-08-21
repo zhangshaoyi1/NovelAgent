@@ -1,0 +1,92 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} · 冲突裁决{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>题材冲突裁决：{{ name }}</h1>
+  <p class="muted">多题材合并产生的同名设定冲突（如修仙与武侠都定义「力量体系」）。逐条选择保留哪一方、或输入手动合并文本，点「应用裁决」写回 world.md，收敛为本小说自有设定。</p>
+</div>
+
+<section class="card">
+  <div class="actions-row">
+    <button class="btn primary" onclick="loadConflicts()">刷新</button>
+    <span id="conflict-summary" class="muted"></span>
+  </div>
+  <div id="conflicts-box"><p class="muted">加载中…</p></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+const PROJECT = '{{ name }}';
+
+async function loadConflicts() {
+  const box = document.getElementById('conflicts-box');
+  const summary = document.getElementById('conflict-summary');
+  box.innerHTML = '<p class="muted">加载中…</p>';
+  let data;
+  try {
+    data = await (await fetch('/api/conflicts/' + PROJECT)).json();
+  } catch (e) {
+    box.innerHTML = '<p class="err">加载失败：' + e + '</p>';
+    return;
+  }
+  summary.textContent = data.pending + ' 条待裁决 / 共 ' + data.total + ' 条';
+  if (!data.conflicts || !data.conflicts.length) {
+    box.innerHTML = '<p class="ok">✓ 无题材冲突（或已全部裁决），多题材设定已收敛为本小说自有设定。</p>';
+    return;
+  }
+  box.innerHTML = '';
+  data.conflicts.forEach(c => {
+    const card = document.createElement('div');
+    card.className = 'card conflict-card';
+    card.dataset.key = c.resource + '|' + c.section;
+    const resolved = c.resolved_index != null || !!c.manual;
+    card.innerHTML = `
+      <h3>${c.resource} · ${c.section}
+        ${resolved ? '<span class="badge ok">已裁决</span>' : '<span class="badge err">待裁决</span>'}</h3>
+      ${c.entries.map((e, i) => `
+        <label class="conflict-opt${resolved && c.resolved_index === i ? ' chosen' : ''}">
+          <input type="radio" name="conflict_opt" value="${i}" data-key="${c.resource}|${c.section}"
+            ${!resolved && i === 0 ? 'checked' : ''} ${resolved ? 'disabled' : ''}/>
+          <span><b>${e.label}</b></span>
+          <span class="muted small">${(e.content || '').replace(/\s+/g, ' ').slice(0, 160)}</span>
+        </label>`).join('')}
+      <div class="conflict-manual">
+        <input class="manual-input" data-key="${c.resource}|${c.section}"
+          placeholder="或输入手动合并文本（有内容时优先于单选）" ${resolved ? 'disabled' : ''}/>
+      </div>`;
+    box.appendChild(card);
+  });
+  box.insertAdjacentHTML('beforeend',
+    '<div class="actions-row"><button class="btn primary" onclick="applyDecisions()">应用裁决并写回</button></div>');
+}
+
+async function applyDecisions() {
+  const decisions = {};
+  document.querySelectorAll('.conflict-card').forEach(card => {
+    const key = card.dataset.key;
+    if (!key) return;
+    const manual = card.querySelector('.manual-input');
+    if (manual && !manual.disabled && manual.value.trim()) {
+      decisions[key] = manual.value.trim();
+      return;
+    }
+    const sel = card.querySelector('input[type=radio]:checked');
+    if (sel && !sel.disabled) decisions[key] = parseInt(sel.value, 10);
+  });
+  const fd = new FormData();
+  fd.append('decisions', JSON.stringify(decisions));
+  let runId;
+  try {
+    const resp = await fetch('/api/conflicts/' + PROJECT + '/resolve', { method: 'POST', body: fd });
+    runId = (await resp.json()).run_id;
+  } catch (e) {
+    alert('提交失败：' + e);
+    return;
+  }
+  const c = startRunConsole('应用冲突裁决');
+  streamEvents(runId, c, () => loadConflicts());
+}
+
+loadConflicts();
+</script>
+{% endblock %}

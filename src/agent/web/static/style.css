@@ -129,3 +129,33 @@ textarea { resize: vertical; }
 .tl-item { font-size: 12px; color: var(--ink); padding: 2px 0; border-left: 3px solid var(--accent);
   padding-left: 8px; margin: 4px 0; }
 .rc-status { padding: 10px 16px; border-top: 1px solid var(--line); display: flex; gap: 8px; align-items: center; }
+
+/* 多选题材 chips */
+.genre-chips { display: flex; flex-wrap: wrap; gap: 8px; }
+.chip {
+  border: 1px solid var(--line); background: var(--panel); color: var(--ink);
+  border-radius: 999px; padding: 6px 14px; font-size: 13px; cursor: pointer;
+  transition: all .15s;
+}
+.chip:hover { border-color: var(--accent); }
+.chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+
+/* 冲突裁决页 */
+.ok { color: var(--ok); }
+.err { color: var(--err); }
+.conflict-card { margin-bottom: 12px; }
+.conflict-card h3 { margin: 0 0 10px; font-size: 15px; display: flex; align-items: center; gap: 8px; }
+.conflict-opt {
+  display: flex; align-items: flex-start; gap: 8px; padding: 8px 10px;
+  border: 1px solid var(--line); border-radius: 8px; margin-bottom: 6px; cursor: pointer;
+}
+.conflict-opt:hover { border-color: var(--accent); }
+.conflict-opt.chosen { border-color: var(--accent); background: rgba(79,70,229,.06); }
+.conflict-opt input { margin-top: 3px; }
+.conflict-opt b { margin-right: 8px; white-space: nowrap; }
+.conflict-manual { margin: 6px 0 2px; }
+.manual-input {
+  width: 100%; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  font-size: 13px; font-family: inherit;
+}
+.manual-input:focus { outline: none; border-color: var(--accent); }

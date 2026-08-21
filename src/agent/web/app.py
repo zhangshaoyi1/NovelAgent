@@ -62,7 +62,18 @@ def project(request: Request, name: str) -> HTMLResponse:
             "ps": ps,
             "meta": meta,
             "flow": state.STATE_FLOW,
+            "conflict_pending": state.get_conflicts(name)["pending"],
         },
+    )
+
+
+@app.get("/p/{name}/conflicts", response_class=HTMLResponse)
+def conflicts_page(request: Request, name: str) -> HTMLResponse:
+    ps = state.get_project_state(name)
+    return templates.TemplateResponse(
+        request,
+        "conflicts.html",
+        {"request": request, "name": name, "ps": ps},
     )
 
 
@@ -146,6 +157,7 @@ async def create_project(
     title: str = Form(...),
     scope: str = Form("long"),
     genre: str = Form("xiuxian"),
+    genres: str = Form(""),
     story_core: str = Form(""),
 ) -> JSONResponse:
     safe = runner.sanitize_project_name(name)
@@ -153,10 +165,37 @@ async def create_project(
     if pdir.exists() and any(pdir.iterdir()):
         raise HTTPException(status_code=400, detail="项目已存在且非空")
     pdir.mkdir(parents=True, exist_ok=True)
-    argv = ["--title", title, "--scope", scope, "--genre", genre, "--story-core", story_core]
+    # 多题材：--genres（逗号分隔）优先，兼容旧 --genre 单值
+    if genres.strip():
+        genre_argv = ["--genres", genres.replace("，", ",")]
+    else:
+        genre_argv = ["--genre", genre]
+    argv = ["--title", title, "--scope", scope, *genre_argv, "--story-core", story_core]
     run_id = runner.run_manager.new_run(safe, "start", argv)
     asyncio.create_task(runner.run_manager.execute(run_id))
     return JSONResponse({"run_id": run_id, "project": safe})
+
+
+@app.get("/api/conflicts/{name}")
+def api_conflicts(name: str) -> JSONResponse:
+    return JSONResponse(state.get_conflicts(name))
+
+
+@app.post("/api/conflicts/{name}/resolve")
+async def resolve_conflicts(
+    name: str,
+    decisions: str = Form(""),
+) -> JSONResponse:
+    """按裁决 JSON 运行 merge-genres --decisions（非交互写回 world.md）。"""
+    safe = runner.sanitize_project_name(name)
+    argv = []
+    if decisions.strip():
+        argv += ["--decisions", decisions]
+    else:
+        argv += ["--auto"]
+    run_id = runner.run_manager.new_run(safe, "merge-genres", argv)
+    asyncio.create_task(runner.run_manager.execute(run_id))
+    return JSONResponse({"run_id": run_id})
 
 
 @app.post("/api/run")

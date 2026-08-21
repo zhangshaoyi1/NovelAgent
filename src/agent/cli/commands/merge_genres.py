@@ -18,7 +18,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from agent.cli._app import app, command, console, typer
-from agent.cli._shared import enforce_gate
+from agent.cli._shared import emit_result, enforce_gate
 from agent.core.genre_merger import GenreMerger, load_conflicts, save_conflicts
 from agent.core.genre_pack import GenrePackRegistry
 
@@ -54,6 +54,14 @@ def merge_genres(
     ),
     auto: bool = typer.Option(
         False, "--auto", help="非交互：以主题材优先自动裁决并落盘"
+    ),
+    decisions: str = typer.Option(
+        "", "--decisions",
+        help="裁决 JSON（键 'resource|section' → 数字下标或手动文本，如 "
+             '{"world_template|力量体系": 1}）；给定则跳过交互与 --auto，直接应用并写回（供 Web 裁决页）',
+    ),
+    json_output: bool = typer.Option(
+        False, "--json", help="以 JSON 输出结果到 stdout（工作流 rich 输出转 stderr）"
     ),
 ) -> None:
     """多题材合并与冲突裁决 - 将选中题材设定合并，冲突逐条让用户决策
@@ -100,11 +108,18 @@ def merge_genres(
     result = merger.merge(packs)
 
     if not result.conflicts:
-        console.print(
-            f"[green]✓ 题材 {[p.manifest.display_name for p in packs]} 无设定冲突，无需裁决。[/green]"
-        )
         # 仍写回合并结果（保证单题材/无冲突时也落盘最新合并文本）
         _write_back(pdir, result, genre_list)
+        if json_output:
+            emit_result(
+                {"success": True, "sources": result.sources,
+                 "conflict_count": 0, "resolved": 0, "unresolved": 0},
+                json_mode=True,
+            )
+        else:
+            console.print(
+                f"[green]✓ 题材 {[p.manifest.display_name for p in packs]} 无设定冲突，无需裁决。[/green]"
+            )
         raise typer.Exit(code=0)
 
     console.print(
@@ -117,11 +132,30 @@ def merge_genres(
     )
 
     # 3. 裁决
-    decisions: dict[tuple[str, str], object] = {}
-    if auto:
+    decisions_map: dict[tuple[str, str], object] = {}
+    if decisions.strip():
+        # 非交互裁决：--decisions JSON（供 Web 裁决页驱动）
+        import json as _json
+
+        try:
+            raw_dec = _json.loads(decisions)
+        except ValueError:
+            console.print("[red]✗ --decisions 不是合法 JSON。[/red]")
+            raise typer.Exit(code=1)
+        if not isinstance(raw_dec, dict):
+            console.print("[red]✗ --decisions 必须是 JSON 对象。[/red]")
+            raise typer.Exit(code=1)
+        for key, val in raw_dec.items():
+            if "|" not in key:
+                continue
+            res, sec = key.split("|", 1)
+            if isinstance(val, int) or (isinstance(val, str) and val.strip()):
+                decisions_map[(res.strip(), sec.strip())] = val
+        console.print(f"[dim]--decisions：应用 {len(decisions_map)} 条裁决。[/dim]")
+    elif auto:
         console.print("[dim]--auto：以主题材优先自动裁决。[/dim]")
         for c in result.conflicts:
-            decisions[(c.resource, c.section)] = 0
+            decisions_map[(c.resource, c.section)] = 0
     else:
         for c in result.conflicts:
             console.print(f"\n[bold cyan]冲突 · {c.resource} · {c.section}[/bold cyan]")
@@ -134,18 +168,31 @@ def merge_genres(
             ).strip()
             if choice.lower() == "m":
                 manual = Prompt.ask("  请输入手动合并后的内容")
-                decisions[(c.resource, c.section)] = manual
+                decisions_map[(c.resource, c.section)] = manual
             elif choice.isdigit():
                 idx = int(choice)
                 if 0 <= idx < len(c.entries):
-                    decisions[(c.resource, c.section)] = idx
+                    decisions_map[(c.resource, c.section)] = idx
                 else:
                     console.print("[yellow]下标越界，回退主题材。[/yellow]")
             # 其它（含回车默认）→ 主题材优先，不写入决策（apply 时默认 0）
 
     # 4. 应用裁决并落盘
-    merger.apply_decisions(result, decisions)
+    merger.apply_decisions(result, decisions_map)
     _write_back(pdir, result, genre_list)
+
+    if json_output:
+        emit_result(
+            {
+                "success": True,
+                "sources": result.sources,
+                "conflict_count": result.conflict_count(),
+                "resolved": result.conflict_count() - result.unresolved_count(),
+                "unresolved": result.unresolved_count(),
+            },
+            json_mode=True,
+        )
+        return
 
     console.print(
         f"\n[bold green]✓ 合并完成[/bold green] 未裁决冲突：{result.unresolved_count()}；"

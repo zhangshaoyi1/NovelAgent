@@ -13,7 +13,8 @@ from pathlib import Path
 from typing import Any
 
 # agent 仓库根（含 projects/ 与 src/），web 包位于 src/agent/web/
-AGENT_ROOT = Path(__file__).resolve().parent.parent.parent
+# __file__: .../agent/src/agent/web/state.py → parent×4 = agent 仓库根
+AGENT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
 PROJECTS_ROOT = AGENT_ROOT / "projects"
 
 # 状态机阶段顺序（用于前端进度条渲染）
@@ -168,3 +169,27 @@ def list_genres() -> list[dict[str, Any]]:
         return GenrePackRegistry().list_genres_light() or []
     except Exception:
         return []
+
+
+def get_conflicts(name: str) -> dict[str, Any]:
+    """读取项目待裁决的题材合并冲突（.state/merge_conflicts.json）。
+
+    返回 {sources, conflicts, pending, total}；无冲突记录时 pending=0。
+    """
+    from agent.cli.commands.merge_genres import pending_conflicts
+
+    try:
+        data = pending_conflicts(project_path(name)) or {}
+    except Exception:
+        data = {}
+    conflicts = data.get("conflicts", []) or []
+    total = len(conflicts)
+    pending = sum(
+        1 for c in conflicts if c.get("resolved_index") is None and not c.get("manual")
+    )
+    return {
+        "sources": data.get("sources", []) or [],
+        "conflicts": conflicts,
+        "pending": pending,
+        "total": total,
+    }

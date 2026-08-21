@@ -19,6 +19,7 @@
   <div class="actions-row">
     <a class="btn primary" href="/p/{{ name }}/guide">打开引导向导</a>
     <a class="btn" href="/p/{{ name }}/write">进入实时写作间</a>
+    <a class="btn" href="/p/{{ name }}/conflicts">冲突裁决{% if conflict_pending > 0 %}<span class="badge err"> {{ conflict_pending }}</span>{% endif %}</a>
     <a class="btn" href="/p/{{ name }}/dashboard">查看看板</a>
     <a class="btn" href="/p/{{ name }}/files">浏览文件</a>
   </div>
