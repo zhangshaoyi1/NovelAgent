@@ -39,6 +39,9 @@ from agent.prompts import (
     G8_ENDING_INSTRUCTION_TEMPLATE,  # G8（补充边界 4）：结局阶段指令（含架构 ending）
     G8_ENDING_FALLBACK_INSTRUCTION,  # G8（补充边界 4）：ending 为空降级「收尾」通用指令
     G11_STYLE_INSTRUCTION_TEMPLATE,  # G11：风格指引（project/style.md 注入）
+    G12_PAYOFF_INSTRUCTION_TEMPLATE,  # G12：爽点剧本
+    G12_EMOTION_INSTRUCTION_TEMPLATE,  # G12：情绪目标
+    G12_READER_FEEDBACK_TEMPLATE,  # G12：读者反馈
 )
 from agent.utils import parse_llm_json
 from agent.workflows.m5_write_chapter import (
@@ -90,6 +93,8 @@ class AgenticWriteWorkflow:
         # ---- G11 新增参数：风格模仿（默认开：project/style.md 存在即注入）----
         style_enabled: bool = True,
         style_file: str | None = None,
+        # ---- G12 新增参数：爽点剧本/情绪目标注入（默认开）----
+        payoff_enabled: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client or LLMClient()
@@ -100,6 +105,8 @@ class AgenticWriteWorkflow:
         # G11：风格开关（透传给 M5._load_context 使用）
         self.style_enabled = style_enabled
         self.style_file = style_file
+        # G12：爽点/情绪开关（透传给 M5._load_context 使用）
+        self.payoff_enabled = payoff_enabled
         # G9：章内子阶段事件发射器（pipeline 注入；None 时零开销）
         self.event_emitter = event_emitter
 
@@ -180,6 +187,24 @@ class AgenticWriteWorkflow:
         style_guide = (ctx.get("style_guide") or "").strip()
         if style_guide:
             task += G11_STYLE_INSTRUCTION_TEMPLATE.format(style_guide=style_guide)
+
+        # ---- G12：爽点剧本 + 情绪目标 + 读者反馈注入（追加顺序：爽点 → 情绪 → 反馈）----
+        payoff_task = (ctx.get("payoff_task") or "").strip()
+        if payoff_task:
+            task += G12_PAYOFF_INSTRUCTION_TEMPLATE.format(payoff_task=payoff_task)
+        emotion_target = (ctx.get("emotion_target") or "").strip()
+        if emotion_target:
+            task += G12_EMOTION_INSTRUCTION_TEMPLATE.format(emotion_target=emotion_target)
+        signals = ctx.get("reader_signals") or []
+        if signals:
+            lines = []
+            for s in signals:
+                desc = str(s.get("desc", "") or "")
+                planted = int(s.get("planted_ch", 0) or 0)
+                marker = "（位于本章之前，请针对此反馈强化本章）" if planted and planted < ctx.get("chapter_num", 0) else ""
+                lines.append(f"- {desc}{marker}")
+            if lines:
+                task += G12_READER_FEEDBACK_TEMPLATE.format(reader_signals="\n".join(lines))
         return task
 
     # ------------------------------------------------------------------
@@ -229,6 +254,8 @@ class AgenticWriteWorkflow:
             # G11：风格开关透传（_load_context 读取 style.md）
             style_enabled=self.style_enabled,
             style_file=self.style_file,
+            # G12：爽点/情绪开关透传（_load_context 读取 payoff_script.json）
+            payoff_enabled=self.payoff_enabled,
         )
         ctx = m5._load_context()
 

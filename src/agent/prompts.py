@@ -396,6 +396,19 @@ G11_METHOD_INSTRUCTION_TEMPLATE = (
     "\n\n# 写作方法模板（请按此结构方法论组织全书/大纲，不要生硬套用）\n{method_text}"
 )
 
+# ---- G12（读者反馈闭环）：爽点剧本 / 情绪目标 / 读者反馈 注入常量（只增不删）----
+G12_PAYOFF_INSTRUCTION_TEMPLATE = (
+    "\n\n# 爽点剧本（本章读者预期满足点，请自然安排、不要生硬堆砌）\n{payoff_task}"
+)
+
+G12_EMOTION_INSTRUCTION_TEMPLATE = (
+    "\n\n# 情绪目标（本章节奏与情绪落点）\n{emotion_target}"
+)
+
+G12_READER_FEEDBACK_TEMPLATE = (
+    "\n\n# 读者反馈（以下为真实读者反馈，涉及弃书点的章节请强化章末钩子与爽点密度）\n{reader_signals}"
+)
+
 
 M5_QUALITY_CHECK_SYSTEM_PROMPT = """你是严格的小说质量审稿编辑。按以下 9 项规则审查章节，输出 JSON。
 

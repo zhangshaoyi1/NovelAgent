@@ -246,6 +246,10 @@ def autowrite(
     no_method: bool = typer.Option(
         False, "--no-method", help="关闭写作方法模板注入（不读 method.md）"
     ),
+    # ---- G12 新增：爽点剧本/情绪目标注入（默认开：.state/payoff_script.json 存在即注入）----
+    no_payoff: bool = typer.Option(
+        False, "--no-payoff", help="关闭爽点剧本/情绪目标注入（不读 .state/payoff_script.json）"
+    ),
 ) -> None:
     """全流程自主写作 - Planner→写作→编辑→记忆→评测+自动回溯
 
@@ -416,6 +420,8 @@ def autowrite(
         style_enabled=not bool(_cli_value(no_style, False)),
         style_file=_cli_value(style_file, None),
         method_enabled=not bool(_cli_value(no_method, False)),
+        # ---- G12 新增：爽点剧本/情绪目标注入（默认开；--no-payoff 关闭）----
+        payoff_enabled=not bool(_cli_value(no_payoff, False)),
     )
 
     try:
@@ -487,6 +493,21 @@ def autowrite(
                     }
                 except Exception:  # noqa: BLE001 - 信封异常降级
                     _env["method"] = {"active": False, "file": None, "name": None}
+            # ---- G12（拍板 6）：信封只增 payoff 字段；--no-payoff 置 null ----
+            if bool(_cli_value(no_payoff, False)):
+                _env["payoff"] = None
+            else:
+                try:
+                    from agent.core.payoff_script import load_payoff_script
+
+                    _ps = load_payoff_script(project_path, enabled=True)
+                    _env["payoff"] = {
+                        "active": bool(_ps.get("chapters")),
+                        "file": str(project_path / ".state" / "payoff_script.json"),
+                        "chapters": len(_ps.get("chapters") or []),
+                    }
+                except Exception:  # noqa: BLE001 - 信封异常降级
+                    _env["payoff"] = {"active": False, "file": None, "chapters": 0}
             emit_result({"success": success, **_env}, json_mode=True)
             return
 

@@ -226,6 +226,8 @@ class AgenticPipelineWorkflow:
         style_enabled: bool = True,
         style_file: str | None = None,
         method_enabled: bool = True,
+        # ---- G12 新增参数（读者反馈闭环：爽点剧本/情绪目标注入）----
+        payoff_enabled: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client
@@ -273,6 +275,8 @@ class AgenticPipelineWorkflow:
         self.style_enabled = bool(style_enabled)
         self.style_file = style_file
         self.method_enabled = bool(method_enabled)
+        # G12：爽点剧本/情绪目标注入（透传给 writer；默认开）
+        self.payoff_enabled = bool(payoff_enabled)
         # G6：写章循环 Guardrails 命中收集（B5-3 修复：结果进报告，不只 console）
         self._guardrail_hits: list[dict[str, Any]] = []
 
@@ -333,6 +337,8 @@ class AgenticPipelineWorkflow:
                 # ---- G11：风格模仿透传（project/style.md 存在即注入）----
                 style_enabled=self.style_enabled,
                 style_file=self.style_file,
+                # ---- G12：爽点剧本/情绪目标透传（.state/payoff_script.json 存在即注入）----
+                payoff_enabled=self.payoff_enabled,
             )
         return self.writer_workflow
 

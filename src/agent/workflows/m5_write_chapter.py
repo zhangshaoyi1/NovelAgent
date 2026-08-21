@@ -45,6 +45,9 @@ from agent.prompts import (
     G8_ENDING_INSTRUCTION_TEMPLATE,  # G8（补充边界 4）：结局阶段指令（含架构 ending）
     G8_ENDING_FALLBACK_INSTRUCTION,  # G8（补充边界 4）：ending 为空降级「收尾」通用指令
     G11_STYLE_INSTRUCTION_TEMPLATE,  # G11：风格指引（project/style.md 注入）
+    G12_PAYOFF_INSTRUCTION_TEMPLATE,  # G12：爽点剧本（.state/payoff_script.json 注入）
+    G12_EMOTION_INSTRUCTION_TEMPLATE,  # G12：情绪目标（本章节奏落点）
+    G12_READER_FEEDBACK_TEMPLATE,  # G12：读者反馈（reader_feedback 债务注入）
 )
 from agent.utils import parse_llm_json
 
@@ -98,6 +101,8 @@ class M5WriteChapterWorkflow:
         # ---- G11 新增参数：风格模仿（默认开：project/style.md 存在即注入）----
         style_enabled: bool = True,
         style_file: str | None = None,
+        # ---- G12 新增参数：爽点剧本/情绪目标注入（默认开：.state/payoff_script.json 存在即注入）----
+        payoff_enabled: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client or LLMClient()
@@ -124,6 +129,8 @@ class M5WriteChapterWorkflow:
         # G11：风格模仿（project/style.md 存在即注入；--no-style 关闭）
         self.style_enabled = style_enabled
         self.style_file = style_file
+        # G12：爽点剧本/情绪目标注入（.state/payoff_script.json 存在即注入；--no-payoff 关闭）
+        self.payoff_enabled = payoff_enabled
 
     def _emit_substage(self, substage: str, chapter: int) -> None:
         """G9：章内子阶段事件（真实阶段边界，M5 精确）；未注入 emitter 时零开销。
@@ -380,12 +387,23 @@ class M5WriteChapterWorkflow:
 
         # C：追读力账本中的开放债务（缺账本则空，不阻断写章）
         open_debts: list = []
+        reader_signals: list = []  # G12：读者反馈信号（kind=reader_feedback 分离，其余维持既有行为）
         try:
             from agent.core.pacing_store import PacingStore
 
+            all_debts = PacingStore(self.project_dir).get_open_debts(n=50)
             open_debts = [
                 {"id": d.id, "desc": d.desc, "kind": d.kind, "planted_ch": d.planted_ch}
-                for d in PacingStore(self.project_dir).get_open_debts()
+                for d in all_debts
+            ]
+            reader_signals = [
+                {
+                    "desc": d.desc,
+                    "planted_ch": d.planted_ch,
+                    "id": d.id,
+                }
+                for d in all_debts
+                if d.kind == "reader_feedback"  # G12：kind 字面量扩展（结构零改动）
             ]
         except Exception:  # noqa: BLE001 - 账本读取失败降级为空
             open_debts = []
@@ -412,6 +430,17 @@ class M5WriteChapterWorkflow:
         except Exception:  # noqa: BLE001 - 学习记忆读取失败降级为空
             learnings = []
             learnings_text = "（暂无已沉淀的写法记忆）"
+
+        # ---- G12：本章爽点剧本 + 情绪目标（缺失/损坏/关闭 → ""）----
+        _payoff_task, _emotion_target = "", ""
+        if getattr(self, "payoff_enabled", True):  # 默认开；--no-payoff 关闭
+            try:
+                from agent.core.payoff_script import chapter_payoff, load_payoff_script
+
+                _script = load_payoff_script(self.project_dir, enabled=True)
+                _payoff_task, _emotion_target = chapter_payoff(_script, chapter_num)
+            except Exception:  # noqa: BLE001 - 剧本读取失败降级为空
+                pass
 
         return {
             "world_info": world_info,
@@ -443,6 +472,10 @@ class M5WriteChapterWorkflow:
             "style_guide": load_style_guide(
                 self.project_dir, self.style_enabled, self.style_file
             ),
+            # ---- G12（读者反馈闭环）：爽点剧本 / 情绪目标 / 读者反馈 ----
+            "payoff_task": _payoff_task,
+            "emotion_target": _emotion_target,
+            "reader_signals": reader_signals,
         }
 
     def _load_architecture_ending(self) -> str:
@@ -787,6 +820,30 @@ class M5WriteChapterWorkflow:
             system_prompt = system_prompt + G11_STYLE_INSTRUCTION_TEMPLATE.format(
                 style_guide=style_guide
             )
+
+        # ---- G12：爽点剧本 + 情绪目标 + 读者反馈注入（追加顺序：爽点 → 情绪 → 反馈）----
+        payoff_task = (ctx.get("payoff_task") or "").strip()
+        if payoff_task:
+            system_prompt = system_prompt + G12_PAYOFF_INSTRUCTION_TEMPLATE.format(
+                payoff_task=payoff_task
+            )
+        emotion_target = (ctx.get("emotion_target") or "").strip()
+        if emotion_target:
+            system_prompt = system_prompt + G12_EMOTION_INSTRUCTION_TEMPLATE.format(
+                emotion_target=emotion_target
+            )
+        signals = ctx.get("reader_signals") or []
+        if signals:
+            lines = []
+            for s in signals:
+                desc = str(s.get("desc", "") or "")
+                planted = int(s.get("planted_ch", 0) or 0)
+                marker = "（位于本章之前，请针对此反馈强化本章）" if planted and planted < ctx.get("chapter_num", 0) else ""
+                lines.append(f"- {desc}{marker}")
+            if lines:
+                system_prompt = system_prompt + G12_READER_FEEDBACK_TEMPLATE.format(
+                    reader_signals="\n".join(lines)
+                )
 
         resp = self.llm.chat_creative(
             messages=[
