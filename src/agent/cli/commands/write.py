@@ -123,10 +123,13 @@ def write(
     try:
         result = workflow.run()
         # Phase 5（巡检自愈）：写章成功 → 清除历史 last_error（区分系统异常 vs 正常）
+        # 注意：StateMachine 构造后必须 load() 才能 save()，否则会覆盖 progress 全部字段
         try:
             from agent.core.state_machine import StateMachine
 
-            StateMachine(project_path).clear_write_error()
+            _sm = StateMachine(project_path)
+            _sm.load()
+            _sm.clear_write_error()
         except Exception:  # noqa: BLE001 - 清错失败不阻断
             pass
         if json_output:
@@ -168,10 +171,12 @@ def write(
     except PreValidationBlocked as blocked:
         # E3：高严重度冲突，生成被中断，需用户仲裁
         # Phase 5（巡检自愈）：记录 last_error + 累加连续失败计数，供自动化区分「等待用户决策」并触发告警
+        # 注意：StateMachine 构造后必须 load() 才能 save()，否则会覆盖 progress 全部字段
         try:
             from agent.core.state_machine import StateMachine
 
             _sm = StateMachine(project_path)
+            _sm.load()
             _sm.record_write_error(
                 "pre_validation_blocked", blocked.report.summary
             )
@@ -202,10 +207,12 @@ def write(
         raise typer.Exit(code=2) from blocked
     except Exception as e:
         # Phase 5（巡检自愈）：记录 last_error + 累加连续失败计数，供自动化区分「系统异常」并触发告警
+        # 注意：StateMachine 构造后必须 load() 才能 save()，否则会覆盖 progress 全部字段
         try:
             from agent.core.state_machine import StateMachine
 
             _sm = StateMachine(project_path)
+            _sm.load()
             _sm.record_write_error("write_failed", str(e))
             _sm.bump_write_failure()
         except Exception:  # noqa: BLE001 - 记录失败不阻断
