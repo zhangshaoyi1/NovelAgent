@@ -126,12 +126,27 @@ class StateMachine:
         self.save()
 
     def clear_write_error(self) -> None:
-        """写章成功后清除 last_error（非阻断，字段缺失/异常均静默）。"""
+        """写章成功后清除 last_error 与连续失败计数（非阻断，字段缺失/异常均静默）。"""
         try:
             self.progress.pop("last_error", None)
+            self.progress["consecutive_write_failures"] = 0
             self.save()
         except Exception:  # noqa: BLE001 - 清除失败不阻断主流程
             pass
+
+    def bump_write_failure(self) -> int:
+        """写章失败时累加连续失败计数，返回累加后的值（供巡检判定连续 2 次告警）。
+
+        与 record_write_error 配套：每次写章失败 +1，成功写章（clear_write_error）
+        归零。巡检读到 progress.consecutive_write_failures >= 2 即触发告警。
+        """
+        try:
+            n = int(self.progress.get("consecutive_write_failures", 0) or 0) + 1
+            self.progress["consecutive_write_failures"] = n
+            self.save()
+            return n
+        except Exception:  # noqa: BLE001 - 计数失败不阻断
+            return 0
 
     # ------ 门禁查询（T-6：门禁改由命令元数据派生）------
     def is_command_allowed(self, command: str) -> bool:

@@ -167,13 +167,15 @@ def write(
             )
     except PreValidationBlocked as blocked:
         # E3：高严重度冲突，生成被中断，需用户仲裁
-        # Phase 5（巡检自愈）：记录 last_error，供自动化区分「等待用户决策」
+        # Phase 5（巡检自愈）：记录 last_error + 累加连续失败计数，供自动化区分「等待用户决策」并触发告警
         try:
             from agent.core.state_machine import StateMachine
 
-            StateMachine(project_path).record_write_error(
+            _sm = StateMachine(project_path)
+            _sm.record_write_error(
                 "pre_validation_blocked", blocked.report.summary
             )
+            _sm.bump_write_failure()
         except Exception:  # noqa: BLE001 - 记录失败不阻断
             pass
         if json_output:
@@ -199,11 +201,13 @@ def write(
             )
         raise typer.Exit(code=2) from blocked
     except Exception as e:
-        # Phase 5（巡检自愈）：记录 last_error，供自动化区分「系统异常」
+        # Phase 5（巡检自愈）：记录 last_error + 累加连续失败计数，供自动化区分「系统异常」并触发告警
         try:
             from agent.core.state_machine import StateMachine
 
-            StateMachine(project_path).record_write_error("write_failed", str(e))
+            _sm = StateMachine(project_path)
+            _sm.record_write_error("write_failed", str(e))
+            _sm.bump_write_failure()
         except Exception:  # noqa: BLE001 - 记录失败不阻断
             pass
         if json_output:
