@@ -105,6 +105,34 @@ class StateMachine:
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(self.state_file)
 
+    # ------ 写章失败记录（Phase 5 巡检自愈：区分系统异常 vs 等待用户决策）------
+    def record_write_error(self, code: str, message: str) -> None:
+        """记录最近一次写章失败，供自动化巡检判定停止类型（系统异常/等待决策）。
+
+        写入 progress.last_error = {"code", "message", "at"}；成功写章后由写章
+        工作流调用 clear_write_error() 清除。仅持久化必要字段，不污染正常进度。
+        """
+        if "progress" not in self.progress or not isinstance(self.progress.get("progress"), dict):
+            # progress 本身即 dict（见 load），这里防御性兜底
+            if not isinstance(self.progress, dict):
+                self.progress = {}
+        from datetime import datetime
+
+        self.progress["last_error"] = {
+            "code": code,
+            "message": (message or "")[:300],
+            "at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        }
+        self.save()
+
+    def clear_write_error(self) -> None:
+        """写章成功后清除 last_error（非阻断，字段缺失/异常均静默）。"""
+        try:
+            self.progress.pop("last_error", None)
+            self.save()
+        except Exception:  # noqa: BLE001 - 清除失败不阻断主流程
+            pass
+
     # ------ 门禁查询（T-6：门禁改由命令元数据派生）------
     def is_command_allowed(self, command: str) -> bool:
         """查询命令在当前状态下是否可用（基于 CommandMeta.allowed_states/is_global）"""

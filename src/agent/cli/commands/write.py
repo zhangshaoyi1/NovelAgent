@@ -122,6 +122,13 @@ def write(
         raise typer.Exit(code=2)
     try:
         result = workflow.run()
+        # Phase 5（巡检自愈）：写章成功 → 清除历史 last_error（区分系统异常 vs 正常）
+        try:
+            from agent.core.state_machine import StateMachine
+
+            StateMachine(project_path).clear_write_error()
+        except Exception:  # noqa: BLE001 - 清错失败不阻断
+            pass
         if json_output:
             # subline / route_node 取自章节 frontmatter（_save_chapter 必写这两个字段）
             import frontmatter
@@ -160,6 +167,15 @@ def write(
             )
     except PreValidationBlocked as blocked:
         # E3：高严重度冲突，生成被中断，需用户仲裁
+        # Phase 5（巡检自愈）：记录 last_error，供自动化区分「等待用户决策」
+        try:
+            from agent.core.state_machine import StateMachine
+
+            StateMachine(project_path).record_write_error(
+                "pre_validation_blocked", blocked.report.summary
+            )
+        except Exception:  # noqa: BLE001 - 记录失败不阻断
+            pass
         if json_output:
             emit_result(
                 {
@@ -183,6 +199,13 @@ def write(
             )
         raise typer.Exit(code=2) from blocked
     except Exception as e:
+        # Phase 5（巡检自愈）：记录 last_error，供自动化区分「系统异常」
+        try:
+            from agent.core.state_machine import StateMachine
+
+            StateMachine(project_path).record_write_error("write_failed", str(e))
+        except Exception:  # noqa: BLE001 - 记录失败不阻断
+            pass
         if json_output:
             emit_result(
                 {
