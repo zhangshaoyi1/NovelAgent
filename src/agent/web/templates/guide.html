@@ -1,0 +1,90 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} · 引导向导{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>引导向导：{{ name }}</h1>
+  <p class="muted">按状态机阶段走通创作闭环。灰色步骤表示当前状态尚不可执行，进度推进后会自动解锁。</p>
+</div>
+
+{% set avail = ps.available_commands %}
+
+<section class="card">
+  <h2>① 开新书</h2>
+  {% if 'start' in avail %}
+    <p class="muted">当前为初始状态，可在工作台「新建项目」时一并完成初始化。</p>
+  {% else %}
+    <p class="ok-note">✓ 已完成（世界观 world.md 已生成）</p>
+  {% endif %}
+</section>
+
+<section class="card {% if 'discuss' not in avail %}disabled{% endif %}">
+  <h2>② 脉络讨论（discuss）</h2>
+  {% if 'discuss' in avail %}
+    <p class="muted">给 Agent 一个讨论切入点，它会基于世界观追问并整理纪要。</p>
+    <textarea id="discuss-msg" rows="2" placeholder="例如：请基于世界观提出 3 个关键创作问题，并给出初步方向建议">请基于世界观提出关键创作问题，并给出初步方向建议</textarea>
+    <button class="btn primary" onclick="guideStep('{{ name }}','discuss',['--message', document.getElementById('discuss-msg').value], '脉络讨论')">运行讨论</button>
+  {% else %}
+    <p class="muted">尚未解锁（需先完成开新书）。</p>
+  {% endif %}
+</section>
+
+<section class="card {% if 'architecture' not in avail %}disabled{% endif %}">
+  <h2>③ 故事架构（architecture）</h2>
+  {% if 'architecture' in avail %}
+    <p class="muted">先生成架构初稿；如需调整，填写反馈后迭代（版本 +1）。</p>
+    <div class="actions-row">
+      <button class="btn primary" onclick="guideStep('{{ name }}','architecture',[], '生成架构初稿')">生成架构初稿</button>
+    </div>
+    <textarea id="arch-fb" rows="2" placeholder="架构修改意见，例如：男二戏份太少，需强化其与主角的羁绊"></textarea>
+    <button class="btn" onclick="guideStep('{{ name }}','architecture',['--feedback', document.getElementById('arch-fb').value], '架构迭代')">基于反馈迭代</button>
+  {% else %}
+    <p class="muted">尚未解锁（需先完成脉络讨论）。</p>
+  {% endif %}
+</section>
+
+<section class="card {% if 'confirm-architecture' not in avail %}disabled{% endif %}">
+  <h2>④ 确认架构（confirm-architecture）</h2>
+  {% if 'confirm-architecture' in avail %}
+    <p class="muted">确认后解锁下游（大纲 / 角色 / 写作）。</p>
+    <button class="btn primary" onclick="guideStep('{{ name }}','confirm-architecture',['--yes'], '确认架构')">确认并解锁</button>
+  {% else %}
+    <p class="muted">尚未解锁（需先生成架构）。</p>
+  {% endif %}
+</section>
+
+<section class="card {% if 'outline' not in avail %}disabled{% endif %}">
+  <h2>⑤ 大纲（outline）</h2>
+  {% if 'outline' in avail %}
+    <button class="btn primary" onclick="guideStep('{{ name }}','outline',[], '生成大纲')">生成大纲</button>
+  {% else %}
+    <p class="muted">尚未解锁（需先确认架构）。</p>
+  {% endif %}
+</section>
+
+<section class="card {% if 'design-characters' not in avail %}disabled{% endif %}">
+  <h2>⑥ 角色设计（design-characters）</h2>
+  {% if 'design-characters' in avail %}
+    <button class="btn primary" onclick="guideStep('{{ name }}','design-characters',[], '角色设计')">设计角色</button>
+  {% else %}
+    <p class="muted">尚未解锁（需先生成大纲）。</p>
+  {% endif %}
+</section>
+
+<section class="card {% if 'write' not in avail %}disabled{% endif %}">
+  <h2>⑦ 写章节（write）</h2>
+  {% if 'write' in avail %}
+    <p class="muted">进入实时写作间可查看流式进度与成本；这里也可直接写下一章。</p>
+    <div class="actions-row">
+      <select id="write-mode">
+        <option value="auto">auto（自主 Agentic Loop）</option>
+        <option value="heavy">heavy（更严）</option>
+        <option value="light">light（更轻）</option>
+      </select>
+      <button class="btn primary" onclick="guideStep('{{ name }}','write',['--mode', document.getElementById('write-mode').value], '写下一章')">写下一章</button>
+      <a class="btn" href="/p/{{ name }}/write">去实时写作间 →</a>
+    </div>
+  {% else %}
+    <p class="muted">尚未解锁（需先完成角色设计）。</p>
+  {% endif %}
+</section>
+{% endblock %}

@@ -1,0 +1,75 @@
+{% extends "base.html" %}
+{% block title %}工作台 · NovelAgent Web{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>工作台</h1>
+  <p class="muted">管理你的小说项目，点击进入即可用界面驱动创作 Agent。</p>
+</div>
+
+<section class="card">
+  <h2>新建项目</h2>
+  <form id="create-form" class="form-grid">
+    <label>项目目录名<input name="name" placeholder="my-novel" required /></label>
+    <label>小说标题<input name="title" placeholder="我的修仙小说" required /></label>
+    <label>体量
+      <select name="scope">
+        <option value="short">短篇（&lt;5万字）</option>
+        <option value="medium">中篇（5-30万字）</option>
+        <option value="long" selected>长篇（30万字+）</option>
+      </select>
+    </label>
+    <label>题材<select name="genre" id="genre-select"></select></label>
+    <label class="full">故事核心（一句话）
+      <input name="story_core" placeholder="废柴少年偶得神秘传承，踏上逆天修仙路" />
+    </label>
+    <div class="full">
+      <button type="submit" class="btn primary">创建并初始化</button>
+      <span class="muted small">创建会调用 start（非交互），由 LLM 生成世界观。</span>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>项目列表（{{ projects|length }}）</h2>
+  {% if projects %}
+  <table class="tbl">
+    <thead><tr><th>项目</th><th>状态</th><th>章节</th><th>世界观</th><th>操作</th></tr></thead>
+    <tbody>
+      {% for p in projects %}
+      <tr>
+        <td><b>{{ p.name }}</b></td>
+        <td><span class="badge">{{ p.state }}</span></td>
+        <td>{{ p.chapters }}</td>
+        <td>{% if p.has_world %}✓{% else %}—{% endif %}</td>
+        <td class="row-actions">
+          <a class="btn small" href="/p/{{ p.name }}">空间</a>
+          <a class="btn small" href="/p/{{ p.name }}/guide">向导</a>
+          <a class="btn small" href="/p/{{ p.name }}/write">写作间</a>
+          <a class="btn small" href="/p/{{ p.name }}/dashboard">看板</a>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted">还没有项目，先在上方创建一个吧。</p>
+  {% endif %}
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  // 填充题材下拉
+  fetch('/api/genres').then(r => r.json()).then(g => {
+    const sel = document.getElementById('genre-select');
+    (g.length ? g : ['xiuxian']).forEach(x => {
+      const o = document.createElement('option'); o.value = x; o.textContent = x; sel.appendChild(o);
+    });
+  });
+  document.getElementById('create-form').addEventListener('submit', e => {
+    e.preventDefault();
+    const f = e.target;
+    const data = new URLSearchParams(new FormData(f));
+    createProject(data, () => location.href = '/p/' + sanitize(f.name.value) + '/guide');
+  });
+</script>
+{% endblock %}

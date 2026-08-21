@@ -13,15 +13,20 @@ def discuss(
     max_rounds: int = typer.Option(
         10, "--max-rounds", "-r", help="最大讨论轮次"
     ),
+    message: str = typer.Option(
+        "", "--message", "-m",
+        help="预设讨论内容（非空则非交互单轮，供 Web UI / 脚本使用）",
+    ),
 ) -> None:
     """M2 脉络讨论 - 多轮追问深化故事思路
 
     交互式与 Agent 讨论，产出 discussion.md。
-    输入 /next 结束讨论。
+    输入 /next 结束讨论。提供 --message 可走非交互单轮模式。
 
     Args:
         project_dir: 小说项目目录
         max_rounds: 最大讨论轮次
+        message: 预设讨论内容（非空触发非交互）
     """
     from pathlib import Path
 
@@ -37,7 +42,12 @@ def discuss(
 
     workflow = M2DiscussWorkflow(project_dir=project_path)
     try:
-        result = workflow.run(user_input=M2Input(max_rounds=max_rounds))
+        if message:
+            result = workflow.run(
+                user_input=M2Input(max_rounds=1, preset_answers=[message])
+            )
+        else:
+            result = workflow.run(user_input=M2Input(max_rounds=max_rounds))
         console.print(
             f"\n[bold green]✓ M2 完成[/bold green] 共 {result.rounds} 轮讨论"
         )

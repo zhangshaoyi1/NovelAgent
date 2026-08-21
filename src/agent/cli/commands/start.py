@@ -10,18 +10,35 @@ def start(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"
     ),
+    title: str = typer.Option(
+        "", "--title", help="小说标题（非空则走非交互配置，供 Web UI / 脚本使用）"
+    ),
+    scope: str = typer.Option(
+        "long", "--scope", help="体量: short(短篇) | medium(中篇) | long(长篇)"
+    ),
+    genre: str = typer.Option(
+        "xiuxian", "--genre", help="题材（需与题材包名一致，如 xiuxian）"
+    ),
+    story_core: str = typer.Option(
+        "", "--story-core", help="故事核心（一句话）"
+    ),
 ) -> None:
     """开新书 - 进入 M1 启动配置工作流
 
     交互式收集标题/体量/题材/风格/故事核心，
     调用 LLM 生成世界观，渲染并保存 world.md。
+    提供 --title 等选项可走非交互模式（Web UI / 脚本调用）。
 
     Args:
         project_dir: 小说项目工作区目录
+        title: 标题（非空触发非交互）
+        scope: 体量
+        genre: 题材
+        story_core: 故事核心
     """
     from pathlib import Path
 
-    from agent.workflows.m1_config import M1ConfigWorkflow
+    from agent.workflows.m1_config import M1ConfigWorkflow, M1Input
 
     project_path = Path(project_dir)
     enforce_gate(str(project_path), "start")
@@ -29,7 +46,13 @@ def start(
 
     workflow = M1ConfigWorkflow(project_dir=project_path)
     try:
-        result = workflow.run()
+        if title:
+            user_input = M1Input(
+                title=title, scope=scope, genre=genre, story_core=story_core
+            )
+            result = workflow.run(user_input=user_input)
+        else:
+            result = workflow.run()
         console.print(
             f"\n[bold green]✓ M1 完成[/bold green] world.md 已生成：{result.world_file}"
         )

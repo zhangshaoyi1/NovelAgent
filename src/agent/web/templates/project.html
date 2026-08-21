@@ -1,0 +1,54 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} · 项目空间{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>项目空间：{{ name }}</h1>
+  <p class="muted">当前状态 <span class="badge">{{ ps.state }}</span> · 介入模式 <span class="badge">{{ ps.mode }}</span></p>
+</div>
+
+<section class="card">
+  <h2>创作进度</h2>
+  <div class="stepper">
+    {% for s in flow %}
+    <div class="step {% if s == ps.state %}current{% elif flow.index(s) < flow.index(ps.state) %}done{% endif %}">
+      <span class="dot"></span><span class="step-label">{{ s }}</span>
+    </div>
+    {% if not loop.last %}<span class="step-line"></span>{% endif %}
+    {% endfor %}
+  </div>
+  <div class="actions-row">
+    <a class="btn primary" href="/p/{{ name }}/guide">打开引导向导</a>
+    <a class="btn" href="/p/{{ name }}/write">进入实时写作间</a>
+    <a class="btn" href="/p/{{ name }}/dashboard">查看看板</a>
+    <a class="btn" href="/p/{{ name }}/files">浏览文件</a>
+  </div>
+</section>
+
+<section class="card">
+  <h2>当前可用操作（状态门禁自动过滤）</h2>
+  <p class="muted small">下列命令按当前状态机阶段自动开放。填参数后点运行，实时日志会弹窗显示。</p>
+  <div class="cmd-grid">
+    {% for cmd in ps.available_commands %}
+    {% set m = meta | selectattr("name", "equalto", cmd) | first %}
+    <div class="cmd-card">
+      <div class="cmd-name">{{ cmd }}</div>
+      <div class="cmd-desc">{{ m.description if m else '' }}</div>
+      <div class="cmd-row">
+        <input class="cmd-args" placeholder="可选参数，如 --intent 想让主角更果断" data-cmd="{{ cmd }}" />
+        <button class="btn small" onclick="runGeneric('{{ name }}', '{{ cmd }}', this)">运行</button>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  function runGeneric(project, command, btn) {
+    const input = btn.parentElement.querySelector('.cmd-args');
+    const args = input ? input.value.trim() : '';
+    const c = startRunConsole('运行 ' + command);
+    runCommand(project, command, args, c, () => location.reload());
+  }
+</script>
+{% endblock %}

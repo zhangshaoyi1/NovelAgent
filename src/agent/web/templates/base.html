@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>{% block title %}NovelAgent Web{% endblock %}</title>
+  <link rel="stylesheet" href="/static/style.css" />
+  <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">📚 NovelAgent <span class="brand-sub">Web UI</span></div>
+    <nav class="nav">
+      <a href="/" {% if active=="home" %}class="active"{% endif %}>工作台</a>
+      {% if name %}
+      <a href="/p/{{ name }}" {% if active=="project" %}class="active"{% endif %}>项目空间</a>
+      <a href="/p/{{ name }}/guide" {% if active=="guide" %}class="active"{% endif %}>引导向导</a>
+      <a href="/p/{{ name }}/write" {% if active=="write" %}class="active"{% endif %}>实时写作间</a>
+      <a href="/p/{{ name }}/dashboard" {% if active=="dashboard" %}class="active"{% endif %}>看板</a>
+      <a href="/p/{{ name }}/files" {% if active=="files" %}class="active"{% endif %}>文件</a>
+      {% endif %}
+    </nav>
+  </header>
+  <main class="container">
+    {% block content %}{% endblock %}
+  </main>
+  <footer class="footer">NovelAgent · 设定集驱动的长篇一致性写作 Agent · Web UI v0.1</footer>
+  <script src="/static/app.js" defer></script>
+  {% block scripts %}{% endblock %}
+</body>
+</html>
