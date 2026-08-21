@@ -222,6 +222,10 @@ class AgenticPipelineWorkflow:
         # ---- G9 新增参数（进度事件流，拍板 2 + 补充边界 1：on_progress 旧签名不动）----
         on_event: Callable[[dict[str, Any]], None] | None = None,
         progress_file: str | Path = ".state/progress.json",
+        # ---- G11 新增参数（竞品借鉴三件套：风格模仿 + 写作方法模板）----
+        style_enabled: bool = True,
+        style_file: str | None = None,
+        method_enabled: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client
@@ -265,6 +269,10 @@ class AgenticPipelineWorkflow:
         self.ending_ratio = max(0.0, min(0.5, float(ending_ratio)))
         self.mainline_gate = bool(mainline_gate)
         self.ending_gate = bool(ending_gate)
+        # G11：风格模仿 + 写作方法模板（透传给 writer/planner/outline；默认开）
+        self.style_enabled = bool(style_enabled)
+        self.style_file = style_file
+        self.method_enabled = bool(method_enabled)
         # G6：写章循环 Guardrails 命中收集（B5-3 修复：结果进报告，不只 console）
         self._guardrail_hits: list[dict[str, Any]] = []
 
@@ -310,6 +318,7 @@ class AgenticPipelineWorkflow:
             self.planner = PlannerAgent(
                 self.project_dir, llm_client=self.llm, memory=self.memory,
                 console=self.console,
+                method_enabled=self.method_enabled,  # G11：写作方法模板注入
             )
         return self.planner
 
@@ -321,6 +330,9 @@ class AgenticPipelineWorkflow:
                 self.project_dir, llm_client=self.llm, console=self.console, tier=self.tier,
                 # ---- G9：章内子阶段事件注入（默认 None 零开销）----
                 event_emitter=self._emit_substage,
+                # ---- G11：风格模仿透传（project/style.md 存在即注入）----
+                style_enabled=self.style_enabled,
+                style_file=self.style_file,
             )
         return self.writer_workflow
 
@@ -557,7 +569,7 @@ class AgenticPipelineWorkflow:
         else:
             self._safe_step(
                 key=False, name="M3 大纲生成",
-                fn=lambda: wf(M3OutlineWorkflow).run(),
+                fn=lambda: wf(M3OutlineWorkflow, method_enabled=self.method_enabled).run(),  # G11：方法模板注入
                 degrade=self._write_placeholder_outline,
             )
             # G4 熔断检查点：规划每步后

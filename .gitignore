@@ -24,3 +24,6 @@ env/
 # 运行时状态（G9 progress.json 等，运行产物不入库）
 /.state/
 .progress.json
+
+# G11：skill 导出产物（不入库）
+dist/skills/

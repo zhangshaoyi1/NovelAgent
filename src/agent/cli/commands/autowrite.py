@@ -233,6 +233,19 @@ def autowrite(
     budget_plan: str = typer.Option(
         None, "--budget-plan", help="预算计划配置文件路径（默认 .state/budget.json；缺失/损坏降级默认）"
     ),
+    # ---- G11 新增：竞品借鉴三件套（风格模仿 + 写作方法模板；默认开，可关）----
+    style_file: str = typer.Option(
+        None, "--style-file", help="风格指引文件路径（默认 project/style.md；存在即注入写章 prompt）"
+    ),
+    no_style: bool = typer.Option(
+        False, "--no-style", help="关闭风格模仿注入（不读 style.md）"
+    ),
+    method: str = typer.Option(
+        None, "--method", help="写作方法模板：three_act / hero_journey / qi_cheng_zhuan_he（写入 project/method.md）"
+    ),
+    no_method: bool = typer.Option(
+        False, "--no-method", help="关闭写作方法模板注入（不读 method.md）"
+    ),
 ) -> None:
     """全流程自主写作 - Planner→写作→编辑→记忆→评测+自动回溯
 
@@ -334,6 +347,20 @@ def autowrite(
         except Exception:  # noqa: BLE001 - 预估引导失败降级，不阻断开写
             pass
 
+    # ---- G11（拍板 2）：--method 选择内置模板写入 project/method.md（用户可再编辑）----
+    _method_val = _cli_value(method, None)
+    if _method_val and not bool(_cli_value(no_method, False)):
+        try:
+            from agent.core.method_style import load_method_text
+
+            _mt, _mn = load_method_text(
+                project_path, enabled=True, method=str(_method_val)
+            )
+            if _mt:
+                console.print(f"[cyan]已写入写作方法模板：{_mn or _method_val}（project/method.md，可再编辑）[/cyan]")
+        except Exception:  # noqa: BLE001 - 模板写入失败降级，不阻断开写
+            pass
+
     # ---- G9：事件订阅（JSON 模式 JSONL 走 stderr；非 JSON 渲染进度条/事件行/正文流式）----
     on_event, stream_meta = _make_on_event(
         json_output=bool(json_output),
@@ -385,6 +412,10 @@ def autowrite(
             if bool(_cli_value(no_progress, False))
             else str(project_path / ".state" / "progress.json")
         ),
+        # ---- G11 新增：风格模仿 + 写作方法模板（默认开；--no-style/--no-method 关闭）----
+        style_enabled=not bool(_cli_value(no_style, False)),
+        style_file=_cli_value(style_file, None),
+        method_enabled=not bool(_cli_value(no_method, False)),
     )
 
     try:
@@ -420,6 +451,42 @@ def autowrite(
             except Exception:  # noqa: BLE001 - 预估异常信封置空占位
                 _env["cost_plan"] = {"chapters": 0, "tiers": [], "guidance": ""}
             _env["budget_plan"] = bp  # 预算计划配置回显（hard_limit_tokens 仅回显不参与判定）
+            # ---- G11（拍板 6）：信封只增 style / method 字段；关闭置 null ----
+            if bool(_cli_value(no_style, False)):
+                _env["style"] = None
+            else:
+                try:
+                    from agent.core.method_style import load_style_guide
+
+                    _sg = load_style_guide(
+                        project_path,
+                        enabled=not bool(_cli_value(no_style, False)),
+                        style_file=_cli_value(style_file, None),
+                    )
+                    _env["style"] = {
+                        "active": bool(_sg),
+                        "file": str(
+                            Path(_cli_value(style_file, None)) if _cli_value(style_file, None)
+                            else project_path / "style.md"
+                        ),
+                        "chars": len(_sg),
+                    }
+                except Exception:  # noqa: BLE001 - 信封异常降级
+                    _env["style"] = {"active": False, "file": None, "chars": 0}
+            if bool(_cli_value(no_method, False)):
+                _env["method"] = None
+            else:
+                try:
+                    from agent.core.method_style import load_method_text
+
+                    _mt, _mn = load_method_text(project_path, enabled=True)
+                    _env["method"] = {
+                        "active": bool(_mt),
+                        "file": str(project_path / "method.md"),
+                        "name": _mn or None,
+                    }
+                except Exception:  # noqa: BLE001 - 信封异常降级
+                    _env["method"] = {"active": False, "file": None, "name": None}
             emit_result({"success": success, **_env}, json_mode=True)
             return
 

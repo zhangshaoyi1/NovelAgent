@@ -58,12 +58,16 @@ class M3OutlineWorkflow:
         setting_manager: SettingManager | None = None,
         state_machine: StateMachine | None = None,
         console: Console | None = None,
+        # G11：写作方法模板开关（默认开：project/method.md 存在即注入）
+        method_enabled: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client or LLMClient()
         self.sm = setting_manager or SettingManager(self.project_dir)
         self.state_machine = state_machine or StateMachine(self.project_dir)
         self.console = console or Console()
+        # G11：方法模板开关
+        self.method_enabled = method_enabled
         self.outline_file = self.project_dir / "outline.md"
         self.jinja_env = Environment(
             loader=FileSystemLoader(str(TEMPLATES_DIR)),
@@ -198,6 +202,19 @@ class M3OutlineWorkflow:
             emotional_tone=arch.get("emotional_tone", ""),
             arch_synopsis=arch.get("synopsis", ""),
         )
+        # G11：写作方法模板注入（project/method.md 存在即追加；缺失/关闭不注入）
+        if self.method_enabled:
+            try:
+                from agent.core.method_style import load_method_text
+                from agent.prompts import G11_METHOD_INSTRUCTION_TEMPLATE
+
+                method_text, _name = load_method_text(self.project_dir, enabled=True)
+                if method_text:
+                    user_prompt += G11_METHOD_INSTRUCTION_TEMPLATE.format(
+                        method_text=method_text
+                    )
+            except Exception:  # noqa: BLE001 - 模板读取失败降级，不阻断大纲生成
+                pass
         resp = self.llm.chat_creative(
             messages=[
                 {"role": "system", "content": M3_SYSTEM_PROMPT},

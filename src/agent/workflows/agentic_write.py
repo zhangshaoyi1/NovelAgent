@@ -38,6 +38,7 @@ from agent.prompts import (
     M5_QUALITY_CHECK_USER_TEMPLATE,
     G8_ENDING_INSTRUCTION_TEMPLATE,  # G8（补充边界 4）：结局阶段指令（含架构 ending）
     G8_ENDING_FALLBACK_INSTRUCTION,  # G8（补充边界 4）：ending 为空降级「收尾」通用指令
+    G11_STYLE_INSTRUCTION_TEMPLATE,  # G11：风格指引（project/style.md 注入）
 )
 from agent.utils import parse_llm_json
 from agent.workflows.m5_write_chapter import (
@@ -86,6 +87,9 @@ class AgenticWriteWorkflow:
         max_drafts: int | None = None,
         # ---- G9 新增参数：章内子阶段事件（默认 None 零开销；由 pipeline 注入）----
         event_emitter: Callable[[dict[str, Any]], None] | None = None,
+        # ---- G11 新增参数：风格模仿（默认开：project/style.md 存在即注入）----
+        style_enabled: bool = True,
+        style_file: str | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client or LLMClient()
@@ -93,6 +97,9 @@ class AgenticWriteWorkflow:
         self.tier = tier
         self.max_drafts = max_drafts
         self.state_machine = StateMachine(self.project_dir)
+        # G11：风格开关（透传给 M5._load_context 使用）
+        self.style_enabled = style_enabled
+        self.style_file = style_file
         # G9：章内子阶段事件发射器（pipeline 注入；None 时零开销）
         self.event_emitter = event_emitter
 
@@ -168,6 +175,11 @@ class AgenticWriteWorkflow:
                 )
             else:
                 task += G8_ENDING_FALLBACK_INSTRUCTION
+
+        # ---- G11：风格指引注入（style.md 存在即注入；缺失/关闭 → 与 G10 输出逐字节一致）----
+        style_guide = (ctx.get("style_guide") or "").strip()
+        if style_guide:
+            task += G11_STYLE_INSTRUCTION_TEMPLATE.format(style_guide=style_guide)
         return task
 
     # ------------------------------------------------------------------
@@ -214,6 +226,9 @@ class AgenticWriteWorkflow:
             pre_validate=False,
             # G9：透传同一 event_emitter（复用 M5 无副作用方法时不另发事件）
             event_emitter=self.event_emitter,
+            # G11：风格开关透传（_load_context 读取 style.md）
+            style_enabled=self.style_enabled,
+            style_file=self.style_file,
         )
         ctx = m5._load_context()
 

@@ -387,6 +387,16 @@ G8_ENDING_FALLBACK_INSTRUCTION = (
     "① 推进并回收主线伏笔；② 收束进行中支线；③ 完成收尾，不留新开的故事线。"
 )
 
+# ---- G11（竞品借鉴三件套）：风格模仿 / 写作方法模板 注入常量（只增不删）----
+G11_STYLE_INSTRUCTION_TEMPLATE = (
+    "\n\n# 风格指引（用户指定，请在本章写作中自然体现，不要生硬堆砌）\n{style_guide}"
+)
+
+G11_METHOD_INSTRUCTION_TEMPLATE = (
+    "\n\n# 写作方法模板（请按此结构方法论组织全书/大纲，不要生硬套用）\n{method_text}"
+)
+
+
 M5_QUALITY_CHECK_SYSTEM_PROMPT = """你是严格的小说质量审稿编辑。按以下 9 项规则审查章节，输出 JSON。
 
 规则：

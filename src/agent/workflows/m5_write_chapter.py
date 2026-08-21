@@ -31,6 +31,7 @@ from agent.core.genre_pack import GenrePackRegistry
 from agent.core.quality_checker import QualityChecker, LLMBackedChecker, Severity
 from agent.core.injected_trope_store import InjectedTropeStore
 from agent.core.llm_client import LLMClient
+from agent.core.method_style import load_style_guide  # G11：风格指引读取
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import Event, State, StateMachine
 from agent.core.confirmation import is_architecture_confirmed
@@ -43,6 +44,7 @@ from agent.prompts import (
     M5_REVISE_USER_TEMPLATE,
     G8_ENDING_INSTRUCTION_TEMPLATE,  # G8（补充边界 4）：结局阶段指令（含架构 ending）
     G8_ENDING_FALLBACK_INSTRUCTION,  # G8（补充边界 4）：ending 为空降级「收尾」通用指令
+    G11_STYLE_INSTRUCTION_TEMPLATE,  # G11：风格指引（project/style.md 注入）
 )
 from agent.utils import parse_llm_json
 
@@ -93,6 +95,9 @@ class M5WriteChapterWorkflow:
         strict_review: bool = False,
         # ---- G9 新增参数：章内子阶段事件（默认 None 零开销；由 pipeline 注入）----
         event_emitter: Callable[[dict[str, Any]], None] | None = None,
+        # ---- G11 新增参数：风格模仿（默认开：project/style.md 存在即注入）----
+        style_enabled: bool = True,
+        style_file: str | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client or LLMClient()
@@ -116,6 +121,9 @@ class M5WriteChapterWorkflow:
         self._qc = QualityChecker(self.project_dir, self.llm)
         # G9：章内子阶段事件发射器（pipeline 注入；None 时零开销）
         self.event_emitter = event_emitter
+        # G11：风格模仿（project/style.md 存在即注入；--no-style 关闭）
+        self.style_enabled = style_enabled
+        self.style_file = style_file
 
     def _emit_substage(self, substage: str, chapter: int) -> None:
         """G9：章内子阶段事件（真实阶段边界，M5 精确）；未注入 emitter 时零开销。
@@ -431,6 +439,10 @@ class M5WriteChapterWorkflow:
             "ending": self._load_architecture_ending(),  # architecture.md frontmatter（空串=降级）
             "ending_mode": bool(progress.get("ending_mode", False)),  # 是否结局模式
             "mainline": list(progress.get("mainline_visited", []) or []),  # 已访问支线
+            # ---- G11：风格指引（project/style.md；--no-style 或缺失 → ""）----
+            "style_guide": load_style_guide(
+                self.project_dir, self.style_enabled, self.style_file
+            ),
         }
 
     def _load_architecture_ending(self) -> str:
@@ -768,6 +780,13 @@ class M5WriteChapterWorkflow:
                 )
             else:
                 system_prompt = system_prompt + G8_ENDING_FALLBACK_INSTRUCTION
+
+        # ---- G11：风格指引注入（style.md 存在即注入；缺失/关闭 → 与 G10 输出逐字节一致）----
+        style_guide = (ctx.get("style_guide") or "").strip()
+        if style_guide:
+            system_prompt = system_prompt + G11_STYLE_INSTRUCTION_TEMPLATE.format(
+                style_guide=style_guide
+            )
 
         resp = self.llm.chat_creative(
             messages=[

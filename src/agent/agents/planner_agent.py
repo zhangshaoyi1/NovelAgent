@@ -25,8 +25,10 @@ from pydantic import BaseModel, Field, ValidationError
 from rich.console import Console
 
 from agent.core.llm_client import LLMClient
+from agent.core.method_style import load_method_text  # G11：写作方法模板
 from agent.core.setting_manager import SettingManager
 from agent.core.structured_output import StructuredOutputError
+from agent.prompts import G11_METHOD_INSTRUCTION_TEMPLATE  # G11：方法模板注入常量
 
 
 # ============================================================
@@ -118,6 +120,8 @@ class PlannerAgent:
         console: Console | None = None,
         decide: PlanDecideFn | None = None,
         decide_async: PlanDecideAsyncFn | None = None,
+        # G11：写作方法模板开关（默认开：project/method.md 存在即注入）
+        method_enabled: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client
@@ -126,11 +130,25 @@ class PlannerAgent:
         self._decide = decide
         self._decide_async = decide_async
         self.plan_file = self.project_dir / ".state" / "plan.json"
+        # G11：方法模板开关
+        self.method_enabled = method_enabled
 
         # G4 新增：Schema 降级标志（供 pipeline 读取）
         self._schema_degraded: bool = False
 
     # ---------------------------------------------------------------- 上下文
+    def _method_suffix(self) -> str:
+        """G11：写作方法模板追加段（project/method.md 存在即注入；缺失/关闭 → ""）。"""
+        if not self.method_enabled:
+            return ""
+        try:
+            method_text, _name = load_method_text(self.project_dir, enabled=True)
+            if not method_text:
+                return ""
+            return G11_METHOD_INSTRUCTION_TEMPLATE.format(method_text=method_text)
+        except Exception:  # noqa: BLE001 - 模板读取失败降级为空，不阻断
+            return ""
+
     def _load_setting_context(self) -> str:
         """读取现有设定集（world/角色/支线）作为 Planner 的参考上下文。"""
         try:
@@ -209,6 +227,7 @@ class PlannerAgent:
             f"【现有设定集上下文（若有，请尊重）】\n{setting_ctx}\n\n"
             "请产出 Master Plan。"
         )
+        user_msg += self._method_suffix()  # G11：写作方法模板注入（存在即追加）
         decide = self._make_decide()
         messages = [
             {"role": "system", "content": _PLANNER_SYSTEM},
@@ -247,6 +266,7 @@ class PlannerAgent:
             f"【用户创作思路】\n{brief}\n\n"
             f"【现有设定集上下文】\n{setting_ctx}\n\n请产出 Master Plan。"
         )
+        user_msg += self._method_suffix()  # G11：写作方法模板注入（存在即追加）
         decide_async = await self._make_decide_async()
         messages = [
             {"role": "system", "content": _PLANNER_SYSTEM},
