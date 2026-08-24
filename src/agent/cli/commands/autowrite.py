@@ -27,6 +27,31 @@ def _cli_value(v: Any, default: Any) -> Any:
     return v
 
 
+def _collect_published_titles(project_dir: Path) -> list[str]:
+    """G13：收集全书已发布章节标题（首个 # 第N章·... 标题正文），用于标题重复判定。"""
+    import re as _re
+
+    titles: list[str] = []
+    chapters_dir = project_dir / "chapters"
+    if not chapters_dir.exists():
+        return titles
+    _title_re = _re.compile(r"^#\s*第\s*\d+\s*章\s*·\s*(.*?)\s*$", _re.MULTILINE)
+    try:
+        for f in sorted(chapters_dir.glob("ch*.md")):
+            try:
+                text = f.read_text(encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                continue
+            # 去 frontmatter
+            text = _re.sub(r"^---[\s\S]*?---", "", text, flags=_re.MULTILINE)
+            m = _title_re.search(text)
+            if m:
+                titles.append(m.group(1).strip())
+    except Exception:  # noqa: BLE001
+        pass
+    return titles
+
+
 def _stream_chapter_text(project_dir: Path, ev: dict, streamer: Any) -> dict[str, Any] | None:
     """G9：读刚落盘的章节文件并逐段渲染正文（stdout；失败静默跳过）。
 
@@ -298,9 +323,20 @@ def autowrite(
     guardrails_obj = None
     gate_mode = "block"  # G10（拍板 5）：默认 block（AI 味命中拒落盘）；--ai-gate-mode advisory 显式放宽
     if bool(_cli_value(ai_gate, True)) and not bool(_cli_value(no_ai_gate, False)):
-        from agent.core.guardrails import build_guardrails
+        from agent.core.guardrails import (
+            build_guardrails,
+            load_fingerprints,
+        )
 
-        gr = build_guardrails()
+        # G13：注入全书已发布标题 + 指纹库（决策③：存 .state/ 下，续写时加载已有库）
+        _fp_db = load_fingerprints(project_path / ".state" / "chapter_fingerprints.json")
+        _published_titles = _collect_published_titles(project_path)
+        gr = build_guardrails(
+            published_titles=_published_titles,
+            fingerprint_db=_fp_db,
+        )
+        # 指纹库同步进 Guardrails（build_guardrails 已注入，这里确保一致）
+        gr.fingerprint_db = _fp_db
         if _cli_value(ai_flavor_words, None):
             gr.ai_flavor_words.extend(
                 w.strip() for w in _cli_value(ai_flavor_words, "").split(",") if w.strip()

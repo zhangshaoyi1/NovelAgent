@@ -53,8 +53,30 @@ _DEFAULT_AI_FLAVOR_WORDS: list[str] = [
     "缓缓开口", "语气平静",
 ]
 
+# ---- G13：三类成书污染护栏（拍板：英文残留 / 占位标题 / 跨章重复）----
+# 1) 英文/杂质残留：正文混入工具返回（如 "Visualization failed. Cost 1 year of lifespan."）、
+#    系统提示片段、序列化泄漏等。小说正文不应含连续英文单词。
+JUNK_RULE_ID: str = "non_chinese_junk"
+# 连续 ≥3 字母的英文单词（标题/人名等由 junk_whitelist 豁免）
+_RE_ENGLISH_WORD = re.compile(r"[A-Za-z]{3,}")
+# 工具/系统残留特征串（强信号，命中即 error，不依赖长度阈值）
+_JUNK_SIGNATURES: list[str] = [
+    "Visualization failed", "Cost", "lifespan", "failed. Cost",
+    "[system]", "system prompt", "undefined", "null",
+]
+# 2) 标题合规：首个 # 第N章·... 标题为空 / 匹配 第N章·第N章 / 长度<阈值 / 与全书标题重复
+TITLE_RULE_ID: str = "title_placeholder"
+_TITLE_RE = re.compile(r"^#\s*第\s*(\d+)\s*章\s*·\s*(.*?)\s*$", re.MULTILINE)
+_TITLE_MIN_LEN = 4          # 标题正文（·之后）最少字数
+_TITLE_MAX_REPEAT = 2       # 标题与已发布标题重复即判违规
+# 3) 跨章段落去重：全书指纹库比对（去空白+标点归一化 hash，≥40字长段落，相似度>0.85）
+DUP_RULE_ID: str = "paragraph_dup"
+_DUP_MIN_CHARS = 40         # 仅对 ≥40 字长段落比对，避免短句误杀
+_DUP_SIMILARITY = 0.85      # 相似度阈值
 # 默认配置路径
 DEFAULT_GUARDRAIL_CONFIG_PATH = ".state/guardrails.json"
+# 全书指纹库默认路径（决策③：存 .state/ 下）
+DEFAULT_FINGERPRINT_PATH = ".state/chapter_fingerprints.json"
 
 
 class GateMode(str, Enum):
@@ -138,6 +160,13 @@ class Guardrails:
         allow_warnings: bool = True,
         ai_flavor_words: list[str] | None = None,   # G6：AI 味词表（默认 _DEFAULT_AI_FLAVOR_WORDS）
         ai_flavor_severity: str = "warn",           # G6：命中 severity（warn 标红 / error 阻断）
+        # ---- G13：三类污染护栏配置 ----
+        junk_whitelist: list[str] | None = None,     # 英文豁免词（人名/专有名词；默认空）
+        check_junk: bool = True,                     # 英文/杂质残留检测开关
+        check_title: bool = True,                    # 标题合规检测开关
+        check_dup: bool = True,                      # 跨章段落去重开关
+        published_titles: list[str] | None = None,   # 全书已发布标题（用于标题重复判定）
+        fingerprint_db: dict[str, list[str]] | None = None,  # 全书指纹库 {章号: [段落hash]}
     ) -> None:
         self.banned_words = list(banned_words if banned_words is not None else _DEFAULT_BANNED)
         self.placeholder_patterns = [
@@ -150,6 +179,14 @@ class Guardrails:
         # G6：AI 味词表与 severity（拍板 #4：默认 warn 标红不阻断）
         self.ai_flavor_words = list(ai_flavor_words if ai_flavor_words is not None else _DEFAULT_AI_FLAVOR_WORDS)
         self.ai_flavor_severity = ai_flavor_severity if ai_flavor_severity in ("warn", "error") else "warn"
+        # ---- G13 ----
+        self.junk_whitelist = set(w.strip() for w in (junk_whitelist or []))
+        self.check_junk = check_junk
+        self.check_title = check_title
+        self.check_dup = check_dup
+        self.published_titles: list[str] = list(published_titles or [])
+        # 指纹库：章号(str) -> 段落归一化 hash 列表；落盘后由调用方增量更新
+        self.fingerprint_db: dict[str, list[str]] = dict(fingerprint_db or {})
 
     # ---------------------------------------------------------------- 文本校验
     def check_text(
@@ -216,6 +253,31 @@ class Guardrails:
                 violations.append(GuardrailViolation(
                     AI_FLAVOR_RULE_ID, self.ai_flavor_severity,
                     f"命中 AI 腔词句「{w}」（{cnt} 次）",
+                ))
+
+        # ---- G13：三类成书污染护栏 ----
+        # 6) 英文/杂质残留（non_chinese_junk）：正文混入工具返回/系统提示/序列化泄漏。
+        if self.check_junk:
+            violation_msg = self._check_junk(t)
+            if violation_msg:
+                violations.append(GuardrailViolation(
+                    JUNK_RULE_ID, "error", violation_msg,
+                ))
+
+        # 7) 标题合规（title_placeholder）：首个 # 第N章·... 标题为空 / 占位 / 重复。
+        if self.check_title:
+            violation_msg = self._check_title(t)
+            if violation_msg:
+                violations.append(GuardrailViolation(
+                    TITLE_RULE_ID, "error", violation_msg,
+                ))
+
+        # 8) 跨章段落去重（paragraph_dup）：与全书指纹库比对，相似度 > 阈值判违规。
+        if self.check_dup:
+            dup_hits = self._check_dup(t)
+            for msg in dup_hits:
+                violations.append(GuardrailViolation(
+                    DUP_RULE_ID, "error", msg,
                 ))
 
         return GuardrailResult(violations)
@@ -342,6 +404,123 @@ class Guardrails:
             out = pat.sub("", out)
         return out
 
+    # ---------------------------------------------------------------- G13 辅助
+    @staticmethod
+    def _normalize_paragraph(p: str) -> str:
+        """段落归一化：去空白 + 标点，供指纹 hash 与相似度比对。
+
+        保留中文、英文、数字；去除空白与所有 Unicode 标点（含中文标点）。
+        （标准库 re 不支持 \p{P}，用 Unicode 范围显式排除。）
+        """
+        # 去除空白
+        s = re.sub(r"\s+", "", p)
+        # 去除 Unicode 标点/符号/分隔符（保留 Letter/Number 类别）
+        # 中文字符范围 + 拉丁字母数字 之外的标点统一删掉
+        s = re.sub(
+            r"[\u0000-\u0020\u0021-\u002f\u003a-\u0040\u005b-\u0060\u007b-\u007e"
+            r"\u2000-\u206f\u3000-\u303f\uff00-\uffef]",
+            "",
+            s,
+        )
+        return s
+
+    @staticmethod
+    def _paragraph_similarity(a: str, b: str) -> float:
+        """基于字符集合 Jaccard 的段落相似度（0~1）。"""
+        sa, sb = set(a), set(b)
+        if not sa and not sb:
+            return 1.0
+        if not sa or not sb:
+            return 0.0
+        inter = len(sa & sb)
+        union = len(sa | sb)
+        return inter / union if union else 0.0
+
+    def _check_junk(self, text: str) -> str | None:
+        """英文/杂质残留检测：连续英文单词（豁免白名单）+ 工具特征串。
+
+        先剥离 YAML frontmatter（含 chapter/created_at 等英文字段，非正文），避免误伤。
+        """
+        body = re.sub(r"^---[\s\S]*?---", "", text, flags=re.MULTILINE)  # 去 frontmatter
+        # 工具/系统残留特征串（强信号，直接判；仅扫正文）
+        for sig in _JUNK_SIGNATURES:
+            if sig.lower() in body.lower():
+                return f"检测到工具/系统残留特征串：{sig!r}（正文不应混入英文/系统返回）"
+        # 连续英文单词（≥3 字母），排除白名单
+        for m in _RE_ENGLISH_WORD.finditer(body):
+            word = m.group(0)
+            if word.lower() not in self.junk_whitelist:
+                return f"检测到正文混入英文单词：{word!r}（成书应为纯中文，白名单豁免：{sorted(self.junk_whitelist) or '无'}）"
+        return None
+
+    def _check_title(self, text: str) -> str | None:
+        """标题合规检测：首个 # 第N章·... 标题。"""
+        m = _TITLE_RE.search(text)
+        if not m:
+            return "未检测到合规章节标题（应为「# 第N章 · <有信息量的标题>」）"
+        title_body = m.group(2).strip()
+        if not title_body:
+            return "章节标题为空（必须给出一句有信息量的标题）"
+        if len(title_body) < _TITLE_MIN_LEN:
+            return f"章节标题过短（{len(title_body)} 字 < 下限 {_TITLE_MIN_LEN}），疑似占位"
+        # 占位标题：标题正文等于/包含「第N章」自身（如「第5章·第5章」）
+        if title_body == f"第{m.group(1)}章" or title_body.startswith(f"第{m.group(1)}章"):
+            return f"章节标题为占位（「第{m.group(1)}章·第{m.group(1)}章」），必须改写为场景化标题"
+        # 与全书已发布标题重复
+        if title_body in self.published_titles:
+            return f"章节标题与已发布章节重复：{title_body!r}"
+        return None
+
+    def _check_dup(self, text: str) -> list[str]:
+        """跨章段落去重：提取 ≥40 字长段落，与全书指纹库比对相似度。"""
+        # 按空行分段，剥离 frontmatter
+        body = re.sub(r"^---[\s\S]*?---", "", text, flags=re.MULTILINE)  # 去 frontmatter
+        paras = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
+        hits: list[str] = []
+        seen_chapters: set[str] = set()
+        for para in paras:
+            if len(para) < _DUP_MIN_CHARS:
+                continue
+            norm = self._normalize_paragraph(para)
+            if not norm:
+                continue
+            phash = hash(norm)
+            # 与全书指纹库比对（调用方应已排除自身章；此处仅比对已有库）
+            for ch, hlist in self.fingerprint_db.items():
+                if ch in seen_chapters:
+                    continue
+                matched_msg: str | None = None
+                for eh in hlist:
+                    if isinstance(eh, tuple):
+                        sim = self._paragraph_similarity(norm, eh[1])
+                        if sim >= _DUP_SIMILARITY:
+                            matched_msg = (
+                                f"第 {ch} 章存在高度相似段落"
+                                f"（相似度 {sim:.2f} ≥ {_DUP_SIMILARITY}），疑似跨章重复"
+                            )
+                            break
+                    elif eh == phash:
+                        matched_msg = f"第 {ch} 章存在完全相同段落，疑似跨章复制"
+                        break
+                if matched_msg:
+                    hits.append(matched_msg)
+                    seen_chapters.add(ch)
+                    break
+        return hits
+
+    def register_fingerprints(self, chapter: str | int, text: str) -> None:
+        """落盘后增量更新全书指纹库（仅收录 ≥40 字长段落的归一化文本）。"""
+        body = re.sub(r"^---[\s\S]*?---", "", text, flags=re.MULTILINE)
+        paras = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
+        entries: list[tuple[int, str]] = []
+        for para in paras:
+            if len(para) < _DUP_MIN_CHARS:
+                continue
+            norm = self._normalize_paragraph(para)
+            if norm:
+                entries.append((hash(norm), norm))
+        self.fingerprint_db[str(chapter)] = entries
+
 
 @dataclass
 class GateReport:
@@ -380,6 +559,11 @@ def load_guardrail_config(path: str | Path | None = None) -> dict[str, Any]:
         "allow_warnings": True,
         "ai_flavor_words": list(_DEFAULT_AI_FLAVOR_WORDS),   # G6
         "ai_flavor_severity": "warn",                        # G6
+        # ---- G13：三类污染护栏默认配置 ----
+        "junk_whitelist": [],          # 英文豁免词（人名/专有名词）
+        "check_junk": True,
+        "check_title": True,
+        "check_dup": True,
     }
     if path is None:
         return cfg
@@ -404,11 +588,29 @@ def load_guardrail_config(path: str | Path | None = None) -> dict[str, Any]:
         cfg["ai_flavor_words"] = raw["ai_flavor_words"] or list(_DEFAULT_AI_FLAVOR_WORDS)
     if raw.get("ai_flavor_severity") in ("warn", "error"):
         cfg["ai_flavor_severity"] = raw["ai_flavor_severity"]
+    # ---- G13 ----
+    if isinstance(raw.get("junk_whitelist"), list):
+        cfg["junk_whitelist"] = raw["junk_whitelist"]
+    if isinstance(raw.get("check_junk"), bool):
+        cfg["check_junk"] = raw["check_junk"]
+    if isinstance(raw.get("check_title"), bool):
+        cfg["check_title"] = raw["check_title"]
+    if isinstance(raw.get("check_dup"), bool):
+        cfg["check_dup"] = raw["check_dup"]
     return cfg
 
 
-def build_guardrails(path: str | Path | None = None) -> "Guardrails":
-    """按配置构建 ``Guardrails`` 实例（含门禁模式与默认合规词表）。"""
+def build_guardrails(
+    path: str | Path | None = None,
+    *,
+    published_titles: list[str] | None = None,
+    fingerprint_db: dict[str, list[str]] | None = None,
+) -> "Guardrails":
+    """按配置构建 ``Guardrails`` 实例（含门禁模式与默认合规词表）。
+
+    G13 扩展：``published_titles`` 注入全书标题用于标题重复判定；
+    ``fingerprint_db`` 注入全书指纹库用于跨章去重（决策③：存 .state/ 下）。
+    """
     cfg = load_guardrail_config(path)
     return Guardrails(
         banned_words=cfg["banned_words"],
@@ -417,4 +619,57 @@ def build_guardrails(path: str | Path | None = None) -> "Guardrails":
         allow_warnings=cfg["allow_warnings"],
         ai_flavor_words=cfg["ai_flavor_words"],        # G6
         ai_flavor_severity=cfg["ai_flavor_severity"],  # G6
+        junk_whitelist=cfg["junk_whitelist"],
+        check_junk=cfg["check_junk"],
+        check_title=cfg["check_title"],
+        check_dup=cfg["check_dup"],
+        published_titles=published_titles,
+        fingerprint_db=fingerprint_db,
     )
+
+
+# ----------------------------------------------------------------------
+# 全书指纹库持久化（决策③：存 .state/ 下，随章节落盘增量更新）
+# ----------------------------------------------------------------------
+def load_fingerprints(path: str | Path | None = None) -> dict[str, list[str]]:
+    """读取全书指纹库。结构：{章号(str): [[hash, 归一化文本], ...]}。
+
+    文件不存在 / 解析失败 → 返回空库（降级，不阻断写作）。
+    """
+    p = Path(path) if path else Path(DEFAULT_FINGERPRINT_PATH)
+    if not p.exists():
+        return {}
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+        db = raw.get("fingerprints", {}) if isinstance(raw, dict) else {}
+        # 兼容存储格式：tuple 在 JSON 中序列化为 [hash, norm]
+        out: dict[str, list[str]] = {}
+        for ch, entries in db.items():
+            if isinstance(entries, list):
+                # 还原为 (hash, norm) 元组列表（register_fingerprints 内部用 tuple）
+                out[ch] = [tuple(e) if isinstance(e, list) else e for e in entries]  # type: ignore[arg-type]
+        return out
+    except Exception:  # noqa: BLE001 - 损坏降级为空
+        return {}
+
+
+def save_fingerprints(
+    db: dict[str, list[str]], path: str | Path | None = None
+) -> None:
+    """写入全书指纹库（原子写）。db 的 value 为 (hash, norm) 元组列表。"""
+    p = Path(path) if path else Path(DEFAULT_FINGERPRINT_PATH)
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        # 元组序列化为 [hash, norm] 以便 JSON 存储
+        serializable = {
+            ch: [list(e) if isinstance(e, tuple) else e for e in entries]
+            for ch, entries in db.items()
+        }
+        tmp = p.with_suffix(p.suffix + ".tmp")
+        tmp.write_text(
+            json.dumps({"fingerprints": serializable}, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+        tmp.replace(p)
+    except Exception:  # noqa: BLE001 - 持久化失败不影响主流程
+        pass

@@ -21,6 +21,7 @@
 from __future__ import annotations
 
 import os
+import json
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -32,6 +33,13 @@ from agent.core.state_machine import Event, State, StateMachine, TRANSITIONS
 from agent.core.setting_manager import SettingManager
 from agent.core.confirmation import is_architecture_confirmed
 import frontmatter
+
+
+def _now_iso() -> str:
+    """返回当前 ISO 时间字符串（G13 告警标记用）。"""
+    from datetime import datetime
+
+    return datetime.now().isoformat(timespec="seconds")
 
 
 @dataclass
@@ -279,6 +287,8 @@ class AgenticPipelineWorkflow:
         self.payoff_enabled = bool(payoff_enabled)
         # G6：写章循环 Guardrails 命中收集（B5-3 修复：结果进报告，不只 console）
         self._guardrail_hits: list[dict[str, Any]] = []
+        # ---- G13：门禁重写后仍不达标章节的告警标记（决策①：不阻断，写文件留痕）----
+        self._quality_flags: list[dict[str, Any]] = []
 
         # ---- G9：事件总线（未订阅 on_event / progress_file=None 时零落盘开销）----
         from agent.core.events import ProgressEventBus
@@ -920,6 +930,53 @@ class AgenticPipelineWorkflow:
         except Exception:  # noqa: BLE001
             pass
 
+    # ------------------------------------------------------------------
+    # G13：门禁打回重写辅助
+    # ------------------------------------------------------------------
+    def _format_guardrail_critique(self, violations: list[dict[str, Any]]) -> str:
+        """把 Guardrails 违例编译成 Writer 可读的修正要求（决策①：重写提示）。"""
+        lines = ["以下为上一版门禁（Guardrails）未通过项，请逐项修订后重新提交章节："]
+        for i, v in enumerate(violations, 1):
+            rid = v.get("rule_id", "?")
+            msg = v.get("message", "")
+            if rid == "non_chinese_junk":
+                lines.append(f"{i}. 英文/杂质残留：{msg} —— 删除所有英文单词与系统提示片段，仅保留纯中文小说正文。")
+            elif rid == "title_placeholder":
+                lines.append(f"{i}. 标题占位/重复：{msg} —— 改写为一句有信息量、非模板化的场景化章节标题。")
+            elif rid == "paragraph_dup":
+                lines.append(f"{i}. 跨章重复：{msg} —— 重写该段落，避免与前述章节雷同（换场景/换视角/换措辞）。")
+            else:
+                lines.append(f"{i}. [{rid}] {msg}")
+        return "\n".join(lines)
+
+    def _flag_chapter_quality(
+        self, chapter: int, violations: list[dict[str, Any]], ch_text: str
+    ) -> None:
+        """门禁重写后仍不达标 → 标记告警（决策①：保留该章、不阻断，写 .state/chapter_quality_flags.json）。"""
+        flag = {
+            "chapter": chapter,
+            "violations": [v.get("message", v.get("rule_id", "")) for v in violations],
+            "flagged_at": _now_iso(),
+        }
+        self._quality_flags.append(flag)
+        # 持久化（追加写，原子）
+        try:
+            from agent.core.guardrails import DEFAULT_GUARDRAIL_CONFIG_PATH  # 仅引用，避免误用
+            qf_path = self.project_dir / ".state" / "chapter_quality_flags.json"
+            qf_path.parent.mkdir(parents=True, exist_ok=True)
+            existing: list[dict[str, Any]] = []
+            if qf_path.exists():
+                try:
+                    existing = json.loads(qf_path.read_text(encoding="utf-8")).get("flags", [])
+                except Exception:  # noqa: BLE001
+                    existing = []
+            existing.append(flag)
+            tmp = qf_path.with_suffix(".json.tmp")
+            tmp.write_text(json.dumps({"flags": existing}, ensure_ascii=False, indent=2), encoding="utf-8")
+            tmp.replace(qf_path)
+        except Exception:  # noqa: BLE001 - 持久化失败仅留内存记录，不阻断
+            pass
+
     def _compute_eta_s(self, target: int) -> Optional[int]:
         """G9：ETA = 已写章平均耗时 × 剩余章数（拍板 4；无可计算时 None）。"""
         try:
@@ -1206,17 +1263,46 @@ class AgenticPipelineWorkflow:
                                     "message": v.get("message", ""),
                                 })
                         if not gr.passed:
+                            # ---- G13（决策①）：硬门禁命中 → 自动打回重写 1 次 ----
+                            critique = self._format_guardrail_critique(gr.violations)
                             self.console.print(
-                                f"[red]第 {ch_num} 章硬门禁未过："
-                                f"{len(gr.violations)} 项违例，已拒绝发布并终止流水线[/red]"
+                                f"[yellow]第 {ch_num} 章硬门禁未过（{len(gr.violations)} 项）："
+                                f"自动打回 Writer 重写 1 次[/yellow]"
                             )
-                            result.blocked = True
-                            result.block_reason = "; ".join(
-                                v.get("message", v.get("rule_id", "")) for v in gr.violations
-                            )
-                            # ---- G9：failure 事件（硬门禁拒绝，error；break 语义零改动）----
-                            self._emit_failure("gate", result.block_reason, severity="error")
-                            break  # 硬门禁：拒绝发布非合规内容，交由人工/修订
+                            try:
+                                wf_result = writer.run(rewrite_hint=critique)
+                                ch_text = str(getattr(wf_result, "chapter_text", ""))
+                                ch_title = str(getattr(wf_result, "chapter_title", ""))
+                                ch_num = int(getattr(wf_result, "chapter_num", ch_num))
+                                gr2 = self.guardrails.gate(ch_text, mode="block")
+                                # 重写后若仍命中，收集明细
+                                for v in gr2.violations:
+                                    if v.get("rule_id") == "ai_flavor":
+                                        self._guardrail_hits.append({
+                                            "chapter": ch_num,
+                                            "rule_id": v.get("rule_id"),
+                                            "severity": v.get("severity"),
+                                            "message": v.get("message", ""),
+                                        })
+                                if gr2.passed:
+                                    self.console.print(
+                                        f"[green]第 {ch_num} 章重写后通过门禁[/green]"
+                                    )
+                                else:
+                                    # 第二次仍不过 → 降级告警标记（决策①：不终止流水线）
+                                    self._flag_chapter_quality(
+                                        ch_num, gr2.violations, ch_text
+                                    )
+                                    self.console.print(
+                                        f"[red]第 {ch_num} 章重写后仍 {len(gr2.violations)} 项未过："
+                                        f"已标记告警并保留该章（不阻断写作）[/red]"
+                                    )
+                            except Exception as re_e:  # noqa: BLE001 - 重写失败降级为告警
+                                self._flag_chapter_quality(ch_num, gr.violations, ch_text)
+                                self.console.print(
+                                    f"[red]第 {ch_num} 章门禁重写失败（{re_e}）："
+                                    f"已标记告警并保留该章[/red]"
+                                )
                     else:
                         gr = self.guardrails.check(ch_text)
                         if not gr.passed:
@@ -1235,6 +1321,16 @@ class AgenticPipelineWorkflow:
                                 })
                 except Exception:  # noqa: BLE001
                     pass
+
+            # ---- G13：章节落盘后增量更新全书指纹库（决策③：存 .state/ 下）----
+            try:
+                if self.guardrails is not None:
+                    self.guardrails.register_fingerprints(ch_num, ch_text)
+                    from agent.core.guardrails import save_fingerprints
+                    fp_path = self.project_dir / ".state" / "chapter_fingerprints.json"
+                    save_fingerprints(self.guardrails.fingerprint_db, fp_path)
+            except Exception:  # noqa: BLE001 - 指纹持久化失败不阻断
+                pass
 
             # 记忆回写
             try:
