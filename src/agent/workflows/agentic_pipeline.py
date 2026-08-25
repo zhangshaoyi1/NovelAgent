@@ -945,8 +945,28 @@ class AgenticPipelineWorkflow:
                 lines.append(f"{i}. 标题占位/重复：{msg} —— 改写为一句有信息量、非模板化的场景化章节标题。")
             elif rid == "paragraph_dup":
                 lines.append(f"{i}. 跨章重复：{msg} —— 重写该段落，避免与前述章节雷同（换场景/换视角/换措辞）。")
+            elif rid == "meta_instruction_leak":
+                lines.append(f"{i}. 写作元指令泄漏：{msg} —— 删除所有「章末悬念/留下悬念」等写作指令标记，它们不是小说正文，不得出现在成书中。")
             else:
                 lines.append(f"{i}. [{rid}] {msg}")
+        return "\n".join(lines)
+
+    def _format_edit_critique(self, conflicts: list[Any]) -> str:
+        """把编辑器一致性阻塞冲突编译成 Writer 可读的修正要求（post-write 硬门禁重写提示）。"""
+        lines = ["以下为上一版一致性审查（ConsistencyChecker）未通过的阻断项，请逐项修订后重新提交章节："]
+        for i, c in enumerate(conflicts, 1):
+            rid = getattr(c, "rule_id", "?")
+            desc = getattr(c, "description", "")
+            if rid == "timeline_conflict":
+                lines.append(
+                    f"{i}. 时间线/生死矛盾：{desc} —— 以 characters/ 角色档案为唯一真源："
+                    f"若本章确需交代该角色死亡，须先更新角色档案生死状态与对应章节，再回写正文；"
+                    f"否则改写为与角色当前生死状态一致的内容。"
+                )
+            elif rid == "relation_conflict":
+                lines.append(f"{i}. 关系网一致性：{desc} —— 核实该角色生死与 relations/graph.md 是否同步更新。")
+            else:
+                lines.append(f"{i}. [{rid}] {desc}")
         return "\n".join(lines)
 
     def _flag_chapter_quality(
@@ -1237,16 +1257,49 @@ class AgenticPipelineWorkflow:
             ch_text = str(getattr(wf_result, "chapter_text", ""))
             ch_title = str(getattr(wf_result, "chapter_title", ""))
 
-            # 编辑并联审查（advisory；硬一致由 Evaluator 终审兜底）
+            # 编辑并联审查：一致性硬门禁（BLOCK 冲突自动打回重写 1 次，与 Guardrails 门禁同级）
             try:
                 edit = editor.review(ch_text)
-                if not edit.passed:
-                    self.console.print(
-                        f"[yellow]第 {ch_num} 章编辑提示："
-                        f"{edit.block_count} 项阻断，{len(edit.frozen_violations)} 项冻结违例[/yellow]"
-                    )
             except Exception:  # noqa: BLE001
                 edit = None
+            if edit is not None:
+                block_conflicts = [c for c in edit.conflicts if c.severity == "block"]
+                if block_conflicts:
+                    critique = self._format_edit_critique(block_conflicts)
+                    self.console.print(
+                        f"[yellow]第 {ch_num} 章一致性硬门禁未过"
+                        f"（{len(block_conflicts)} 项阻断）：自动打回 Writer 重写 1 次[/yellow]"
+                    )
+                    try:
+                        wf_result = writer.run(rewrite_hint=critique)
+                        ch_text = str(getattr(wf_result, "chapter_text", ""))
+                        ch_title = str(getattr(wf_result, "chapter_title", ""))
+                        ch_num = int(getattr(wf_result, "chapter_num", ch_num))
+                        edit2 = editor.review(ch_text)
+                        still = [c for c in (edit2.conflicts or []) if c.severity == "block"] if edit2 else []
+                        if not still:
+                            self.console.print(f"[green]第 {ch_num} 章重写后通过一致性门禁[/green]")
+                        else:
+                            self._flag_chapter_quality(ch_num, [c.to_dict() for c in still], ch_text)
+                            self.console.print(
+                                f"[red]第 {ch_num} 章重写后仍 {len(still)} 项阻断未过："
+                                f"已标记告警并保留该章（不阻断写作）[/red]"
+                            )
+                    except Exception as re_e:  # noqa: BLE001 - 重写失败降级为告警
+                        self._flag_chapter_quality(ch_num, [c.to_dict() for c in block_conflicts], ch_text)
+                        self.console.print(
+                            f"[red]第 {ch_num} 章一致性门禁重写失败（{re_e}）："
+                            f"已标记告警并保留该章[/red]"
+                        )
+                elif edit.conflicts:
+                    self.console.print(
+                        f"[yellow]第 {ch_num} 章编辑提示：{len(edit.conflicts)} 项一致性警告[/yellow]"
+                    )
+                elif edit.frozen_violations:
+                    self.console.print(
+                        f"[yellow]第 {ch_num} 章编辑提示："
+                        f"{len(edit.frozen_violations)} 项冻结违例[/yellow]"
+                    )
 
             # Phase 5 · Guardrails 门禁（advisory 提示 / block 硬门禁）。未注入则跳过。
             if self.guardrails is not None:

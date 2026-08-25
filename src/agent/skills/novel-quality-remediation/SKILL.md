@@ -123,14 +123,18 @@ changan 复盘还暴露三类**根因在 agent 而非小说正文**的缺陷，�
 ### 第七类：角色状态治理缺失（周伯生死矛盾）
 
 - **现象**：ch049 写周伯「十年前便已故去」，但其角色档案 `characters/仵作周伯.md` 载明其为后期殉职、ch003–ch059 一直在世。
-- **根因**：`core/consistency_checker.py` 的 `timeline_conflict`/`relation_conflict` 等规则**全是 `_noop_consistency_check` 空壳**，角色生死/时间线从未被强制校验；novel-writer skill 的"写前拉白名单"也未落到代码。
-- **修复**（`workflows/m5_write_chapter.py` + `prompts.py`）：
-  - 新增 `_build_character_constraints(subline_data)`：从 `characters/<name>.md` 抽取结构化「状态/生死/时间线」真源，拼成**不可违背硬约束**；
-  - 该约束注入 Writer 的 system prompt（`G_CHARACTER_STATE_CONSTRAINT_TEMPLATE`），明确"本章正文不可与角色状态/时间线矛盾"；
-  - `M5_GENERATE_SYSTEM_PROMPT` 第 9 条"不与 character.md 冲突"、第 13 条"禁止元指令泄漏"同步强化。
-  - 说明：`consistency_checker` 的 timeline/relation 规则仍是空壳，后续可把上述抽取逻辑接入做 post-write 复核；当前以写前约束注入为治本手段。
+- **根因**：`core/consistency_checker.py` 的 `timeline_conflict`/`relation_conflict` 等规则**原先全是 `_noop_consistency_check` 空壳**，角色生死/时间线从未被强制校验；novel-writer skill 的"写前拉白名单"也未落到代码。
+- **双重修复**（写前约束注入 + 写后真实校验，二者互补）：
+  - **写前**（治本，`workflows/m5_write_chapter.py` + `prompts.py`）：新增 `_build_character_constraints(subline_data)` 从 `characters/<name>.md` 抽取结构化「状态/生死/时间线」真源，拼成**不可违背硬约束**注入 Writer system prompt（配合 `M5_GENERATE_SYSTEM_PROMPT` 第 9 条"不与 character.md 冲突"、第 13 条"禁止元指令泄漏"）。
+  - **写后**（`core/consistency_checker.py`，已将空壳落地为真实规则）：
+    - `timeline_conflict`（BLOCK）：比对 `characters/*.md` 生死真源，正文断言某角色「已故/死了/牺牲」但档案为在世或后期才牺牲 → 阻断；死亡断言**归属到正文中最近角色称呼**，避免张冠李戴（已修李承安误报）。
+    - `relation_conflict`（WARN）：比对 `relations/graph.md` 活跃边，正文称某角色已故但其关系网仍有互动型活跃边 → 告警。
+    - `golden_finger_overstep`（WARN）：比对角色「禁用词」（如周伯禁用 系统/金手指），正文让其触发系统/金手指 → 告警。
+    - `realm_overstep`（WARN）：比对 `world.md` 境界体系（仅当显式定义时才触发，防误报），宣称突破至未登记境界 → 告警。
+    - 门禁接线：`agentic_pipeline.py` 编辑并联审查原仅为 advisory；现改为 **BLOCK 一致性冲突与 Guardrails 同级**——自动打回 Writer 重写 1 次，仍不过则标记告警保留（不阻断流水线）。`_get_arbiter` 改为按需惰性构造，避免 post-write 校验触发无谓的 LLM/网络初始化。
+  - 单测：`tests/test_consistency_checker.py` 覆盖四规则（含周伯式矛盾、金手指、境界越级、关系网），全绿。
 
-> 上述代码修改（guardrails `meta_instruction_leak` + m5 pacing/route/character 修复 + prompts 强化）已通过逻辑单测，待 agent 仓提交。
+> 上述代码修改（guardrails `meta_instruction_leak` + m5 pacing/route/character 修复 + prompts 强化 + consistency_checker 四规则真实化 + pipeline 硬门禁接线）已通过逻辑单测，待 agent 仓提交。
 
 ## 标准工作流（runbook）
 
