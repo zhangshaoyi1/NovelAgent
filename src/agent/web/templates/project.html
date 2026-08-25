@@ -21,7 +21,25 @@
     <a class="btn" href="/p/{{ name }}/write">进入实时写作间</a>
     <a class="btn" href="/p/{{ name }}/conflicts">冲突裁决{% if conflict_pending > 0 %}<span class="badge err"> {{ conflict_pending }}</span>{% endif %}</a>
     <a class="btn" href="/p/{{ name }}/dashboard">查看看板</a>
+    <a class="btn" href="/p/{{ name }}/team">Agent 阵容</a>
+    <a class="btn" href="/p/{{ name }}/graph">世界关系图谱</a>
     <a class="btn" href="/p/{{ name }}/files">浏览文件</a>
+  </div>
+</section>
+
+<section class="card">
+  <h2>双模式连续滑块（自主度）</h2>
+  <p class="muted small">拖动调节 Agent 自主度：左=作者全掌控，右=全自动碰撞（Auto Driver）。亦可一键预设。</p>
+  <div class="slider-row">
+    <input type="range" min="0" max="100" value="{{ ps.autonomy_level or 70 }}" id="autonomy-slider" />
+    <span id="autonomy-value" class="badge">{{ ps.autonomy_level or 70 }}</span>
+    <span class="badge" id="autonomy-label">
+      {% if (ps.autonomy_level or 70) >= 90 %}Auto Driver{% elif (ps.autonomy_level or 70) >= 30 %}Co-pilot{% else %}Director{% endif %}
+    </span>
+  </div>
+  <div class="actions-row">
+    <button class="btn small" onclick="setAutonomy('{{ name }}', 100)">Auto Driver（全自动碰撞）</button>
+    <button class="btn small" onclick="setAutonomy('{{ name }}', 35)">Co-pilot（协同审校）</button>
   </div>
 </section>
 

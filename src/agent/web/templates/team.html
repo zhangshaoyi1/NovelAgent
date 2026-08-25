@@ -1,0 +1,64 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} · Agent 阵容{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>Agent 阵容：{{ name }}</h1>
+  <p class="muted">{{ summary }}</p>
+</div>
+
+<section class="card">
+  <p class="muted small">
+    不是一个写手，而是一支编制完整的创作团队。每一道工序都有专精的 Agent 负责，
+    它们围绕同一个世界状态协同工作，由你担任总编。
+  </p>
+</section>
+
+{% set cat_color = {
+  "世界构建": "#2e7d32",
+  "情节叙事": "#f9a825",
+  "成文润色": "#8e24aa",
+  "审校把关": "#c62828"
+} %}
+
+{% for g in groups %}
+<section class="card">
+  <h2 style="color:{{ cat_color[g.category] }};">{{ g.category }} <span class="muted small">· {{ g.tagline }}</span></h2>
+  <div class="roster-grid">
+    {% for a in g.agents %}
+    <div class="agent-card" style="border-left:4px solid {{ cat_color[g.category] }};">
+      <div class="agent-head">
+        <span class="agent-glyph" style="background:{{ cat_color[g.category] }};">{{ a.glyph }}</span>
+        <span class="agent-name">{{ a.name }}</span>
+      </div>
+      <div class="agent-resp">{{ a.responsibility }}</div>
+      <div class="agent-engine">⚙ {{ a.engine }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+{% endfor %}
+{% endblock %}
+{% block scripts %}
+<style>
+  .roster-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
+    gap: 12px;
+    margin-top: 8px;
+  }
+  .agent-card {
+    background: #fff;
+    border-radius: 8px;
+    padding: 10px 12px;
+    box-shadow: 0 1px 3px rgba(0,0,0,.08);
+  }
+  .agent-head { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; }
+  .agent-glyph {
+    display: inline-flex; align-items: center; justify-content: center;
+    width: 26px; height: 26px; border-radius: 6px; color: #fff; font-weight: 700;
+  }
+  .agent-name { font-weight: 600; }
+  .agent-resp { font-size: 13px; color: #333; line-height: 1.5; }
+  .agent-engine { font-size: 11px; color: #999; margin-top: 6px; }
+</style>
+{% endblock %}

@@ -6,6 +6,20 @@
   <p class="muted">管理你的小说项目，点击进入即可用界面驱动创作 Agent。</p>
 </div>
 
+<section class="card philosophy">
+  <h2>世界模拟 · {{ philosophy.tagline }}</h2>
+  <p class="muted">{{ philosophy.opening }}</p>
+  <p>{{ philosophy.positioning }}</p>
+  <div class="pillar-grid">
+    {% for p in philosophy.pillars %}
+    <div class="pillar">
+      <div class="pillar-title">{{ loop.index }}. {{ p.title }}</div>
+      <div class="pillar-body">{{ p.body }}</div>
+    </div>
+    {% endfor %}
+  </div>
+</section>
+
 <section class="card">
   <h2>新建项目</h2>
   <form id="create-form" class="form-grid">

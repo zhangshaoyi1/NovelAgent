@@ -169,3 +169,46 @@ textarea { resize: vertical; }
   font-size: 13px; font-family: inherit;
 }
 .manual-input:focus { outline: none; border-color: var(--accent); }
+
+/* 世界模拟哲学面板 */
+.philosophy p { line-height: 1.7; }
+.pillar-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 12px; margin-top: 10px; }
+.pillar { background: #fff; border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; }
+.pillar-title { font-weight: 700; color: var(--accent); margin-bottom: 6px; }
+.pillar-body { font-size: 13px; color: #333; line-height: 1.6; }
+
+/* 双模式连续滑块（自主度 0-100） */
+.slider-row { display: flex; align-items: center; gap: 12px; margin: 6px 0 4px; }
+.slider-row input[type="range"] {
+  flex: 1; width: auto; padding: 0; height: 6px; -webkit-appearance: none; appearance: none;
+  background: linear-gradient(90deg, var(--accent) 0%, var(--accent) var(--fill, 70%), var(--line) var(--fill, 70%));
+  border: none; border-radius: 999px; cursor: pointer;
+}
+.slider-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none; appearance: none; width: 18px; height: 18px; border-radius: 50%;
+  background: #fff; border: 2px solid var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.2); cursor: pointer;
+}
+.slider-row input[type="range"]::-moz-range-thumb {
+  width: 18px; height: 18px; border-radius: 50%; background: #fff;
+  border: 2px solid var(--accent); box-shadow: 0 1px 3px rgba(0,0,0,.2); cursor: pointer;
+}
+.slider-row .badge { min-width: 44px; text-align: center; }
+#autonomy-value { font-weight: 700; color: var(--accent); }
+.autonomy-note { margin-top: 4px; color: var(--ok); }
+
+/* 可拖拽世界关系图谱 */
+.graph-toolbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.legend { display: flex; gap: 10px; flex-wrap: wrap; }
+.legend-chip { display: inline-flex; align-items: center; gap: 6px; font-size: 13px; color: var(--muted); }
+.legend-chip i { width: 12px; height: 12px; border-radius: 3px; display: inline-block; }
+.graph-layout { display: flex; gap: 14px; align-items: stretch; }
+#graph-network { flex: 1; height: 70vh; min-height: 420px; border: 1px solid var(--line); border-radius: 12px; background: #fbfbfd; box-shadow: var(--shadow); }
+.graph-side { width: 300px; flex: none; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); padding: 14px; box-shadow: var(--shadow); }
+.graph-side h3 { margin: 0 0 10px; font-size: 15px; }
+.side-form label { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); margin-bottom: 10px; }
+.side-default { color: var(--muted); }
+.side-default .small { font-size: 12px; }
+@media (max-width: 760px) {
+  .graph-layout { flex-direction: column; }
+  .graph-side { width: auto; }
+}

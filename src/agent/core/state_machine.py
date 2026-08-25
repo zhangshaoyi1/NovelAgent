@@ -81,6 +81,7 @@ class StateMachine:
         self.state: State = State.INIT
         self.progress: dict[str, Any] = {}
         self.mode: str = "heavy"  # heavy | light | auto
+        self.autonomy_level: int = 70  # 0-100，Agent 自主度（双模式连续滑块）
 
     # ------ 持久化 ------
     def load(self) -> None:
@@ -102,6 +103,11 @@ class StateMachine:
             self.state = State.INIT
         self.progress = data.get("progress", {})
         self.mode = data.get("mode", "heavy")
+        try:
+            self.autonomy_level = int(data.get("autonomy_level", 70))
+        except (TypeError, ValueError):
+            self.autonomy_level = 70
+        self.autonomy_level = max(0, min(100, self.autonomy_level))
 
     def save(self) -> None:
         """原子写入状态文件"""
@@ -110,6 +116,7 @@ class StateMachine:
             "state": self.state.value,
             "progress": self.progress,
             "mode": self.mode,
+            "autonomy_level": self.autonomy_level,
         }
         tmp = self.state_file.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -187,6 +194,20 @@ class StateMachine:
             raise ValueError(f"非法模式：{mode}，可选值：{sorted(self.VALID_MODES)}")
         self.mode = mode
         self.save()
+
+    # ------ 自主权谱系（双模式连续滑块）------
+    def set_autonomy_level(self, level: int) -> None:
+        """设置 Agent 自主度（0-100，连续可调）
+
+        Args:
+            level: 0=作者全掌控，100=Agent 全自动碰撞（Auto Driver）
+        """
+        self.autonomy_level = max(0, min(100, int(level)))
+        self.save()
+
+    def get_autonomy_level(self) -> int:
+        """读取 Agent 自主度"""
+        return self.autonomy_level
 
     # ------ 状态转换（T-6：使用单一 TRANSITIONS 表）------
     def transition(self, event: Event) -> None:

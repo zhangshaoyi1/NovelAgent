@@ -144,3 +144,83 @@ function guideCompose(project) {
   const c = startRunConsole('一键写书（compose）');
   runCommand(project, 'compose', argv, c, () => location.reload());
 }
+
+/* ============================================================
+ * 双模式连续滑块：Agent 自主度（0-100）
+ * ============================================================ */
+
+/* 前端标签（与后端 autonomy_label 对齐，避免后端未返回时空白） */
+function autonomyLabel(level) {
+  if (level >= 90) return 'Auto Driver';
+  if (level >= 30) return 'Co-pilot';
+  return 'Director';
+}
+
+/* 设置自主度：POST /api/mode，并即时刷新滑块与标签 */
+function setAutonomy(project, level) {
+  const lvl = Math.max(0, Math.min(100, parseInt(level, 10) || 0));
+  const fd = new FormData();
+  fd.append('name', project);
+  fd.append('autonomy', lvl);
+  fetch('/api/mode', { method: 'POST', body: fd })
+    .then((r) => r.json())
+    .then((j) => {
+      const applied = j.autonomy != null ? j.autonomy : lvl;
+      const slider = document.getElementById('autonomy-slider');
+      const valEl = document.getElementById('autonomy-value');
+      const lblEl = document.getElementById('autonomy-label');
+      if (slider) slider.value = applied;
+      if (valEl) valEl.textContent = applied;
+      if (lblEl) lblEl.textContent = j.label || autonomyLabel(applied);
+      if (j.message) flashAutonomyNote(j.message);
+    })
+    .catch((e) => alert('设置自主度失败：' + e));
+}
+
+/* 滑块下方提示行（短暂显示后端回执） */
+function flashAutonomyNote(msg) {
+  let el = document.getElementById('autonomy-note');
+  if (!el) {
+    el = document.createElement('div');
+    el.id = 'autonomy-note';
+    el.className = 'muted small autonomy-note';
+    const card = document.querySelector('.slider-row');
+    if (card && card.parentElement) card.parentElement.appendChild(el);
+  }
+  el.textContent = msg;
+}
+
+/* 从当前页推断项目名（优先 data-project，回退到 URL /p/{name}） */
+function currentProjectName() {
+  if (document.body.dataset && document.body.dataset.project) {
+    return document.body.dataset.project;
+  }
+  const m = location.pathname.match(/\/p\/([^/]+)/);
+  return m ? m[1] : '';
+}
+
+/* 滑块实时联动：拖动即时更新数值与标签，松手（change）后落库 */
+document.addEventListener('DOMContentLoaded', function () {
+  const slider = document.getElementById('autonomy-slider');
+  if (!slider) return;
+  slider.addEventListener('input', function () {
+    const v = parseInt(slider.value, 10);
+    slider.style.setProperty('--fill', v + '%');
+    const valEl = document.getElementById('autonomy-value');
+    const lblEl = document.getElementById('autonomy-label');
+    if (valEl) valEl.textContent = v;
+    if (lblEl) lblEl.textContent = autonomyLabel(v);
+  });
+  // 初始填充
+  slider.style.setProperty('--fill', slider.value + '%');
+  let t;
+  slider.addEventListener('change', function () {
+    const v = parseInt(slider.value, 10);
+    const project = currentProjectName();
+    if (!project) return;
+    clearTimeout(t);
+    t = setTimeout(function () {
+      setAutonomy(project, v);
+    }, 300);
+  });
+});

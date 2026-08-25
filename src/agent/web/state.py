@@ -87,6 +87,7 @@ def get_project_state(name: str) -> dict[str, Any]:
     return {
         "state": sm.state.value,
         "mode": sm.mode,
+        "autonomy_level": sm.autonomy_level,
         "progress": sm.progress,
         "available_commands": sm.allowed_commands(),
     }

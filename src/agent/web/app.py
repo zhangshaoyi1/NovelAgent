@@ -30,6 +30,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from agent.web import runner, state
+from agent.agents.registry import get_groups, roster_summary, RosterCategory
+from agent.core.philosophy import get_philosophy
+from agent.workflows.m8_mode import ModeController, autonomy_label
+from agent.core.relation_manager import (
+    RelationManager,
+    WorldNode,
+    WorldEdge,
+    NODE_KIND_LABELS,
+    NODE_KIND_COLORS,
+)
 
 # 触发所有 CLI 命令的 @command 注册（含动态注册的 compose / autowrite 等），
 # 使 Web 端的 available_commands 与 CLI 保持一致。
@@ -49,7 +59,9 @@ app.mount("/static", StaticFiles(directory=str(_HERE / "static")), name="static"
 def home(request: Request) -> HTMLResponse:
     projects = state.list_projects()
     return templates.TemplateResponse(
-        request, "home.html", {"request": request, "projects": projects}
+        request,
+        "home.html",
+        {"request": request, "projects": projects, "philosophy": get_philosophy()},
     )
 
 
@@ -137,6 +149,116 @@ def file_view(request: Request, name: str, path: str = "") -> HTMLResponse:
     )
 
 
+@app.get("/p/{name}/team", response_class=HTMLResponse)
+def team_page(request: Request, name: str) -> HTMLResponse:
+    """Agent 阵容页面：展示「编制完整创作团队」"""
+    groups = [
+        {
+            "category": g.category.value,
+            "tagline": g.tagline,
+            "agents": [
+                {
+                    "glyph": a.glyph,
+                    "name": a.name,
+                    "responsibility": a.responsibility,
+                    "engine": a.engine,
+                    "trait": a.trait,
+                }
+                for a in g.agents
+            ],
+        }
+        for g in get_groups()
+    ]
+    return templates.TemplateResponse(
+        request,
+        "team.html",
+        {
+            "request": request,
+            "name": name,
+            "summary": roster_summary(),
+            "groups": groups,
+            "total": sum(len(g["agents"]) for g in groups),
+        },
+    )
+
+
+@app.get("/p/{name}/graph", response_class=HTMLResponse)
+def graph_page(request: Request, name: str) -> HTMLResponse:
+    """可拖拽世界关系图谱页面（vis-network 力导向，节点按类型着色）"""
+    return templates.TemplateResponse(
+        request, "graph.html", {"request": request, "name": name}
+    )
+
+
+@app.get("/api/relations/{name}")
+def api_relations(name: str) -> JSONResponse:
+    """读取世界关系图谱（JSON，供前端 vis-network 消费）"""
+    rm = RelationManager(state.project_path(name))
+    rm.load()
+    return JSONResponse(
+        {
+            "nodes": [n.to_dict() for n in rm.graph.nodes],
+            "edges": [e.to_dict() for e in rm.graph.edges],
+            "kinds": NODE_KIND_LABELS,
+            "colors": NODE_KIND_COLORS,
+            "empty": not rm.exists(),
+        }
+    )
+
+
+@app.post("/api/relations/{name}")
+async def api_relations_update(request: Request, name: str) -> JSONResponse:
+    """全量保存世界关系图谱（含拖拽坐标 / 新增节点与边）"""
+    data = await request.json()
+    rm = RelationManager(state.project_path(name))
+    rm.load()
+    if isinstance(data.get("nodes"), list):
+        rm.graph.nodes = [WorldNode.from_dict(n) for n in data["nodes"]]
+    if isinstance(data.get("edges"), list):
+        rm.graph.edges = [WorldEdge.from_dict(e) for e in data["edges"]]
+    rm.save()
+    return JSONResponse(
+        {"ok": True, "nodes": len(rm.graph.nodes), "edges": len(rm.graph.edges)}
+    )
+
+
+@app.post("/api/relations/{name}/seed")
+def api_relations_seed(name: str) -> JSONResponse:
+    """一键填充示例世界图谱（人物/势力/地点/物品/伏笔）"""
+    rm = RelationManager(state.project_path(name))
+    rm.seed_sample()
+    return JSONResponse(
+        {"ok": True, "nodes": len(rm.graph.nodes), "edges": len(rm.graph.edges)}
+    )
+
+
+@app.get("/api/roster")
+def api_roster() -> JSONResponse:
+    """Agent 阵容 JSON（前端消费）"""
+    return JSONResponse(
+        {
+            "summary": roster_summary(),
+            "groups": [
+                {
+                    "category": g.category.value,
+                    "tagline": g.tagline,
+                    "agents": [
+                        {
+                            "glyph": a.glyph,
+                            "name": a.name,
+                            "responsibility": a.responsibility,
+                            "engine": a.engine,
+                            "trait": a.trait,
+                        }
+                        for a in g.agents
+                    ],
+                }
+                for g in get_groups()
+            ],
+        }
+    )
+
+
 # ============================================================
 # JSON API
 # ============================================================
@@ -148,6 +270,17 @@ def api_genres() -> JSONResponse:
 @app.get("/api/state/{name}")
 def api_state(name: str) -> JSONResponse:
     return JSONResponse(state.get_project_state(name))
+
+
+@app.post("/api/mode")
+async def api_set_mode(name: str = Form(...), autonomy: int = Form(...)) -> JSONResponse:
+    """设置双模式连续自主度（0-100），同步 legacy mode 字段"""
+    ctrl = ModeController(project_dir=state.project_path(name))
+    result = ctrl.set_autonomy(int(autonomy))
+    level = ctrl.autonomy
+    return JSONResponse(
+        {"autonomy": level, "label": autonomy_label(level), "message": result.message}
+    )
 
 
 @app.get("/api/chapters/{name}")

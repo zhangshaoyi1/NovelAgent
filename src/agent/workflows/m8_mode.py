@@ -78,6 +78,42 @@ MODE_INTERVENTION_MATRIX: dict[Mode, set[InterventionPoint]] = {
     },
 }
 
+# ============================================================
+# 双模式连续滑块：自主权谱系（0-100）
+# ============================================================
+AUTONOMY_MIN = 0
+AUTONOMY_MAX = 100
+AUTONOMY_DEFAULT = 70
+
+# 两个命名预设（对标笔枢 Auto Driver / Co-pilot）
+PRESET_AUTO_DRIVER = 100   # 全自动碰撞：放手让世界状态机与导演自由推演
+PRESET_COPILOT = 35        # 协同审校：任意节点接管，审校与改稿有 Agent 辅助
+
+# 离散模式 → 自主度映射（兼容旧三档切换）
+MODE_TO_AUTONOMY = {
+    Mode.HEAVY: 20,
+    Mode.LIGHT: 55,
+    Mode.AUTO: 100,
+}
+
+# 各介入点的「所需作者掌控阈值」：自主度低于该值即打断询问作者
+AUTONOMY_THRESHOLDS: dict[InterventionPoint, int] = {
+    InterventionPoint.CHAPTER_BEFORE: 80,
+    InterventionPoint.CHAPTER_AFTER: 55,
+    InterventionPoint.PLOT_NODE: 40,
+    InterventionPoint.FORESHADOW_RECALL: 35,
+    InterventionPoint.MAJOR_DECISION: 0,  # 重大决策始终打断（安全底线）
+}
+
+
+def autonomy_label(level: int) -> str:
+    """自主度 → 双模式标签"""
+    if level >= 90:
+        return "Auto Driver · 全自动碰撞"
+    if level >= 30:
+        return "Co-pilot · 协同审校"
+    return "Director · 重度协作"
+
 
 @dataclass
 class ModeInfo:
@@ -126,14 +162,27 @@ class ModeController:
     # ------ 查询 ------
     @property
     def current_mode(self) -> Mode:
-        """获取当前模式"""
+        """获取当前模式（离散兼容字段）"""
         try:
             return Mode(self.state_machine.mode)
         except ValueError:
             return Mode.HEAVY
 
+    @property
+    def autonomy(self) -> int:
+        """读取当前自主度（0-100）"""
+        try:
+            return self.state_machine.get_autonomy_level()
+        except Exception:  # noqa: BLE001 - 读取失败降级默认
+            return AUTONOMY_DEFAULT
+
     def should_intervene(self, point: InterventionPoint) -> bool:
-        """判断给定介入点在当前模式下是否需要询问用户
+        """判断给定介入点是否需要询问用户（连续自主权门禁）
+
+        规则：
+            - 重大决策（MAJOR_DECISION）为安全底线，始终打断。
+            - 其余介入点：当自主度低于该点的「所需作者掌控阈值」时打断，
+              自主度越高，Agent 越自主，作者越少被打断。
 
         Args:
             point: 介入点类型
@@ -141,7 +190,38 @@ class ModeController:
         Returns:
             True 表示需要暂停询问用户
         """
-        return point in MODE_INTERVENTION_MATRIX.get(self.current_mode, set())
+        # 重大决策：安全底线，始终打断
+        if point == InterventionPoint.MAJOR_DECISION:
+            return True
+        threshold = AUTONOMY_THRESHOLDS.get(point, AUTONOMY_MAX)
+        return self.autonomy < threshold
+
+    def set_autonomy(self, level: int) -> M8ModeResult:
+        """设置自主度（0-100，连续可调），并同步 legacy mode 字段
+
+        Args:
+            level: 0=作者全掌控，100=Agent 全自动碰撞（Auto Driver）
+
+        Returns:
+            切换结果（复用 M8ModeResult，old/new 反映离散 mode 对齐）
+        """
+        level = max(AUTONOMY_MIN, min(AUTONOMY_MAX, int(level)))
+        old_mode = self.current_mode
+        self.state_machine.set_autonomy_level(level)
+        # 同步 legacy mode，便于旧逻辑/展示
+        if level >= 90:
+            self.state_machine.set_mode("auto")
+        elif level >= 30:
+            self.state_machine.set_mode("light")
+        else:
+            self.state_machine.set_mode("heavy")
+        new_mode = self.current_mode
+        return M8ModeResult(
+            old_mode=old_mode,
+            new_mode=new_mode,
+            changed=True,
+            message=f"自主权已设为 {level}（{autonomy_label(level)}）",
+        )
 
     def get_mode_info(self, mode: Mode | None = None) -> ModeInfo:
         """获取模式详细信息"""
@@ -200,6 +280,8 @@ class ModeController:
                 message=f"当前已是 {target.value} 模式，无需切换",
             )
 
+        # 离散模式切换同步自主度（保持两套控制一致）
+        self.state_machine.set_autonomy_level(MODE_TO_AUTONOMY[target])
         self.state_machine.set_mode(target.value)
         return M8ModeResult(
             old_mode=old,
@@ -334,13 +416,15 @@ class ModeController:
 
     # ------ 展示 ------
     def show_status(self) -> None:
-        """展示当前模式信息"""
+        """展示当前模式信息（含连续自主权）"""
         mode = self.current_mode
         info = self.get_mode_info()
-        table = Table(title="介入频率模式")
+        level = self.autonomy
+        table = Table(title="介入频率模式 · 双模式连续滑块")
         table.add_column("项目", style="cyan")
         table.add_column("值", style="white")
         table.add_row("当前模式", f"{mode.value}（{info.label}）")
+        table.add_row("自主度", f"{level} / 100 · {autonomy_label(level)}")
         table.add_row("描述", info.description)
         table.add_row("介入点", "、".join(info.intervention_points))
         self.console.print(table)
