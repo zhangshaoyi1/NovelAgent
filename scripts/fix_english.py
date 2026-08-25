@@ -1,7 +1,10 @@
-"""changan 英文残留 LLM 最小改动改写器。
+"""changan 英文残留 LLM 最小改动改写器（稳健版）。
 
 读 .state/english_scan.json，分批调用真实 LLM，对每处含英文的行返回"仅把英文片段
 翻译/改写为自然中文"的完整行（不动其他内容）。脚本用精确字符串替换原文件对应行。
+
+稳健性修复：给每行分配稳定行号标识（L001/L002…）作为 JSON 键，避免模型在回写键里
+改写原文字符导致精确匹配失败（旧版用"原行全文"做键，模型常微调一两个字使 lookup 落空）。
 """
 from __future__ import annotations
 import json
@@ -17,7 +20,7 @@ NOVEL_CH = pathlib.Path("D:/project/NovelAgent/novels/changan-binyiguan/chapters
 SCAN = pathlib.Path("D:/project/NovelAgent/novels/changan-binyiguan/.state/english_scan.json")
 BATCH = 8
 
-# 从 .env 加载（简单解析，避免引入项目完整配置）
+
 def load_env(p: pathlib.Path) -> dict:
     env = {}
     if p.exists():
@@ -29,8 +32,6 @@ def load_env(p: pathlib.Path) -> dict:
             env[k.strip()] = v.strip().strip('"').strip("'")
     return env
 
-sys.path.insert(0, str(ROOT / "src"))
-# 不依赖项目配置，直接用 openai 客户端
 
 import time
 
@@ -56,17 +57,13 @@ def call_llm_with_retry(client, model, prompt, max_retry=5):
     raise last_err
 
 
-PROMPT = """你是一名中文小说编辑。下面是一批小说正文行，其中混入了英文单词或短语（如 said/voice/last/otts 等模型生成残留），破坏了中文成书的纯净度。
+PROMPT = """你是一名中文小说编辑。下面是一批带行号标识的小说正文行，其中混入了英文单词或短语（如 said/voice/last/otts 等模型生成残留），破坏了中文成书的纯净度。
 你的任务：对每一行，仅把其中的英文片段翻译/改写为自然、符合上下文的中文，保持原句其他内容、标点、语气完全不变。若一行有多处英文，全部改写。
 绝对不要重写整句、不要添加解释、不要改变任何非英文部分。
 
-返回严格 JSON 对象，键为"原行完整文本"，值为"仅替换英文后的中文行"。只返回 JSON，不要 markdown 围栏。
+返回严格 JSON 对象，键为每行左侧的"行号标识"（如 "L001"、"L002"，务必原样照抄、不要改动），值为"仅替换英文后的中文整行"。只返回 JSON，不要 markdown 围栏。
 
-示例：
-输入行：李承安点头，但心中暗otts：这案子牵扯太大，官府可能 involvement。
-输出键值：{"李承安点头，但心中暗otts：这案子牵扯太大，官府可能 involvement。":"李承安点头，但心中暗忖：这案子牵扯太大，官府可能涉足其中。"}
-
-待处理行（每行一个，可能重复）：
+待处理行（每行一个，左侧为行号标识）：
 """
 
 
@@ -99,7 +96,10 @@ def main() -> None:
         if not lines_to_fix:
             continue
 
-        prompt = PROMPT + "\n".join(lines_to_fix)
+        # 分配稳定行号标识，避免模型改动能回写键
+        id_map = {f"L{i+1:03d}": para for i, para in enumerate(lines_to_fix)}
+        prompt_lines = [f"【{lid}】{para}" for lid, para in id_map.items()]
+        prompt = PROMPT + "\n".join(prompt_lines)
         try:
             out = call_llm_with_retry(client, model, prompt)
             mapping = json.loads(out)
@@ -116,7 +116,10 @@ def main() -> None:
             changed = 0
             for loc in detail[ch]:
                 para = loc["paragraph"]
-                new_para = mapping.get(para)
+                lid = next((k for k, v in id_map.items() if v == para), None)
+                if lid is None:
+                    continue
+                new_para = mapping.get(lid)
                 if not new_para or new_para == para:
                     continue
                 # 精确替换：在文件中找到该行并替换（保留行号上下文）
