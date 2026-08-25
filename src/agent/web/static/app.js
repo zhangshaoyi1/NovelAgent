@@ -111,7 +111,36 @@ async function createProject(params, onDone) {
 }
 
 /* 向导步骤：根据当前状态渲染不同的可用动作 */
-function guideStep(project, command, argv, label) {
+function guideStep(project,  command, argv, label) {
   const c = startRunConsole(label || command);
   runCommand(project, command, argv, c, () => location.reload());
+}
+
+/* 向导：一键自动写书（compose 命令） */
+function guideCompose(project) {
+  const name = document.getElementById('compose-name').value.trim();
+  const dir = document.getElementById('compose-dir').value.trim();
+  const core = document.getElementById('compose-core').value.trim();
+  const scope = document.getElementById('compose-scope').value;
+  const genre = document.getElementById('compose-genre').value.trim();
+  const chapters = document.getElementById('compose-chapters').value.trim();
+  const mode = document.getElementById('compose-mode').value;
+  if (!name && !dir) {
+    alert('请至少填写「书名」或「已有项目目录」之一');
+    return;
+  }
+  if (!name && !core) {
+    alert('续写模式需填写「已有项目目录」；新书模式需填写「书名」与「一句话核心梗」');
+    return;
+  }
+  const argv = [];
+  if (name) argv.push('--name', name);
+  if (dir) argv.push('--dir', dir);
+  if (core) argv.push('--story-core', core);
+  argv.push('--scope', scope);
+  if (genre) argv.push('--genre', genre);
+  if (chapters && chapters !== '0') argv.push('--chapters', chapters);
+  argv.push('--mode', mode);
+  const c = startRunConsole('一键写书（compose）');
+  runCommand(project, 'compose', argv, c, () => location.reload());
 }

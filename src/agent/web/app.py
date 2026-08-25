@@ -31,6 +31,10 @@ from fastapi.templating import Jinja2Templates
 
 from agent.web import runner, state
 
+# 触发所有 CLI 命令的 @command 注册（含动态注册的 compose / autowrite 等），
+# 使 Web 端的 available_commands 与 CLI 保持一致。
+import agent.cli.commands  # noqa: F401  副作用：命令元数据登记
+
 app = FastAPI(title="NovelAgent Web UI", version="0.1.0")
 
 _HERE = Path(__file__).resolve().parent

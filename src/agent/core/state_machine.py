@@ -89,7 +89,17 @@ class StateMachine:
             self.state = State.INIT
             return
         data = json.loads(self.state_file.read_text(encoding="utf-8"))
-        self.state = State(data.get("state", State.INIT))
+        raw = data.get("state", State.INIT)
+        try:
+            self.state = State(raw)
+        except ValueError:
+            # 防御：state.json 中存在非法/笔误状态值（如历史数据 "COMPLETE"）
+            # 不阻断 Web / CLI，降级为 INIT 并保留原始值供排查。
+            print(
+                f"[state_machine] 警告：{self.state_file} 的状态值 "
+                f"{raw!r} 非法，已降级为 INIT"
+            )
+            self.state = State.INIT
         self.progress = data.get("progress", {})
         self.mode = data.get("mode", "heavy")
 

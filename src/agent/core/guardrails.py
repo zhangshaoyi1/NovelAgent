@@ -53,7 +53,7 @@ _DEFAULT_AI_FLAVOR_WORDS: list[str] = [
     "缓缓开口", "语气平静",
 ]
 
-# ---- G13：三类成书污染护栏（拍板：英文残留 / 占位标题 / 跨章重复）----
+# ---- G14：三类成书污染护栏（拍板：英文残留 / 占位标题 / 跨章重复）----
 # 1) 英文/杂质残留：正文混入工具返回（如 "Visualization failed. Cost 1 year of lifespan."）、
 #    系统提示片段、序列化泄漏等。小说正文不应含连续英文单词。
 JUNK_RULE_ID: str = "non_chinese_junk"
@@ -160,7 +160,7 @@ class Guardrails:
         allow_warnings: bool = True,
         ai_flavor_words: list[str] | None = None,   # G6：AI 味词表（默认 _DEFAULT_AI_FLAVOR_WORDS）
         ai_flavor_severity: str = "warn",           # G6：命中 severity（warn 标红 / error 阻断）
-        # ---- G13：三类污染护栏配置 ----
+        # ---- G14：三类污染护栏配置 ----
         junk_whitelist: list[str] | None = None,     # 英文豁免词（人名/专有名词；默认空）
         check_junk: bool = True,                     # 英文/杂质残留检测开关
         check_title: bool = True,                    # 标题合规检测开关
@@ -179,7 +179,7 @@ class Guardrails:
         # G6：AI 味词表与 severity（拍板 #4：默认 warn 标红不阻断）
         self.ai_flavor_words = list(ai_flavor_words if ai_flavor_words is not None else _DEFAULT_AI_FLAVOR_WORDS)
         self.ai_flavor_severity = ai_flavor_severity if ai_flavor_severity in ("warn", "error") else "warn"
-        # ---- G13 ----
+        # ---- G14 ----
         self.junk_whitelist = set(w.strip() for w in (junk_whitelist or []))
         self.check_junk = check_junk
         self.check_title = check_title
@@ -255,7 +255,7 @@ class Guardrails:
                     f"命中 AI 腔词句「{w}」（{cnt} 次）",
                 ))
 
-        # ---- G13：三类成书污染护栏 ----
+        # ---- G14：三类成书污染护栏 ----
         # 6) 英文/杂质残留（non_chinese_junk）：正文混入工具返回/系统提示/序列化泄漏。
         if self.check_junk:
             violation_msg = self._check_junk(t)
@@ -404,7 +404,7 @@ class Guardrails:
             out = pat.sub("", out)
         return out
 
-    # ---------------------------------------------------------------- G13 辅助
+    # ---------------------------------------------------------------- G14 辅助
     @staticmethod
     def _normalize_paragraph(p: str) -> str:
         """段落归一化：去空白 + 标点，供指纹 hash 与相似度比对。
@@ -559,7 +559,7 @@ def load_guardrail_config(path: str | Path | None = None) -> dict[str, Any]:
         "allow_warnings": True,
         "ai_flavor_words": list(_DEFAULT_AI_FLAVOR_WORDS),   # G6
         "ai_flavor_severity": "warn",                        # G6
-        # ---- G13：三类污染护栏默认配置 ----
+        # ---- G14：三类污染护栏默认配置 ----
         "junk_whitelist": [],          # 英文豁免词（人名/专有名词）
         "check_junk": True,
         "check_title": True,
@@ -588,7 +588,7 @@ def load_guardrail_config(path: str | Path | None = None) -> dict[str, Any]:
         cfg["ai_flavor_words"] = raw["ai_flavor_words"] or list(_DEFAULT_AI_FLAVOR_WORDS)
     if raw.get("ai_flavor_severity") in ("warn", "error"):
         cfg["ai_flavor_severity"] = raw["ai_flavor_severity"]
-    # ---- G13 ----
+    # ---- G14 ----
     if isinstance(raw.get("junk_whitelist"), list):
         cfg["junk_whitelist"] = raw["junk_whitelist"]
     if isinstance(raw.get("check_junk"), bool):
@@ -608,7 +608,7 @@ def build_guardrails(
 ) -> "Guardrails":
     """按配置构建 ``Guardrails`` 实例（含门禁模式与默认合规词表）。
 
-    G13 扩展：``published_titles`` 注入全书标题用于标题重复判定；
+    G14 扩展：``published_titles`` 注入全书标题用于标题重复判定；
     ``fingerprint_db`` 注入全书指纹库用于跨章去重（决策③：存 .state/ 下）。
     """
     cfg = load_guardrail_config(path)

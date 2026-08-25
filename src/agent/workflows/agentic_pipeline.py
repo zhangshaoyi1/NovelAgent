@@ -36,7 +36,7 @@ import frontmatter
 
 
 def _now_iso() -> str:
-    """返回当前 ISO 时间字符串（G13 告警标记用）。"""
+    """返回当前 ISO 时间字符串（G14 告警标记用）。"""
     from datetime import datetime
 
     return datetime.now().isoformat(timespec="seconds")
@@ -287,7 +287,7 @@ class AgenticPipelineWorkflow:
         self.payoff_enabled = bool(payoff_enabled)
         # G6：写章循环 Guardrails 命中收集（B5-3 修复：结果进报告，不只 console）
         self._guardrail_hits: list[dict[str, Any]] = []
-        # ---- G13：门禁重写后仍不达标章节的告警标记（决策①：不阻断，写文件留痕）----
+        # ---- G14：门禁重写后仍不达标章节的告警标记（决策①：不阻断，写文件留痕）----
         self._quality_flags: list[dict[str, Any]] = []
 
         # ---- G9：事件总线（未订阅 on_event / progress_file=None 时零落盘开销）----
@@ -931,7 +931,7 @@ class AgenticPipelineWorkflow:
             pass
 
     # ------------------------------------------------------------------
-    # G13：门禁打回重写辅助
+    # G14：门禁打回重写辅助
     # ------------------------------------------------------------------
     def _format_guardrail_critique(self, violations: list[dict[str, Any]]) -> str:
         """把 Guardrails 违例编译成 Writer 可读的修正要求（决策①：重写提示）。"""
@@ -1263,7 +1263,7 @@ class AgenticPipelineWorkflow:
                                     "message": v.get("message", ""),
                                 })
                         if not gr.passed:
-                            # ---- G13（决策①）：硬门禁命中 → 自动打回重写 1 次 ----
+                            # ---- G14（决策①）：硬门禁命中 → 自动打回重写 1 次 ----
                             critique = self._format_guardrail_critique(gr.violations)
                             self.console.print(
                                 f"[yellow]第 {ch_num} 章硬门禁未过（{len(gr.violations)} 项）："
@@ -1322,7 +1322,7 @@ class AgenticPipelineWorkflow:
                 except Exception:  # noqa: BLE001
                     pass
 
-            # ---- G13：章节落盘后增量更新全书指纹库（决策③：存 .state/ 下）----
+            # ---- G14：章节落盘后增量更新全书指纹库（决策③：存 .state/ 下）----
             try:
                 if self.guardrails is not None:
                     self.guardrails.register_fingerprints(ch_num, ch_text)

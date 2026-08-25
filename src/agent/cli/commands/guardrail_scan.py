@@ -1,4 +1,4 @@
-"""guardrail-scan 命令 —— G13 成书质量护栏扫描
+"""guardrail-scan 命令 —— G14 成书质量护栏扫描
 
 对已有小说的全部章节运行三条护栏规则（英文残留 / 占位标题 / 跨章重复），
 输出逐章体检报告。这是 NovelAgent 的**内置校验功能**，由 CLI 直接调用，
@@ -32,7 +32,7 @@ def guardrail_scan(
         True, "--report/--no-report", help="是否写 .state/guardrail_scan_report.md"
     ),
 ) -> None:
-    """G13 成书质量护栏扫描 —— 英文残留 / 占位标题 / 跨章重复 体检报告"""
+    """G14 成书质量护栏扫描 —— 英文残留 / 占位标题 / 跨章重复 体检报告"""
     import json
     from pathlib import Path
 

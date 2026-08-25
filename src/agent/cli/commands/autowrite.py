@@ -28,7 +28,7 @@ def _cli_value(v: Any, default: Any) -> Any:
 
 
 def _collect_published_titles(project_dir: Path) -> list[str]:
-    """G13：收集全书已发布章节标题（首个 # 第N章·... 标题正文），用于标题重复判定。"""
+    """G14：收集全书已发布章节标题（首个 # 第N章·... 标题正文），用于标题重复判定。"""
     import re as _re
 
     titles: list[str] = []
@@ -328,7 +328,7 @@ def autowrite(
             load_fingerprints,
         )
 
-        # G13：注入全书已发布标题 + 指纹库（决策③：存 .state/ 下，续写时加载已有库）
+        # G14：注入全书已发布标题 + 指纹库（决策③：存 .state/ 下，续写时加载已有库）
         _fp_db = load_fingerprints(project_path / ".state" / "chapter_fingerprints.json")
         _published_titles = _collect_published_titles(project_path)
         gr = build_guardrails(

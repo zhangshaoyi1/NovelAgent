@@ -1,0 +1,80 @@
+{
+  "name": "novel-writing-team",
+  "version": "1.0.0",
+  "description": "Multi-agent novel writing studio: outline, write, and critique in a dynamic loop for coherent long-form fiction.",
+  "author": {
+    "name": "zsy",
+    "email": "zsy@workbuddy.cn"
+  },
+  "agents": [
+    "./agents/novel-writing-team-lead.md",
+    "./agents/novel-outline.md",
+    "./agents/novel-writer.md",
+    "./agents/novel-critic.md"
+  ],
+  "expertType": "team",
+  "agentName": "novel-writing-team-lead",
+  "teamInfo": {
+    "leadAgent": "novel-writing-team-lead",
+    "memberAgents": ["novel-outline", "novel-writer", "novel-critic"]
+  },
+  "displayName": {
+    "en": "Novel Writing Team",
+    "zh": "小说创作团"
+  },
+  "profession": {
+    "en": "Novel Writing Team",
+    "zh": "小说创作团"
+  },
+  "displayDescription": {
+    "en": "Multi-agent long-form fiction studio: outline planning, chapter writing, and editorial critique collaborate in a dynamic loop to produce coherent, high-quality novels.",
+    "zh": "多智能体长篇小说创作团：大纲推进、正文写作、审稿修订动态协作，避免重复与设定漂移，写出连贯长篇。"
+  },
+  "avatar": "avatars/team.png",
+  "categoryId": "06-ContentCreative",
+  "defaultInitPrompt": {
+    "zh": "开始创作一部新小说（先搭世界观与主线）",
+    "en": "I want to write a novel. Please use the outline agent to set up the world and main plot, then start chapter one."
+  },
+  "plugin": "novel-writing-team",
+  "tags": [
+    { "en": "Long-form Fiction", "zh": "长篇小说" },
+    { "en": "Story Outline", "zh": "大纲架构" },
+    { "en": "Editorial Review", "zh": "审稿修订" }
+  ],
+  "quickPrompts": [
+    { "en": "Start a new novel: give me a world setting + main plot", "zh": "开始创作一部新小说（先搭世界观与主线）" },
+    { "en": "Continue writing, advance the main plot to chapter X", "zh": "继续续写，把主线推进到第 X 章" },
+    { "en": "Review the latest chapter for plot holes or inconsistencies", "zh": "检查最新章节有没有不合理或矛盾的地方" }
+  ],
+  "members": [
+    {
+      "id": "novel-writing-team-lead",
+      "displayName": { "en": "Zhiheng Gu", "zh": "顾执衡" },
+      "profession": { "en": "Creative Director", "zh": "创作总监" },
+      "avatar": "avatars/novel-writing-team-lead.png",
+      "role": "lead"
+    },
+    {
+      "id": "novel-outline",
+      "displayName": { "en": "Mouyuan Su", "zh": "苏谋远" },
+      "profession": { "en": "Outline Architect", "zh": "大纲架构师" },
+      "avatar": "avatars/novel-outline.png",
+      "role": "member"
+    },
+    {
+      "id": "novel-writer",
+      "displayName": { "en": "Yanxing Shen", "zh": "沈砚行" },
+      "profession": { "en": "Chapter Writer", "zh": "正文执笔" },
+      "avatar": "avatars/novel-writer.png",
+      "role": "member"
+    },
+    {
+      "id": "novel-critic",
+      "displayName": { "en": "Jingming Yan", "zh": "严镜明" },
+      "profession": { "en": "Critic Editor", "zh": "审稿主编" },
+      "avatar": "avatars/novel-critic.png",
+      "role": "member"
+    }
+  ]
+}

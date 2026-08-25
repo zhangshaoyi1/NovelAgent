@@ -162,7 +162,7 @@ def run_compose(
             print("⚠ foreshadow-report 异常（非致命），请稍后手动重跑："
                   f" python -m agent.cli foreshadow-report -d {project_dir}")
 
-        # G13：全量段落去重扫描（完本关卡，检测跨章重复内容）
+        # G14：全量段落去重扫描（完本关卡，检测跨章重复内容）
         try:
             from agent.core.guardrails import Guardrails, save_fingerprints
 

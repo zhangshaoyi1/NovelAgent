@@ -140,6 +140,16 @@ textarea { resize: vertical; }
 .chip:hover { border-color: var(--accent); }
 .chip.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 
+/* 引导向导：一键写书卡片 */
+.card-compose { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
+.compose-form { display: flex; flex-direction: column; gap: 12px; margin-top: 4px; }
+.compose-form .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.compose-form .field input, .compose-form .field select {
+  font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: #fff; color: var(--ink); width: 100%;
+}
+.compose-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+
 /* 冲突裁决页 */
 .ok { color: var(--ok); }
 .err { color: var(--err); }

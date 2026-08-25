@@ -1,7 +1,7 @@
 # NovelAgent 使用指南（面向作者 / 使用者）
 
 > 本指南介绍 **NovelAgent 这个写作软件本身怎么用**：如何安装、配置大模型、把一本小说从 0 写到完结、以及日常查看 / 修改 / 导出。
-> 如果你要的是"用脚本自动批量写作（极品医仙那种一键驱动）"，那套工具已单独放到 **`写作自动化/` 独立仓库**，本指南不覆盖。
+> 如果你要的是"用脚本自动批量写作（极品医仙那种一键驱动）"，那套能力已整合进 agent 仓库的 **`scripts/compose.py`（一键写书，见 novel-agent-driver 的 One-Shot Compose）**，本指南聚焦软件本身用法。
 
 ---
 
@@ -94,38 +94,38 @@ LLM_MODEL_ID=qwen2.5:14b
 ### 3.4 临时指定 .env
 部分命令支持 `--env <路径>`（仅本次命令生效，透传给下游 LLM 客户端）：
 ```bash
-novel-agent write -d projects/my-novel --env ./another.env
-novel-agent doctor -d projects/my-novel --env ./another.env
+novel-agent write -d novels/my-novel --env ./another.env
+novel-agent doctor -d novels/my-novel --env ./another.env
 ```
 
 ---
 
 ## 四、核心写作流程（从新书到完结）
 
-建议先 `cd` 到你的**工作区根目录**（即 `agent/.env` 所在目录，或任何能让 NovelAgent 找到 `.env` 的目录），再用 `-d` 指定小说项目。项目默认相对路径是 `projects/my-novel`。
+建议先 `cd` 到你的**工作区根目录**（即 `agent/.env` 所在目录，或任何能让 NovelAgent 找到 `.env` 的目录），再用 `-d` 指定小说项目。项目默认相对路径是 `novels/my-novel`。
 
 ### 4.1 开新书 —— `start`
 ```bash
-novel-agent start -d projects/my-novel
+novel-agent start -d novels/my-novel
 ```
 交互式收集 **标题 / 体量 / 题材 / 风格 / 故事核心**，然后调 LLM 生成世界观 `world.md`。这是第一步，后续所有命令都依赖它。
 
 ### 4.2 脉络讨论 —— `discuss`
 ```bash
-novel-agent discuss -d projects/my-novel            # 默认最多 10 轮
-novel-agent discuss -d projects/my-novel -r 15      # 最多 15 轮
+novel-agent discuss -d novels/my-novel            # 默认最多 10 轮
+novel-agent discuss -d novels/my-novel -r 15      # 最多 15 轮
 ```
 与 Agent 多轮对话，深化故事思路，产出 `discussion.md`。在对话框输入 `/next` 结束讨论。
 
 ### 4.3 大纲 —— `outline`
 ```bash
-novel-agent outline -d projects/my-novel
+novel-agent outline -d novels/my-novel
 ```
 基于已确认的架构生成 `outline.md`（故事简介 + 顶层支线任务列表），并为每条支线创建 `subline.md`。
 
 ### 4.4 角色设计 —— `design-characters`
 ```bash
-novel-agent design-characters -d projects/my-novel
+novel-agent design-characters -d novels/my-novel
 ```
 产出：
 - `protagonist_route.md`（树状主角成长路线）
@@ -136,8 +136,8 @@ novel-agent design-characters -d projects/my-novel
 
 ### 4.5 写章节（核心循环）—— `write`
 ```bash
-novel-agent write -d projects/my-novel                  # 写下一章
-novel-agent write -d projects/my-novel --no-strict-review   # 跳过 D 严格审查（更快，质量偏弱）
+novel-agent write -d novels/my-novel                  # 写下一章
+novel-agent write -d novels/my-novel --no-strict-review   # 跳过 D 严格审查（更快，质量偏弱）
 ```
 每一章的执行链条：
 1. **7 步上下文加载**（world → subline → route → relations → characters → foreshadows → 题材规则）；
@@ -148,12 +148,12 @@ novel-agent write -d projects/my-novel --no-strict-review   # 跳过 D 严格审
 - 加 `--json` 会以 JSON 输出结果（供外部脚本 / 自动化驱动调用，stdout 是 JSON，rich UI 走 stderr）。
 - 可能触发 **前置冲突检测**（`pre_validation_blocked`）：当世界观出现高严重度冲突时，生成被暂停。此时按报告修改 `world.md` / `subline` / 角色档案，或用下面的 `adjust-*` 调整，再重跑 `write`。
 
-> 想"一口气写完整本"而不手动反复敲命令？见独立的 **`写作自动化/` 仓库**里的通用驱动，它会循环调用 `write` 并自动处理限流、续写、导出。
+> 想"一口气写完整本"而不手动反复敲命令？见 **`scripts/compose.py`（One-Shot Compose）**，一条命令即可循环调用 `write` 并自动处理限流、续写、导出。
 
 ### 4.6 一致性演化 —— `adjust-relation` / `adjust-route`
 ```bash
-novel-agent adjust-relation -d projects/my-novel -i "赵无极对林寻从对立转为暗中赏识"
-novel-agent adjust-route    -d projects/my-novel -i "让主角在N02选择加入执法堂当卧底，后期再反水"
+novel-agent adjust-relation -d novels/my-novel -i "赵无极对林寻从对立转为暗中赏识"
+novel-agent adjust-route    -d novels/my-novel -i "让主角在N02选择加入执法堂当卧底，后期再反水"
 ```
 让**关系网** / **主角成长路线**随真实剧情演化：
 - 旧关系不会删除，而是标记为 `archived` + 强度 0（归档边单独成章）；
@@ -164,9 +164,9 @@ novel-agent adjust-route    -d projects/my-novel -i "让主角在N02选择加入
 
 ### 4.7 导出成书 —— `export`
 ```bash
-novel-agent export -d projects/my-novel -f txt                 # 导出 TXT
-novel-agent export -d projects/my-novel -f markdown -t "我的修仙路"   # 指定书名
-novel-agent export -d projects/my-novel -f epub -o ./output    # 导出 EPUB 到指定目录
+novel-agent export -d novels/my-novel -f txt                 # 导出 TXT
+novel-agent export -d novels/my-novel -f markdown -t "我的修仙路"   # 指定书名
+novel-agent export -d novels/my-novel -f epub -o ./output    # 导出 EPUB 到指定目录
 ```
 支持 `txt` / `markdown` / `epub`，默认输出到 `<项目>/exports/`。中途或完结都能导出。
 
@@ -176,38 +176,38 @@ novel-agent export -d projects/my-novel -f epub -o ./output    # 导出 EPUB 到
 
 ### 5.1 查看状态 —— `status`
 ```bash
-novel-agent status -d projects/my-novel            # 富文本：状态/模式/进度/可用命令
-novel-agent status -d projects/my-novel --json    # JSON：state/mode/progress/available_commands
+novel-agent status -d novels/my-novel            # 富文本：状态/模式/进度/可用命令
+novel-agent status -d novels/my-novel --json    # JSON：state/mode/progress/available_commands
 ```
 随时看"写到第几章、当前状态、接下来能跑什么命令"。
 
 ### 5.2 介入模式 —— `mode`
 ```bash
-novel-agent mode -d projects/my-novel              # 查看当前模式
-novel-agent mode -d projects/my-novel -t light     # 切到 light
-novel-agent mode -d projects/my-novel -t auto      # 切到 auto（全自动，重大决策才打断）
+novel-agent mode -d novels/my-novel              # 查看当前模式
+novel-agent mode -d novels/my-novel -t light     # 切到 light
+novel-agent mode -d novels/my-novel -t auto      # 切到 auto（全自动，重大决策才打断）
 ```
 三档：**heavy**（每章前问方向、每章后等反馈）/ **light**（仅剧情节点介入）/ **auto**（自主推进）。
 
 ### 5.3 健康体检（只读）—— `doctor`
 ```bash
-novel-agent doctor -d projects/my-novel            # 只读诊断，绝不修改
-novel-agent doctor -d projects/my-novel --ping     # 额外探测 embedding / LLM 端点可达性
+novel-agent doctor -d novels/my-novel            # 只读诊断，绝不修改
+novel-agent doctor -d novels/my-novel --ping     # 额外探测 embedding / LLM 端点可达性
 ```
 逐项检查：结构（阶段产物是否齐全）、状态机、设定集、RAG 索引、依赖配置，并给出**修复命令**。出问题先跑它。
 
 ### 5.4 可视化 Dashboard —— `dashboard`
 ```bash
-novel-agent dashboard -d projects/my-novel -o out.html          # 生成自包含只读 HTML（可双击打开）
-novel-agent dashboard -d projects/my-novel --serve --port 8080  # 起本地只读服务（Ctrl-C 关闭）
+novel-agent dashboard -d novels/my-novel -o out.html          # 生成自包含只读 HTML（可双击打开）
+novel-agent dashboard -d novels/my-novel --serve --port 8080  # 起本地只读服务（Ctrl-C 关闭）
 ```
 聚合关系图、主角路线、伏笔、进度、节奏、健康诊断，渲染为只读可视化。**只读，绝不修改任何项目文件**。
 
 ### 5.5 安全网：快照与回滚 —— `snapshot` / `rollback`
 ```bash
-novel-agent snapshot -d projects/my-novel -l before-revision   # 给设定集打快照
-novel-agent rollback -d projects/my-novel -c 20     # 回滚到第 20 章（1-19 保留，20+ 归档到 chapters/_archived/）
-novel-agent rollback -d projects/my-novel -c 20 -y  # 跳过二次确认
+novel-agent snapshot -d novels/my-novel -l before-revision   # 给设定集打快照
+novel-agent rollback -d novels/my-novel -c 20     # 回滚到第 20 章（1-19 保留，20+ 归档到 chapters/_archived/）
+novel-agent rollback -d novels/my-novel -c 20 -y  # 跳过二次确认
 ```
 写歪了不怕：快照随时存，回滚把后续章节归档（不删），进度指针退回，从指定章重写。
 
@@ -242,7 +242,7 @@ novel-agent load-skill <skill名>         # 加载评估 / 写作 skill
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | `LLM_API_KEY 未配置` / 找不到 key | `.env` 没放对或没加载 | 确认 `agent/.env` 存在且含 `LLM_API_KEY`；或命令加 `--env` |
-| `429` / `速率限制` / `rate limit` | LLM 服务商 RPM 限流 | `write` 会自动退避重试；频繁则调大 `LLM_TIMEOUT`、换额度更高模型，或用 `写作自动化/` 驱动的 `cooldown_sec` |
+| `429` / `速率限制` / `rate limit` | LLM 服务商 RPM 限流 | `write` 会自动退避重试；频繁则调大 `LLM_TIMEOUT`、换额度更高模型，或改用 `scripts/compose.py` 一键驱动（含退避重试） |
 | `pre_validation_blocked` | 世界观高严重度冲突 | 按报告改 `world.md` / `subline` / 角色，或用 `adjust-*` 调整后再 `write` |
 | `ModuleNotFoundError: agent` | 没装包 / PYTHONPATH 没含 src | `pip install -e ./agent`，或运行前 `PYTHONPATH=.../agent/src` |
 | 进度丢失 / 状态异常 | 状态文件损坏 | 先 `doctor` 诊断；必要时 `snapshot` 后 `rollback`，或 `reset-state` |
@@ -324,17 +324,17 @@ pip install -e ./agent
 # 2) 配置（新建 agent/.env，填入你的 LLM key，见第三章）
 
 # 3) 开一本新书并依次推进
-novel-agent start    -d projects/my-first-novel
-novel-agent discuss  -d projects/my-first-novel
-novel-agent outline  -d projects/my-first-novel
-novel-agent design-characters -d projects/my-first-novel
+novel-agent start    -d novels/my-first-novel
+novel-agent discuss  -d novels/my-first-novel
+novel-agent outline  -d novels/my-first-novel
+novel-agent design-characters -d novels/my-first-novel
 
-# 4) 写前 10 章（手动循环，或改用 写作自动化/ 驱动一键跑）
-novel-agent write -d projects/my-first-novel
+# 4) 写前 10 章（手动循环，或改用 scripts/compose.py 一键跑）
+novel-agent write -d novels/my-first-novel
 # ……反复 write 直到满意……
 
 # 5) 导出成书
-novel-agent export -d projects/my-first-novel -f txt
+novel-agent export -d novels/my-first-novel -f txt
 ```
 
-更省事的全自动版本，见并列的 **`写作自动化/`** 仓库（通用写作驱动 + 配置即可换书复用）。
+更省事的全自动版本，见 **`scripts/compose.py`**（一键写完一本，非定时，可直接换书复用）。
