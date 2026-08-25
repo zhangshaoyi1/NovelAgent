@@ -78,6 +78,19 @@ DEFAULT_GUARDRAIL_CONFIG_PATH = ".state/guardrails.json"
 # 全书指纹库默认路径（决策③：存 .state/ 下）
 DEFAULT_FINGERPRINT_PATH = ".state/chapter_fingerprints.json"
 
+# ---- G14（补充）：第四类成书污染——写作元指令泄漏 ----
+# agent 下发给 LLM 的「章末悬念 / 章节钩子 / 内部章节号」等写作元指令被模型原样写进正文
+# （如 ch026 结尾的 `【章末悬念】…`、ch002 的 `章末悬念：…`），属 prompt 污染，写时拦截。
+META_LEAK_RULE_ID: str = "meta_instruction_leak"
+# 命中即判 error 的强信号标记（仅在正文中检测，已剥离 frontmatter）：
+# - 章末悬念 / 留下悬念：agent→LLM 的钩子指令被写进正文
+# - 悬念[：:] / 本章要求[：:] / 写作指令 / 作者指令 / 系统指令 / 写作提示：写作元指令残留
+# - ch\d+章 / 第\d+章里 / 第\d+段[：:]：内部章节号/段号泄漏到叙事
+_META_LEAK_RE = re.compile(
+    r"章末悬念|留下悬念|悬念[：:]|本章要求[：:]|写作指令|作者指令|系统指令|写作提示"
+    r"|ch\d+章|第\d+章里|第\d+段[：:]"
+)
+
 
 class GateMode(str, Enum):
     """护栏门禁模式。
@@ -165,6 +178,7 @@ class Guardrails:
         check_junk: bool = True,                     # 英文/杂质残留检测开关
         check_title: bool = True,                    # 标题合规检测开关
         check_dup: bool = True,                      # 跨章段落去重开关
+        check_meta_leak: bool = True,                # 写作元指令泄漏检测开关（G14 补充）
         published_titles: list[str] | None = None,   # 全书已发布标题（用于标题重复判定）
         fingerprint_db: dict[str, list[str]] | None = None,  # 全书指纹库 {章号: [段落hash]}
     ) -> None:
@@ -184,6 +198,7 @@ class Guardrails:
         self.check_junk = check_junk
         self.check_title = check_title
         self.check_dup = check_dup
+        self.check_meta_leak = check_meta_leak
         self.published_titles: list[str] = list(published_titles or [])
         # 指纹库：章号(str) -> 段落归一化 hash 列表；落盘后由调用方增量更新
         self.fingerprint_db: dict[str, list[str]] = dict(fingerprint_db or {})
@@ -278,6 +293,14 @@ class Guardrails:
             for msg in dup_hits:
                 violations.append(GuardrailViolation(
                     DUP_RULE_ID, "error", msg,
+                ))
+
+        # 9) 写作元指令泄漏（meta_instruction_leak）：agent→LLM 的钩子/规划指令被写进正文。
+        if self.check_meta_leak:
+            leak = self._check_meta_leak(t)
+            if leak:
+                violations.append(GuardrailViolation(
+                    META_LEAK_RULE_ID, "error", leak,
                 ))
 
         return GuardrailResult(violations)
@@ -508,6 +531,20 @@ class Guardrails:
                     break
         return hits
 
+    def _check_meta_leak(self, text: str) -> str | None:
+        """写作元指令泄漏检测：章末悬念/章节钩子/内部章节号等指令被写入正文。
+
+        先剥离 YAML frontmatter（含 chapter/created_at 等非正文字段），仅扫正文。
+        """
+        body = re.sub(r"^---[\s\S]*?---", "", text, flags=re.MULTILINE)  # 去 frontmatter
+        m = _META_LEAK_RE.search(body)
+        if m:
+            return (
+                f"检测到写作元指令泄漏：正文出现标记「{m.group(0)}」"
+                f"（章末悬念/钩子/内部章节号是 agent→LLM 的指令，不得写入交付正文）"
+            )
+        return None
+
     def register_fingerprints(self, chapter: str | int, text: str) -> None:
         """落盘后增量更新全书指纹库（仅收录 ≥40 字长段落的归一化文本）。"""
         body = re.sub(r"^---[\s\S]*?---", "", text, flags=re.MULTILINE)
@@ -564,6 +601,7 @@ def load_guardrail_config(path: str | Path | None = None) -> dict[str, Any]:
         "check_junk": True,
         "check_title": True,
         "check_dup": True,
+        "check_meta_leak": True,       # G14 补充：写作元指令泄漏检测
     }
     if path is None:
         return cfg
@@ -597,6 +635,8 @@ def load_guardrail_config(path: str | Path | None = None) -> dict[str, Any]:
         cfg["check_title"] = raw["check_title"]
     if isinstance(raw.get("check_dup"), bool):
         cfg["check_dup"] = raw["check_dup"]
+    if isinstance(raw.get("check_meta_leak"), bool):
+        cfg["check_meta_leak"] = raw["check_meta_leak"]
     return cfg
 
 
@@ -623,6 +663,7 @@ def build_guardrails(
         check_junk=cfg["check_junk"],
         check_title=cfg["check_title"],
         check_dup=cfg["check_dup"],
+        check_meta_leak=cfg["check_meta_leak"],
         published_titles=published_titles,
         fingerprint_db=fingerprint_db,
     )

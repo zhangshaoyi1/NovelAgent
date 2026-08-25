@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -48,8 +49,11 @@ from agent.prompts import (
     G12_PAYOFF_INSTRUCTION_TEMPLATE,  # G12：爽点剧本（.state/payoff_script.json 注入）
     G12_EMOTION_INSTRUCTION_TEMPLATE,  # G12：情绪目标（本章节奏落点）
     G12_READER_FEEDBACK_TEMPLATE,  # G12：读者反馈（reader_feedback 债务注入）
+    G_CHARACTER_STATE_CONSTRAINT_TEMPLATE,  # 角色状态硬约束（来自 characters/*.md，不可违背）
 )
 from agent.utils import parse_llm_json
+
+logger = logging.getLogger(__name__)
 
 MAX_REVISIONS = 2
 
@@ -350,6 +354,8 @@ class M5WriteChapterWorkflow:
 
         # Step 5: 本章涉及角色
         characters_info, characters_fingerprint = self._load_characters(subline_data)
+        # P-C 修复：角色生死/时间线硬约束（来自 characters/*.md 真源）
+        character_constraints = self._build_character_constraints(subline_data)
 
         # Step 6: 伏笔任务
         foreshadow_task = self._load_foreshadow_task(progress)
@@ -457,6 +463,7 @@ class M5WriteChapterWorkflow:
             "route_main_growth": route_info["main_growth"],
             "characters_info": characters_info,
             "characters_fingerprint": characters_fingerprint,
+            "character_constraints": character_constraints,  # P-C 修复：角色生死/时间线硬约束
             "relations_info": relations_info,
             "foreshadow_task": foreshadow_task,
             "prev_chapter_summary": prev_summary,
@@ -566,12 +573,31 @@ class M5WriteChapterWorkflow:
                         "main_result": main_result,
                         "main_growth": main_growth,
                     }
-        # 没匹配到范围，取第一个节点
-        if len(blocks) >= 3:
-            block = blocks[2]
+        # 没匹配到范围 → P-B 修复：均匀分配节点使路线随章节推进，而非恒为 N01
+        node_ids = [blocks[i] for i in range(1, len(blocks), 2)]
+        if node_ids:
+            # 用节点范围的最大 hi 作为全书跨度（无范围则退化为本章号）
+            his: list[int] = []
+            for i in range(1, len(blocks), 2):
+                m = re.search(r"章节范围[：:]\s*(\d+)[-~](\d+)", blocks[i + 1] if i + 1 < len(blocks) else "")
+                if m:
+                    his.append(int(m.group(2)))
+            total = max(his) if his else chapter_num
+            idx = min(len(node_ids) - 1, int((chapter_num - 1) / max(1, total) * len(node_ids)))
+            node_id = node_ids[idx]
+            block = ""
+            for i in range(1, len(blocks), 2):
+                if blocks[i] == node_id:
+                    block = blocks[i + 1] if i + 1 < len(blocks) else ""
+                    break
             milestone = re.search(r"## N\d+ · (.+)", block)
+            logger.warning(
+                "[route] 第 %d 章未被任何路线节点范围覆盖（全书跨度 %d），"
+                "按位置分配到节点 %s",
+                chapter_num, total, node_id,
+            )
             return {
-                "node_id": blocks[1],
+                "node_id": node_id,
                 "milestone": milestone.group(1).strip() if milestone else "",
                 "main_title": "",
                 "main_result": "",
@@ -586,10 +612,8 @@ class M5WriteChapterWorkflow:
             return "（关系网未生成）"
         return graph_file.read_text(encoding="utf-8")[:1500]
 
-    def _load_characters(
-        self, subline_data: dict[str, Any]
-    ) -> tuple[str, str]:
-        """读取本章涉及角色的 character.md"""
+    def _extract_character_names(self, subline_data: dict[str, Any]) -> list[str]:
+        """从 subline.md 解析本章出场角色名列表（供角色信息加载与状态硬约束复用）。"""
         # 从 subline.md 的出场角色字段获取角色列表
         raw_chars = subline_data["metadata"].get("characters") or subline_data["metadata"].get("出场角色")
         if not raw_chars:
@@ -607,13 +631,22 @@ class M5WriteChapterWorkflow:
             cleaned = raw_chars.strip("[]'\" ")
             names = [n.strip("'\" ") for n in cleaned.split(",") if n.strip()]
 
+        # 如果没提取到角色名，加载所有角色
+        if not names:
+            chars_dir = self.project_dir / "characters"
+            if chars_dir.exists():
+                names = [p.stem for p in chars_dir.glob("*.md")]
+        return names
+
+    def _load_characters(
+        self, subline_data: dict[str, Any]
+    ) -> tuple[str, str]:
+        """读取本章涉及角色的 character.md"""
+        names = self._extract_character_names(subline_data)
+
         chars_dir = self.project_dir / "characters"
         info_parts: list[str] = []
         fingerprint_parts: list[str] = []
-
-        # 如果没提取到角色名，加载所有角色
-        if not names and chars_dir.exists():
-            names = [p.stem for p in chars_dir.glob("*.md")]
 
         for name in names[:6]:  # 最多 6 个
             # 尝试加载
@@ -643,6 +676,61 @@ class M5WriteChapterWorkflow:
             "\n".join(info_parts) if info_parts else "（无角色信息）",
             "\n".join(fingerprint_parts) if fingerprint_parts else "（无语言指纹）",
         )
+
+    def _build_character_constraints(self, subline_data: dict[str, Any]) -> str:
+        """P-C 修复：把 characters/*.md 的生死/状态/时间线真源抽取为「不可违背」硬约束。
+
+        直接喂给 writer 的系统提示，防止出现 ch049「周伯十年前便已故去」这类与前文
+        角色档案矛盾的内容。纯规则提取，零网络；缺失档案则跳过该角色。
+        """
+        names = self._extract_character_names(subline_data)
+        chars_dir = self.project_dir / "characters"
+        if not names or not chars_dir.exists():
+            return ""
+
+        parts: list[str] = []
+        for name in names[:6]:  # 与 _load_characters 取前 6 个保持一致
+            char_data = self.sm.load_character(name)
+            if not char_data["exists"]:
+                fuzzy = False
+                for p in chars_dir.glob("*.md"):
+                    if name in p.stem or p.stem in name:
+                        char_data = self.sm.load_character(p.stem)
+                        fuzzy = True
+                        break
+                if not fuzzy:
+                    continue
+            content = char_data["content"]
+            # 1) 优先取结构化状态段落
+            status = (
+                self._extract_section(content, "状态")
+                or self._extract_section(content, "当前状态")
+                or self._extract_section(content, "生死")
+                or self._extract_section(content, "存活状态")
+            )
+            # 2) 关键词兜底（无结构化段落时）
+            if not status:
+                if re.search(r"已故|去世|死亡|牺牲|阵亡|陨落|辞世", content):
+                    status = "（档案正文提及已故/牺牲，按已故处理）"
+                elif re.search(r"在世|存活|健在", content):
+                    status = "（档案正文提及在世/存活）"
+            # 3) 关键时间线
+            timeline = (
+                self._extract_section(content, "时间线")
+                or self._extract_section(content, "关键时间线")
+                or self._extract_section(content, "生平")
+            )
+            bits: list[str] = []
+            if status:
+                bits.append(f"权威状态：{status.strip()[:120]}")
+            if timeline:
+                bits.append(f"关键时间线：{timeline.strip()[:160]}")
+            if bits:
+                parts.append(
+                    f"- {name}：{'；'.join(bits)}。"
+                    f"本章正文不可与上述状态/时间线矛盾（尤其角色生死、所处年代须一致）。"
+                )
+        return "\n".join(parts)
 
     def _load_foreshadow_task(self, progress: dict[str, Any]) -> str:
         """读取 foreshadows.md，检查本章是否需埋/回收伏笔"""
@@ -712,29 +800,84 @@ class M5WriteChapterWorkflow:
     def _determine_pressure_stage(
         self, subline_data: dict[str, Any], chapter_num: int
     ) -> tuple[str, str]:
-        """从 subline.md 的压力曲线表确定当前阶段"""
+        """从 subline.md 的压力曲线表确定当前阶段。
+
+        P-B 修复：原先在「曲线表缺失」或「章节号未被任何区间覆盖」时一律回退 ``铺垫/低``，
+        一旦规划产出平坦曲线（如 setup 覆盖 1-117），全书会卡在铺垫。现改为：
+        ① 解析全部区间；② 命中区间直接采用；③ 未命中或曲线退化（铺垫段占比 > 50%
+        且存在后续阶段）时，按章节在全书跨度中的位置推导爬升曲线，并告警。
+        """
         content = subline_data.get("content", "")
-        # 查找压力曲线表
         section = self._extract_section(content, "剧集压力曲线")
         if not section:
-            return "铺垫", "低"
+            logger.warning(
+                "[pacing] subline「剧集压力曲线」缺失，第 %d 章按位置推导压力阶段",
+                chapter_num,
+            )
+            return self._position_based_stage(chapter_num, 1, 200)
 
-        # 解析表格行 | 阶段 | 章节 | 张力等级 |
+        bands: list[tuple[str, int, int, str]] = []
         for line in section.splitlines():
             if line.startswith("|") and "阶段" not in line and "---" not in line:
                 parts = [p.strip() for p in line.split("|")]
                 if len(parts) >= 4:
-                    stage = parts[1]
-                    range_str = parts[2]
-                    tension = parts[3]
-                    # 解析范围 "1-50" 或 "51-200"
-                    range_match = re.match(r"(\d+)[-~](\d+)", range_str)
+                    range_match = re.match(r"(\d+)[-~](\d+)", parts[2])
                     if range_match:
-                        lo = int(range_match.group(1))
-                        hi = int(range_match.group(2))
-                        if lo <= chapter_num <= hi:
-                            return stage, tension
-        return "铺垫", "低"
+                        bands.append(
+                            (parts[1], int(range_match.group(1)), int(range_match.group(2)), parts[3])
+                        )
+        if not bands:
+            logger.warning(
+                "[pacing] subline「剧集压力曲线」无可解析区间，第 %d 章按位置推导",
+                chapter_num,
+            )
+            return self._position_based_stage(chapter_num, 1, 200)
+
+        # 整体跨度
+        min_lo = min(b[1] for b in bands)
+        max_hi = max(b[2] for b in bands)
+        # 命中区间优先
+        for stage, lo, hi, tension in bands:
+            if lo <= chapter_num <= hi:
+                # 退化检测：铺垫段过长且存在后续阶段 → 视为平坦曲线，改按位置推导
+                setup_bands = [b for b in bands if b[0] == "铺垫"]
+                has_later = any(b[0] != "铺垫" for b in bands)
+                if (
+                    stage == "铺垫"
+                    and has_later
+                    and setup_bands
+                    and (setup_bands[0][2] - setup_bands[0][1] + 1)
+                    > 0.5 * max(1, max_hi - min_lo + 1)
+                ):
+                    logger.warning(
+                        "[pacing] 检测到退化压力曲线（铺垫段覆盖 %d-%d，占全书 %d%%），"
+                        "第 %d 章改按位置推导压力阶段",
+                        setup_bands[0][1], setup_bands[0][2],
+                        round(100 * (setup_bands[0][2] - setup_bands[0][1] + 1) / max(1, max_hi - min_lo + 1)),
+                        chapter_num,
+                    )
+                    return self._position_based_stage(chapter_num, min_lo, max_hi)
+                return stage, tension
+        # 未命中任何区间 → 按位置推导
+        logger.warning(
+            "[pacing] 第 %d 章未被任何压力曲线区间覆盖（全书 %d-%d），按位置推导",
+            chapter_num, min_lo, max_hi,
+        )
+        return self._position_based_stage(chapter_num, min_lo, max_hi)
+
+    @staticmethod
+    def _position_based_stage(chapter_num: int, lo: int, hi: int) -> tuple[str, str]:
+        """按章节在 [lo, hi] 跨度中的位置推导爬升压力阶段（铺垫→冲突→高潮→舒缓）。"""
+        if hi <= lo:
+            return "铺垫", "低"
+        frac = (chapter_num - lo) / (hi - lo)
+        if frac < 0.15:
+            return "铺垫", "低"
+        if frac < 0.5:
+            return "冲突", "中"
+        if frac < 0.85:
+            return "高潮", "高"
+        return "舒缓", "低"
 
     # ============================================================
     # 2. 章节生成
@@ -845,6 +988,13 @@ class M5WriteChapterWorkflow:
                 system_prompt = system_prompt + G12_READER_FEEDBACK_TEMPLATE.format(
                     reader_signals="\n".join(lines)
                 )
+
+        # ---- 角色状态硬约束（P-C 修复）：把 characters/*.md 的生死/时间线真源注入为不可违背规则 ----
+        character_constraints = (ctx.get("character_constraints") or "").strip()
+        if character_constraints:
+            system_prompt = system_prompt + G_CHARACTER_STATE_CONSTRAINT_TEMPLATE.format(
+                character_constraints=character_constraints
+            )
 
         resp = self.llm.chat_creative(
             messages=[

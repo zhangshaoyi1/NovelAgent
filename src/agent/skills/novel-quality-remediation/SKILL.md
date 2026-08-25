@@ -2,7 +2,7 @@
 name: novel-quality-remediation
 version: 0.1.0
 type: remediation
-description: 成书质量体检与修复工作流——针对已生成小说中的英文残留、占位标题、跨章逐字/近似重复三类问题，提供"治本（写时护栏）+ 治标（存量修复脚本）"的完整方案。
+description: 成书质量体检与修复工作流——针对已生成小说中的英文残留、占位标题、跨章逐字/近似重复、写作元指令泄漏四类问题，提供"治本（写时护栏）+ 治标（存量修复脚本）"的完整方案。
 commands:
   - name: quality-remediation
     args:
@@ -30,19 +30,21 @@ independent: true
   1. **英文残留**：模型生成时混入的英文单词/短语（如 `voice`、`lantern`、`Visualization failed. Cost 1 year of lifespan.`）。
   2. **占位标题**：每章 `# 第N章 · 第N章` 或空标题、过短标题。
   3. **跨章重复**：同一段落被逐字/近似复制到多章（"开场重演/场景雷同"缺陷，最狠可达百次级）。
+  4. **写作元指令泄漏**：agent 下发给 LLM 的"章末悬念 / 章节钩子 / 内部章节号"等写作元指令被模型原样写进小说正文（如 ch026 结尾的 `【章末悬念】…`、ch002 的 `章末悬念：…`），属 prompt 污染，需整段剔除。
 - 也用于**治本**：确保下一本书在写作阶段就被 `guardrails.py` 拦截，不再产生上述问题。
 
 ## 两层防线
 
 ### 治本：写时自动校验（guardrails.py，已落地）
 
-`src/agent/core/guardrails.py` 在 `autowrite` 落盘前 `gate(mode="block")` 注入三条规则，命中即打回 Writer 重写 1 次，仍不过则降级告警（写 `.state/chapter_quality_flags.json`）不阻断：
+`src/agent/core/guardrails.py` 在 `autowrite` 落盘前 `gate(mode="block")` 注入以下规则，命中即打回 Writer 重写 1 次，仍不过则降级告警（写 `.state/chapter_quality_flags.json`）不阻断：
 
 | rule_id | 含义 | 阈值/判定 |
 |---|---|---|
 | `non_chinese_junk` | 英文/乱码残留 | 剥离 frontmatter 后，连续≥3字母英文 + 特征串（`Visualization failed`/`Cost`/`[system]`/`undefined`/`null`），白名单豁免 |
 | `title_placeholder` | 占位标题 | 标题为空 / 长度<4 / `第N章·第N章` / 与 `published_titles` 重复 → error |
 | `paragraph_dup` | 跨章重复 | 与全书指纹库比对，相似度≥0.85（仅≥40字长段）→ error |
+| `meta_instruction_leak` | 写作元指令泄漏（章末悬念/章节规划标记/内部章节号写入正文） | 正文含 `章末悬念`/`（章末悬念`/`【章末悬念`/`留下悬念`/`悬念[:：]` 等标记，或叙事中冒出 `ch\d+章`/`第\d+章` 指代写作进度 → error |
 
 配套：
 - `autowrite` 构建 guardrails 时注入全书标题 + `load` 指纹库（续写复用）；
@@ -63,6 +65,72 @@ independent: true
 | 4 | `scan_dup.py` | 跨章重复分析 → `.state/dup_scan_v2.json` | 无 |
 | 5 | `fix_dup.py` | 对相似度 1.00 的逐字重复，LLM 改写去重（保留首次为基准，变种轮换） | `dup_scan_v2.json` |
 | 6 | `fix_dup_highsim.py` | 对 ≥0.95 的近似重复，定向改写（用户确认要改的段落） | 无 |
+
+### 第四类缺陷：写作元指令泄漏（meta-instruction leak）
+
+**现象**：agent 给 LLM 的"写作指令 / 章节规划标记"被模型原样写进小说正文，而非仅作为 prompt 字段。changan 实测形态：
+
+- `【章末悬念】老宦官离开后，李承安在灵堂供桌底下发现了一行用指甲刻出的字迹……`（ch026 结尾）
+- `章末悬念：李承安决定夜晚去鬼市调查……`（ch002 / ch029）
+- `（章末悬念：周伯的背叛、皇宫里的老者、玉坠的双生之谜）`（ch088 / ch096 / ch119）
+- `留下悬念：阴阳平衡能否恢复？人心能否向善？`（ch146）
+- 正文叙事里冒出内部章节号引用，如"那个在 ch32 章里把羊皮纸塞进他手里的老伯"（ch045 / ch113 / ch163）
+
+**为什么是缺陷**：章末悬念 / 章节钩子是 **agent→LLM 的指令**，应作为独立 prompt 字段（或 system 提示）下发，绝不该出现在交付给读者的正文中。写进正文既破坏阅读、又暴露写作流程内部信息，是 prompt 污染的典型信号。
+
+**检测（scan）**：
+
+```python
+import re
+# 实际实现见 guardrails._META_LEAK_RE（剥离 frontmatter 后扫描正文）
+META_LEAK = re.compile(
+    r'章末悬念|留下悬念|悬念[：:]|本章要求[：:]|写作指令|作者指令|系统指令|写作提示'
+    r'|ch\d+章|第\d+章里|第\d+段[：:]'
+)
+# 对每章正文（剥离 frontmatter）扫描，命中即报告「章节 + 行号 + 片段」
+```
+
+可沉淀为 `scripts/scan_meta_leak.py`，并在 `guardrail_scan` 的 `--scope` 增加 `meta` 维度。
+
+**修复（fix，存量）**：这类标记属"元信息"，应**整段删除**（钩子内容不进正文）。用 `scripts/fix_meta_leak.py` 按行删除命中行（含其后的钩子 payload，直到行尾或下一个空行）；正文叙事里的 `ch\d+章` / `第\d+章里` 引用需 LLM 改写为自然叙述（如"周伯在城南老槐树下塞给他玉坠那次"）。
+
+**预防（治本，写时）**：
+
+- Writer 角色（novel-writer skill）在写前准备里新增硬约束：**交付正文禁止包含任何写作元指令**；章末悬念由 Lead/Outline 作为独立字段传入，Writer 只产出纯小说文本。
+- `guardrails.py` 新增第 4 条规则 `meta_instruction_leak`（见上表），`autowrite` 落盘前 `gate(block)` 拦截，命中打回重写。
+- 写后自检：grep 本章是否含 `章末悬念|留下悬念|（章末悬念` 等标记，命中即判"指令泄漏"剔除后重交。
+
+## agent 侧防御（第五~七类缺陷，2026-08-25 落地于代码）
+
+changan 复盘还暴露三类**根因在 agent 而非小说正文**的缺陷，已修复在写作系统代码层，使下一本书不再复现（小说正文本身按用户要求未改动）：
+
+### 第五类：状态机冻结（pressure_stage 恒为铺垫）
+
+- **现象**：`pressure_stage` 全 164 章中 109 章为「铺垫」，ch001–ch117 全部卡在铺垫，仅 ch118 才转冲突。
+- **根因**：`m5_write_chapter._determine_pressure_stage` 在「曲线表缺失」或「章节号未被任何区间覆盖」时**一律回退 `铺垫/低`**，盲信规划产出的平坦曲线（如 setup 覆盖 1-117）。
+- **修复**（`workflows/m5_write_chapter.py`）：
+  - 解析全部区间，命中区间直接采用；
+  - 未命中 → 按章节在全书跨度中的位置推导爬升曲线（`_position_based_stage`：前 15% 铺垫 / 15–50% 冲突 / 50–85% 高潮 / 后 15% 舒缓）；
+  - 退化检测：铺垫段占比 > 50% 且存在后续阶段 → 视为平坦曲线，强制按位置推导并 `logger.warning`。
+  - `M5_GENERATE_SYSTEM_PROMPT` 第 2 条已要求"本章必须属于当前压力曲线阶段，按阶段控制张力"，与推导结果一致。
+
+### 第六类：路线节点冻结（route_node 恒为 N01）
+
+- **现象**：`route_node` 114/164 为空，其余几乎全是 N01；autowrite 日志每章同写 `route_node:N01` + `subline:S04`。
+- **根因**：`m5_write_chapter._load_route_node` 在「章节号未被任何节点范围覆盖」时**静默回退第一个节点（N01）**。
+- **修复**（`workflows/m5_write_chapter.py`）：未命中范围时按全书跨度**均匀分配节点**（`idx = chapter/total * node_count`），使路线随章节推进，并 `logger.warning`。
+
+### 第七类：角色状态治理缺失（周伯生死矛盾）
+
+- **现象**：ch049 写周伯「十年前便已故去」，但其角色档案 `characters/仵作周伯.md` 载明其为后期殉职、ch003–ch059 一直在世。
+- **根因**：`core/consistency_checker.py` 的 `timeline_conflict`/`relation_conflict` 等规则**全是 `_noop_consistency_check` 空壳**，角色生死/时间线从未被强制校验；novel-writer skill 的"写前拉白名单"也未落到代码。
+- **修复**（`workflows/m5_write_chapter.py` + `prompts.py`）：
+  - 新增 `_build_character_constraints(subline_data)`：从 `characters/<name>.md` 抽取结构化「状态/生死/时间线」真源，拼成**不可违背硬约束**；
+  - 该约束注入 Writer 的 system prompt（`G_CHARACTER_STATE_CONSTRAINT_TEMPLATE`），明确"本章正文不可与角色状态/时间线矛盾"；
+  - `M5_GENERATE_SYSTEM_PROMPT` 第 9 条"不与 character.md 冲突"、第 13 条"禁止元指令泄漏"同步强化。
+  - 说明：`consistency_checker` 的 timeline/relation 规则仍是空壳，后续可把上述抽取逻辑接入做 post-write 复核；当前以写前约束注入为治本手段。
+
+> 上述代码修改（guardrails `meta_instruction_leak` + m5 pacing/route/character 修复 + prompts 强化）已通过逻辑单测，待 agent 仓提交。
 
 ## 标准工作流（runbook）
 
@@ -103,6 +171,7 @@ python -m agent.cli guardrail-scan -d <PROJECT> --scope junk,title,dup
 9. **⚠️ 重装配不得丢弃标题行**：用"按空行切段再 join"方式重装配正文时，若切段函数过滤掉 `#` 开头行（`not p.startswith("#")`），会**静默删除章节标题**（`# 第N章 · ...`）。务必保留标题行，或用"前插到 frontmatter 之后"的插入式写法。本次 ch012/ch019/ch146 曾因此丢标题，已用 LLM 重生成标题修复。
 10. **⚠️ 去重改写要"远离"基准而非"趋同"基准**：给 LLM 的 canonical 示例若与待改段高度相似，模型可能只改一两个字反而**撞上**基准（如 ch067 赵铁段把 `藏好`→`藏入袖中`，恰与 ch062 基准一致，变成新重复）。要求模型换不同细节/句式/观察角度，且改写后人工 diff 确认与 canonical 不同。
 11. **"相似度 1.00"可能是护栏评分假象**：`guardrail_scan` 的 `paragraph_dup` 在某些短段落上会报 1.00，但用护栏自身的 `_normalize_paragraph` + difflib 做逐对复算可能只有 0.5–0.6。**"真正逐字重复"以归一化完全相等为准**（即 `fix_dup.py` 的去重判定方法），它才是可信的清零判据；护栏报告的 0.85–0.999 为判定带，1.00 单点需复算确认。
+12. **⚠️ 写作元指令会"泄漏"进正文**：autowrite 把"章末悬念"等钩子作为 prompt 下发时，模型可能把它连同钩子内容一起写进正文（ch026 `【章末悬念】…`、ch002/ch029 `章末悬念：…`、ch088/ch096/ch119 `（章末悬念：…）`、ch146 `留下悬念：…`）。根因是钩子指令与正文生成共用同一输出通道，缺少"元指令不得落盘"的硬约束。修复=整段删标记；治本=新增 `meta_instruction_leak` 护栏规则 + Writer 侧"元指令不入正文"约束（见上「第四类缺陷」）。
 
 ## 残留处置约定
 
@@ -112,4 +181,4 @@ python -m agent.cli guardrail-scan -d <PROJECT> --scope junk,title,dup
 
 ## 输出物
 
-- `.state/english_scan.json` / `.state/guardrail_scan_report.md` / `.state/dup_scan_v2.json` / `.state/dedup_fix_manifest.json` / `.state/highsim_fix_manifest.json` —— 体检与改写清单，供复核。
+- `.state/english_scan.json` / `.state/guardrail_scan_report.md` / `.state/dup_scan_v2.json` / `.state/dedup_fix_manifest.json` / `.state/highsim_fix_manifest.json` / `.state/meta_leak_scan.json` —— 体检与改写清单，供复核。

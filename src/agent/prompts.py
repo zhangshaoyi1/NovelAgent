@@ -321,7 +321,8 @@ M5_GENERATE_SYSTEM_PROMPT = """你是顶级修仙小说写手，擅长用精炼�
 9. 不与 world.md / subline.md / character.md 冲突
 10. 如本章需埋/回收伏笔，自然融入剧情
 11. 高潮章节自动扩篇幅 + 多视角 + 慢镜头
-12. 直接输出正文，不要标题不要前言不要解释"""
+12. 直接输出正文，不要标题不要前言不要解释
+13. 禁止在正文写入任何写作元指令（如【章末悬念】、章末钩子标记、内部章节编号 chN 等）；章末钩子/悬念用情节自然呈现，绝不可把 agent 给 LLM 的指令原样抄进正文"""
 
 M5_GENERATE_USER_TEMPLATE = """【小说信息】
 标题：{title}
@@ -407,6 +408,12 @@ G12_EMOTION_INSTRUCTION_TEMPLATE = (
 
 G12_READER_FEEDBACK_TEMPLATE = (
     "\n\n# 读者反馈（以下为真实读者反馈，涉及弃书点的章节请强化章末钩子与爽点密度）\n{reader_signals}"
+)
+
+# ---- 角色状态硬约束（P-C 修复：来自 characters/*.md 的生死/时间线真源，注入为不可违背规则）----
+G_CHARACTER_STATE_CONSTRAINT_TEMPLATE = (
+    "\n\n# 角色状态硬约束（来自角色档案 characters/*.md，本章正文绝对不可违背）\n"
+    "{character_constraints}"
 )
 
 

@@ -166,7 +166,7 @@ def run_compose(
         try:
             from agent.core.guardrails import Guardrails, save_fingerprints
 
-            gr = Guardrails(check_junk=False, check_title=False, check_dup=True)
+            gr = Guardrails(check_junk=False, check_title=False, check_dup=True, check_meta_leak=True)
             db: dict[str, list] = {}
             dup_report: list[str] = []
             chapters_dir = project_dir / "chapters"
