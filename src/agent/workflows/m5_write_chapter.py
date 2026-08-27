@@ -94,6 +94,7 @@ _ENGLISH_REPLACE_MAP = {
     "Leveraged": "杠杆", "fingers": "手指", "distant": "远处", "progress": "进度",
     "Audit": "审计", "grant_token": "授权令牌", "ip_in_whitelist": "白名单内地址",
     "in_maintenance_window": "维护窗口期", "xxxx": "某某",
+    "nodded": "点头", "auditorium": "礼堂", "CRC": "校验码",
 }
 # 修订时给 LLM 的中文等价参考（与上面映射保持一致口径）
 _ENGLISH_REPLACE_GUIDE = (
@@ -1267,7 +1268,7 @@ class M5WriteChapterWorkflow:
         # ---- G-EN：落盘前最终英文兜底（主循环修订后若仍有英文，追加专门修订 + 确定性清理）----
         residual = scan_english_contamination(text)
         if residual:
-            text = self._extra_english_revise(text, residual, ctx)
+            text = self._extra_english_revise(text, residual, ctx, max_extra=6)
             residual = scan_english_contamination(text)
             if residual:
                 text, still = hard_replace_english(text)
