@@ -1447,6 +1447,17 @@ class M5WriteChapterWorkflow:
             "revision_attempts": revision_attempts,
             "evidence_chain": evidence_chain.to_dict(),
         }
+        # ---- G-EN：落盘前绝对零英文关卡（单一写盘点，任何写章路径都过此门）----
+        # 不论上游 _quality_check_and_revise 的 G-EN 块是否生效，这里都再做一次确定性兜底，
+        # 保证写到磁盘的正文一定零英文（已知词翻译、未知串剔除）。
+        clean_text, _still = hard_replace_english(text)
+        if clean_text != text:
+            logger.warning(
+                "[no_english] _save_chapter 落盘前确定性清理英文残留(上游兜底未生效)"
+            )
+        text = clean_text
+        word_count = len(text.replace("\n", "").replace(" ", ""))
+        metadata["word_count"] = word_count
         body = f"# 第 {ctx['chapter_num']} 章 · {title}\n\n{text}"
         post = frontmatter.Post(body, **metadata)
         file.write_text(frontmatter.dumps(post), encoding="utf-8")
