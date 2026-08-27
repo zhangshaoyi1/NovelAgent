@@ -68,7 +68,7 @@ _ENGLISH_REPLACE_MAP = {
     "IP": "网络地址", "ID": "身份标识", "logo": "标识", "log": "日志",
     "Plan": "备选方案", "NGOs": "国际非政府组织", "allocation_weight": "分配权重",
     "shoulders": "肩背", "loys": "洛城", "kreisel": "陀螺状", "thirty": "三十",
-    "Lv": "级", "XH": "玄霄", "ZG": "天工", "API": "接口", "AI": "人工智能", "debug": "调试",
+    "Lv": "级", "Lv2": "二级", "Lv3": "三级", "XH": "玄霄", "ZG": "天工", "API": "接口", "AI": "人工智能", "debug": "调试",
     "cache": "缓存", "buffer": "缓冲", "token": "令牌", "node": "节点",
     "DL": "地灵", "JY": "九幽", "LF": "灵链", "TM": "商标", "Street": "街道",
     # 叙事英文泄漏（无歧义内容词，确定性替换）
@@ -134,25 +134,31 @@ def scan_english_contamination(text: str) -> list[str]:
 
 
 def hard_replace_english(text: str) -> tuple[str, list[str]]:
-    """落盘前确定性兜底：把已知英文 token 替换为中文；残留未知拉丁串直接剔除。
-    返回 (清理后文本, 仍残留的 token 列表)。"""
-    residual = scan_english_contamination(text)
-    if not residual:
-        return text, []
+    """落盘前确定性兜底：把已知英文 token 替换为中文；任何残留拉丁串直接剔除。
+
+    关键保证：返回的 out 正文一定零英文（未知 token 宁可删除也不留英文）。
+    返回 (清理后文本, 仍残留的 token 列表[正常应为空])。
+
+    设计要点：
+    - 大小写不敏感（Bugs/BUG/Bug 都命中 bug 映射），避免『已知词却因大小写漏替换』。
+    - 长词优先（ip_in_whitelist 先于 ip；VIP 先于 IP），防止子串误中。
+    - 任何仍残留的拉丁串（未知词）一律剔除，作为最后保险，绝不让英文落盘。
+    """
+    # 1) 已知 token 大小写不敏感替换（长词优先，避免 bug 误中 debug 等）
     out = text
-    replaced_any = False
-    for tok in residual:
-        repl = _ENGLISH_REPLACE_MAP.get(tok) or _ENGLISH_REPLACE_MAP.get(tok.lower())
-        if repl:
-            # 词边界仅以拉丁字母判定（Python3 的 \w 含中文，不能用，否则中文相邻处替换失败）
-            out = re.sub(r"(?<![A-Za-z])" + re.escape(tok) + r"(?![A-Za-z])", repl, out)
-            replaced_any = True
-    # 重新扫描：已替换的应消失；仍未命中的未知串直接剔除（宁可丢词也不留英文）
-    still = scan_english_contamination(out)
-    if still:
+    for tok in sorted(_ENGLISH_REPLACE_MAP, key=len, reverse=True):
+        repl = _ENGLISH_REPLACE_MAP[tok]
+        out = re.sub(
+            r"(?<![A-Za-z])" + re.escape(tok) + r"(?![A-Za-z])",
+            repl, out, flags=re.IGNORECASE,
+        )
+    # 2) 任何仍残留的拉丁串（未知词）直接剔除（宁可丢词也不留英文）
+    residual = scan_english_contamination(out)
+    if residual:
         out = _ENGLISH_RUN_RE.sub("", out)
         out = re.sub(r"\s{2,}", " ", out).strip()
-    return out, still if not replaced_any else []
+        residual = scan_english_contamination(out)
+    return out, residual
 
 
 @dataclass
