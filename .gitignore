@@ -33,3 +33,4 @@ dist/skills/
 /.workbuddy/
 # 测试密钥（.env_ai 含测试用 API Key，同样不入库）
 .env_ai
+.idea/
