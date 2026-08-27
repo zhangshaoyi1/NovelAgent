@@ -8,6 +8,56 @@ from agent.cli._shared import *
 
 from agent.core.state_machine import State
 
+
+def _rescue_disk_chapter(project_path: Path) -> dict | None:
+    """写章 run() 抛异常时，以磁盘落盘好章为权威判定是否实际成功。
+
+    根治：某次 run 已在落盘步骤写出好章、但因收尾/瞬时异常（如 LLM 超时、
+    writer 结构化校验重试耗尽、Windows 清理步骤异常）而在推进 state 前抛异常
+    → 被 CLI 误判 rc=1。本函数检查「计划写入的下一章」是否已在磁盘成为有效好章，
+    若是则视为成功返回，避免上层 daemon 因 rc=1 反复重写同一章
+    （历史 ch22/ch29 死循环根因）。仅当磁盘确有有效好章时才救活；
+    生成阶段即失败（磁盘无章）则正确返回 None，交由原失败逻辑处理。
+    """
+    import re as _re
+
+    try:
+        import frontmatter as _fm
+        from agent.core.state_machine import StateMachine
+
+        _sm = StateMachine(project_path)
+        _sm.load()
+        _cur = int(_sm.progress.get("current_chapter") or 0)
+        _tgt = _cur + 1
+        _cf = Path(project_path) / "chapters" / f"ch{_tgt:03d}.md"
+        if not _cf.exists():
+            return None
+        _post = _fm.load(_cf)
+        _qp = _post.metadata.get("quality_passed")
+        _wc = _post.metadata.get("word_count") or 0
+        try:
+            _wc = int(_wc)
+        except (TypeError, ValueError):
+            _wc = 0
+        _cjk = len(_re.findall(r"[一-鿿]", _post.content or ""))
+        if _qp is not True or (_wc < 600 and _cjk < 600):
+            return None
+        return {
+            "success": True,
+            "chapter": _tgt,
+            "title": _post.metadata.get("title", ""),
+            "word_count": _wc,
+            "quality_passed": True,
+            "revision_attempts": _post.metadata.get("revision_attempts", 0),
+            "rag_context_len": 0,
+            "d_issues": [],
+            "subline": _post.metadata.get("subline", ""),
+            "route_node": _post.metadata.get("route_node", ""),
+        }
+    except Exception:  # noqa: BLE001 - rescue 自身异常视为未救活
+        return None
+
+
 @command(allowed_states=(State.CHARACTER_DESIGN, State.WRITING,))
 def write(
     project_dir: str = typer.Option(
@@ -206,6 +256,27 @@ def write(
             )
         raise typer.Exit(code=2) from blocked
     except Exception as e:
+        # ★根治：好章已落盘但 run() 因收尾/瞬时异常失败 → 以磁盘为权威判成功
+        # 消除「好章落盘却 rc=1」导致的 daemon 反复重写死循环（历史 ch22/ch29）
+        _rescued = _rescue_disk_chapter(project_path)
+        if _rescued is not None:
+            try:
+                from agent.core.state_machine import StateMachine as _SM2
+
+                _s2 = _SM2(project_path)
+                _s2.load()
+                _s2.clear_write_error()
+            except Exception:  # noqa: BLE001 - 清错失败不阻断
+                pass
+            if json_output:
+                emit_result(_rescued, json_mode=True)
+            else:
+                console.print(
+                    f"\n[bold green]✓ 写章完成（磁盘落盘好章已确认）[/bold green] "
+                    f"第 {_rescued['chapter']} 章 · {_rescued['word_count']} 字"
+                )
+            return
+        # —— 以下为原失败逻辑：记录 last_error + 累加失败 + exit 1 ——
         # Phase 5（巡检自愈）：记录 last_error + 累加连续失败计数，供自动化区分「系统异常」并触发告警
         # 注意：StateMachine 构造后必须 load() 才能 save()，否则会覆盖 progress 全部字段
         try:

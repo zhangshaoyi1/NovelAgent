@@ -322,7 +322,8 @@ M5_GENERATE_SYSTEM_PROMPT = """你是顶级修仙小说写手，擅长用精炼�
 10. 如本章需埋/回收伏笔，自然融入剧情
 11. 高潮章节自动扩篇幅 + 多视角 + 慢镜头
 12. 直接输出正文，不要标题不要前言不要解释
-13. 禁止在正文写入任何写作元指令（如【章末悬念】、章末钩子标记、内部章节编号 chN 等）；章末钩子/悬念用情节自然呈现，绝不可把 agent 给 LLM 的指令原样抄进正文"""
+13. 禁止在正文写入任何写作元指令（如【章末悬念】、章末钩子标记、内部章节编号 chN 等）；章末钩子/悬念用情节自然呈现，绝不可把 agent 给 LLM 的指令原样抄进正文
+14. 正文必须是纯中文叙事，绝对禁止出现任何英文单词、变量名、缩写或外文词（如 allocation_weight、NGOs、VIP、KPI、CEO、bug、IP、ID、logo、Plan B、shoulders、loys、kreisel、thirty 等）。赛博/系统/代码设定一律用中文表达：VIP→贵宾认证；CEO→掌权者/总裁；KPI→绩效指标；bug→漏洞/差错；IP→网络地址；ID→身份标识；Plan B→备选方案；allocation_weight→分配权重的后门代码；NGOs→国际非政府组织。代码/变量名严禁直接写进正文，必须译为叙事化中文（如『分配权重的后门代码』）。整句英文（如 "thirty多道目光…shoulders 很稳"）尤其禁止"""
 
 M5_GENERATE_USER_TEMPLATE = """【小说信息】
 标题：{title}
@@ -429,6 +430,7 @@ M5_QUALITY_CHECK_SYSTEM_PROMPT = """你是严格的小说质量审稿编辑。�
 7. dialogue_personality: 角色台词符合其语言指纹
 8. foreshadow_status: 本章如埋/回收伏笔，需标注
 9. climax_expansion: 高潮章节自动扩篇幅 + 多视角 + 慢镜头
+10. no_english: 正文不得含任何英文单词/变量名/缩写/外文词（2+ 连续拉丁字母即不通过），必须改写为纯中文叙事（VIP→贵宾认证、CEO→掌权者、KPI→绩效指标、bug→漏洞、allocation_weight→分配权重的后门代码、NGOs→国际非政府组织 等）；代码/变量名严禁直接写进正文
 
 输出 JSON：
 {{
@@ -603,6 +605,7 @@ def format_learnings(learnings: list) -> str:
 M5_QUALITY_CHECK_USER_TEMPLATE = """【风格配置】
 文风：{tone} | 章节字数目标：{chapter_length}
 禁用词限量：突然/忽然/就在这时/微微一笑 全章 ≤ 2 次
+硬约束（no_english）：正文禁止出现任何英文单词/变量名/缩写/外文词（2+ 连续拉丁字母即不通过），必须改写为纯中文叙事
 
 【本章涉及角色的语言指纹】
 {characters_fingerprint}
@@ -620,7 +623,8 @@ M5_REVISE_SYSTEM_PROMPT = """你是小说修订编辑。根据审稿意见修订
 要求：
 1. 只修改有问题的部分，保持整体结构和已通过的部分不变
 2. 严格解决每条 issue
-3. 直接输出修订后的完整正文，不要解释"""
+3. 若审稿意见涉及「正文英文污染 / no_english」，必须把全部英文单词/变量名/缩写/外文词改写为自然的中文叙事（VIP→贵宾认证、CEO→掌权者/总裁、KPI→绩效指标、bug→漏洞/差错、IP→网络地址、ID→身份标识、Plan B→备选方案、allocation_weight→分配权重的后门代码、NGOs→国际非政府组织、shoulders→肩背、loys→洛城、kreisel→陀螺状、thirty→三十 等）；代码/变量名严禁保留，必须译为叙事化中文。仅替换英文，保持情节/人物/对话/结构完全不变
+4. 直接输出修订后的完整正文，不要解释"""
 
 M5_REVISE_USER_TEMPLATE = """【审稿意见】
 {quality_report}

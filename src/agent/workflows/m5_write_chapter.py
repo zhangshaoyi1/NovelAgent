@@ -57,6 +57,98 @@ logger = logging.getLogger(__name__)
 
 MAX_REVISIONS = 2
 
+# ===== G-EN：正文纯中文硬关卡（确定性扫描，不依赖 LLM 自觉）=====
+# 正文出现 2+ 连续「拉丁字母或下划线」即视为英文污染（单字母如 X光/S级 暂放行，避免过度纠偏）。
+# 注意：必须至少含一个拉丁字母，避免把纯下划线占位符（如 ________）误判为英文。
+_ENGLISH_RUN_RE = re.compile(r"[A-Za-z][A-Za-z_]*[A-Za-z]|[A-Za-z]{2,}")
+# 常见英文 token → 中文等价（仅作落盘前确定性兜底；主修复靠 LLM 修订把整句理顺）。
+# 注意：值尽量取「独立名词」避免与原句已有中文叠词（如原句已有『认证』就不写『贵宾认证』）。
+_ENGLISH_REPLACE_MAP = {
+    "VIP": "贵宾", "KPI": "绩效指标", "CEO": "掌权者", "BUG": "漏洞", "bug": "漏洞",
+    "IP": "网络地址", "ID": "身份标识", "logo": "标识", "log": "日志",
+    "Plan": "备选方案", "NGOs": "国际非政府组织", "allocation_weight": "分配权重",
+    "shoulders": "肩背", "loys": "洛城", "kreisel": "陀螺状", "thirty": "三十",
+    "Lv": "级", "XH": "玄霄", "ZG": "天工", "API": "接口", "debug": "调试",
+    "cache": "缓存", "buffer": "缓冲", "token": "令牌", "node": "节点",
+    "DL": "地灵", "JY": "九幽", "LF": "灵链", "TM": "商标", "Street": "街道",
+    # 叙事英文泄漏（无歧义内容词，确定性替换）
+    "frowned": "皱眉", "already": "已经", "rejected": "拒绝", "please": "请",
+    "swallowed": "咽下", "tomorrow": "明日", "darkness": "黑暗", "widest": "最宽",
+    "dozens": "数十", "shook": "摇头", "chewing": "咀嚼", "clamp": "夹紧",
+    "murmured": "低语", "platinum": "铂金", "slowly": "缓缓", "desperate": "绝望",
+    "desperately": "拼命", "flicker": "闪烁", "shake": "晃动", "suddenly": "突然",
+    "gossip": "闲言", "tied": "系住", "crimson": "绯红", "temporary": "临时",
+    "weakly": "虚弱", "shrugged": "耸肩", "smiling": "微笑", "traps": "陷阱",
+    "mixed": "混杂", "whispered": "低声", "screaming": "尖叫", "cheap": "廉价",
+    "undergoing": "正经历", "faces": "脸庞", "raises": "抬起", "stabilizing": "稳住",
+    "nodded": "点头", "verdict": "裁决", "waiting": "等待",
+    "Instead": "反而", "cold": "冰冷", "sharp": "锐利", "interesting": "有趣",
+    "shaky": "颤抖", "deeper": "更深", "stolen": "被夺", "lower": "压低",
+    "seconds": "秒", "flick": "轻弹", "forward": "向前", "stepping": "迈步",
+    "tokens": "令牌", "trembling": "颤抖", "eyes": "眼睛", "reborn": "重生",
+    "report": "报告", "reverberating": "回荡", "funnel": "汇聚", "itself": "自身",
+    "leverage": "利用", "painpoint": "痛点", "light": "灯光", "nobody": "无人",
+    "shadows": "阴影", "IDs": "身份标识",
+    "fifty": "五十", "AND": "而且", "silently": "沉默地", "twitch": "抽动",
+}
+# 修订时给 LLM 的中文等价参考（与上面映射保持一致口径）
+_ENGLISH_REPLACE_GUIDE = (
+    "正文存在英文单词/变量名/缩写，必须全部改写为自然的中文叙事，不得保留任何拉丁字母词。"
+    "中文等价参考：VIP→贵宾认证；CEO→掌权者/总裁；KPI→绩效指标；bug/BUG→漏洞/差错；"
+    "IP→网络地址；ID→身份标识；Plan B→备选方案；allocation_weight→分配权重的后门代码；"
+    "NGOs→国际非政府组织；logo→标识；shoulders→肩背；loys→（改为中文地名，如洛城）；"
+    "kreisel→（德文，改为中文描述，如陀螺状）；thirty→三十；Lv2→二级；XH→玄霄；ZG→天工。"
+    "代码/变量名（如 allocation_weight）严禁直接写进正文，必须译为叙事化中文"
+    "（如『分配权重的后门代码』）。仅替换英文部分，保持情节/人物/对话/结构完全不变，直接输出完整正文。"
+)
+
+
+def _strip_frontmatter(text: str) -> str:
+    """去掉可能存在的 YAML frontmatter（保险起见，正文本身不应带，但修订回传可能夹带）"""
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            rest = text[end + 4:]
+            return rest.lstrip("\n")
+    return text
+
+
+def scan_english_contamination(text: str) -> list[str]:
+    """确定性扫描正文英文污染：返回去重后的 2+ 连续拉丁字母 token 列表（单字母如 X光 放行）。"""
+    if not text:
+        return []
+    body = _strip_frontmatter(text)
+    tokens = _ENGLISH_RUN_RE.findall(body)
+    seen: set[str] = set()
+    uniq: list[str] = []
+    for t in tokens:
+        if t not in seen:
+            seen.add(t)
+            uniq.append(t)
+    return uniq
+
+
+def hard_replace_english(text: str) -> tuple[str, list[str]]:
+    """落盘前确定性兜底：把已知英文 token 替换为中文；残留未知拉丁串直接剔除。
+    返回 (清理后文本, 仍残留的 token 列表)。"""
+    residual = scan_english_contamination(text)
+    if not residual:
+        return text, []
+    out = text
+    replaced_any = False
+    for tok in residual:
+        repl = _ENGLISH_REPLACE_MAP.get(tok) or _ENGLISH_REPLACE_MAP.get(tok.lower())
+        if repl:
+            # 词边界仅以拉丁字母判定（Python3 的 \w 含中文，不能用，否则中文相邻处替换失败）
+            out = re.sub(r"(?<![A-Za-z])" + re.escape(tok) + r"(?![A-Za-z])", repl, out)
+            replaced_any = True
+    # 重新扫描：已替换的应消失；仍未命中的未知串直接剔除（宁可丢词也不留英文）
+    still = scan_english_contamination(out)
+    if still:
+        out = _ENGLISH_RUN_RE.sub("", out)
+        out = re.sub(r"\s{2,}", " ", out).strip()
+    return out, still if not replaced_any else []
+
 
 @dataclass
 class M5Result:
@@ -1010,6 +1102,41 @@ class M5WriteChapterWorkflow:
     # ============================================================
     # 3. 质量校验 + 自动修订
     # ============================================================
+    def _extra_english_revise(
+        self, text: str, tokens: list[str], ctx: dict[str, Any], max_extra: int = 2
+    ) -> str:
+        """落盘前追加的英文专门修订：把残留英文 token 明确告诉 LLM，要求改纯中文。
+        最多 max_extra 次，避免无限循环；仍残留则交给 hard_replace_english 兜底。"""
+        for _ in range(max_extra):
+            toks = scan_english_contamination(text)
+            if not toks:
+                break
+            instr = (
+                f"本章正文仍残留英文（必须全部改为纯中文叙事）：{', '.join(toks[:20])}。"
+                + _ENGLISH_REPLACE_GUIDE
+                + " 仅替换这些英文，保持情节/人物/对话/结构完全不变，直接输出完整正文。"
+            )
+            try:
+                rev_resp = self.llm.chat_creative(
+                    messages=[
+                        {"role": "system", "content": M5_REVISE_SYSTEM_PROMPT},
+                        {
+                            "role": "user",
+                            "content": M5_REVISE_USER_TEMPLATE.format(
+                                quality_report=instr, chapter_text=text
+                            ),
+                        },
+                    ],
+                    temperature=0.4,
+                    max_tokens=4096,
+                    enable_thinking=False,
+                )
+                text = rev_resp.text.strip()
+            except Exception:  # noqa: BLE001 - 修订调用异常不阻断，交由兜底清理
+                logger.warning("[no_english] 追加英文修订调用异常，交由确定性清理")
+                break
+        return text
+
     def _quality_check_and_revise(
         self, ctx: dict[str, Any], chapter_text: str
     ) -> tuple[dict[str, Any], int, str]:
@@ -1081,6 +1208,32 @@ class M5WriteChapterWorkflow:
                 if d_blocking:
                     report["overall_pass"] = False
 
+            # ---- G-EN：正文纯中文硬关卡（确定性扫描，叠加在 LLM 质检之上，不依赖 LLM 自觉）----
+            english_tokens = scan_english_contamination(text)
+            quality_report_text = resp.text
+            if english_tokens:
+                report["overall_pass"] = False
+                report.setdefault("rules", []).append(
+                    {
+                        "rule": "no_english",
+                        "pass": False,
+                        "issue": "正文含英文污染（必须改为纯中文）："
+                        + "、".join(english_tokens[:20]),
+                    }
+                )
+                report["suggestions"] = (
+                    report.get("suggestions", "") + "\n" + _ENGLISH_REPLACE_GUIDE
+                )
+                # 把明确的中文替换指令直接塞进修订提示词，确保 LLM 知道改什么
+                quality_report_text = (
+                    resp.text
+                    + "\n\n# 硬性修订指令（必须执行，否则本章不通过）\n"
+                    + "本章检出英文污染 token："
+                    + "、".join(english_tokens[:20])
+                    + "\n"
+                    + _ENGLISH_REPLACE_GUIDE
+                )
+
             if report.get("overall_pass", False):
                 break
 
@@ -1092,7 +1245,7 @@ class M5WriteChapterWorkflow:
                     f"  [yellow]质量校验未通过（第 {attempt + 1} 次修订）...[/yellow]"
                 )
                 revise_prompt = M5_REVISE_USER_TEMPLATE.format(
-                    quality_report=resp.text,
+                    quality_report=quality_report_text,
                     chapter_text=text,
                 )
                 rev_resp = self.llm.chat_creative(
@@ -1106,6 +1259,32 @@ class M5WriteChapterWorkflow:
                 )
                 text = rev_resp.text.strip()
                 attempts = attempt + 1
+
+        # ---- G-EN：落盘前最终英文兜底（主循环修订后若仍有英文，追加专门修订 + 确定性清理）----
+        residual = scan_english_contamination(text)
+        if residual:
+            text = self._extra_english_revise(text, residual, ctx)
+            residual = scan_english_contamination(text)
+            if residual:
+                text, still = hard_replace_english(text)
+                if still:
+                    logger.warning(
+                        "[no_english] 落盘前仍存在英文残留，已做确定性清理: %s",
+                        still[:20],
+                    )
+                else:
+                    logger.info("[no_english] 落盘前确定性清理完成，无英文残留")
+            # 英文已清干净 → 把 no_english 规则移出，避免影响整体通过判定
+            if not scan_english_contamination(text):
+                report.setdefault("rules", [])
+                report["rules"] = [
+                    r for r in report["rules"] if r.get("rule") != "no_english"
+                ]
+                other_fail = any(
+                    (not r.get("pass", True)) for r in report.get("rules", [])
+                )
+                if not other_fail:
+                    report["overall_pass"] = True
 
         # T-5：可选启用结构化质量校验（仅补充，不阻断主路径 LLM 校验）
         if getattr(self, "enable_structured_qc", False):
