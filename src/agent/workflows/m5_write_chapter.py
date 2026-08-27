@@ -68,7 +68,7 @@ _ENGLISH_REPLACE_MAP = {
     "IP": "网络地址", "ID": "身份标识", "logo": "标识", "log": "日志",
     "Plan": "备选方案", "NGOs": "国际非政府组织", "allocation_weight": "分配权重",
     "shoulders": "肩背", "loys": "洛城", "kreisel": "陀螺状", "thirty": "三十",
-    "Lv": "级", "XH": "玄霄", "ZG": "天工", "API": "接口", "debug": "调试",
+    "Lv": "级", "XH": "玄霄", "ZG": "天工", "API": "接口", "AI": "人工智能", "debug": "调试",
     "cache": "缓存", "buffer": "缓冲", "token": "令牌", "node": "节点",
     "DL": "地灵", "JY": "九幽", "LF": "灵链", "TM": "商标", "Street": "街道",
     # 叙事英文泄漏（无歧义内容词，确定性替换）
@@ -90,6 +90,10 @@ _ENGLISH_REPLACE_MAP = {
     "leverage": "利用", "painpoint": "痛点", "light": "灯光", "nobody": "无人",
     "shadows": "阴影", "IDs": "身份标识",
     "fifty": "五十", "AND": "而且", "silently": "沉默地", "twitch": "抽动",
+    "brow": "眉心", "formula": "公式", "auctions": "拍卖会", "payload": "载荷",
+    "Leveraged": "杠杆", "fingers": "手指", "distant": "远处", "progress": "进度",
+    "Audit": "审计", "grant_token": "授权令牌", "ip_in_whitelist": "白名单内地址",
+    "in_maintenance_window": "维护窗口期", "xxxx": "某某",
 }
 # 修订时给 LLM 的中文等价参考（与上面映射保持一致口径）
 _ENGLISH_REPLACE_GUIDE = (
