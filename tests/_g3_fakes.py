@@ -9,8 +9,8 @@ from __future__ import annotations
 import json
 from types import SimpleNamespace
 
-from agent.agents.planner_agent import MasterPlan
-from agent.core.llm_client import LLMResponse
+from agent.agents.planner import MasterPlan
+from agent.client import LLMResponse
 
 
 # M1~M4 全部期望字段都包含的通用 JSON（一份 dict 通吃所有 workflow 的解析）。
@@ -137,7 +137,12 @@ class _StubEditor:
     """编辑桩：直接通过。"""
 
     def review(self, text):
-        return SimpleNamespace(passed=True, block_count=0, frozen_violations=[])
+        return SimpleNamespace(
+            passed=True,
+            block_count=0,
+            frozen_violations=[],
+            conflicts=[],
+        )
 
 
 class _StubMemory:

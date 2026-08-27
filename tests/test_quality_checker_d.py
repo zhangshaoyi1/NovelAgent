@@ -1,4 +1,4 @@
-"""D 多维 LLM 质量审查测试（增量 D / T04）
+﻿"""D 多维 LLM 质量审查测试（增量 D / T04）
 
 覆盖：
 - LLMQualityRule._check：llm=None 降级空 / 正常解析 blocking / 异常降级空
@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent.core.llm_client import LLMResponse
+from agent.client import LLMResponse
 from agent.core.quality_checker import (
     Issue,
     LLMBackedChecker,

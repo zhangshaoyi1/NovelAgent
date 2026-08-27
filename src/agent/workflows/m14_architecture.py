@@ -27,7 +27,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
+from agent.core.workflow_registry import workflow
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import Event, State, StateMachine
 from agent.core.genre_pack import first_genre
@@ -76,6 +77,7 @@ class M14ConfirmResult:
     unlocked_stages: list[str] = field(default_factory=list)
 
 
+@workflow("m14_architecture")
 class M14ArchitectureWorkflow:
     """M14 故事架构生成与确认门禁工作流"""
 

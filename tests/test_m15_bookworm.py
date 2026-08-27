@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.core.llm_client import LLMResponse
+from agent.client import LLMResponse
 from agent.workflows.m15_bookworm import (
     BookwormComparison,
     BookwormInput,
@@ -142,7 +142,7 @@ class TestSkillLoad:
 
     def test_load_from_custom_dir(self, tmp_path: Path) -> None:
         """从自定义目录加载"""
-        src = Path(__file__).resolve().parent.parent / "agent" / "skills" / "bookworm"
+        src = Path(__file__).resolve().parent.parent / "src" / "agent" / "skills" / "bookworm"
         dst = tmp_path / "bookworm"
         import shutil
 

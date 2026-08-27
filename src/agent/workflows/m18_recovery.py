@@ -33,7 +33,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
-from agent.core.state_machine import State, StateMachine
+from agent.core.state_machine import Event, State, StateMachine
+from agent.core.workflow_registry import workflow
 from agent.utils import safe_remove
 
 
@@ -167,6 +168,7 @@ class Draft:
         )
 
 
+@workflow("m18_recovery")
 class DraftManager:
     """管理 .state/draft.wip 草稿（F18.4）
 

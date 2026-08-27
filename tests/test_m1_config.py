@@ -1,4 +1,4 @@
-"""M1 启动配置工作流单元测试
+﻿"""M1 启动配置工作流单元测试
 
 mock LLM，验证流程正确性，不真实调用 API。
 """
@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.core.llm_client import LLMClient, LLMConfig, LLMResponse
+from agent.client import LLMClient, LLMConfig, LLMResponse
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import State, StateMachine
 from agent.workflows.m1_config import M1ConfigWorkflow, M1Input

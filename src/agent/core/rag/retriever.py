@@ -1,4 +1,4 @@
-"""召回器（增量 A / T02）
+﻿"""召回器（增量 A / T02）
 
 ``Retriever.retrieve(query, top_k)``：向量召回 + BM25 兜底融合，返回 ``list[Chunk]``。
 
@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.rag._types import Chunk
 from agent.core.rag.bm25 import BM25Index
 from agent.core.rag.vector_store import LocalVectorStore

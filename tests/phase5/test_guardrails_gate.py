@@ -13,7 +13,7 @@ from agent.core.guardrails import (
 
 def test_default_guardrails_no_false_positive():
     # 默认 Guardrails() 禁用词为空，正常正文不误伤（保持 Phase4 向后兼容）
-    g = Guardrails()
+    g = Guardrails(check_title=False)
     res = g.check("林惊羽拔出长剑，剑光如雪。")
     assert res.passed is True
 
@@ -27,7 +27,9 @@ def test_build_guardrails_loads_default_compliance_words():
 
 def test_advisory_gate_passes_clean_text():
     g = build_guardrails()
-    report = g.gate("林惊羽拔出长剑，剑光如雪。", mode=GateMode.ADVISORY)
+    # 包含合规章节标题，确保 title_placeholder 不误伤
+    text = "# 第1章 · 初入江湖\n\n林惊羽拔出长剑，剑光如雪。"
+    report = g.gate(text, mode=GateMode.ADVISORY)
     assert report.passed is True
     assert report.mode is GateMode.ADVISORY
 
@@ -42,7 +44,7 @@ def test_block_gate_rejects_banned_word():
 
 def test_block_gate_auto_cleans_placeholder_and_passes():
     g = build_guardrails()
-    draft = "第一章开头。[TODO] 这里待补。结尾正常。"
+    draft = "# 第1章 · 初入江湖\n\n开头。[TODO] 这里待补。结尾正常。"
     report = g.gate(draft, mode=GateMode.BLOCK)
     # 占位残留被自动剥离后可以放行
     assert report.passed is True

@@ -1,4 +1,4 @@
-"""G4 Schema 强校验测试（P0-2 验收）：验证 Planner 分级校验策略。
+﻿"""G4 Schema 强校验测试（P0-2 验收）：验证 Planner 分级校验策略。
 
 纯离线：用 fake decide 函数控制 chat_structured 返回值，验证 _validate_masterplan
 的分级行为（关键字段硬拒重试 → 安全降级；非关键字段按条目降级）。
@@ -14,7 +14,7 @@ import pytest
 from pydantic import ValidationError
 from rich.console import Console
 
-from agent.agents.planner_agent import (
+from agent.agents.planner import (
     Arc,
     CharacterSketch,
     MasterPlan,

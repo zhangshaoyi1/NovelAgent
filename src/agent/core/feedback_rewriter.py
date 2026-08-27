@@ -1,4 +1,4 @@
-"""A3 反馈→定向改写闭环（用户好用核心能力）
+﻿"""A3 反馈→定向改写闭环（用户好用核心能力）
 
 把用户针对某一章的反馈（"这章太拖" / "主角太蠢" / "感情戏不够"）变成**局部定向重写**，
 而不是只能整章回退或整本重跑。这是把"枪手"变成"听话的枪手"的关键黏性闭环。
@@ -30,7 +30,7 @@ import frontmatter
 from rich.console import Console
 
 from agent.core.guardrails import GateMode, Guardrails, build_guardrails
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.setting_manager import SettingManager
 
 

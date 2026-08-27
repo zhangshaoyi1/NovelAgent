@@ -97,12 +97,16 @@ MODE_TO_AUTONOMY = {
 }
 
 # 各介入点的「所需作者掌控阈值」：自主度低于该值即打断询问作者
+# 阈值与 MODE_INTERVENTION_MATRIX 对齐：
+#   HEAVY(20) → 除 MAJOR_DECISION 外全部打断
+#   LIGHT(55) → PLOT_NODE / FORESHADOW_RECALL / MAJOR_DECISION 打断
+#   AUTO(100) → 仅 MAJOR_DECISION 打断
 AUTONOMY_THRESHOLDS: dict[InterventionPoint, int] = {
-    InterventionPoint.CHAPTER_BEFORE: 80,
-    InterventionPoint.CHAPTER_AFTER: 55,
-    InterventionPoint.PLOT_NODE: 40,
-    InterventionPoint.FORESHADOW_RECALL: 35,
-    InterventionPoint.MAJOR_DECISION: 0,  # 重大决策始终打断（安全底线）
+    InterventionPoint.CHAPTER_BEFORE: 30,      # 仅 HEAVY(<30) 打断
+    InterventionPoint.CHAPTER_AFTER: 30,       # 仅 HEAVY(<30) 打断
+    InterventionPoint.PLOT_NODE: 60,           # HEAVY(<60) + LIGHT(<60) 打断
+    InterventionPoint.FORESHADOW_RECALL: 60,   # HEAVY(<60) + LIGHT(<60) 打断
+    InterventionPoint.MAJOR_DECISION: 0,       # 重大决策始终打断（安全底线）
 }
 
 

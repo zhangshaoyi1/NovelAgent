@@ -29,9 +29,10 @@ from typing import Any
 
 import frontmatter
 from rich.console import Console
+from agent.core.workflow_registry import workflow
 from rich.panel import Panel
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import StateMachine
 from agent.utils import parse_llm_json
@@ -52,6 +53,7 @@ class ExportResult:
     message: str = ""
 
 
+@workflow("m11_export")
 class ExportWorkflow:
     """导出工作流（F11.2）
 
@@ -295,6 +297,7 @@ class ImportResult:
     message: str = ""
 
 
+@workflow("m11_import")
 class ImportWorkflow:
     """导入工作流（F11.1）
 
@@ -482,6 +485,7 @@ class CompletionExtras:
     message: str = ""
 
 
+@workflow("m11_completion_extras")
 class CompletionExtrasWorkflow:
     """完本附加产出工作流（F11.3）
 

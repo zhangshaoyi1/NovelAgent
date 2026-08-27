@@ -1,4 +1,4 @@
-"""M15 书虫 Skill（独立可移植）
+﻿"""M15 书虫 Skill（独立可移植）
 
 基于 PRD F15.1-F15.6，实现以资深书虫视角评估小说标题/开头吸引力的 skill。
 
@@ -33,7 +33,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.prompts import M15_BOOKWORM_SYSTEM_PROMPT, M15_BOOKWORM_USER_TEMPLATE
 from agent.utils import parse_llm_json
 

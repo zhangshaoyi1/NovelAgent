@@ -1,4 +1,4 @@
-"""索引器（增量 A / T02）
+﻿"""索引器（增量 A / T02）
 
 ``Indexer`` 负责把项目知识（world / sublines / characters / relations / foreshadows /
 已写章节）切片、嵌入、写入本地向量库 + BM25 兜底索引。
@@ -19,7 +19,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.rag._types import Chunk
 from agent.core.rag.bm25 import BM25Index
 from agent.core.rag.vector_store import LocalVectorStore

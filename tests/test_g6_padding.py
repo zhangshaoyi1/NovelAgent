@@ -1,4 +1,4 @@
-"""G6 B6 防注水确定性门测试（T7，纯离线确定性指标，零 LLM）
+﻿"""G6 B6 防注水确定性门测试（T7，纯离线确定性指标，零 LLM）
 
 覆盖（对齐设计 §8 关键断言）：
 - 整章重复/车轱辘话 → padding_repetition_abnormal 失败（ratio > 0.30）→ overall_pass=False。
@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.agents.evaluator_agent import EvaluatorAgent
+from agent.agents.evaluator import EvaluatorAgent
 
 
 def _write_chapter(p: Path, name: str, text: str) -> None:

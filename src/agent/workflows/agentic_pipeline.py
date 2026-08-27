@@ -28,10 +28,11 @@ from typing import Any, Callable, Optional
 
 from rich.console import Console
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.state_machine import Event, State, StateMachine, TRANSITIONS
 from agent.core.setting_manager import SettingManager
 from agent.core.confirmation import is_architecture_confirmed
+from agent.core.workflow_registry import workflow
 import frontmatter
 
 
@@ -168,6 +169,7 @@ def build_rewrite_hint(report: Any, chapter_nums: list[int]) -> str:
 _DOWNGRADE_ORDER: list[str] = ["quality", "balanced", "economy"]
 
 
+@workflow("agentic_pipeline")
 class AgenticPipelineWorkflow:
     """全流程自主写作流水线。
 
@@ -327,7 +329,7 @@ class AgenticPipelineWorkflow:
     # ---------------------------------------------------------------- 构造默认 Agent
     def _ensure_planner(self) -> PlannerLike:
         if self.planner is None:
-            from agent.agents.planner_agent import PlannerAgent
+            from agent.agents.planner import PlannerAgent
 
             self.planner = PlannerAgent(
                 self.project_dir, llm_client=self.llm, memory=self.memory,
@@ -354,7 +356,7 @@ class AgenticPipelineWorkflow:
 
     def _ensure_editor(self) -> EditorLike:
         if self.editor is None:
-            from agent.agents.editor_agent import EditorAgent
+            from agent.agents.editor import EditorAgent
 
             self.editor = EditorAgent(
                 self.project_dir, llm_client=self.llm, console=self.console, memory=self.memory,
@@ -363,7 +365,7 @@ class AgenticPipelineWorkflow:
 
     def _ensure_evaluator(self) -> EvaluatorLike:
         if self.evaluator is None:
-            from agent.agents.evaluator_agent import EvaluatorAgent
+            from agent.agents.evaluator import EvaluatorAgent
 
             # 质量目标优先取自 MasterPlan
             qt: dict[str, float] = {}

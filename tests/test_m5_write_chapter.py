@@ -1,4 +1,4 @@
-"""M5 章节创作工作流单元测试
+﻿"""M5 章节创作工作流单元测试
 
 覆盖：
 - 门禁（状态、架构确认、world.md/subline.md/protagonist_route.md 不存在）
@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.core.state_machine import State, StateMachine
 from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow, MAX_REVISIONS
 
@@ -248,7 +248,7 @@ class TestStrictReview:
         """
         import json as _json
 
-        from agent.core.llm_client import LLMClient, LLMResponse
+        from agent.client import LLMClient, LLMResponse
 
         creative_texts = iter([CHAPTER_TEXT, CHAPTER_TEXT, CHAPTER_TEXT])
         main_report = _json.dumps(QUALITY_PASS, ensure_ascii=False)

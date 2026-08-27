@@ -12,12 +12,14 @@ from agent import __version__
 from agent.cli._app import app, console
 from agent.utils import make_quiet_console
 
+_SKILL_REGISTRY: Any = None
+
 def _get_registry() -> Any:
     global _SKILL_REGISTRY
     if _SKILL_REGISTRY is None:
-        from agent.workflows.m15_bookworm import SkillRegistry
+        from agent.core.skill_registry import get_skill_registry
 
-        _SKILL_REGISTRY = SkillRegistry()
+        _SKILL_REGISTRY = get_skill_registry()
     return _SKILL_REGISTRY
 
 

@@ -1,4 +1,4 @@
-"""G2 收紧 LLM 质检维度判定 —— 阈值同步契约 + soft_margin 注入 + 门禁断言（P0-4 / P0-6）
+﻿"""G2 收紧 LLM 质检维度判定 —— 阈值同步契约 + soft_margin 注入 + 门禁断言（P0-4 / P0-6）
 
 纯离线：注入 stub score_fn，不调用真实 LLM。验证：
 - P0-4 阈值两处同步（EvaluatorAgent.qt 默认 / QualityTargets 默认均为 85 / 80）。
@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.agents.evaluator_agent import DimensionResult, EvaluatorAgent, _SOFT_MARGIN
-from agent.agents.planner_agent import QualityTargets
+from agent.agents.evaluator import DimensionResult, EvaluatorAgent, _SOFT_MARGIN
+from agent.agents.planner import QualityTargets
 
 
 # ============================================================

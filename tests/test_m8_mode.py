@@ -38,6 +38,9 @@ def _build_project(tmp_path: Path, mode: str = "heavy") -> Path:
     sm.load()
     sm.state = State.WRITING
     sm.mode = mode
+    # 同步设置 autonomy_level 以匹配模式，确保 should_intervene 逻辑正确
+    autonomy_map = {"heavy": 20, "light": 55, "auto": 100}
+    sm.autonomy_level = autonomy_map.get(mode, 70)
     sm.save()
     return d
 

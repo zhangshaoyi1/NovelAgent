@@ -28,11 +28,12 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import Event, State, StateMachine
 from agent.core.confirmation import is_architecture_confirmed
 from agent.core.genre_pack import first_genre
+from agent.core.workflow_registry import workflow
 from agent.prompts import M3_SYSTEM_PROMPT, M3_USER_PROMPT_TEMPLATE
 from agent.utils import parse_llm_json
 
@@ -49,6 +50,7 @@ class M3Result:
     subline_files: list[Path] = field(default_factory=list)
 
 
+@workflow("m3_outline")
 class M3OutlineWorkflow:
     """M3 大纲与简介生成工作流"""
 

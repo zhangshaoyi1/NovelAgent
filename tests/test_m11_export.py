@@ -1,4 +1,4 @@
-"""M11 导入导出单元测试
+﻿"""M11 导入导出单元测试
 
 覆盖：
 - ExportWorkflow：txt/markdown/epub 三格式、空章节、书名读取、自定义输出目录
@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.core.llm_client import LLMResponse
+from agent.client import LLMResponse
 from agent.workflows.m11_export import (
     CompletionExtrasWorkflow,
     ExportResult,

@@ -1,4 +1,4 @@
-"""evaluate 命令 —— 全书「不崩」体检（Phase 2）
+﻿"""evaluate 命令 —— 全书「不崩」体检（Phase 2）
 
 对已有书稿跑 Evaluator 七维「不崩」套件，输出量化体检报告；
 不达标时可自动回溯最近 N 章（--auto-repair 会触发重写闭环）。
@@ -79,10 +79,10 @@ def evaluate(
     enforce_gate(str(project_path), "evaluate", json_mode=json_output)
 
     workflow_console = make_quiet_console() if json_output else console
-    from agent.agents.evaluator_agent import EvaluatorAgent
+    from agent.agents.evaluator import EvaluatorAgent
 
     # ---- G7（补充边界 3，修复 R3-3）：接线 tracer —— 复用 agent_service.py 行 80-82 模式 ----
-    from agent.core.llm_client import LLMClient
+    from agent.client import LLMClient
     from agent.core.llmops import TraceStore, TracedLLMClient, set_tracer
 
     set_tracer(TraceStore(project_path))

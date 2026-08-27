@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import re
@@ -9,7 +9,7 @@ from typing import Optional
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import emit_result
 from agent.core.learning_store import Learning, LearningStore
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.workflows.m17_learn import LearningMiner
 
 

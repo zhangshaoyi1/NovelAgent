@@ -1,4 +1,4 @@
-"""M12 内容审核与上下文管理
+﻿"""M12 内容审核与上下文管理
 
 基于 PRD F12.1-F12.3：
 
@@ -30,7 +30,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.setting_manager import SettingManager
 from agent.prompts import (
     M12_CONFLICT_SYSTEM_PROMPT,

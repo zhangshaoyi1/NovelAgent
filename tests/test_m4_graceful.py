@@ -1,4 +1,4 @@
-"""M4 硬编码崩点修复验证（P0-4）：注入非 JSON / 非 dict 响应
+﻿"""M4 硬编码崩点修复验证（P0-4）：注入非 JSON / 非 dict 响应
 
 纯离线：构造一个返回纯文本（非 JSON）的 fake LLM；M4 ``_llm_generate_characters``
 必须优雅降级（对齐 M1/M14/M3 的 ValueError 兜底），``run()`` 不 raise，且产出
@@ -10,7 +10,7 @@ from __future__ import annotations
 import frontmatter
 from pathlib import Path
 
-from agent.core.llm_client import LLMResponse
+from agent.client import LLMResponse
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import State, StateMachine
 from agent.workflows.m4_character import M4CharacterWorkflow

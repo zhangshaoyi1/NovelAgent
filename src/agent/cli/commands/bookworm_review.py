@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import *
@@ -73,7 +73,7 @@ def bookworm_review(
     skill = registry.get_skill("bookworm")
     if skill is None:
         # 自动加载
-        from agent.core.llm_client import LLMClient
+        from agent.client import LLMClient
 
         skill = registry.load_builtin("bookworm", llm=LLMClient(), console=console)
 

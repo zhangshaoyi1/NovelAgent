@@ -1,4 +1,4 @@
-"""M4 角色路线与关系网工作流单元测试
+﻿"""M4 角色路线与关系网工作流单元测试
 
 覆盖：
 - 门禁（状态、架构确认、world.md 不存在、outline.md 不存在）
@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.core.state_machine import Event, State, StateMachine
 from agent.workflows.m14_architecture import M14ArchitectureWorkflow
 from agent.workflows.m4_character import M4CharacterWorkflow

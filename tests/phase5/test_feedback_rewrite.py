@@ -13,8 +13,9 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.core.feedback_rewriter import FeedbackRewriter, RewriteResult
+from agent.core.guardrails import Guardrails
 from agent.service.agent_service import AgentService
 
 
@@ -42,7 +43,11 @@ REWRITTEN = "（重写版）林寻咬破舌尖，精血沁入镜面，这一章�
 # ============================================================
 def test_rewrite_success(tmp_path):
     d = __import__("tests.conftest", fromlist=["make_project"]).make_project(tmp_path, n_chapters=3)
-    rewriter = FeedbackRewriter(d, llm_client=_fake_llm(REWRITTEN))
+    rewriter = FeedbackRewriter(
+        d,
+        llm_client=_fake_llm(REWRITTEN),
+        guardrails=Guardrails(check_title=False, check_meta_leak=False),
+    )
     res = rewriter.rewrite(2, "节奏太慢，删水")
 
     assert isinstance(res, RewriteResult)

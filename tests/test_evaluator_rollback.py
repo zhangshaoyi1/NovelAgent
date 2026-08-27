@@ -1,4 +1,4 @@
-"""EvaluatorAgent.evaluate_with_repair 闭环回归测试（G1）
+﻿"""EvaluatorAgent.evaluate_with_repair 闭环回归测试（G1）
 
 验证「不崩」第三层防御（自动回溯重写）的真实闭环：
 - 不达标时触发回溯并调用 rewriter（带正确章节清单）；
@@ -13,7 +13,7 @@ from __future__ import annotations
 import types
 from pathlib import Path
 
-from agent.agents.evaluator_agent import (
+from agent.agents.evaluator import (
     DimensionResult,
     EvaluatorAgent,
     NovelHealthReport,

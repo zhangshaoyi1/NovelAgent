@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import *
@@ -27,7 +27,7 @@ def context(
     """
     from pathlib import Path
 
-    from agent.core.llm_client import LLMClient
+    from agent.client import LLMClient
     from agent.workflows.m12_audit import ContextLoader
 
     project_path = Path(project_dir)

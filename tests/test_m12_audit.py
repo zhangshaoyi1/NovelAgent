@@ -1,4 +1,4 @@
-"""M12 内容审核与上下文管理单元测试
+﻿"""M12 内容审核与上下文管理单元测试
 
 覆盖：
 - ConflictArbiter (F12.1)：设定冲突检测、报告解析、严重度判定
@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.core.llm_client import LLMResponse
+from agent.client import LLMResponse
 from agent.workflows.m12_audit import (
     ChapterSummary,
     ChapterSummarizer,

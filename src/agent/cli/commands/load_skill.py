@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import *
@@ -15,7 +15,7 @@ def load_skill(
     使用示例：
       novel-agent load-skill bookworm
     """
-    from agent.core.llm_client import LLMClient
+    from agent.client import LLMClient
 
     registry = _get_registry()
     try:

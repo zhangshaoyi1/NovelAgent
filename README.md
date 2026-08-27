@@ -7,11 +7,17 @@
 
 ## 一、NovelAgent 是什么
 
-NovelAgent 是一个**共创式长篇小说写作 Agent**：你给它世界观、脉络、角色，它按"设定集驱动"的方式一章一章往下写，并在写作过程中维护：
+NovelAgent 是一个**共创式长篇小说写作 Agent**：给它一段思路（题材 / 核心梗 / 风格 / 体量），它能自主完成「世界观 → 大纲 → 角色 → 逐章写作 → 成书评测」全流程，并以「不崩」七维终审量化保证质量。
 
+它的核心能力：
+
+- **全自主写作**：`autowrite` 一键输入思路，全自动完成（支持 `auto` 全自主 / `light` 关键节点介入 / `heavy` 每章控制）；
 - **长篇一致性**：角色关系网、主角成长路线、伏笔表、金手指登记，随剧情演化但不矛盾；
 - **剧集树（支线 / 卷）**：按 `outline.md` + 每条支线的 `subline.md` 推进；
-- **质量门禁**：每章生成后做 9 项通用质量校验 + D 多维 LLM 审查（爽点 / OOC / 连贯性 / 追读力），不通过会自动修订；
+- **质量门禁**：每章多重校验（爽点 / OOC / 连贯性 / 追读力 / AI 味 / 注水 / 黄金三章），不通过自动修订；
+- **成书体检**：`evaluate` 跑「不崩」七维终审 + `appeal` 迷爱看 6 维评分，缺陷自动回溯修复；
+- **G14 成书质量护栏**：写时 BLOCK 英文残留 / 占位标题 / 跨章重复，`guardrail-scan` 全量体检；
+- **笔枢对标能力**：Agent 阵容叙事（`roster`）、冰山建书 60+ 字段（`iceberg`）、双模式连续滑块（`mode --autonomy`）、可拖拽世界关系图谱（`graph`）；
 - **可逆操作**：快照、回滚、归档，写错了能后退。
 
 命令行入口统一为 `novel-agent`（安装后），等价于 `python -m agent.cli`。所有命令都接受一个 `-d/--dir <项目目录>` 参数指向你的小说项目。
@@ -106,6 +112,33 @@ novel-agent doctor -d novels/my-novel --env ./another.env
 
 建议先 `cd` 到你的**工作区根目录**（即 `agent/.env` 所在目录，或任何能让 NovelAgent 找到 `.env` 的目录），再用 `-d` 指定小说项目。项目默认相对路径是 `novels/my-novel`。
 
+### 4.0 全自主写作（推荐，默认模式）
+
+只需给一段思路，Agent 全自动完成整本书：
+
+```bash
+novel-agent autowrite -d novels/my-novel --brief "玄幻+废柴逆袭+爽文" --chapters 30
+```
+
+全流程自动串联：世界观生成 → 脉络讨论 → 故事架构 → 大纲 → 角色设计 → 逐章写作 → 成书评测。支持 `--mode auto`（默认全自主）/ `--mode light`（关键节点询问）/ `--mode heavy`（每章控制）。
+
+**成书质量体检：**
+```bash
+novel-agent evaluate -d novels/my-novel              # 「不崩」七维终审（默认真 LLM 实判）
+novel-agent appeal -d novels/my-novel --chapter 12    # 「迷爱看」6 维评分
+novel-agent guardrail-scan -d novels/my-novel         # 成书质量护栏全量扫描
+```
+
+**反馈改写：**
+```bash
+novel-agent rewrite -d novels/my-novel --chapter 12 --feedback "节奏太快，放慢并补细节"
+```
+
+**一键完本（全自动写完整本，含 start→autowrite→去重）：**
+```bash
+novel-agent compose -d novels/my-novel --brief "..." --chapters 30
+```
+
 ### 4.1 开新书 —— `start`
 ```bash
 novel-agent start -d novels/my-novel
@@ -185,11 +218,20 @@ novel-agent status -d novels/my-novel --json    # JSON：state/mode/progress/ava
 
 ### 5.2 介入模式 —— `mode`
 ```bash
-novel-agent mode -d novels/my-novel              # 查看当前模式
-novel-agent mode -d novels/my-novel -t light     # 切到 light
-novel-agent mode -d novels/my-novel -t auto      # 切到 auto（全自动，重大决策才打断）
+novel-agent mode -d novels/my-novel                    # 查看当前模式
+novel-agent mode -d novels/my-novel -t light           # 切到 light
+novel-agent mode -d novels/my-novel -t auto            # 切到 auto（全自动，重大决策才打断）
 ```
+
 三档：**heavy**（每章前问方向、每章后等反馈）/ **light**（仅剧情节点介入）/ **auto**（自主推进）。
+
+**进阶：连续自主度滑块**（0–100，替代固定三档）：
+```bash
+novel-agent mode -d novels/my-novel --autonomy 80      # 高度自动，但重大决策仍询问
+novel-agent mode -d novels/my-novel --autonomy 100     # 预设：auto-driver（完全自主）
+novel-agent mode -d novels/my-novel --autonomy 35      # 预设：co-pilot（协作模式）
+```
+自主度越高越自动，`MAJOR_DECISION` 始终打断作为安全底线。Web UI 项目空间以连续滑块呈现。
 
 ### 5.3 健康体检（只读）—— `doctor`
 ```bash
@@ -227,7 +269,7 @@ novel-agent rollback -d novels/my-novel -c 20 -y  # 跳过二次确认
 
 ## 六、题材包（genre packs）
 
-NovelAgent 内置多种题材的规则 / 套路 / 术语（修仙、都市、悬疑、科幻、重生、末世、玄学……），可注入写作流程：
+NovelAgent 内置多种题材的规则 / 套路 / 术语（修仙、武侠、都市、悬疑、科幻、重生、末世、玄学、男频爽文……），可注入写作流程：
 
 ```bash
 novel-agent list-genres                 # 列出所有可用题材
@@ -236,6 +278,20 @@ novel-agent load-genre -d <项目> <题材名>   # 把题材规则加载进项�
 novel-agent inject-genre -d <项目> <题材名> # 注入题材套路到写作
 novel-agent load-skill <skill名>         # 加载评估 / 写作 skill
 ```
+
+### 多题材混搭（多选合并 + 冲突裁决）
+
+一本小说可以**同时选择多个题材**（如修仙+武侠+科幻）：
+
+```bash
+# CLI 开新书多选
+novel-agent start -d novels/my-novel --title "XXX" --genres xiuxian,wuxia
+
+# 查看待裁决的冲突并逐条处理
+novel-agent merge-genres -d novels/my-novel
+```
+
+题材包采用**渐进式披露**加载：列表只读元信息（中文名/简介），选中后才按需加载全量内容，控制成本。选中题材的世界观模板/术语/套路/质量规则会按段落自动合并；若多个题材定义了同名设定段落，生成**冲突卡**由你裁决，最终收敛为**本小说自己的设定**。
 
 ---
 
@@ -261,14 +317,38 @@ novel-agent load-skill <skill名>         # 加载评估 / 写作 skill
 ### 核心创作
 | 命令 | 说明 | 主要参数 |
 |---|---|---|
-| `start` | 开新书，生成 world.md | `-d` |
+| `autowrite` | 全自主写作（规划→写→评→修） | `-d`, `--brief`, `--chapters`, `--mode` |
+| `compose` | 一键全自动写书（start→autowrite 至完本） | `-d`, `--brief`, `--chapters` |
+| `start` | 开新书，生成 world.md | `-d`, `--genres`（多题材） |
 | `discuss` | 脉络讨论，产出 discussion.md | `-d`, `-r/--max-rounds` |
+| `architecture` | 故事架构 | `-d` |
+| `confirm-architecture` | 确认架构（解锁大纲） | `-d` |
 | `outline` | 大纲 + 各支线 subline | `-d` |
 | `design-characters` | 角色 / 关系 / 伏笔 / 金手指 | `-d` |
 | `write` | 写下一章（核心循环） | `-d`, `--no-strict-review`, `--json`, `--env` |
 | `adjust-relation` | 调整角色关系网 | `-d`, `-i/--intent`, `--json` |
 | `adjust-route` | 调整主角成长路线 | `-d`, `-i/--intent`, `--json` |
 | `export` | 导出 txt/markdown/epub | `-d`, `-f/--format`, `-o/--output`, `-t/--title` |
+
+### 成书质量
+| 命令 | 说明 |
+|---|---|
+| `evaluate` | 「不崩」七维终审（默认真 LLM 实判） |
+| `appeal` | 「迷爱看」6 维评分 |
+| `guardrail-scan` | 成书质量护栏全量扫描 |
+| `rewrite` | 反馈→定向改写 |
+| `bookworm-review` | 书虫视角评审 |
+| `track-pacing` | 节奏追踪 |
+
+### 世界构建 & 笔枢对标
+| 命令 | 说明 |
+|---|---|
+| `roster` | Agent 阵容叙事（25 位专家分组展示） |
+| `iceberg` | 冰山建书 60+ 字段清单 |
+| `philosophy` | 世界模拟哲学文案 |
+| `graph` | 可拖拽世界关系图谱 |
+| `mode --autonomy N` | 连续自主度滑块（0–100） |
+| `merge-genres` | 多题材冲突裁决 |
 
 ### 查看 / 诊断（`*`）
 | 命令 | 说明 |
@@ -310,12 +390,15 @@ PYTHONPATH=D:/project/NovelAgent/agent/src python -m agent.web --port 8080
 
 启动后浏览器访问 `http://<host>:<port>` 即可。页面包含：
 
-- **工作台** `/`：项目列表 / 新建项目；
-- **项目空间** `/p/{name}`：状态机进度 + 当前可用操作（按阶段门禁）；
+- **引导向导** `/`：项目列表 / 新建项目（含多题材 chips 选择 + 一键写书入口）；
+- **项目空间** `/p/{name}`：状态机进度 + 当前可用操作（按阶段门禁）+ **自主度连续滑块**；
 - **引导向导** `/p/{name}/guide`：按状态机阶段走通创作闭环；
 - **实时写作间** `/p/{name}/write`：写章 SSE 实时进度 + 成本视图；
 - **看板** `/p/{name}/dashboard`：成本 / 评测 / 模型路由 / MCP；
-- **文件浏览** `/p/{name}/files` 与单文件查看 `/p/{name}/file?path=`。
+- **文件浏览** `/p/{name}/files` 与单文件查看 `/p/{name}/file?path=`；
+- **冲突裁决** `/p/{name}/conflicts`：多题材同名设定冲突逐条裁决；
+- **Agent 阵容** `/p/{name}/roster`：25 位专家 Agent 分组展示；
+- **世界关系图谱** `/p/{name}/graph`：力导向图可拖拽编排、点选编辑。
 
 > Web 端与 CLI 共享同一套命令元数据（`available_commands` 一致），所以在网页上能跑的操作和命令行完全对齐。停止服务用 `Ctrl-C`。
 
@@ -327,17 +410,20 @@ PYTHONPATH=D:/project/NovelAgent/agent/src python -m agent.web --port 8080
 | `load-genre` | 加载题材规则到项目 |
 | `inject-genre` | 注入题材套路 |
 | `load-skill` | 加载 skill |
+| `export-skill`* | 导出 skill 为独立分发包 |
 | `audit-chapter` | 审计单章质量 |
 | `audit-setting` | 审计设定集 |
-| `bookworm-review` | 书虫视角评审 |
 | `foreshadow-check` | 伏笔一致性检查 |
 | `foreshadow-report` | 伏笔报表 |
-| `track-pacing` | 节奏追踪 |
 | `summarize-chapter` | 章节摘要 |
 | `summarize-range` | 区间摘要 |
 | `learn` | 学习 / 沉淀经验 |
-| `architecture` | 查看架构 |
-| `confirm-architecture` | 确认架构（解锁大纲） |
+| `show` | 章节预览（默认末章） |
+| `cost-plan` | 写前成本预估 |
+| `payoff-plan` | 爽点剧本生成 |
+| `emotion-track` | 情绪轨迹 ASCII 渲染 |
+| `reader-feedback` | 读者反馈数据回流 |
+| `ecosystem`* | 生态看板（MCP/路由/工具） |
 | `draft-status` | 草稿状态 |
 | `draft-discard` | 丢弃草稿 |
 | `import-draft` | 导入外部草稿 |
@@ -355,7 +441,10 @@ pip install -e ./agent
 
 # 2) 配置（新建 agent/.env，填入你的 LLM key，见第三章）
 
-# 3) 开一本新书并依次推进
+# 3) 方式 A：全自主写作（推荐，一条命令完成）
+novel-agent autowrite -d novels/my-first-novel --brief "玄幻+废柴逆袭+爽文" --chapters 10
+
+# 3) 方式 B：分步共创（手把手推进）
 novel-agent start    -d novels/my-first-novel
 novel-agent discuss  -d novels/my-first-novel
 novel-agent outline  -d novels/my-first-novel

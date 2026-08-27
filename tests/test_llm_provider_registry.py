@@ -1,4 +1,4 @@
-"""T-7 LLMProvider 注册表单元测试
+﻿"""T-7 LLMProvider 注册表单元测试
 
 覆盖：
 - 注册新 provider 后 create 返回其实例（单一注册点，禁 if/else）
@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent.core.exceptions import LLMError
-from agent.core.llm_client import (
+from agent.client import (
     LLMClient,
     LLMConfig,
     LLMProvider,
@@ -44,7 +44,7 @@ class _PrimaryFake(LLMProvider):
         self.calls += 1
         if self.raise_exc is not None:
             raise self.raise_exc
-        from agent.core.llm_client import LLMResponse
+        from agent.client import LLMResponse
 
         return LLMResponse(text="primary-ok", model=model, raw={})
 
@@ -59,7 +59,7 @@ class _FallbackFake(LLMProvider):
 
     def chat(self, messages, model, temperature, max_tokens, enable_thinking, timeout, **kwargs):  # noqa: ANN001
         self.calls += 1
-        from agent.core.llm_client import LLMResponse
+        from agent.client import LLMResponse
 
         return LLMResponse(text=self.response_text, model=model, raw={})
 

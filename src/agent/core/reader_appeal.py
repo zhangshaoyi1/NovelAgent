@@ -1,4 +1,4 @@
-"""B1 真 LLM 追读力 / 读者吸引力评分器（迷爱看核心）
+﻿"""B1 真 LLM 追读力 / 读者吸引力评分器（迷爱看核心）
 
 把 Evaluator 现有 5 个「pass 默认」维度升级为**真实 LLM 评分**，并新增作者侧可直接使用的
 「迷爱看」6 维评分（钩子强度/爽点密度/代入感/人物弧光/世界观新颖度/情绪曲线）。
@@ -31,7 +31,7 @@ from agent.core.chapters import (  # G6：公共章节读取 helper（消除根�
     strip_frontmatter,
     take_chapter_files,
 )
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.utils import parse_llm_json
 
 

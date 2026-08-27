@@ -113,8 +113,8 @@ def test_g10_guardrails_gate_block_rejects_ai_flavor(tmp_path: Path) -> None:
     from agent.core.guardrails import GateMode, build_guardrails
 
     gr = build_guardrails()
-    # 构造含高置信 AI 腔组合式短语的文本（词表命中）
-    text = "他嘴角勾起一抹弧度，不禁微微一笑，仿佛一切都尽在掌握。"
+    # 构造含高置信 AI 腔组合式短语的文本（词表命中），含合规章节标题避免 title_placeholder 误伤
+    text = "# 第1章 · 风云初起\n\n他嘴角勾起一抹弧度，不禁微微一笑，仿佛一切都尽在掌握。"
     res = gr.gate(text, mode=GateMode.BLOCK)
     assert res.passed is False, "block 模式命中 AI 味应拒落盘（passed=False）"
     assert any(

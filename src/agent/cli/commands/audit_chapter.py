@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import *
@@ -28,7 +28,7 @@ def audit_chapter(
 
     import frontmatter
 
-    from agent.core.llm_client import LLMClient
+    from agent.client import LLMClient
     from agent.core.setting_manager import SettingManager
     from agent.workflows.m12_audit import ContentAuditor
 

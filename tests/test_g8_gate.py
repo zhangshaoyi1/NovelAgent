@@ -1,4 +1,4 @@
-"""G8 验收维度门禁测试（T5/T7 验收，纯离线）
+﻿"""G8 验收维度门禁测试（T5/T7 验收，纯离线）
 
 覆盖（对齐设计 §6.2 / §9 T5）：
 - stub 报告断言 mainline_progress / ending_convergence 存在、source="computed"、影响 overall_pass；
@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from agent.agents.evaluator_agent import EvaluatorAgent
+from agent.agents.evaluator import EvaluatorAgent
 from agent.core.state_machine import State, StateMachine
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
 from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow

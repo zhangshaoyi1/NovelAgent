@@ -13,8 +13,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.pacing_store import Debt, Ledger, PacingStore
+from agent.core.workflow_registry import workflow
 from agent.prompts import M16_PACING_SYSTEM_PROMPT, M16_PACING_USER_TEMPLATE
 from agent.utils import parse_llm_json
 
@@ -29,6 +30,7 @@ class PacingExtraction:
     debts: list[Debt] = field(default_factory=list)
 
 
+@workflow("m16_pacing")
 class PacingTracker:
     """追读力抽取与对账器（C）"""
 

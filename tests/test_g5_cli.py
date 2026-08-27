@@ -1,4 +1,4 @@
-"""G5 CLI 参数透传测试：验证 autowrite 命令的 --appeal-gate 相关参数
+﻿"""G5 CLI 参数透传测试：验证 autowrite 命令的 --appeal-gate 相关参数
 能正确透传到 AgenticPipelineWorkflow 和 EvaluatorAgent。
 
 覆盖：
@@ -15,7 +15,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from agent.agents.evaluator_agent import EvaluatorAgent, NovelHealthReport
+from agent.agents.evaluator import EvaluatorAgent, NovelHealthReport
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
 from tests.test_g5_gate import _make_g5_project
 

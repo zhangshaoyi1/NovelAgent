@@ -1,4 +1,4 @@
-"""M14 故事架构生成与确认门禁工作流单元测试
+﻿"""M14 故事架构生成与确认门禁工作流单元测试
 
 mock LLM，验证生成、迭代、确认、门禁、状态转换。
 """
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import State, StateMachine
 from agent.workflows.m14_architecture import (

@@ -1,4 +1,4 @@
-"""语义记忆（SemanticMemory，Phase 2 → Phase 5 向量后端）
+﻿"""语义记忆（SemanticMemory，Phase 2 → Phase 5 向量后端）
 
 长期事实记忆：世界观设定、角色事实、已确立的剧情节点、伏笔登记等"应该长期记得"
 的结构化事实。
@@ -53,7 +53,7 @@ def build_default_embed_fn(provider: str = "openai") -> Callable[[list[str]], li
             OllamaEmbedding,
             OpenAICompatibleEmbedding,
         )
-        from agent.core.llm_client import LLMClient
+        from agent.client import LLMClient
 
         cfg = LLMClient().config
         if provider == "ollama":

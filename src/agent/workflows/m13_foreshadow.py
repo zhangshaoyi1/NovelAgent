@@ -34,7 +34,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.core.state_machine import State, StateMachine
+from agent.core.state_machine import Event, State, StateMachine
+from agent.core.workflow_registry import workflow
 
 
 # ============================================================
@@ -115,6 +116,7 @@ class M13Report:
 # ============================================================
 # 伏笔管理工作流
 # ============================================================
+@workflow("m13_foreshadow")
 class M13ForeshadowWorkflow:
     """M13 伏笔管理工作流"""
 

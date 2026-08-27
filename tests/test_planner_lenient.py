@@ -1,4 +1,4 @@
-"""Planner 结构化输出宽松重建回归测试（修复 bug1）
+﻿"""Planner 结构化输出宽松重建回归测试（修复 bug1）
 
 验证 ``PlannerAgent._build_plan_lenient`` 在结构化输出字段缺失/类型不符时，
 仍能保留有效部分，而非整体退化为空计划。
@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.agents.planner_agent import PlannerAgent
+from agent.agents.planner import PlannerAgent
 
 
 def test_build_plan_lenient_keeps_valid_parts(tmp_path: Path) -> None:

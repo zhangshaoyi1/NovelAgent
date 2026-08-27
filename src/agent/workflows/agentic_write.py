@@ -28,10 +28,11 @@ from typing import Any, Callable
 
 from rich.console import Console
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.state_machine import Event, State, StateMachine
 from agent.core.tools.builtins import set_project_context
 from agent.core.writer_agent import WriterAgent
+from agent.core.workflow_registry import workflow
 from agent.prompts import (
     M5_GENERATE_USER_TEMPLATE,
     M5_QUALITY_CHECK_SYSTEM_PROMPT,
@@ -70,6 +71,7 @@ class AgenticWriteResult:
     d_issues: list[dict[str, Any]] = field(default_factory=list)
 
 
+@workflow("agentic_write")
 class AgenticWriteWorkflow:
     """Agentic 写章工作流（替代 M5 硬编码流程）。
 

@@ -1,4 +1,4 @@
-"""E2 题材动态注入（运行时套路加载到 M5 写作）单元测试
+﻿"""E2 题材动态注入（运行时套路加载到 M5 写作）单元测试
 
 覆盖：
 - GenrePackRegistry.load_trope 提取套路片段（精确 + 模糊匹配）
@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from agent.core.injected_trope_store import InjectedTropeStore
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
 
 from tests.conftest import (

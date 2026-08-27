@@ -1,4 +1,4 @@
-"""rewrite 命令 —— A3 反馈→定向改写（用户好用闭环）
+﻿"""rewrite 命令 —— A3 反馈→定向改写（用户好用闭环）
 
 把用户对某一章的反馈（"太拖" / "主角太蠢" / "感情戏不够"）变成局部定向重写，
 而不是只能整章回退或整本重跑。
@@ -76,7 +76,7 @@ def rewrite(
 
     from agent.core.feedback_rewriter import FeedbackRewriter
     from agent.core.guardrails import build_guardrails
-    from agent.core.llm_client import LLMClient
+    from agent.client import LLMClient
 
     workflow_console = make_quiet_console() if json_output else console
     rewriter = FeedbackRewriter(

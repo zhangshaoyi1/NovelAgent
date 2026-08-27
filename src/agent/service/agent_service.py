@@ -1,4 +1,4 @@
-"""Service 层（Phase 3 · 接口预留，Web UI 本期不做）
+﻿"""Service 层（Phase 3 · 接口预留，Web UI 本期不做）
 
 把「全流程自主写作」与「不崩体检」封装为一个**进程内、框架无关**的服务接口
 ``AgentService``，供 CLI 命令与（未来的）FastAPI / WebSocket 层共用。
@@ -19,7 +19,7 @@ from typing import Any
 
 from rich.console import Console
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.llmops import (
     CostModel,
     EvalHarness,
@@ -29,7 +29,7 @@ from agent.core.llmops import (
     get_tracer,
     set_tracer,
 )
-from agent.core.model_routing import ModelRouter
+from agent.client import ModelRouter
 from agent.core.tools.mcp_bridge import MCPBridge
 from agent.core.guardrails import build_guardrails
 
@@ -126,7 +126,7 @@ class AgentService:
         维度由 LLM 实判，替代离线时的满分安全默认。传 False 可强制离线（CI/测试）。
         LLM 不可用时自动降级为离线安全默认。
         """
-        from agent.agents.evaluator_agent import EvaluatorAgent
+        from agent.agents.evaluator import EvaluatorAgent
         from agent.core.reader_appeal import ReaderAppealScorer
 
         score_fn = None

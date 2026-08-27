@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.core.state_machine import State, StateMachine
 from agent.workflows.m6_adjust import (
     M6AdjustRouteWorkflow,
@@ -658,6 +658,10 @@ class TestCLIImport:
             # 方式 A: app.registered_commands 列表
             for c in getattr(app, "registered_commands", []) or []:
                 name = getattr(c, "name", None)
+                if not name:
+                    # name 为 None 时，从 callback 函数名派生
+                    cb = getattr(c, "callback", None)
+                    name = getattr(cb, "__name__", None) if cb else None
                 if name:
                     registered.add(str(name).replace("-", "_"))
             # 方式 B: 通过 Typer 内部 info.commands

@@ -1,4 +1,4 @@
-"""M3 大纲生成工作流单元测试
+﻿"""M3 大纲生成工作流单元测试
 
 mock LLM，验证 outline.md 生成、subline 占位、门禁、状态转换。
 """
@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import State, StateMachine
 from agent.workflows.m3_outline import M3OutlineWorkflow, M3Result

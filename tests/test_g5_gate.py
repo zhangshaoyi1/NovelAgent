@@ -1,4 +1,4 @@
-"""G5 门禁测试（P0-1 验收）：迷爱看六维硬闸并入 EvaluatorAgent.overall_pass
+﻿"""G5 门禁测试（P0-1 验收）：迷爱看六维硬闸并入 EvaluatorAgent.overall_pass
 
 覆盖：
 - 低分（综合 < 60）→ 六维 passed=False → overall_pass=False（被拦截）
@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from rich.console import Console
 
-from agent.agents.evaluator_agent import EvaluatorAgent
+from agent.agents.evaluator import EvaluatorAgent
 from agent.core.reader_appeal import (
     APPEAL_DIMENSIONS,
     APPEAL_DIM_FLOOR,

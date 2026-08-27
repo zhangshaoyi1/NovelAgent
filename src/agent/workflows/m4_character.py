@@ -32,11 +32,12 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import Event, State, StateMachine
 from agent.core.confirmation import is_architecture_confirmed
 from agent.core.genre_pack import first_genre
+from agent.core.workflow_registry import workflow
 from agent.prompts import M4_SYSTEM_PROMPT, M4_USER_PROMPT_TEMPLATE
 from agent.utils import parse_llm_json
 
@@ -59,6 +60,7 @@ class M4Result:
     golden_finger_registration: dict[str, Any] = field(default_factory=dict)
 
 
+@workflow("m4_character")
 class M4CharacterWorkflow:
     """M4 角色路线与关系网工作流"""
 

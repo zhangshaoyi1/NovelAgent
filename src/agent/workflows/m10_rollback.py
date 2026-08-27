@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from agent.core.workflow_registry import workflow
 
 import frontmatter
 from rich.console import Console
@@ -54,6 +55,7 @@ class RollbackResult:
     message: str = ""
 
 
+@workflow("m10_rollback")
 class M10RollbackWorkflow:
     """分叉点回滚工作流（F10.1）
 
@@ -251,6 +253,7 @@ class ResumeBrief:
         return "\n".join(lines)
 
 
+@workflow("m10_resume")
 class M10ResumeWorkflow:
     """续作恢复工作流（F10.2）
 

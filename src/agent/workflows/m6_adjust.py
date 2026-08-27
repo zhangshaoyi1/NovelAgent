@@ -33,6 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from agent.core.workflow_registry import workflow
 
 import frontmatter
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -40,7 +41,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import State, StateMachine
 from agent.core.confirmation import is_architecture_confirmed
@@ -170,6 +171,7 @@ class M6RelationResult:
 # ============================================================
 # 路线调整工作流
 # ============================================================
+@workflow("m6_adjust_route")
 class M6AdjustRouteWorkflow:
     """M6 主角成长路线动态调整"""
 
@@ -530,6 +532,7 @@ class M6AdjustRouteWorkflow:
 # ============================================================
 # 关系调整工作流
 # ============================================================
+@workflow("m6_adjust_relation")
 class M6AdjustRelationWorkflow:
     """M6 角色关系网动态调整"""
 

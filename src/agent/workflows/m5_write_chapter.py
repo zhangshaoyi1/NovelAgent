@@ -29,9 +29,10 @@ from agent.core.conflict_service import ConflictArbiter, ConflictReport
 from agent.core.evidence_chain import EvidenceChain, EvidenceRef
 from agent.core.exceptions import PreValidationBlocked
 from agent.core.genre_pack import GenrePackRegistry, first_genre
+from agent.core.workflow_registry import workflow
 from agent.core.quality_checker import QualityChecker, LLMBackedChecker, Severity
 from agent.core.injected_trope_store import InjectedTropeStore
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.method_style import load_style_guide  # G11：风格指引读取
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import Event, State, StateMachine
@@ -187,6 +188,7 @@ class PreValidationResult:
     auto_resolved: list[str] = field(default_factory=list)
 
 
+@workflow("m5_write_chapter")
 class M5WriteChapterWorkflow:
     """M5 章节创作工作流"""
 

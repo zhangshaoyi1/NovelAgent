@@ -1,4 +1,4 @@
-"""M2 脉络讨论工作流单元测试
+﻿"""M2 脉络讨论工作流单元测试
 
 mock LLM，验证多轮对话、讨论纪要生成、状态转换。
 """
@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import State, StateMachine
 from agent.workflows.m2_discuss import (

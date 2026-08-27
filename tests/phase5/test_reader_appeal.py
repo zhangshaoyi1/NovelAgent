@@ -1,4 +1,4 @@
-"""B1 真 LLM 追读力 / 迷爱看评分 —— 离线测试
+﻿"""B1 真 LLM 追读力 / 迷爱看评分 —— 离线测试
 
 用 conftest.make_project 搭建项目，注入假 LLM（MagicMock spec=LLMClient），
 覆盖：
@@ -16,7 +16,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.core.reader_appeal import (
     APPEAL_DIMENSIONS,
     ReaderAppealReport,
@@ -129,7 +129,7 @@ def test_evaluator_wired_with_scorer(tmp_path):
             return 100.0
         return 0.0
 
-    from agent.agents.evaluator_agent import EvaluatorAgent
+    from agent.agents.evaluator import EvaluatorAgent
 
     ev = EvaluatorAgent(d, score_fn=fake_score)
     report = ev._evaluate_once()
@@ -142,7 +142,7 @@ def test_evaluator_wired_with_scorer(tmp_path):
 
 def test_evaluator_offline_defaults(tmp_path):
     d = __import__("tests.conftest", fromlist=["make_project"]).make_project(tmp_path, n_chapters=3)
-    from agent.agents.evaluator_agent import EvaluatorAgent
+    from agent.agents.evaluator import EvaluatorAgent
 
     ev = EvaluatorAgent(d)  # 无 score_fn → 安全默认
     report = ev._evaluate_once()

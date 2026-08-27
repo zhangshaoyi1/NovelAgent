@@ -15,7 +15,7 @@ from agent.core.guardrails import (
     Guardrails,
     GuardrailResult,
 )
-from agent.core.model_routing import ModelRouter, RouteCandidate
+from agent.client import ModelRouter, RouteCandidate
 from agent.core.tools.base import ToolResult
 from agent.core.tools.mcp_bridge import (
     HTTPTransport,
@@ -255,14 +255,14 @@ def test_guardrails_placeholder_fails():
 
 
 def test_guardrails_clean_text_passes():
-    g = Guardrails(max_chars=100000)
+    g = Guardrails(max_chars=100000, check_title=False)
     res = g.check("林轩推开沉重的大门，月光洒在他的肩头。")
     assert res.passed is True
     assert res.errors == []
 
 
 def test_guardrails_too_short_is_warn_not_error():
-    g = Guardrails(min_chars=1000)
+    g = Guardrails(min_chars=1000, check_title=False)
     res = g.check("短章。")
     # 仅 warn → 默认 allow_warnings → passed 仍为 True
     assert res.passed is True
@@ -277,7 +277,7 @@ def test_guardrails_schema_missing_field_fails():
 
 
 def test_guardrails_schema_present_passes():
-    g = Guardrails()
+    g = Guardrails(check_title=False, check_junk=False)
     res = g.check('{"title": "x", "body": "y"}', required_fields=["title", "body"])
     assert res.passed is True
 
@@ -292,7 +292,7 @@ def test_guardrails_enforce_raises_on_failure():
 
 
 def test_guardrails_enforce_ok_returns_result():
-    g = Guardrails(max_chars=100000)
+    g = Guardrails(max_chars=100000, check_title=False)
     res = g.enforce("正常的章节正文内容。")
     assert isinstance(res, GuardrailResult)
     assert res.passed is True

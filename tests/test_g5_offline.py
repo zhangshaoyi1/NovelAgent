@@ -1,4 +1,4 @@
-"""G5 离线短路测试（修正点 A 验收）：
+﻿"""G5 离线短路测试（修正点 A 验收）：
 llm_used=False 时，六维每个 DimensionResult value=APPEAL_DIM_FLOOR(40)，
 综合维 value=APPEAL_PASS_LINE(60)，全部 passed=True，禁止触发回溯。
 
@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from rich.console import Console
 
-from agent.agents.evaluator_agent import EvaluatorAgent
+from agent.agents.evaluator import EvaluatorAgent
 from agent.core.reader_appeal import (
     APPEAL_DIMENSIONS,
     APPEAL_DIM_FLOOR,

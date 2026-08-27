@@ -31,6 +31,8 @@ from typing import Any
 
 import frontmatter
 
+from agent.core.registry import BaseRegistry
+
 
 # ============================================================
 # 数据模型
@@ -261,49 +263,58 @@ def extract_trope_section(tropes_text: str, trope_name: str) -> tuple[str, str]:
 # ============================================================
 # 注册表
 # ============================================================
-class GenrePackRegistry:
-    """题材包注册表
+class GenrePackRegistry(BaseRegistry[GenrePack]):
+    """题材包注册表（DeepSeek Harness 风格）
 
-    管理内置题材包与用户自定义题材包的加载、查询。
+    继承 BaseRegistry，使用统一的 register()/get()/list()/has() 接口。
+    管理 skills/ 目录下 type=genre 的题材包自动发现、缓存加载与查询。
 
     用法：
         registry = GenrePackRegistry()
         # 列出可用题材
-        genres = registry.list_genres()
+        genres = registry.list_genres()  # 基于 BaseRegistry.list()
         # 加载修仙题材包
-        pack = registry.load("xiuxian")
-        # 查询信息
-        info = registry.info("xiuxian")
+        pack = registry.load("xiuxian")  # 自动注册到 BaseRegistry
+        # 查询已加载的题材包
+        pack = registry.get("xiuxian")
     """
 
     def __init__(self, skills_dir: Path | None = None) -> None:
+        super().__init__()
         if skills_dir is None:
             # 默认 agent/skills/
             skills_dir = Path(__file__).resolve().parent.parent / "skills"
         self.skills_dir = Path(skills_dir)
-        # 已加载的题材包缓存：name → GenrePack
-        self._cache: dict[str, GenrePack] = {}
+        # 已发现但未注册（未加载）的题材包元信息
+        self._discovered: dict[str, GenreManifest] = {}
 
-    # ------ 列举 ------
-    def list_genres(self) -> list[str]:
-        """列出所有可用题材包名称"""
+        # 初始化时扫描一次
+        self._discover()
+
+    # ------ 发现 ------
+
+    def _discover(self) -> None:
+        """扫描 skills/ 目录，发现所有 type=genre 的题材包"""
         if not self.skills_dir.exists():
-            return []
-        names: list[str] = []
+            return
         for d in sorted(self.skills_dir.iterdir()):
             if not d.is_dir():
                 continue
-            # 必须含 SKILL.md 且 type=genre
             skill_md = d / "SKILL.md"
             if not skill_md.exists():
                 continue
             try:
                 manifest = load_genre_manifest(d)
-                names.append(manifest.name)
-            except ValueError:
+                self._discovered[manifest.name] = manifest
+            except (ValueError, FileNotFoundError):
                 # 非 genre 类型（如 bookworm skill）跳过
                 continue
-        return names
+
+    # ------ 列举（基于 BaseRegistry.list() 扩展）------
+
+    def list_genres(self) -> list[str]:
+        """列出所有已发现题材包名称（仅扫描 frontmatter，不触发加载）"""
+        return list(self._discovered.keys())
 
     def list_genres_light(self) -> list[dict[str, str]]:
         """渐进式披露：仅读取每个题材包 SKILL.md 的 frontmatter（name/label/description），
@@ -315,11 +326,7 @@ class GenrePackRegistry:
         不要用 list_available()，它会一次性全量加载所有题材包，成本高。
         """
         result: list[dict[str, str]] = []
-        for name in self.list_genres():
-            try:
-                manifest = load_genre_manifest(self.skills_dir / name)
-            except ValueError:
-                continue
+        for name, manifest in self._discovered.items():
             result.append(
                 {
                     "id": manifest.name,
@@ -352,8 +359,9 @@ class GenrePackRegistry:
         return result
 
     # ------ 加载 ------
+
     def load(self, name: str) -> GenrePack:
-        """加载题材包（带缓存）
+        """加载题材包（带缓存，自动注册到 BaseRegistry）
 
         Args:
             name: 题材包名称
@@ -361,25 +369,25 @@ class GenrePackRegistry:
         Raises:
             ValueError: 题材包不存在或格式错误
         """
-        if name in self._cache:
-            return self._cache[name]
+        existing = self.get(name)
+        if existing is not None:
+            return existing
 
-        skill_dir = self.skills_dir / name
-        if not skill_dir.exists():
+        if name not in self._discovered:
             raise ValueError(
                 f"题材包不存在: {name}，可用题材: {', '.join(self.list_genres())}"
             )
 
-        pack = load_genre_pack(skill_dir)
-        self._cache[name] = pack
+        manifest = self._discovered[name]
+        if not manifest.skill_dir:
+            raise ValueError(f"题材包 {name} 缺少 skill_dir")
+
+        pack = load_genre_pack(manifest.skill_dir)
+        self.register(name, pack)
         return pack
 
     def is_loaded(self, name: str) -> bool:
-        return name in self._cache
-
-    def get(self, name: str) -> GenrePack | None:
-        """获取已加载的题材包（不触发加载）"""
-        return self._cache.get(name)
+        return self.has(name)
 
     def load_trope(self, genre: str, trope_name: str) -> Trope:
         """从指定题材包提取单个套路模板（E2 动态注入）
@@ -408,8 +416,8 @@ class GenrePackRegistry:
         return pack.to_dict()
 
     def clear_cache(self) -> None:
-        """清空缓存"""
-        self._cache.clear()
+        """清空缓存（清空 BaseRegistry 注册表）"""
+        self._registry.clear()
 
     # ------ F9.3 subagent/mcp 挂载接口（v2 留接口）------
     def mount_subagent(self, genre: str, subagent_config: dict[str, Any]) -> None:

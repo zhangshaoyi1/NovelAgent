@@ -1,4 +1,4 @@
-"""Pipeline 回溯重写「针对性」回归测试（G1）
+﻿"""Pipeline 回溯重写「针对性」回归测试（G1）
 
 验证：当 Evaluator 终审不达标触发回溯时，Pipeline 的 rewriter 会把失败维度
 编译成针对性提示，并通过 ``Writer.run(rewrite_hint=...)`` 传给 Writer，而非盲目重写。
@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 from types import SimpleNamespace
 
-from agent.agents.evaluator_agent import DimensionResult, NovelHealthReport, RepairPlan
+from agent.agents.evaluator import DimensionResult, NovelHealthReport, RepairPlan
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import State, StateMachine
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow, build_rewrite_hint

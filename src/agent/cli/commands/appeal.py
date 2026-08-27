@@ -1,4 +1,4 @@
-"""appeal 命令 —— B1 迷爱看评分（读者吸引力）
+﻿"""appeal 命令 —— B1 迷爱看评分（读者吸引力）
 
 对指定章节（或自定义文本）跑真 LLM「迷爱看」6 维评分：钩子强度 / 爽点密度 / 代入感 /
 人物弧光 / 世界观新颖度 / 情绪曲线。直接回答「读者会不会爱看」。
@@ -92,7 +92,7 @@ def appeal(
             if idx >= 0:
                 synopsis = wc[idx: idx + 300]
 
-    from agent.core.llm_client import LLMClient
+    from agent.client import LLMClient
     from agent.core.reader_appeal import ReaderAppealScorer
 
     # ---- G7（补充边界 3，修复 R3-3）：接线 tracer —— 复用 agent_service.py 行 80-82 模式 ----

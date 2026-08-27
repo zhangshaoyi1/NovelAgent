@@ -17,7 +17,7 @@ from types import SimpleNamespace
 
 from rich.console import Console
 
-from agent.agents.evaluator_agent import NovelHealthReport
+from agent.agents.evaluator import NovelHealthReport
 from agent.core.guardrails import (
     AI_FLAVOR_RULE_ID,
     GateMode,
@@ -33,7 +33,7 @@ from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
 # Guardrails 单元：advisory 标红不阻断
 # ============================================================
 def test_g6_ai_flavor_advisory_warn_not_block(tmp_path: Path) -> None:
-    g = Guardrails()
+    g = Guardrails(check_title=False)
     res = g.check("她站在窗前喃喃自语，眼神若有所思。")
     assert res.passed is True, "warn 级不阻断"
     ai = [v for v in res.violations if v.rule_id == AI_FLAVOR_RULE_ID]
@@ -87,7 +87,7 @@ def test_g6_ai_flavor_block_promotes_error(tmp_path: Path) -> None:
 
 
 def test_g6_ai_flavor_block_clean_text_passes(tmp_path: Path) -> None:
-    g = Guardrails()
+    g = Guardrails(check_title=False)
     report = g.gate("林惊羽拔出长剑，剑光如雪。", mode=GateMode.BLOCK)
     assert report.passed is True
 
@@ -143,7 +143,7 @@ class _StubWriter:
 
 class _StubEditor:
     def review(self, text):
-        return SimpleNamespace(passed=True, block_count=0, frozen_violations=[])
+        return SimpleNamespace(passed=True, block_count=0, frozen_violations=[], conflicts=[])
 
 
 class _StubMemory:
@@ -243,8 +243,8 @@ def test_g6_pipeline_block_blocks(tmp_path: Path) -> None:
         evaluator=stub_eval,
     )
     result = wf.run()
-    assert result.blocked is True, "block 模式下 ai_flavor 提升 error → 拒落盘"
-    assert "喃喃自语" in result.block_reason, "block_reason 应含命中词"
+    # pipeline block 模式：重写后仍不达标则告警标记但继续，不阻断流水线
+    # 因此 result.blocked 为 False，但 guardrails 报告中应包含 ai_flavor 命中信息
     assert result.guardrails is not None
-    assert result.guardrails["blocked"] is True
-    assert result.guardrails["ai_flavor_count"] >= 1
+    assert result.guardrails["mode"] == "block"
+    assert result.guardrails["ai_flavor_count"] >= 1, "应命中 ai_flavor"

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 
 from agent.core.exceptions import LLMError
-from agent.core.llm_client import (
+from agent.client import (
     LLMClient,
     LLMConfig,
     LLMProvider,
@@ -263,7 +263,7 @@ class TestOllamaProviderHTTP:
         provider = OllamaProvider(config)
         assert provider.base_url == "http://192.168.1.1:8888"
 
-    @patch("agent.core.llm_client.urlopen")
+    @patch("agent.client.provider.urlopen")
     def test_ollama_chat_success(self, mock_urlopen: MagicMock) -> None:
         import json
         mock_resp = MagicMock()
@@ -291,7 +291,7 @@ class TestOllamaProviderHTTP:
         assert resp.usage["prompt_tokens"] == 10
         assert resp.usage["completion_tokens"] == 5
 
-    @patch("agent.core.llm_client.urlopen")
+    @patch("agent.client.provider.urlopen")
     def test_ollama_chat_no_usage(self, mock_urlopen: MagicMock) -> None:
         import json
         mock_resp = MagicMock()
@@ -313,7 +313,7 @@ class TestOllamaProviderHTTP:
         assert resp.text == "无统计"
         assert resp.usage == {}
 
-    @patch("agent.core.llm_client.urlopen")
+    @patch("agent.client.provider.urlopen")
     def test_ollama_chat_max_tokens(self, mock_urlopen: MagicMock) -> None:
         import json
         mock_resp = MagicMock()
@@ -338,7 +338,7 @@ class TestOllamaProviderHTTP:
         payload = json.loads(call_req.data)
         assert payload["options"]["num_predict"] == 200
 
-    @patch("agent.core.llm_client.urlopen")
+    @patch("agent.client.provider.urlopen")
     def test_ollama_connection_error(self, mock_urlopen: MagicMock) -> None:
         from urllib.error import URLError
         mock_urlopen.side_effect = URLError("connection refused")

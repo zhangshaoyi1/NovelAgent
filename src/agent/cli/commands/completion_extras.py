@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import *
@@ -29,7 +29,7 @@ def completion_extras(
     """
     from pathlib import Path
 
-    from agent.core.llm_client import LLMClient
+    from agent.client import LLMClient
     from agent.workflows.m11_export import CompletionExtrasWorkflow
 
     project_path = Path(project_dir)

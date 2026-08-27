@@ -1,4 +1,4 @@
-"""健康体检 doctor（增量 F）
+﻿"""健康体检 doctor（增量 F）
 
 只读诊断：分模块检查项目目录 / 状态机 / 设定集(DB) / RAG 索引 / 依赖可用性，
 给出修复建议命令（fix_command）。doctor 只读取、绝不修改任何项目文件。
@@ -425,7 +425,7 @@ class Doctor:
             True 表示可达（embed 返回非空向量）；False 表示不可达（返回空）。
         """
         try:
-            from agent.core.llm_client import LLMClient
+            from agent.client import LLMClient
 
             vectors = LLMClient().embed(["健康检查探针"])
             return bool(vectors)
@@ -437,7 +437,7 @@ class Doctor:
     # ============================================================
     def _check_deps(self, *, ping: bool = False) -> list[CheckItem]:
         try:
-            from agent.core.llm_client import LLMClient
+            from agent.client import LLMClient
 
             pre = LLMClient().preflight()
         except Exception as e:  # noqa: BLE001
@@ -498,7 +498,7 @@ class Doctor:
         复用 ``LLMClient.chat`` 的一次极简调用；失败即视为不可达。
         """
         try:
-            from agent.core.llm_client import LLMClient
+            from agent.client import LLMClient
 
             resp = LLMClient().chat(
                 [{"role": "user", "content": "ping"}],

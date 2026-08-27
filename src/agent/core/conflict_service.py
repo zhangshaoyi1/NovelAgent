@@ -1,4 +1,4 @@
-"""冲突仲裁核心服务（F12.1）
+﻿"""冲突仲裁核心服务（F12.1）
 
 从 M12 工作流上提至 core 层，供 M5（前置门禁）与 M12（设定冲突检测）共用，
 消除工作流之间的直接耦合。
@@ -18,7 +18,7 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.setting_manager import SettingManager
 from agent.prompts import (
     M12_CONFLICT_SYSTEM_PROMPT,

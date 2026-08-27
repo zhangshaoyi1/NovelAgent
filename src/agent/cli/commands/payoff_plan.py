@@ -1,4 +1,4 @@
-"""payoff_plan 命令 —— 爽点剧本生成（G12 P0-1，拍板 1：确定性模板，零 LLM）。
+﻿"""payoff_plan 命令 —— 爽点剧本生成（G12 P0-1，拍板 1：确定性模板，零 LLM）。
 
 按压力阶段（铺垫/发展/高潮/结局）确定性生成章节级爽点剧本 + 情绪目标，
 写入 `.state/payoff_script.json`（用户可手编覆盖）；写章时自动注入。
@@ -30,7 +30,7 @@ def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None
     if chapters and int(chapters) > 0:
         return int(chapters)
     try:
-        from agent.agents.planner_agent import PlannerAgent
+        from agent.agents.planner import PlannerAgent
 
         plan = PlannerAgent(project_dir, llm_client=None).load_plan()
         if plan is not None and getattr(plan, "total_chapters", 0):

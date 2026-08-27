@@ -1,4 +1,4 @@
-"""cost_plan 命令 —— 写前成本预估（G10 P0-1，拍板 1：纯复用 CostModel.estimate_book，零新统计）。
+﻿"""cost_plan 命令 —— 写前成本预估（G10 P0-1，拍板 1：纯复用 CostModel.estimate_book，零新统计）。
 
 放 cli/commands/ 与既有 cost.py 命令并列（只读看板类命令）；
 `resolve_book_chapters` / `build_cost_plan` 亦被 autowrite 开写前引导复用（跨命令 import，
@@ -35,7 +35,7 @@ def resolve_book_chapters(project_dir: str | Path, chapters: int | None = None) 
     if chapters:
         return int(chapters)
     try:
-        from agent.agents.planner_agent import PlannerAgent
+        from agent.agents.planner import PlannerAgent
 
         plan = PlannerAgent(project_dir, llm_client=None).load_plan()
         if plan is not None and getattr(plan, "total_chapters", 0):

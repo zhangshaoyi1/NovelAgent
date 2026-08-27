@@ -1,4 +1,4 @@
-"""Phase 2 离线测试（无 LLM / 无网络）
+﻿"""Phase 2 离线测试（无 LLM / 无网络）
 
 覆盖：
 - 统一 Memory Layer（语义 / 会话 / 整合 / 门面）
@@ -18,14 +18,14 @@ from pathlib import Path
 import frontmatter
 import pytest
 
-from agent.agents.evaluator_agent import (
+from agent.agents.evaluator import (
     DimensionResult,
     EvaluatorAgent,
     NovelHealthReport,
     RepairPlan,
 )
-from agent.agents.editor_agent import EditConflict, EditorAgent, EditReport
-from agent.agents.planner_agent import MasterPlan, PlannerAgent
+from agent.agents.editor import EditConflict, EditorAgent, EditReport
+from agent.agents.planner import MasterPlan, PlannerAgent
 from agent.core.state_machine import State, StateMachine
 from agent.memory import MemoryLayer
 from agent.memory.consolidated import ConsolidatedMemory

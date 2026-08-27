@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import *
@@ -27,7 +27,7 @@ def audit_setting(
     from pathlib import Path
 
     from agent.core.conflict_service import ConflictArbiter
-    from agent.core.llm_client import LLMClient
+    from agent.client import LLMClient
 
     project_path = Path(project_dir)
     enforce_gate(str(project_path), "audit_setting")

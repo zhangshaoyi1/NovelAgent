@@ -25,10 +25,11 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import Event, State, StateMachine
 from agent.core.genre_pack import first_genre
+from agent.core.workflow_registry import workflow
 from agent.prompts import M2_SYSTEM_PROMPT, M2_USER_PROMPT_TEMPLATE
 
 
@@ -65,6 +66,7 @@ class M2Result:
     history: list[ChatTurn] = field(default_factory=list)
 
 
+@workflow("m2_discuss")
 class M2DiscussWorkflow:
     """M2 脉络讨论工作流"""
 

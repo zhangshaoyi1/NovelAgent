@@ -1,4 +1,4 @@
-"""T-2 M1 题材模板去硬编码 + 选项动态化验收
+﻿"""T-2 M1 题材模板去硬编码 + 选项动态化验收
 
 覆盖：
 - GenrePackRegistry.list_genres() 至少含 wuxia / xiuxian。
@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent.core.genre_pack import GenrePackRegistry
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import State, StateMachine
 from agent.workflows.m1_config import M1ConfigWorkflow, M1Input

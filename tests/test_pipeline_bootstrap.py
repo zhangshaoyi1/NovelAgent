@@ -1,4 +1,4 @@
-"""自主模式设定集引导回归测试（修复 bug2 / bug3 根因）
+﻿"""自主模式设定集引导回归测试（修复 bug2 / bug3 根因）
 
 验证 ``AgenticPipelineWorkflow._ensure_setting_set`` 在「缺 world.md /
 缺 architecture / 缺支线」时能从 brief + MasterPlan 自动补齐，并把状态机置为
@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.agents.planner_agent import MasterPlan
+from agent.agents.planner import MasterPlan
 from agent.core.confirmation import is_architecture_confirmed
 from agent.core.setting_manager import SettingManager
 from agent.core.state_machine import State

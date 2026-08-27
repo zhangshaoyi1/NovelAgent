@@ -24,7 +24,7 @@ from typing import Any, Awaitable, Callable, Optional
 from pydantic import BaseModel, Field, ValidationError
 from rich.console import Console
 
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.method_style import load_method_text  # G11：写作方法模板
 from agent.core.setting_manager import SettingManager
 from agent.core.structured_output import StructuredOutputError
@@ -482,7 +482,7 @@ class PlannerAgent:
         """显式检查关键字段是否缺失/非法（G4 修复）。
 
         ``MasterPlan`` 中 ``brief/genre/title/total_chapters/episode_tree`` 均有默认值，
-        缺失时不会触发 ``ValidationError``，导致“关键字段缺失→重试”的分级策略形同虚设。
+        缺失时不会触发 ``ValidationError``，导致"关键字段缺失→重试"的分级策略形同虚设。
         故单独显式检查，使 PRD 拍板 #2（关键字段硬拒重试→失败安全降级）真正生效。
         """
         if not isinstance(data, dict):

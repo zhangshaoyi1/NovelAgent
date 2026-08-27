@@ -1,4 +1,4 @@
-"""Learn 测试（增量 E / T05）
+﻿"""Learn 测试（增量 E / T05）
 
 覆盖：
 - LearningStore：add/list/clear + 同 category+text 去重 + 损坏降级为空
@@ -14,7 +14,7 @@ from pathlib import Path
 
 from agent.cli import app
 from agent.core.learning_store import Learning, LearningStore
-from agent.core.llm_client import LLMResponse
+from agent.client import LLMResponse
 from agent.workflows.m17_learn import LearningMiner
 from typer.testing import CliRunner
 

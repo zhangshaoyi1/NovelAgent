@@ -1,4 +1,4 @@
-"""G6 B4 黄金三章门禁测试（T7，纯离线 stub）
+﻿"""G6 B4 黄金三章门禁测试（T7，纯离线 stub）
 
 覆盖（对齐设计 §8 关键断言）：
 - 低分（前三章 hook_strength < 40 或 total < 60）→ golden_* 失败 → overall_pass=False
@@ -20,7 +20,7 @@ from pathlib import Path
 
 from rich.console import Console
 
-from agent.agents.evaluator_agent import EvaluatorAgent
+from agent.agents.evaluator import EvaluatorAgent
 from agent.core.chapters import (
     list_chapter_files,
     read_chapters_text,

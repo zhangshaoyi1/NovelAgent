@@ -1,4 +1,4 @@
-"""G2 收紧 LLM 质检判定 —— ReaderAppealScorer 离线断言（P0-1 / P0-2 / P0-3 / P0-5）
+﻿"""G2 收紧 LLM 质检判定 —— ReaderAppealScorer 离线断言（P0-1 / P0-2 / P0-3 / P0-5）
 
 覆盖：
 - P0-1 prompt 关键词断言（issues / 逐项 / 不得合并 / 豁免 / 80+ / 依据）+ 维度标签不含"明显"。
@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.core.reader_appeal import (
     _EVAL_DIM_LABELS,
     _EVAL_SYSTEM_PROMPT,

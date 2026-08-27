@@ -15,6 +15,8 @@
 
 from __future__ import annotations
 
+from agent.core.workflow_registry import workflow
+
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -26,7 +28,7 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
 from agent import __version__
-from agent.core.llm_client import LLMClient
+from agent.client import LLMClient
 from agent.core.genre_pack import GenrePackRegistry
 from agent.core.genre_merger import GenreMerger, save_conflicts
 from agent.core.setting_manager import SettingManager
@@ -78,6 +80,7 @@ class M1Result:
     content: str
 
 
+@workflow("m1_config")
 class M1ConfigWorkflow:
     """M1 启动配置工作流"""
 

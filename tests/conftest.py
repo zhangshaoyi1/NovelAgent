@@ -1,4 +1,4 @@
-"""共享测试夹具（集中管理，避免各测试文件重复定义与互相 import）
+﻿"""共享测试夹具（集中管理，避免各测试文件重复定义与互相 import）
 
 提供：
 - ARCH_JSON / CHAPTER_TEXT / QUALITY_PASS / QUALITY_FAIL 样例数据
@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.core.state_machine import State, StateMachine
 from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
 

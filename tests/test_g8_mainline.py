@@ -1,4 +1,4 @@
-"""G8 主线推进测试（T2/T7 验收，纯离线零 LLM）
+﻿"""G8 主线推进测试（T2/T7 验收，纯离线零 LLM）
 
 覆盖（对齐设计 §6.2 / §9 T2）：
 - stub 5 支线 + 30 章目标 + fake writer 推进 progress → 自动切换 ≥3 条支线；
@@ -21,7 +21,7 @@ import frontmatter
 import pytest
 from rich.console import Console
 
-from agent.core.llm_client import LLMResponse
+from agent.client import LLMResponse
 from agent.core.state_machine import State, StateMachine
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
 from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow

@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 import agent.utils
 import pytest
 from agent.cli import app
-from agent.core.llm_client import LLMClient, LLMResponse
+from agent.client import LLMClient, LLMResponse
 from agent.core.state_machine import State
 from typer.testing import CliRunner
 
@@ -64,7 +64,8 @@ class TestWriteJson:
         monkeypatch.setattr(agent.utils.os, "remove", _raise_os_error)
 
         runner = CliRunner()
-        result = runner.invoke(app, ["write", "--json", "-d", str(d)])
+        # 使用 --mode pipeline 确保走 M5WriteChapterWorkflow（含 save_draft/clear_draft）
+        result = runner.invoke(app, ["write", "--json", "--mode", "pipeline", "-d", str(d)])
 
         assert result.exit_code == 0, result.output
         data = json.loads(result.stdout)

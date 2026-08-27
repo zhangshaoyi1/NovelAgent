@@ -1,4 +1,4 @@
-"""ecosystem 命令 —— MCP 生态 / 模型路由看板（Phase 4）
+﻿"""ecosystem 命令 —— MCP 生态 / 模型路由看板（Phase 4）
 
 展示本项目的 MCP 服务器连接状态、动态模型路由表与本地内置工具清单。
 纯只读看板，不修改书稿；用于发布前确认「外部工具接入」与「模型分工」是否就绪。
@@ -33,7 +33,7 @@ def ecosystem(
 
     workflow_console = make_quiet_console() if json_output else console
 
-    from agent.core.model_routing import ModelRouter
+    from agent.client import ModelRouter
     from agent.core.tools.mcp_bridge import MCPBridge
 
     proj = Path(project_dir)
