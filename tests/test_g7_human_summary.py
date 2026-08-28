@@ -1,4 +1,4 @@
-﻿"""G7 人话总结层测试（T1-T3 验收，纯离线）
+"""G7 人话总结层测试（T1-T3 验收，纯离线）
 
 覆盖（对齐 PRD §8 / 设计 §8 T1-T3）：
 - 注入 2 个失败维 → `_build_summary` 生成 headline/failures（line 含「实测 X ＞ 合格线 Y（差 Z）」
@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.agents.evaluator import DimensionResult, EvaluatorAgent, NovelHealthReport
-from agent.core.quality.reader_appeal import (
+from agent.core.quality.scoring.reader_appeal import (
     APPEAL_DIMENSIONS,
     ReaderAppealReport,
     build_appeal_summary_lines,

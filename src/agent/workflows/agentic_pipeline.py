@@ -31,7 +31,7 @@ from rich.console import Console
 from agent.client import LLMClient
 from agent.core.engine.state_machine import Event, State, StateMachine, TRANSITIONS
 from agent.core.story.setting_manager import SettingManager
-from agent.core.quality.confirmation import is_architecture_confirmed
+from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.core.engine.workflow_registry import workflow
 import frontmatter
 
@@ -377,7 +377,7 @@ class AgenticPipelineWorkflow:
                 pass
             score_fn = None
             try:
-                from agent.core.quality.reader_appeal import ReaderAppealScorer
+                from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
 
                 # 默认接真 LLM 评分（B1）；LLM 不可用时 scorer 内部自动降级为离线安全默认。
                 score_fn = ReaderAppealScorer(llm_client=self.llm).score
@@ -386,7 +386,7 @@ class AgenticPipelineWorkflow:
             appeal_scorer = None
             if self.appeal_gate:
                 try:
-                    from agent.core.quality.reader_appeal import ReaderAppealScorer
+                    from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
 
                     appeal_scorer = ReaderAppealScorer(llm_client=self.llm)
                 except Exception:  # noqa: BLE001

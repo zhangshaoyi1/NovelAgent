@@ -93,7 +93,7 @@ def appeal(
                 synopsis = wc[idx: idx + 300]
 
     from agent.client import LLMClient
-    from agent.core.quality.reader_appeal import ReaderAppealScorer
+    from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
 
     # ---- G7（补充边界 3，修复 R3-3）：接线 tracer —— 复用 agent_service.py 行 80-82 模式 ----
     from agent.core.llmops import TraceStore, TracedLLMClient, set_tracer
@@ -109,7 +109,7 @@ def appeal(
 
     # ---- G7：人话总结行填充（拍板 2；--no-human-summary 时不填充 → 展示层跳过）----
     if not bool(getattr(no_human_summary, "default", no_human_summary)):
-        from agent.core.quality.reader_appeal import build_appeal_summary_lines
+        from agent.core.quality.scoring.reader_appeal import build_appeal_summary_lines
 
         report.summary_lines = build_appeal_summary_lines(report)
 

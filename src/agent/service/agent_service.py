@@ -127,7 +127,7 @@ class AgentService:
         LLM 不可用时自动降级为离线安全默认。
         """
         from agent.agents.evaluator import EvaluatorAgent
-        from agent.core.quality.reader_appeal import ReaderAppealScorer
+        from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
 
         score_fn = None
         if real_score:
@@ -200,7 +200,7 @@ class AgentService:
         把用户针对某章的反馈变成局部定向重写，而非整章回退/重跑。
         返回 RewriteResult.to_dict()。
         """
-        from agent.core.quality.feedback_rewriter import FeedbackRewriter
+        from agent.core.quality.rewrite.feedback_rewriter import FeedbackRewriter
 
         rewriter = FeedbackRewriter(
             project_dir=self.project_dir,

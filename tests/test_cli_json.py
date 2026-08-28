@@ -39,7 +39,7 @@ def _patch_llm(monkeypatch: pytest.MonkeyPatch, mock: MagicMock) -> None:
     确保 CLI 路径完全不触碰真实 LLM / 网络。"""
     zero_arg = lambda *a, **kw: mock  # noqa: E731
     monkeypatch.setattr("agent.workflows.m5_write_chapter.LLMClient", zero_arg)
-    monkeypatch.setattr("agent.core.conflict_service.LLMClient", zero_arg)
+    monkeypatch.setattr("agent.client.LLMClient", zero_arg)
     monkeypatch.setattr("agent.workflows.m6_adjust.LLMClient", zero_arg)
     monkeypatch.setattr("agent.workflows.m11_export.LLMClient", zero_arg)
 

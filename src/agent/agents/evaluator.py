@@ -40,7 +40,7 @@ from rich.console import Console
 from agent.core.story.chapters import iter_chapter_texts  # G6：公共章节读取 helper（根因 B6-3）
 from agent.core.engine.state_machine import StateMachine
 from agent.workflows.m10_rollback import M10RollbackWorkflow
-from agent.core.quality.reader_appeal import (  # G5：迷爱看六维双闸
+from agent.core.quality.scoring.reader_appeal import (  # G5：迷爱看六维双闸
     ReaderAppealScorer,
     APPEAL_DIMENSIONS,
     APPEAL_PASS_LINE,

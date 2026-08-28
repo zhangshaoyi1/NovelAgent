@@ -1,4 +1,4 @@
-﻿"""G5 CLI 参数透传测试：验证 autowrite 命令的 --appeal-gate 相关参数
+"""G5 CLI 参数透传测试：验证 autowrite 命令的 --appeal-gate 相关参数
 能正确透传到 AgenticPipelineWorkflow 和 EvaluatorAgent。
 
 覆盖：
@@ -81,7 +81,7 @@ def test_g5_cli_no_appeal_gate(tmp_path: Path) -> None:
 # 3. --appeal-threshold 75 → 综合线严格化
 # ============================================================
 def test_g5_cli_threshold_75(tmp_path: Path) -> None:
-    from agent.core.quality.reader_appeal import (
+    from agent.core.quality.scoring.reader_appeal import (
         APPEAL_DIMENSIONS,
         ReaderAppealReport,
         ReaderAppealScorer,

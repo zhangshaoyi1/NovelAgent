@@ -282,8 +282,8 @@ class GenrePackRegistry(BaseRegistry[GenrePack]):
     def __init__(self, skills_dir: Path | None = None) -> None:
         super().__init__()
         if skills_dir is None:
-            # 默认 agent/skills/
-            skills_dir = Path(__file__).resolve().parent.parent / "skills"
+            # 默认 agent/skills/（本文件位于 .../core/registry/，需上溯 3 层到 agent/）
+            skills_dir = Path(__file__).resolve().parent.parent.parent / "skills"
         self.skills_dir = Path(skills_dir)
         # 已发现但未注册（未加载）的题材包元信息
         self._discovered: dict[str, GenreManifest] = {}

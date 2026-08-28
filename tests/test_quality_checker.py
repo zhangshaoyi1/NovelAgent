@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.core.quality.quality_checker import (
+from agent.core.quality.scoring.quality_checker import (
     BANNED_WORDS,
     GENRE_RULES,
     Issue,

@@ -74,7 +74,7 @@ def rewrite(
 
     enforce_gate(str(project_path), "rewrite", json_mode=json_output)
 
-    from agent.core.quality.feedback_rewriter import FeedbackRewriter
+    from agent.core.quality.rewrite.feedback_rewriter import FeedbackRewriter
     from agent.core.quality.guardrails import build_guardrails
     from agent.client import LLMClient
 

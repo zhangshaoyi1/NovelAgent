@@ -7,7 +7,7 @@ M3/M4/M5/M6 必须直接 import 其它 workflow 模块，违背「平级 workflo
 的架构约定。现上提为独立函数，所有模块统一从本模块引用，切断 workflow 间耦合。
 
 Hook 约定（见 ARCHITECTURE_TASKS_EXT.md 第 7 条）：
-    统一使用 ``agent.core.confirmation.is_architecture_confirmed(project_dir)``，
+    统一使用 ``agent.core.quality.guardrails.is_architecture_confirmed(project_dir)``，
     禁止 workflow 间 ``import m14_architecture``。
 """
 

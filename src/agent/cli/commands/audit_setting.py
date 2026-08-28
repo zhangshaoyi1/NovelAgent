@@ -26,7 +26,7 @@ def audit_setting(
     """
     from pathlib import Path
 
-    from agent.core.quality.conflict_service import ConflictArbiter
+    from agent.core.quality.consistency.conflict_service import ConflictArbiter
     from agent.client import LLMClient
 
     project_path = Path(project_dir)

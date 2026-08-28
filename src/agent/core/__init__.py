@@ -99,21 +99,16 @@ from agent.core.story.meta.philosophy import (
 )
 
 # ── quality 层导出 ──────────────────────────────────────────────────
-from agent.core.quality.conflict_service import (
+from agent.core.quality.consistency import (
     Conflict,
     ConflictReport,
     ConflictArbiter,
-)
-from agent.core.quality.confirmation import (
-    is_architecture_confirmed,
-)
-from agent.core.quality.consistency_checker import (
     CheckTrigger,
     ConsistencyChecker,
     Severity,
 )
-from agent.core.quality.feedback_rewriter import FeedbackRewriter
 from agent.core.quality.guardrails import (
+    is_architecture_confirmed,
     Guardrails,
     GuardrailResult,
     GateMode,
@@ -128,11 +123,9 @@ from agent.core.quality.guardrails import (
     DEFAULT_GUARDRAIL_CONFIG_PATH,
     DEFAULT_FINGERPRINT_PATH,
 )
-from agent.core.quality.quality_checker import (
+from agent.core.quality.scoring import (
     QualityChecker,
     LLMBackedChecker,
-)
-from agent.core.quality.reader_appeal import (
     ReaderAppealScorer,
     APPEAL_DIMENSIONS,
     APPEAL_PASS_LINE,
@@ -142,6 +135,7 @@ from agent.core.quality.reader_appeal import (
     gate_chapter,
     build_appeal_summary_lines,
 )
+from agent.core.quality.rewrite import FeedbackRewriter
 
 # ── llm 层导出 ──────────────────────────────────────────────────────
 from agent.core.llm.budget_plan import load_budget_plan

@@ -91,7 +91,7 @@ class TestReindexCommand:
         d = make_project(tmp_path, n_chapters=3)
         # 注入假 embedder（命令内部 Indexer 默认 LLMClient → 由 patch 替换为假）
         monkeypatch.setattr(
-            "agent.core.rag.indexer.LLMClient", _FakeLLMClient
+            "agent.client.LLMClient", _FakeLLMClient
         )
 
         runner = CliRunner()

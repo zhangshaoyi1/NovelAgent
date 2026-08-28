@@ -1,4 +1,4 @@
-﻿"""D 多维 LLM 质量审查测试（增量 D / T04）
+"""D 多维 LLM 质量审查测试（增量 D / T04）
 
 覆盖：
 - LLMQualityRule._check：llm=None 降级空 / 正常解析 blocking / 异常降级空
@@ -13,11 +13,11 @@ import json
 from pathlib import Path
 
 from agent.client import LLMResponse
-from agent.core.quality.quality_checker import (
-    Issue,
+from agent.core.quality.scoring.quality_checker import (
     LLMBackedChecker,
     LLMQualityRule,
     QualityChecker,
+    RuleLayer,
     Severity,
 )
 
@@ -52,7 +52,7 @@ class TestLLMQualityRule:
         return LLMQualityRule(
             id="d_ooc",
             name="角色一致性(OOC)",
-            layer=__import__("agent.core.quality_checker", fromlist=["RuleLayer"]).RuleLayer.COMMON,
+            layer=RuleLayer.COMMON,
             severity=Severity.BLOCK,
             dimension="ooc",
             prompt_template="OOC 判定",

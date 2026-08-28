@@ -35,7 +35,7 @@ from rich.table import Table
 from agent.client import LLMClient
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
-from agent.core.quality.confirmation import is_architecture_confirmed
+from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.core.registry.genre_pack import first_genre
 from agent.core.engine.workflow_registry import workflow
 from agent.prompts import M4_SYSTEM_PROMPT, M4_USER_PROMPT_TEMPLATE

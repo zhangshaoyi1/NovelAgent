@@ -9,7 +9,7 @@ display_name: 规则怪谈/无限流
 commands: []
 hooks:
   - agent.workflows.m1_config.load_genre_template
-  - agent.core.quality_checker.register_genre_rules
+  - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
 ---

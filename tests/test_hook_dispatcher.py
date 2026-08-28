@@ -17,21 +17,21 @@ from agent.workflows import m1_config
 
 
 def _snapshot_genre_rules():
-    from agent.core import quality_checker
+    from agent.core.quality.scoring import quality_checker
 
     return list(quality_checker.GENRE_RULES)
 
 
 def test_dispatch_xiuxian_populates_genre_rules(tmp_path: Path) -> None:
     """对 xiuxian 调 dispatch_genre_hooks 后 GENRE_RULES 非空"""
-    from agent.core import quality_checker
+    from agent.core.quality.scoring import quality_checker
 
     original = _snapshot_genre_rules()
     quality_checker.GENRE_RULES.clear()
     try:
         pack = GenrePackRegistry().load("xiuxian")
         dispatched = dispatch_genre_hooks(tmp_path, "xiuxian", pack)
-        assert "agent.core.quality_checker.register_genre_rules" in dispatched
+        assert "agent.core.quality.scoring.quality_checker.register_genre_rules" in dispatched
         assert len(quality_checker.GENRE_RULES) > 0
         # 解析出的规则应含题材层 id（如 G-01）
         assert any(r.layer.value == "genre" for r in quality_checker.GENRE_RULES)

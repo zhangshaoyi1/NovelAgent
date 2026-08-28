@@ -45,7 +45,7 @@ from agent.utils import parse_llm_json
 
 # ============================================================
 # F12.1 设定冲突仲裁
-from agent.core.quality.conflict_service import Conflict, ConflictReport, ConflictArbiter
+from agent.core.quality.consistency import Conflict, ConflictReport, ConflictArbiter
 # ============================================================
 # F12.2 内容审核
 # ============================================================

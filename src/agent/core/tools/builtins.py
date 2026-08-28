@@ -134,7 +134,7 @@ def count_words(text: str) -> Any:
     },
 )
 def quality_check(chapter_text: str) -> Any:
-    from agent.core.quality.quality_checker import QualityChecker
+    from agent.core.quality.scoring.quality_checker import QualityChecker
 
     report = QualityChecker(get_project_dir(), None).check(chapter_text)
     return {

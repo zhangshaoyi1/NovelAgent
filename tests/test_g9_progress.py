@@ -298,7 +298,7 @@ def test_progress_write_failure_does_not_block(tmp_path: Path, monkeypatch) -> N
     def failing_write(*_a, **_k):
         raise OSError("磁盘写失败")
 
-    monkeypatch.setattr("agent.core.events._atomic_write_progress", failing_write)
+    monkeypatch.setattr("agent.core.engine.events._atomic_write_progress", failing_write)
     p = _make_pipeline(d, writer, target=2, progress_file=d / ".state" / "progress.json")
     result = p.run()  # 不应抛异常
     assert result.chapters_written == 2, "落盘失败不应阻断成书"

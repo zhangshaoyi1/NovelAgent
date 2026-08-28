@@ -44,7 +44,7 @@ from rich.table import Table
 from agent.client import LLMClient
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
-from agent.core.quality.confirmation import is_architecture_confirmed
+from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.prompts import (
     M6_ADJUST_ROUTE_SYSTEM_PROMPT,
     M6_ADJUST_ROUTE_USER_TEMPLATE,

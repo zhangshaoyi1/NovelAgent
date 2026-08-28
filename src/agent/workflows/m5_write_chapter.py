@@ -25,18 +25,18 @@ import frontmatter
 from rich.console import Console
 from rich.panel import Panel
 
-from agent.core.quality.conflict_service import ConflictArbiter, ConflictReport
+from agent.core.quality.consistency import ConflictArbiter, ConflictReport
 from agent.core.story.evidence_chain import EvidenceChain, EvidenceRef
 from agent.core.base.exceptions import PreValidationBlocked
 from agent.core.registry.genre_pack import GenrePackRegistry, first_genre
 from agent.core.engine.workflow_registry import workflow
-from agent.core.quality.quality_checker import QualityChecker, LLMBackedChecker, Severity
+from agent.core.quality.scoring import QualityChecker, LLMBackedChecker, Severity
 from agent.core.story.injected_trope_store import InjectedTropeStore
 from agent.client import LLMClient
 from agent.core.story.method_style import load_style_guide  # G11：风格指引读取
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
-from agent.core.quality.confirmation import is_architecture_confirmed
+from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.prompts import (
     M5_GENERATE_SYSTEM_PROMPT,
     M5_GENERATE_USER_TEMPLATE,

@@ -49,7 +49,7 @@ from agent.workflows.m5_write_chapter import (
     M5WriteChapterWorkflow,
     PreValidationBlocked,
 )
-from agent.core.quality.confirmation import is_architecture_confirmed
+from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.core.story.evidence_chain import EvidenceChain
 from agent.prompts import format_open_debts, format_rag_context
 

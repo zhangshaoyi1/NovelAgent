@@ -158,9 +158,9 @@ class TestInjectGenreCli:
             def load_world(self) -> dict:
                 return {"metadata": {"genres": ["xiuxian", "wuxia"]}}
 
-        monkeypatch.setattr("agent.core.genre_pack.GenrePackRegistry", FakeRegistry)
-        monkeypatch.setattr("agent.core.injected_trope_store.InjectedTropeStore", lambda _p: store)
-        monkeypatch.setattr("agent.core.setting_manager.SettingManager", _FakeSM)
+        monkeypatch.setattr("agent.core.registry.genre_pack.GenrePackRegistry", FakeRegistry)
+        monkeypatch.setattr("agent.core.story.injected_trope_store.InjectedTropeStore", lambda _p: store)
+        monkeypatch.setattr("agent.core.story.setting_manager.SettingManager", _FakeSM)
         monkeypatch.setattr(
             "agent.cli.commands.inject_genre.enforce_gate", lambda *a, **k: None
         )
@@ -179,9 +179,9 @@ class TestInjectGenreCli:
         )
         store = FakeStore()
 
-        monkeypatch.setattr("agent.core.genre_pack.GenrePackRegistry", FakeRegistry)
-        monkeypatch.setattr("agent.core.injected_trope_store.InjectedTropeStore", lambda _p: store)
-        monkeypatch.setattr("agent.core.setting_manager.SettingManager", lambda _p: FakeSM({"genres": ["xiuxian"]}))
+        monkeypatch.setattr("agent.core.registry.genre_pack.GenrePackRegistry", FakeRegistry)
+        monkeypatch.setattr("agent.core.story.injected_trope_store.InjectedTropeStore", lambda _p: store)
+        monkeypatch.setattr("agent.core.story.setting_manager.SettingManager", lambda _p: FakeSM({"genres": ["xiuxian"]}))
         monkeypatch.setattr(
             "agent.cli.commands.inject_genre.enforce_gate", lambda *a, **k: None
         )
@@ -198,9 +198,9 @@ class TestInjectGenreCli:
             "---\ngenres: ['xiuxian']\n---\n# world\n", encoding="utf-8"
         )
 
-        monkeypatch.setattr("agent.core.genre_pack.GenrePackRegistry", FakeRegistry)
-        monkeypatch.setattr("agent.core.injected_trope_store.InjectedTropeStore", lambda _p: FakeStore())
-        monkeypatch.setattr("agent.core.setting_manager.SettingManager", lambda _p: FakeSM({"genres": ["xiuxian"]}))
+        monkeypatch.setattr("agent.core.registry.genre_pack.GenrePackRegistry", FakeRegistry)
+        monkeypatch.setattr("agent.core.story.injected_trope_store.InjectedTropeStore", lambda _p: FakeStore())
+        monkeypatch.setattr("agent.core.story.setting_manager.SettingManager", lambda _p: FakeSM({"genres": ["xiuxian"]}))
         monkeypatch.setattr(
             "agent.cli.commands.inject_genre.enforce_gate", lambda *a, **k: None
         )

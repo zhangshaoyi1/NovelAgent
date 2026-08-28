@@ -95,7 +95,7 @@ def _make_mock_response(text: str = "hello", model: str = "m") -> MagicMock:
     return resp
 
 
-@patch("agent.core.llm_client.OpenAIProvider._get_client")
+@patch("agent.client.provider.OpenAIProvider._get_client")
 def test_chat_success(mock_get_client: MagicMock) -> None:
     """成功调用返回 LLMResponse"""
     mock_client = MagicMock()
@@ -110,7 +110,7 @@ def test_chat_success(mock_get_client: MagicMock) -> None:
     assert resp.usage["total_tokens"] == 15
 
 
-@patch("agent.core.llm_client.OpenAIProvider._get_client")
+@patch("agent.client.provider.OpenAIProvider._get_client")
 def test_chat_retries_on_failure(mock_get_client: MagicMock) -> None:
     """失败应重试，最终成功"""
     mock_client = MagicMock()
@@ -129,7 +129,7 @@ def test_chat_retries_on_failure(mock_get_client: MagicMock) -> None:
     assert mock_client.chat.completions.create.call_count == 2
 
 
-@patch("agent.core.llm_client.OpenAIProvider._get_client")
+@patch("agent.client.provider.OpenAIProvider._get_client")
 def test_chat_raises_after_max_retries(mock_get_client: MagicMock) -> None:
     """重试耗尽应抛 LLMError"""
     mock_client = MagicMock()
@@ -146,7 +146,7 @@ def test_chat_raises_after_max_retries(mock_get_client: MagicMock) -> None:
     assert mock_client.chat.completions.create.call_count == 2
 
 
-@patch("agent.core.llm_client.OpenAIProvider._get_client")
+@patch("agent.client.provider.OpenAIProvider._get_client")
 def test_chat_creative_uses_main_model(mock_get_client: MagicMock) -> None:
     """chat_creative 用主模型"""
     mock_client = MagicMock()
@@ -160,7 +160,7 @@ def test_chat_creative_uses_main_model(mock_get_client: MagicMock) -> None:
     assert call_kwargs["model"] == "main"
 
 
-@patch("agent.core.llm_client.OpenAIProvider._get_client")
+@patch("agent.client.provider.OpenAIProvider._get_client")
 def test_chat_utility_uses_utility_model_and_low_temp(mock_get_client: MagicMock) -> None:
     """chat_utility 用轻量模型且温度低"""
     mock_client = MagicMock()

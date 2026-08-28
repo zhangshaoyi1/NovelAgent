@@ -110,7 +110,7 @@ def test_g10_invalid_mode_falls_back_block(tmp_path: Path, monkeypatch) -> None:
 # 5. guardrails.gate(mode=BLOCK) 命中 AI 味 → passed=False（拒落盘机制）
 # ============================================================
 def test_g10_guardrails_gate_block_rejects_ai_flavor(tmp_path: Path) -> None:
-    from agent.core.quality.guardrails GateMode, build_guardrails
+    from agent.core.quality.guardrails import GateMode, build_guardrails
 
     gr = build_guardrails()
     # 构造含高置信 AI 腔组合式短语的文本（词表命中），含合规章节标题避免 title_placeholder 误伤

@@ -90,7 +90,7 @@ def evaluate(
 
     score_fn = None
     if real_score:
-        from agent.core.quality.reader_appeal import ReaderAppealScorer
+        from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
 
         score_fn = ReaderAppealScorer(llm_client=traced_llm).score   # 改：裸 LLMClient → traced_llm
 

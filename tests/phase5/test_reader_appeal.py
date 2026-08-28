@@ -1,4 +1,4 @@
-﻿"""B1 真 LLM 追读力 / 迷爱看评分 —— 离线测试
+"""B1 真 LLM 追读力 / 迷爱看评分 —— 离线测试
 
 用 conftest.make_project 搭建项目，注入假 LLM（MagicMock spec=LLMClient），
 覆盖：
@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent.client import LLMClient, LLMResponse
-from agent.core.quality.reader_appeal import (
+from agent.core.quality.scoring.reader_appeal import (
     APPEAL_DIMENSIONS,
     ReaderAppealReport,
     ReaderAppealScorer,

@@ -14,8 +14,8 @@ import frontmatter
 import pytest
 
 from agent.client import LLMClient, LLMResponse
-from agent.core.quality.feedback_rewriter FeedbackRewriter, RewriteResult
-from agent.core.quality.guardrails Guardrails
+from agent.core.quality.rewrite.feedback_rewriter import FeedbackRewriter, RewriteResult
+from agent.core.quality.guardrails import Guardrails
 from agent.service.agent_service import AgentService
 
 

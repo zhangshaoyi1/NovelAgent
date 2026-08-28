@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.core.quality.confirmation import is_architecture_confirmed
+from agent.core.quality.guardrails import is_architecture_confirmed
 
 # 不应再直接 import m14_architecture 的工作流（T-4 解耦目标）
 # 注意：agent 包实际位于 <repo_root>/src/agent（pytest pythonpath=["src"]），
@@ -55,7 +55,7 @@ def test_no_direct_m14_import_in_decoupled_workflows() -> None:
         assert "from agent.workflows.m14_architecture import" not in text, (
             f"{rel} 仍直接 import m14_architecture，未解耦到 core.confirmation"
         )
-        # 应改为引用 core.confirmation.is_architecture_confirmed
-        assert "agent.core.confirmation import is_architecture_confirmed" in text, (
-            f"{rel} 未改用 agent.core.confirmation.is_architecture_confirmed"
+        # 应改为引用 core.quality.guardrails.is_architecture_confirmed
+        assert "agent.core.quality.guardrails import is_architecture_confirmed" in text, (
+            f"{rel} 未改用 agent.core.quality.guardrails.is_architecture_confirmed"
         )

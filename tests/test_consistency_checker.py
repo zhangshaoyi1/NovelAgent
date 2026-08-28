@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.core.quality.consistency_checker import (
+from agent.core.quality.consistency.checker import (
     ConsistencyChecker,
     ConsistencyReport,
     CheckTrigger,

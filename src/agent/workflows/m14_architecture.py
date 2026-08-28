@@ -310,10 +310,10 @@ class M14ArchitectureWorkflow:
     def check_confirmed(project_dir: Path | str) -> bool:
         """门禁检查：architecture.md 的 confirmed 字段（向后兼容包装）
 
-        T-4 起实际逻辑已上提至 ``agent.core.confirmation.is_architecture_confirmed``，
+        T-4 起实际逻辑已上提至 ``agent.core.quality.guardrails.is_architecture_confirmed``，
         本静态方法保留以兼容既有调用方；新代码请直接使用 ``is_architecture_confirmed``。
         """
-        from agent.core.quality.confirmation import is_architecture_confirmed
+        from agent.core.quality.guardrails import is_architecture_confirmed
 
         return is_architecture_confirmed(project_dir)
 

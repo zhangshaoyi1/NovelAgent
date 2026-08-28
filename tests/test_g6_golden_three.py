@@ -1,4 +1,4 @@
-﻿"""G6 B4 黄金三章门禁测试（T7，纯离线 stub）
+"""G6 B4 黄金三章门禁测试（T7，纯离线 stub）
 
 覆盖（对齐设计 §8 关键断言）：
 - 低分（前三章 hook_strength < 40 或 total < 60）→ golden_* 失败 → overall_pass=False
@@ -27,7 +27,7 @@ from agent.core.story.chapters import (
     strip_frontmatter,
     take_chapter_files,
 )
-from agent.core.quality.reader_appeal import (
+from agent.core.quality.scoring.reader_appeal import (
     APPEAL_DIMENSIONS,
     GOLDEN_DIM_FLOOR,
     GOLDEN_JOIN_CHAR_LIMIT,

@@ -8,7 +8,7 @@ description: 修仙题材包 - 境界体系/爽点套路/术语表/战斗模板/
 commands: []
 hooks:
   - agent.workflows.m1_config.load_genre_template
-  - agent.core.quality_checker.register_genre_rules
+  - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
 ---

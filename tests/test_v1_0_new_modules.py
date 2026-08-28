@@ -12,7 +12,7 @@ import pytest
 
 class TestBaseRegistry:
     def test_register_and_get(self):
-        from agent.core.registry import BaseRegistry
+        from agent.core.base.registry import BaseRegistry
 
         reg = BaseRegistry()
         obj = {"key": "value"}
@@ -21,7 +21,7 @@ class TestBaseRegistry:
         assert reg.get("nonexistent") is None
 
     def test_list(self):
-        from agent.core.registry import BaseRegistry
+        from agent.core.base.registry import BaseRegistry
 
         reg = BaseRegistry()
         reg.register("a", 1)
@@ -30,7 +30,7 @@ class TestBaseRegistry:
         assert len(reg) == 2
 
     def test_contains(self):
-        from agent.core.registry import BaseRegistry
+        from agent.core.base.registry import BaseRegistry
 
         reg = BaseRegistry()
         reg.register("foo", "bar")
@@ -63,7 +63,7 @@ class TestWorkflowRegistry:
 
 class TestSkillRegistry:
     def test_skill_registry_init(self):
-        from agent.core.skill_registry import SkillRegistry
+        from agent.core.registry.skill_registry import SkillRegistry
 
         reg = SkillRegistry()
         # 注：实际环境中有 skill 目录时，会扫描到已注册的 skill
@@ -72,7 +72,7 @@ class TestSkillRegistry:
         assert isinstance(reg.list_skills(), list)
 
     def test_skill_info(self):
-        from agent.core.skill_registry import SkillInfo
+        from agent.core.registry.skill_registry import SkillInfo
 
         info = SkillInfo(
             name="test_skill",
@@ -285,7 +285,7 @@ class TestRecoveryEngine:
 
 class TestRetry:
     def test_retry_success(self):
-        from agent.core.retry import retry
+        from agent.core.base.retry import retry
 
         call_count = 0
 
@@ -299,7 +299,7 @@ class TestRetry:
         assert call_count == 1  # 第一次就成功
 
     def test_retry_then_succeed(self):
-        from agent.core.retry import retry
+        from agent.core.base.retry import retry
 
         call_count = 0
 
@@ -316,7 +316,7 @@ class TestRetry:
         assert call_count == 3
 
     def test_retry_exhausted(self):
-        from agent.core.retry import retry, RetryError
+        from agent.core.base.retry import retry, RetryError
 
         @retry(max_attempts=2, backoff=0.1, jitter=0.0)
         def always_fail():
@@ -327,7 +327,7 @@ class TestRetry:
         assert exc.value.attempts == 2
 
     def test_retry_non_retryable(self):
-        from agent.core.retry import retry
+        from agent.core.base.retry import retry
 
         @retry(max_attempts=3, backoff=0.1, jitter=0.0)
         def raise_value_error():
@@ -337,7 +337,7 @@ class TestRetry:
             raise_value_error()
 
     def test_retry_config_helpers(self):
-        from agent.core.retry import retry_transport, retry_parse
+        from agent.core.base.retry import retry_transport, retry_parse
 
         transport = retry_transport()
         parse = retry_parse()
@@ -420,7 +420,7 @@ class TestPostProcessor:
 
 class TestTensionCurve:
     def test_empty_text(self):
-        from agent.core.tension_curve import TensionCurveManager
+        from agent.core.story.tension_curve import TensionCurveManager
 
         manager = TensionCurveManager()
         score = manager.evaluate_chapter(1, "")
@@ -428,7 +428,7 @@ class TestTensionCurve:
         assert score.chapter == 1
 
     def test_evaluate_chapter(self):
-        from agent.core.tension_curve import TensionCurveManager
+        from agent.core.story.tension_curve import TensionCurveManager
 
         manager = TensionCurveManager()
         text = (
@@ -440,7 +440,7 @@ class TestTensionCurve:
         assert score.chapter == 1
 
     def test_plan_arc(self):
-        from agent.core.tension_curve import TensionCurveManager
+        from agent.core.story.tension_curve import TensionCurveManager
 
         manager = TensionCurveManager()
         arc = manager.plan_arc(1, 1, 30)
@@ -450,14 +450,14 @@ class TestTensionCurve:
         assert len(arc.phases) == 5  # build_up / escalate / climax / peak / aftermath
 
     def test_rhythm_check_few_chapters(self):
-        from agent.core.tension_curve import TensionCurveManager
+        from agent.core.story.tension_curve import TensionCurveManager
 
         manager = TensionCurveManager()
         alerts = manager.check_rhythm(window=10)
         assert alerts == []  # 章节数不足
 
     def test_rhythm_flat_detection(self):
-        from agent.core.tension_curve import TensionCurveManager
+        from agent.core.story.tension_curve import TensionCurveManager
 
         manager = TensionCurveManager()
         # 添加 10 章低紧张度章节
@@ -468,7 +468,7 @@ class TestTensionCurve:
         assert len(flat_alerts) > 0
 
     def test_suggestions(self):
-        from agent.core.tension_curve import TensionCurveManager
+        from agent.core.story.tension_curve import TensionCurveManager
 
         manager = TensionCurveManager()
         arc = manager.plan_arc(1, 1, 30)

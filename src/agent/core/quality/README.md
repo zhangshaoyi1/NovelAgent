@@ -3,16 +3,13 @@
 ## 职责
 小说质量相关的校验、仲裁、门禁、评分和反馈重写。
 
-## 包含文件
-| 文件 | 职责 |
-|------|------|
-| `confirmation.py` | 架构确认门禁（is_architecture_confirmed, confirm_architecture） |
-| `conflict_service.py` | 冲突仲裁核心服务（ConflictArbiter, ConflictReport, Conflict） |
-| `consistency_checker.py` | 一致性检查器（CheckTrigger, ConsistencyChecker, Severity） |
-| `feedback_rewriter.py` | 反馈重写器（FeedbackRewriter） |
-| `guardrails.py` | 护栏检查（Guardrails, save_fingerprints, fullbook_dup_scan 全量去重扫描） |
-| `quality_checker.py` | 质量检查器（QualityChecker, LLMBackedChecker） |
-| `reader_appeal.py` | 读者吸引力评分（ReaderAppealScorer, 六维评分） |
+## 子包结构（按关注点拆分）
+| 子包 | 职责 | 关键符号 |
+|------|------|----------|
+| `guardrails/` | 内容与形式合规护栏、配置/指纹/全量去重扫描、架构门禁 | `Guardrails`, `build_guardrails`, `fullbook_dup_scan`, `GuardrailResult`, `GateMode`, `is_architecture_confirmed` |
+| `consistency/` | 章节一致性校验与冲突仲裁 | `ConsistencyChecker`, `ConsistencyReport`, `CheckTrigger`, `Severity`, `ConflictArbiter`, `ConflictReport`, `Conflict` |
+| `scoring/` | 通用质量评分（LLM 审查）与读者吸引力六维评分 | `QualityChecker`, `RuleLayer`, `QualityReport`, `LLMBackedChecker`, `ReaderAppealScorer`, `ReaderAppealReport`, `gate_chapter` |
+| `rewrite/` | 基于反馈的章节重写 | `FeedbackRewriter`, `RewriteResult` |
 
 ## 依赖规则
 - 依赖 base/、client/、story/
@@ -24,3 +21,5 @@
 - service/ (AgentService)
 - agents/ (EditorAgent, EvaluatorAgent)
 - tools/ (builtins 的 quality_check 工具，懒加载)
+
+外部使用者统一从 `agent.core.quality` 顶层导入（如 `from agent.core.quality import Guardrails`），无需感知子包细节。
