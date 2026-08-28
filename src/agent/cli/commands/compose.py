@@ -16,6 +16,7 @@ import typer
 
 from agent.cli._app import app, command, console
 from agent.core.infra.compose_runner import run_compose
+from agent.core.quality.guardrails import fullbook_dup_scan
 from agent.core.engine.state_machine import State
 
 
@@ -53,6 +54,7 @@ def compose(
         mode=mode,
         env=env,
         checkup=not no_checkup,
+        fullbook_scan=fullbook_dup_scan,
     )
     if rc != 0:
         raise typer.Exit(code=rc)

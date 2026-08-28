@@ -714,3 +714,47 @@ def save_fingerprints(
         tmp.replace(p)
     except Exception:  # noqa: BLE001 - 持久化失败不影响主流程
         pass
+
+
+# ----------------------------------------------------------------------
+# G14 全量段落去重扫描（完本关卡，由 compose 体检经依赖注入触发）
+# ----------------------------------------------------------------------
+def fullbook_dup_scan(project_dir: str | Path) -> None:
+    """全书跨章重复段落扫描（G14）。
+
+    遍历 ``<project>/chapters/ch*.md``，逐章检测与已登记指纹的重复，
+    命中时写 ``<project>/.state/dup_scan_report.md``；扫描完成后同步刷新
+    全书指纹库（决策③：持久化到 .state/chapter_fingerprints.json）。
+
+    归属 quality/（复用 Guardrails 指纹机制），由调用方（如 compose 体检）
+    注入触发，infra/compose_runner 不直接依赖本模块。
+    """
+    project_dir = Path(project_dir)
+    gr = Guardrails(check_junk=False, check_title=False, check_dup=True, check_meta_leak=True)
+    db: dict[str, list] = {}
+    dup_report: list[str] = []
+    chapters_dir = project_dir / "chapters"
+    if chapters_dir.exists():
+        for f in sorted(chapters_dir.glob("ch*.md")):
+            try:
+                text = f.read_text(encoding="utf-8")
+            except Exception:  # noqa: BLE001
+                continue
+            ch_num = f.stem
+            hits = gr._check_dup(text)
+            if hits:
+                dup_report.append(f"### {ch_num}\n" + "\n".join(f"- {h}" for h in hits))
+            gr.register_fingerprints(ch_num, text)
+            db.update(gr.fingerprint_db)
+    if dup_report:
+        report_path = project_dir / ".state" / "dup_scan_report.md"
+        report_path.parent.mkdir(parents=True, exist_ok=True)
+        report_path.write_text(
+            "# 完本全量段落去重扫描报告\n\n" + "\n\n".join(dup_report) + "\n",
+            encoding="utf-8",
+        )
+        print(f"⚠ 检测到跨章重复内容，报告见：{report_path}")
+    else:
+        print("✅ 全量段落去重扫描：未检测到跨章重复内容。")
+    # 同步刷新指纹库（决策③：全书指纹库持久化）
+    save_fingerprints(db, project_dir / ".state" / "chapter_fingerprints.json")

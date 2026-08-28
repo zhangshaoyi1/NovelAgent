@@ -99,6 +99,11 @@ from agent.core.story.meta.philosophy import (
 )
 
 # ── quality 层导出 ──────────────────────────────────────────────────
+from agent.core.quality.conflict_service import (
+    Conflict,
+    ConflictReport,
+    ConflictArbiter,
+)
 from agent.core.quality.confirmation import (
     is_architecture_confirmed,
 )
@@ -117,6 +122,7 @@ from agent.core.quality.guardrails import (
     GateReport,
     build_guardrails,
     save_fingerprints,
+    fullbook_dup_scan,
     load_guardrail_config,
     load_fingerprints,
     DEFAULT_GUARDRAIL_CONFIG_PATH,
@@ -159,7 +165,6 @@ from agent.core.registry.genre_merger import GenreMerger
 
 # ── infra 层导出 ─────────────────────────────────────────────────────
 from agent.core.infra.compose_runner import run_compose, resolve_project_dir
-from agent.core.infra.conflict_service import Conflict, ConflictReport, ConflictArbiter
 from agent.core.infra.context import ContextEngine, ContextItem
 from agent.core.infra.context_loader import ContextLoader, LoadedContext
 from agent.core.infra.dashboard_aggregator import DashboardAggregator

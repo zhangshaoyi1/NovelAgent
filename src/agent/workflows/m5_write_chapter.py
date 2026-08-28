@@ -25,7 +25,7 @@ import frontmatter
 from rich.console import Console
 from rich.panel import Panel
 
-from agent.core.infra.conflict_service import ConflictArbiter, ConflictReport
+from agent.core.quality.conflict_service import ConflictArbiter, ConflictReport
 from agent.core.story.evidence_chain import EvidenceChain, EvidenceRef
 from agent.core.base.exceptions import PreValidationBlocked
 from agent.core.registry.genre_pack import GenrePackRegistry, first_genre

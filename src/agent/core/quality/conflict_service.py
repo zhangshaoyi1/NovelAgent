@@ -3,7 +3,8 @@
 从 M12 工作流上提至 core 层，供 M5（前置门禁）与 M12（设定冲突检测）共用，
 消除工作流之间的直接耦合。
 
-依赖仅限 core 层与 prompts/utils，不反向依赖任何 workflow。
+归属 quality/（冲突仲裁是质量保障职责，ConsistencyChecker 的 field_conflict
+规则直接复用本模块），依赖仅限 story/prompts/utils/client，不依赖 infra。
 """
 
 from __future__ import annotations

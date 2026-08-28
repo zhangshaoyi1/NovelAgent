@@ -14,6 +14,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+from collections.abc import Callable
 from pathlib import Path
 
 # compose_runner.py 位于 <repo>/src/agent/core/，向上 3 级即仓库根（含 src/ 与 scripts/）
@@ -46,11 +47,14 @@ def run_compose(
     mode: str = "auto",
     env: str = "",
     checkup: bool = True,
+    fullbook_scan: Callable[[Path], None] | None = None,
 ) -> int:
     """执行一次「开新书/续写 → 写至完本」的流程。
 
     Args:
         checkup: 完本后是否自动跑体检（evaluate + foreshadow-report）。
+        fullbook_scan: G14 全量去重扫描回调（由调用方注入
+            ``quality.guardrails.fullbook_dup_scan``，避免 infra 反向依赖 quality）。
 
     Returns:
         子进程退出码（0 表示成功）。
@@ -118,41 +122,12 @@ def run_compose(
                   f" python -m agent.cli foreshadow-report -d {project_dir}")
 
         # G14：全量段落去重扫描（完本关卡，检测跨章重复内容）
-        try:
-            from agent.core.quality.guardrails import Guardrails, save_fingerprints
-
-            gr = Guardrails(check_junk=False, check_title=False, check_dup=True, check_meta_leak=True)
-            db: dict[str, list] = {}
-            dup_report: list[str] = []
-            chapters_dir = project_dir / "chapters"
-            if chapters_dir.exists():
-                for f in sorted(chapters_dir.glob("ch*.md")):
-                    try:
-                        text = f.read_text(encoding="utf-8")
-                    except Exception:  # noqa: BLE001
-                        continue
-                    ch_num = f.stem
-                    hits = gr._check_dup(text)
-                    if hits:
-                        dup_report.append(f"### {ch_num}\n" + "\n".join(f"- {h}" for h in hits))
-                    gr.register_fingerprints(ch_num, text)
-                    db.update(gr.fingerprint_db)
-                if dup_report:
-                    report_path = project_dir / ".state" / "dup_scan_report.md"
-                    report_path.parent.mkdir(parents=True, exist_ok=True)
-                    report_path.write_text(
-                        "# 完本全量段落去重扫描报告\n\n"
-                        + "\n\n".join(dup_report)
-                        + "\n",
-                        encoding="utf-8",
-                    )
-                    print(f"⚠ 检测到跨章重复内容，报告见：{report_path}")
-                else:
-                    print("✅ 全量段落去重扫描：未检测到跨章重复内容。")
-                # 同步刷新指纹库（决策③：全书指纹库持久化）
-                save_fingerprints(db, project_dir / ".state" / "chapter_fingerprints.json")
-        except Exception as e:  # noqa: BLE001 - 扫描异常非致命
-            print(f"⚠ 全量段落去重扫描异常（非致命）：{e}")
+        # 扫描实现归属 quality/guardrails，由调用方注入回调，infra 不依赖 quality
+        if fullbook_scan is not None:
+            try:
+                fullbook_scan(project_dir)
+            except Exception as e:  # noqa: BLE001 - 扫描异常非致命
+                print(f"⚠ 全量段落去重扫描异常（非致命）：{e}")
 
         print("✅ 体检完成，报告见项目目录（evaluate / foreshadow_report.md / dup_scan_report.md）。")
 

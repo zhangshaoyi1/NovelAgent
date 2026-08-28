@@ -1,4 +1,4 @@
-﻿"""M12 内容审核与上下文管理
+"""M12 内容审核与上下文管理
 
 基于 PRD F12.1-F12.3：
 
@@ -45,7 +45,7 @@ from agent.utils import parse_llm_json
 
 # ============================================================
 # F12.1 设定冲突仲裁
-from agent.core.infra.conflict_service import Conflict, ConflictReport, ConflictArbiter
+from agent.core.quality.conflict_service import Conflict, ConflictReport, ConflictArbiter
 # ============================================================
 # F12.2 内容审核
 # ============================================================
