@@ -16,7 +16,7 @@ from agent.core.quality.guardrails import (
     GuardrailResult,
 )
 from agent.client import ModelRouter, RouteCandidate
-from agent.core.tools.base import ToolResult
+from agent.core.engine.tool_contracts import ToolResult
 from agent.core.tools.mcp_bridge import (
     HTTPTransport,
     MCPBridge,

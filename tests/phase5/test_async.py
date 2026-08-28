@@ -4,7 +4,7 @@ import asyncio
 import time
 
 from agent.core.engine.agent_loop import AgentAction, AgentLoop
-from agent.core.tools.base import Tool, ToolRegistry, ToolResult
+from agent.core.engine.tool_contracts import Tool, ToolRegistry, ToolResult
 
 
 def test_tool_run_async_sync_tool_offloaded():

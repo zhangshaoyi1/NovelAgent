@@ -1,4 +1,4 @@
-﻿"""G11 写作方法模板测试（T6 验收，纯离线零 LLM）。
+"""G11 写作方法模板测试（T6 验收，纯离线零 LLM）。
 
 覆盖（对齐 G11/设计.md §3 / §9 T3）：
 - load_method_text 内置模板选择写入 method.md；
@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.agents.planner import PlannerAgent
-from agent.core.story.method_style load_method_text
+from agent.core.story.method_style import load_method_text
 from agent.prompts import G11_METHOD_INSTRUCTION_TEMPLATE
 
 

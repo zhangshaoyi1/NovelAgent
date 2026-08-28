@@ -14,9 +14,9 @@ import pytest
 
 from agent.core.engine.agent_loop import AgentAction, AgentLoop, LoopResult
 from agent.core.base.structured_output import pydantic_to_json_schema
-from agent.core.tools.base import ToolResult
+from agent.core.engine.tool_contracts import ToolResult
 from agent.core.tools import registry
-from agent.core.writer_agent import WriterAgent
+from agent.agents.writer_agent import WriterAgent
 from agent.workflows.agentic_write import AgenticWriteWorkflow
 
 

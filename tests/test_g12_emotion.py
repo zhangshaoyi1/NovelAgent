@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.cli.commands.emotion_track import build_track, render_ascii
-from agent.core.story.payoff_script build_payoff_script, save_payoff_script
+from agent.core.story.payoff_script import build_payoff_script, save_payoff_script
 
 
 def _make_project_with_script(tmp_path: Path, total: int = 10) -> Path:

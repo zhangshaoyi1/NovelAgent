@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.core.story.evidence_chain EvidenceChain, EvidenceRef
+from agent.core.story.evidence_chain import EvidenceChain, EvidenceRef
 
 from tests.conftest import (
     _build_minimal_project,

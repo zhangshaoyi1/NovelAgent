@@ -16,8 +16,9 @@ STYLE_GUIDE_MAX_CHARS = 800
 # 方法模板正文截断上限（模板文件本身控制，双保险）
 METHOD_TEXT_MAX_CHARS = 2000
 
-# 内置写作方法模板目录（相对 agent 包根：src/agent/methods/）
-_METHODS_DIR = Path(__file__).resolve().parent.parent / "methods"
+# 内置写作方法模板目录（相对 agent 包根：src/agent/methods/；本文件位于
+# .../core/story/，需上溯 3 层到 agent/）
+_METHODS_DIR = Path(__file__).resolve().parent.parent.parent / "methods"
 
 
 def load_style_guide(

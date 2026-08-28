@@ -13,7 +13,7 @@ from __future__ import annotations
 import frontmatter
 from pathlib import Path
 
-from agent.core.infra.conflict_service Conflict, ConflictReport
+from agent.core.quality import Conflict, ConflictReport
 from agent.core.base.exceptions import PreValidationBlocked
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import StateMachine
@@ -49,7 +49,7 @@ def _revision_log(project_dir: Path) -> list[str]:
 # 高严重度：中断生成
 # ============================================================
 class TestHighSeverityBlocks:
-    def test_high_severity_raises_blocked(self, tmp_path: Path) -> None:
+    def test_high_severity_interrupts(self, tmp_path: Path) -> None:
         d = _build_minimal_project(tmp_path)
         report = ConflictReport(
             conflicts=[
@@ -72,11 +72,10 @@ class TestHighSeverityBlocks:
         )
         wf.state_machine.load()
         ctx = wf._load_context()
-        try:
-            wf._pre_validation(ctx)
-            raise AssertionError("期望 PreValidationBlocked")
-        except PreValidationBlocked as e:
-            assert e.report is report
+        pv = wf._pre_validation(ctx)
+        # 高严重度 → decision=interrupt（调用侧会据此抛 PreValidationBlocked(pv.report)）
+        assert pv.decision == "interrupt"
+        assert pv.report is report
 
     def test_high_severity_writes_revision_log(self, tmp_path: Path) -> None:
         d = _build_minimal_project(tmp_path)
@@ -102,10 +101,8 @@ class TestHighSeverityBlocks:
         # 章节文件不应被创建（生成前已中断）
         wf.state_machine.load()
         ctx = wf._load_context()
-        import pytest
-
-        with pytest.raises(PreValidationBlocked):
-            wf._pre_validation(ctx)
+        pv = wf._pre_validation(ctx)
+        assert pv.decision == "interrupt"
 
         assert (d / "chapters" / "ch001.md").exists() is False
         log = _revision_log(d)
@@ -168,7 +165,7 @@ class TestLowSeverityAutoResolve:
         wf.state_machine.load()
         ctx = wf._load_context()
         result = wf._pre_validation(ctx)  # 不应抛异常
-        assert result["decision"] == "continue"
+        assert result.decision == "continue"
         log = _revision_log(d)
         assert any("[仲裁-自动]" in entry for entry in log)
         assert "支线目标" in log[-1]
@@ -191,7 +188,7 @@ class TestNoConflictContinues:
         wf.state_machine.load()
         ctx = wf._load_context()
         result = wf._pre_validation(ctx)
-        assert result["decision"] == "continue"
+        assert result.decision == "continue"
         # 无仲裁记录写入修订日志
         log = _revision_log(d)
         assert all("[仲裁" not in entry for entry in log)
@@ -218,7 +215,7 @@ class TestPreValidateToggle:
             pre_validate=False,
         )
         wf.state_machine.load()
-        ctx = wf._load_context()
-        result = wf._pre_validation(ctx)  # 不应抛 PreValidationBlocked
-        assert result["decision"] == "continue"
+        # run() 应跳过门禁：高严重度报告也不抛 PreValidationBlocked，且仲裁器未被调用
+        result = wf.run()
+        assert result is not None
         assert arbiter.calls == []  # 门禁未触发
