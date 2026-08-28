@@ -92,6 +92,7 @@ class LLMClient:
 
         embedding_base_url = os.getenv("EMBEDDING_BASE_URL", "")
         embedding_api_key = os.getenv("EMBEDDING_API_KEY", "")
+        embedding_provider = os.getenv("EMBEDDING_PROVIDER", "").lower()
 
         _et_raw = os.getenv("LLM_ENABLE_THINKING", "").strip().lower()
         enable_thinking: bool | None = None
@@ -109,6 +110,7 @@ class LLMClient:
             embedding_model=embedding_model,
             embedding_base_url=embedding_base_url,
             embedding_api_key=embedding_api_key,
+            embedding_provider=embedding_provider,
             timeout=int(os.getenv("LLM_TIMEOUT", "120")),
             max_retries=int(os.getenv("LLM_MAX_RETRIES", "3")),
             retry_base_delay=float(os.getenv("LLM_RETRY_BASE_DELAY", "1.0")),

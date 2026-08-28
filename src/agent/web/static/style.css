@@ -41,6 +41,7 @@ body {
 }
 .card h2 { margin: 0 0 12px; font-size: 16px; }
 .card.disabled { opacity: .55; }
+.card.highlight { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent), var(--shadow); }
 .ok-note { color: var(--ok); font-weight: 600; }
 
 .btn {

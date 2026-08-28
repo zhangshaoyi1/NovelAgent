@@ -5,6 +5,8 @@
 - ``OpenAICompatibleEmbedding``：走 OpenAI 兼容 ``/embeddings`` 协议（复用 ``.env`` 的
   ``LLM_BASE_URL`` / ``LLM_API_KEY`` / ``EMBEDDING_MODEL_ID``）。
 - ``OllamaEmbedding``：本地 Ollama ``/api/embeddings``（零成本离线 embedding）。
+- ``QwenLocalEmbedding``：本地 Qwen 模型（transformers 离线推理，通过 ``HF_ENDPOINT``
+  镜像下载）。
 
 ``LLMProvider.embed`` / ``LLMClient.embed`` 均委托到本模块（单一实现，避免双份 HTTP 逻辑）。
 本模块不反向依赖 ``llm_client``，避免循环导入。
@@ -96,3 +98,87 @@ class OllamaEmbedding(EmbeddingProvider):
                 # 单条失败不影响其它条；返回空向量，由调用方降级为 BM25-only
                 out.append([])
         return out
+
+
+class QwenLocalEmbedding(EmbeddingProvider):
+    """本地 Qwen 模型嵌入（transformers 离线推理）
+
+    使用 Hugging Face ``transformers`` 加载 Qwen 模型，通过 mean pooling
+    提取文本嵌入向量。模型首次使用自动通过 ``HF_ENDPOINT`` 镜像下载。
+
+    配置（.env）：
+        EMBEDDING_MODEL_ID=Qwen/Qwen2.5-0.5B-Instruct  # 模型名，默认最小 Qwen
+        EMBEDDING_DEVICE=cpu                            # cpu / cuda，默认自动检测
+    """
+
+    def __init__(
+        self,
+        model_name: str = "Qwen/Qwen2.5-0.5B-Instruct",
+        device: str | None = None,
+        max_length: int = 512,
+        batch_size: int = 8,
+    ) -> None:
+        self.model_name = model_name
+        self.device = device
+        self.max_length = max_length
+        self.batch_size = batch_size
+        self._model = None
+        self._tokenizer = None
+
+    def _load(self) -> None:
+        if self._model is not None:
+            return
+        import torch
+        from transformers import AutoModel, AutoTokenizer
+
+        self._tokenizer = AutoTokenizer.from_pretrained(
+            self.model_name, trust_remote_code=True
+        )
+        self._model = AutoModel.from_pretrained(
+            self.model_name, trust_remote_code=True
+        )
+        if self.device is None:
+            self.device = "cuda" if torch.cuda.is_available() else "cpu"
+        self._model.to(self.device)
+        self._model.eval()
+
+    @staticmethod
+    def _mean_pooling(
+        token_embeddings: "torch.Tensor",
+        attention_mask: "torch.Tensor",
+    ) -> "torch.Tensor":
+        """Mean pooling 加权平均 token 嵌入"""
+        import torch
+
+        mask = attention_mask.unsqueeze(-1).expand(token_embeddings.size()).float()
+        return torch.sum(token_embeddings * mask, 1) / torch.clamp(
+            mask.sum(1), min=1e-9
+        )
+
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        import torch
+
+        self._load()
+        all_embeddings: list[list[float]] = []
+
+        for i in range(0, len(texts), self.batch_size):
+            batch = texts[i : i + self.batch_size]
+            inputs = self._tokenizer(
+                batch,
+                padding=True,
+                truncation=True,
+                max_length=self.max_length,
+                return_tensors="pt",
+            ).to(self.device)
+
+            with torch.no_grad():
+                outputs = self._model(**inputs)
+                embeddings = self._mean_pooling(
+                    outputs.last_hidden_state, inputs["attention_mask"]
+                )
+                # L2 归一化
+                embeddings = torch.nn.functional.normalize(embeddings, p=2, dim=1)
+
+            all_embeddings.extend(embeddings.cpu().tolist())
+
+        return all_embeddings

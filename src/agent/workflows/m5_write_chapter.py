@@ -985,6 +985,48 @@ class M5WriteChapterWorkflow:
         return "舒缓", "低"
 
     # ============================================================
+    # 1.5 章节正文后格式化（安全网，兜底 LLM 段落格式遗漏）
+    # ============================================================
+    @staticmethod
+    def _format_chapter_body(text: str) -> str:
+        """规范化章节正文的段落格式。
+
+        1. 去除每行首尾空白字符
+        2. 将连续 3+ 空行压缩为 1 个空行
+        3. 确保最后没有多余空行
+        4. 如果全文没有任何段落分隔，自动按句分段（兜底 LLM 完全不分段的情况）
+        """
+        import re as _re
+
+        # 1) 按行处理，去除行首尾空白
+        lines = text.split("\n")
+        stripped = [line.strip() for line in lines]
+
+        # 2) 压缩连续空行：连续空白行 → 一个空行
+        result: list[str] = []
+        blank_count = 0
+        for line in stripped:
+            if line == "":
+                blank_count += 1
+                if blank_count == 1:
+                    result.append("")
+            else:
+                blank_count = 0
+                result.append(line)
+
+        # 3) 去除末尾多余空行
+        while result and result[-1] == "":
+            result.pop()
+
+        body = "\n".join(result)
+
+        # 4) 如果全文没有任何段落分隔（无空行），自动按句分段
+        if "\n" not in body and len(body) > 200:
+            body = _auto_split_paragraphs(body)
+
+        return body
+
+    # ============================================================
     # 2. 章节生成
     # ============================================================
     def _generate_chapter(
@@ -1110,7 +1152,9 @@ class M5WriteChapterWorkflow:
             max_tokens=4096,
             enable_thinking=False,
         )
-        return resp.text.strip()
+        # 后处理：规范化段落格式（安全网，即使 LLM 遗漏规则 15 也兜底）
+        raw = resp.text.strip()
+        return self._format_chapter_body(raw)
 
     # ============================================================
     # 3. 质量校验 + 自动修订
@@ -1652,3 +1696,34 @@ class M5WriteChapterWorkflow:
         pattern = rf"\*\*{re.escape(field_name)}\*\*[：:]\s*(.+)"
         m = re.search(pattern, content)
         return m.group(1).strip() if m else ""
+
+
+# ============================================================
+# 工具函数：自动按句分段（兜底 LLM 完全不分段的情况）
+# ============================================================
+def _auto_split_paragraphs(text: str) -> str:
+    """自动将无段落分隔的长文本按句分段，每 2-4 句组成一个段落。
+
+    仅作为安全网，当 LLM 完全遗漏段落分隔时使用。
+    """
+    import re as _re
+
+    # 按中文句子结束符分割（保留分隔符）
+    parts = _re.split(r"(?<=[。！？」])", text)
+    sentences = [s.strip() for s in parts if s.strip()]
+
+    if len(sentences) <= 1:
+        return text
+
+    # 分组为段落（每段 2-4 句，优先 3 句）
+    paragraphs: list[str] = []
+    current: list[str] = []
+    for s in sentences:
+        current.append(s)
+        if len(current) >= 3:
+            paragraphs.append("".join(current))
+            current = []
+    if current:
+        paragraphs.append("".join(current))
+
+    return "\n\n".join(paragraphs)

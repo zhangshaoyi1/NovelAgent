@@ -5,6 +5,7 @@ __pycache__/
 
 # 密钥：绝不提交 .env（含 LLM API Key 等敏感信息）
 .env
+.env.accel
 
 # 测试 / lint 缓存
 .pytest_cache/
@@ -34,3 +35,12 @@ dist/skills/
 # 测试密钥（.env_ai 含测试用 API Key，同样不入库）
 .env_ai
 .idea/
+
+# 备份输出（非项目代码）
+outputs/
+
+# 开发笔记/思考记录（非项目代码）
+.agents/notes/
+
+# 一次性调试脚本
+_debug_safe_remove.py

@@ -35,6 +35,7 @@ class LLMConfig:
     embedding_model: str = ""
     embedding_base_url: str = ""
     embedding_api_key: str = ""
+    embedding_provider: str = ""  # ""=同 LLM_PROVIDER, "qwen_local"=本地 Qwen transformers 推理
     timeout: int = 120
     max_retries: int = 3
     retry_base_delay: float = 1.0

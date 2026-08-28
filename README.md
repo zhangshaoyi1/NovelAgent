@@ -374,26 +374,30 @@ novel-agent merge-genres -d novels/my-novel
 
 ### 5.7 网页界面（Web UI）
 
-NovelAgent 自带一个**零构建的 Web UI**（FastAPI 服务端渲染 + Jinja2 + HTMX 局部刷新，无需 Node 工具链），把 CLI 的创作闭环做成可视化工作台。依赖 `fastapi` + `uvicorn`（已随包安装）。
+NovelAgent 自带一个**零构建的 Web UI**（FastAPI 服务端渲染 + Jinja2 + HTMX 局部刷新，无需 Node 工具链），把 CLI 的创作闭环做成可视化工作台。依赖 `fastapi` + `uvicorn`（已随包安装，无需额外操作）。
 
-**启动：**
+**启动方式：**
 
+**推荐（安装后全局可用）：**
 ```bash
-# 方式一：通过 CLI 命令（推荐）
 novel-agent web                                  # 默认 http://127.0.0.1:8000
 novel-agent web --host 0.0.0.0 --port 8080       # 指定监听地址 / 端口
-
-# 方式二：直接跑模块（等价于 CLI 的 web 命令）
-python -m agent.web                              # 需先把 src 加入 PYTHONPATH
-PYTHONPATH=D:/project/NovelAgent/agent/src python -m agent.web --port 8080
 ```
 
-启动后浏览器访问 `http://<host>:<port>` 即可。页面包含：
+**备选（直接跑模块）：**
+```bash
+python -m agent.cli web                          # 等价于 CLI 的 web 命令
+python -m agent.web                              # 直接跑 web 模块
+```
+
+**常见问题：** 如报 `ModuleNotFoundError: No module named 'uvicorn'`，重跑 `pip install -e ./agent` 即可。
+
+**页面路由：**
 
 - **引导向导** `/`：项目列表 / 新建项目（含多题材 chips 选择 + 一键写书入口）；
-- **项目空间** `/p/{name}`：状态机进度 + 当前可用操作（按阶段门禁）+ **自主度连续滑块**；
+- **项目空间** `/p/{name}`：状态机进度 + 当前可用操作（按阶段门禁）+ **自主度连续滑块**；写作中状态顶部显示 **⚡ 自动续写** 卡片，可直接指定章节数一键续写；
 - **引导向导** `/p/{name}/guide`：按状态机阶段走通创作闭环；
-- **实时写作间** `/p/{name}/write`：写章 SSE 实时进度 + 成本视图；
+- **实时写作间** `/p/{name}/write`：写章 SSE 实时进度 + 成本视图；支持**单章写入**和**批量自动续写**（指定目标章节数，一键续写多章）；
 - **看板** `/p/{name}/dashboard`：成本 / 评测 / 模型路由 / MCP；
 - **文件浏览** `/p/{name}/files` 与单文件查看 `/p/{name}/file?path=`；
 - **冲突裁决** `/p/{name}/conflicts`：多题材同名设定冲突逐条裁决；

@@ -48,15 +48,22 @@ class LLMProvider(ABC):
     def embed(self, texts: list[str]) -> list[list[float]]:
         """生成文本嵌入向量
 
-        基类统一实现：依据 provider 名选择 OpenAI 兼容或 Ollama 嵌入端点。
+        基类统一实现：依据 ``embedding_provider`` 选择嵌入后端。
         不可达时返回空列表降级（绝不阻断写章）。
         """
         from agent.core.rag.embeddings import (
             OllamaEmbedding,
             OpenAICompatibleEmbedding,
+            QwenLocalEmbedding,
         )
 
-        if self.config.provider == "ollama":
+        ep = (self.config.embedding_provider or self.config.provider).lower()
+
+        if ep == "qwen_local":
+            provider = QwenLocalEmbedding(
+                model_name=self.config.embedding_model or "Qwen/Qwen2.5-0.5B-Instruct",
+            )
+        elif ep == "ollama":
             provider = OllamaEmbedding(
                 model=self.config.embedding_model or self.config.model,
                 base_url=self.config.base_url or "http://localhost:11434",
@@ -64,8 +71,8 @@ class LLMProvider(ABC):
         else:
             provider = OpenAICompatibleEmbedding(
                 model=self.config.embedding_model or self.config.model,
-                base_url=self.config.base_url,
-                api_key=self.config.api_key,
+                base_url=self.config.embedding_base_url or self.config.base_url,
+                api_key=self.config.embedding_api_key or self.config.api_key,
             )
         return provider.embed(texts)
 
@@ -170,7 +177,9 @@ class OpenAIProvider(LLMProvider):
         return LLMResponse(text=text, usage=usage, model=model, raw=resp)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        """委托到 OpenAICompatibleEmbedding"""
+        """委托到 OpenAICompatibleEmbedding（若另有 embedding_provider 则走基类）"""
+        if self.config.embedding_provider:
+            return super().embed(texts)
         from agent.core.rag.embeddings import OpenAICompatibleEmbedding
 
         provider = OpenAICompatibleEmbedding(
@@ -249,7 +258,9 @@ class OllamaProvider(LLMProvider):
         return LLMResponse(text=text, usage=usage, model=model, raw=raw)
 
     def embed(self, texts: list[str]) -> list[list[float]]:
-        """委托到 OllamaEmbedding"""
+        """委托到 OllamaEmbedding（若另有 embedding_provider 则走基类）"""
+        if self.config.embedding_provider:
+            return super().embed(texts)
         from agent.core.rag.embeddings import OllamaEmbedding
 
         provider = OllamaEmbedding(
