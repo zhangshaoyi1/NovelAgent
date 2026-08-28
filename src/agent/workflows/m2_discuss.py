@@ -26,10 +26,10 @@ from rich.panel import Panel
 from rich.prompt import Prompt
 
 from agent.client import LLMClient
-from agent.core.setting_manager import SettingManager
-from agent.core.state_machine import Event, State, StateMachine
-from agent.core.genre_pack import first_genre
-from agent.core.workflow_registry import workflow
+from agent.core.story.setting_manager import SettingManager
+from agent.core.engine.state_machine import Event, State, StateMachine
+from agent.core.registry.genre_pack import first_genre
+from agent.core.engine.workflow_registry import workflow
 from agent.prompts import M2_SYSTEM_PROMPT, M2_USER_PROMPT_TEMPLATE
 
 

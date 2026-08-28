@@ -1,4 +1,4 @@
-﻿"""cost_plan 命令 —— 写前成本预估（G10 P0-1，拍板 1：纯复用 CostModel.estimate_book，零新统计）。
+"""cost_plan 命令 —— 写前成本预估（G10 P0-1，拍板 1：纯复用 CostModel.estimate_book，零新统计）。
 
 放 cli/commands/ 与既有 cost.py 命令并列（只读看板类命令）；
 `resolve_book_chapters` / `build_cost_plan` 亦被 autowrite 开写前引导复用（跨命令 import，
@@ -43,7 +43,7 @@ def resolve_book_chapters(project_dir: str | Path, chapters: int | None = None) 
     except Exception:  # noqa: BLE001
         pass
     try:
-        from agent.core.state_machine import StateMachine
+        from agent.core.engine.state_machine import StateMachine
 
         sm = StateMachine(project_dir)
         sm.load()
@@ -53,7 +53,7 @@ def resolve_book_chapters(project_dir: str | Path, chapters: int | None = None) 
     except Exception:  # noqa: BLE001
         pass
     try:
-        from agent.core.chapters import list_chapter_files
+        from agent.core.story.chapters import list_chapter_files
 
         n = len(list_chapter_files(project_dir))
         if n > 0:

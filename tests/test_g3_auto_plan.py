@@ -17,8 +17,8 @@ from __future__ import annotations
 import frontmatter
 from pathlib import Path
 
-from agent.core.confirmation import is_architecture_confirmed
-from agent.core.state_machine import State
+from agent.core.quality.confirmation import is_architecture_confirmed
+from agent.core.engine.state_machine import State
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
 from tests._g3_fakes import (
     _FakeLLM,

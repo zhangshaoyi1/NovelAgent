@@ -8,7 +8,7 @@ from typing import Optional
 
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import emit_result
-from agent.core.learning_store import Learning, LearningStore
+from agent.core.story.learning_store import Learning, LearningStore
 from agent.client import LLMClient
 from agent.workflows.m17_learn import LearningMiner
 

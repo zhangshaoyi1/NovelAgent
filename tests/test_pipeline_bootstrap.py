@@ -12,9 +12,9 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.agents.planner import MasterPlan
-from agent.core.confirmation import is_architecture_confirmed
-from agent.core.setting_manager import SettingManager
-from agent.core.state_machine import State
+from agent.core.quality.confirmation import is_architecture_confirmed
+from agent.core.story.setting_manager import SettingManager
+from agent.core.engine.state_machine import State
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
 from tests._g3_fakes import _FakeLLM
 
@@ -101,7 +101,7 @@ def test_ensure_setting_set_preserves_existing_progress(tmp_path: Path) -> None:
         "# 支线\n\n## 支线目标\n推进\n\n## 剧集压力曲线\n| 阶段 | 章节 | 张力等级 |\n|---|---|---|\n| 铺垫 | 1-100 | 低 |\n",
     )
     # 预置进度
-    from agent.core.state_machine import StateMachine
+    from agent.core.engine.state_machine import StateMachine
 
     st = StateMachine(tmp_path)
     st.state = State.WRITING

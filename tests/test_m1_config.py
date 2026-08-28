@@ -11,8 +11,8 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent.client import LLMClient, LLMConfig, LLMResponse
-from agent.core.setting_manager import SettingManager
-from agent.core.state_machine import State, StateMachine
+from agent.core.story.setting_manager import SettingManager
+from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m1_config import M1ConfigWorkflow, M1Input
 
 

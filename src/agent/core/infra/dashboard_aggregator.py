@@ -374,7 +374,7 @@ class DashboardAggregator:
             # 文件存在但损坏 → 降级
             return PacingPanel(available=False)
         try:
-            from agent.core.pacing_store import Ledger
+            from agent.core.story.pacing_store import Ledger
 
             # 复用 C 的存储范式（Ledger.from_dict 与 PacingStore.load 等价）
             ledger = Ledger.from_dict(raw)
@@ -398,7 +398,7 @@ class DashboardAggregator:
         except (json.JSONDecodeError, OSError):
             return LearningPanel(available=False)
         try:
-            from agent.core.learning_store import LearningStore
+            from agent.core.story.learning_store import LearningStore
 
             items = LearningStore(self.project_dir).load()
             return LearningPanel(available=True, items=[asdict(x) for x in items])
@@ -424,7 +424,7 @@ class DashboardAggregator:
     # ----------------------------------------------------------
     def _read_health(self) -> HealthPanel:
         try:
-            from agent.core.doctor import Doctor, doctor_to_dict
+            from agent.core.infra.doctor import Doctor, doctor_to_dict
 
             checks = Doctor(self.project_dir).check(ping=False)
             healthy = Doctor.is_healthy(checks)

@@ -31,7 +31,7 @@ def _cli_value(v: Any, default: Any) -> Any:
 def list_feedback(project_dir: str | Path) -> list[dict[str, Any]]:
     """列出全部 reader_feedback 类债务。"""
     try:
-        from agent.core.pacing_store import PacingStore
+        from agent.core.story.pacing_store import PacingStore
 
         return [
             {"id": d.id, "desc": d.desc, "planted_ch": d.planted_ch}
@@ -63,7 +63,7 @@ def add_feedback(
     if not parts:
         raise ValueError("至少提供 --score / --abandon-at / --comment 之一")
 
-    from agent.core.pacing_store import Debt, PacingStore
+    from agent.core.story.pacing_store import Debt, PacingStore
 
     store = PacingStore(project_dir)
     debt = Debt(

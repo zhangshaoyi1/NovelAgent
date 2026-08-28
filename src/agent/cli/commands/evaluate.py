@@ -1,4 +1,4 @@
-﻿"""evaluate 命令 —— 全书「不崩」体检（Phase 2）
+"""evaluate 命令 —— 全书「不崩」体检（Phase 2）
 
 对已有书稿跑 Evaluator 七维「不崩」套件，输出量化体检报告；
 不达标时可自动回溯最近 N 章（--auto-repair 会触发重写闭环）。
@@ -13,7 +13,7 @@ from pathlib import Path
 
 from agent.cli._app import app, command, console, typer
 from agent.cli._shared import *  # enforce_gate / emit_result / make_quiet_console
-from agent.core.state_machine import State
+from agent.core.engine.state_machine import State
 
 
 @command(allowed_states=(State.WRITING, State.PAUSED, State.COMPLETED))
@@ -90,7 +90,7 @@ def evaluate(
 
     score_fn = None
     if real_score:
-        from agent.core.reader_appeal import ReaderAppealScorer
+        from agent.core.quality.reader_appeal import ReaderAppealScorer
 
         score_fn = ReaderAppealScorer(llm_client=traced_llm).score   # 改：裸 LLMClient → traced_llm
 

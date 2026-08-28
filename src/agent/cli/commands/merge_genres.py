@@ -19,8 +19,8 @@ from rich.prompt import Prompt
 
 from agent.cli._app import app, command, console, typer
 from agent.cli._shared import emit_result, enforce_gate
-from agent.core.genre_merger import GenreMerger, load_conflicts, save_conflicts
-from agent.core.genre_pack import GenrePackRegistry
+from agent.core.registry.genre_merger import GenreMerger, load_conflicts, save_conflicts
+from agent.core.registry.genre_pack import GenrePackRegistry
 
 
 def _replace_section(md_text: str, heading_prefix: str, new_body: str) -> str:
@@ -74,7 +74,7 @@ def merge_genres(
         genres: 题材列表（逗号分隔）；留空读取 world.md 的 genres
         auto: 非交互自动裁决
     """
-    from agent.core.setting_manager import SettingManager
+    from agent.core.story.setting_manager import SettingManager
 
     pdir = Path(project_dir)
     enforce_gate(str(pdir), "merge-genres")

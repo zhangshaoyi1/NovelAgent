@@ -28,10 +28,10 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
 from agent.client import LLMClient
-from agent.core.workflow_registry import workflow
-from agent.core.setting_manager import SettingManager
-from agent.core.state_machine import Event, State, StateMachine
-from agent.core.genre_pack import first_genre
+from agent.core.engine.workflow_registry import workflow
+from agent.core.story.setting_manager import SettingManager
+from agent.core.engine.state_machine import Event, State, StateMachine
+from agent.core.registry.genre_pack import first_genre
 from agent.prompts import (
     M14_ITERATE_SYSTEM_PROMPT,
     M14_ITERATE_USER_PROMPT_TEMPLATE,
@@ -313,7 +313,7 @@ class M14ArchitectureWorkflow:
         T-4 起实际逻辑已上提至 ``agent.core.confirmation.is_architecture_confirmed``，
         本静态方法保留以兼容既有调用方；新代码请直接使用 ``is_architecture_confirmed``。
         """
-        from agent.core.confirmation import is_architecture_confirmed
+        from agent.core.quality.confirmation import is_architecture_confirmed
 
         return is_architecture_confirmed(project_dir)
 

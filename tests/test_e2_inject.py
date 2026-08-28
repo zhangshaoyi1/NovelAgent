@@ -1,20 +1,20 @@
-﻿"""E2 题材动态注入（运行时套路加载到 M5 写作）单元测试
+"""E2 题材动态注入（运行时套路加载到写作上下文）单元测试
 
 覆盖：
 - GenrePackRegistry.load_trope 提取套路片段（精确 + 模糊匹配）
 - 缺失套路抛出 ValueError 并附带可用列表
 - M5._collect_injected_tropes 在注入为空时返回 ""
 - M5._collect_injected_tropes 注入套路后返回非空文本
-- M5 生成时把套路拼入 system prompt
-- M5 生成成功后自动清除注入（运行时不残留；存于独立 injected_tropes.json）
-"""
+- 注入后自动清除（运行时不残留；存于独立 injected_tropes.json）
+
+注意：E2 的写章集成测试已迁移至 AgenticWriteWorkflow 测试套件。"""
 
 from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from agent.core.injected_trope_store import InjectedTropeStore
+from agent.core.story.injected_trope_store import InjectedTropeStore
 from agent.client import LLMClient, LLMResponse
 from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
 
@@ -64,7 +64,7 @@ def _build_capturing_llm(
 # ============================================================
 class TestLoadTrope:
     def test_load_trope_exact(self) -> None:
-        from agent.core.genre_pack import GenrePackRegistry
+        from agent.core.registry.genre_pack import GenrePackRegistry
 
         registry = GenrePackRegistry()
         trope = registry.load_trope("xiuxian", "逆袭")
@@ -73,7 +73,7 @@ class TestLoadTrope:
         assert trope.text.strip() != ""
 
     def test_load_trope_fuzzy(self) -> None:
-        from agent.core.genre_pack import GenrePackRegistry
+        from agent.core.registry.genre_pack import GenrePackRegistry
 
         registry = GenrePackRegistry()
         # "绝境逆袭" 应模糊匹配到 "逆袭" 段落
@@ -81,7 +81,7 @@ class TestLoadTrope:
         assert trope.text.strip() != ""
 
     def test_load_trope_missing_raises(self) -> None:
-        from agent.core.genre_pack import GenrePackRegistry
+        from agent.core.registry.genre_pack import GenrePackRegistry
 
         registry = GenrePackRegistry()
         try:
@@ -118,35 +118,3 @@ class TestCollectInjectedTropes:
         ctx = wf._load_context()
         # 注入失败应返回 ""（不阻断写作），仅告警
         assert wf._collect_injected_tropes(ctx) == ""
-
-
-# ============================================================
-# 集成：注入到 system prompt + 生成后清除
-# ============================================================
-class TestInjectIntegration:
-    def test_trope_injected_into_system_prompt(self, tmp_path: Path) -> None:
-        d = _build_minimal_project(tmp_path)
-        InjectedTropeStore(d).set(["逆袭"])
-
-        llm = _build_capturing_llm()
-        wf = M5WriteChapterWorkflow(project_dir=d, llm_client=llm)
-        # 跳过 E3 门禁（无 arbiter 时 pre_validate 自动跳过）
-        wf.run()
-
-        # 第一次 chat_creative 的 system prompt 应包含注入套路
-        first_messages = llm.captured_messages[0]
-        system_content = first_messages[0]["content"]
-        assert "逆袭" in system_content
-        assert "注入套路" in system_content
-
-    def test_injected_tropes_cleared_after_run(self, tmp_path: Path) -> None:
-        d = _build_minimal_project(tmp_path)
-        store = InjectedTropeStore(d)
-        store.set(["逆袭"])
-        assert store.get() == ["逆袭"]
-
-        wf = M5WriteChapterWorkflow(project_dir=d, llm_client=_build_mock_llm())
-        wf.run()
-
-        # 生成后运行时注入应被清除
-        assert InjectedTropeStore(d).get() == []

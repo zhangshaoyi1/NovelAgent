@@ -22,7 +22,7 @@ import pytest
 from rich.console import Console
 
 from agent.client import LLMResponse
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
 from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
 from agent.workflows.mainline import decide_mainline_advance

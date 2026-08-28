@@ -20,8 +20,8 @@ import frontmatter
 import pytest
 from rich.console import Console
 
-from agent.core.events import ProgressEventBus, compute_eta_s
-from agent.core.state_machine import State
+from agent.core.engine.events import ProgressEventBus, compute_eta_s
+from agent.core.engine.state_machine import State
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
 from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
 from tests._g3_fakes import _StubEditor, _StubMemory, _StubPlanner, _make_plan
@@ -98,7 +98,7 @@ def _make_project(tmp_path: Path) -> Path:
     进度带 current_subline（规划完成后的真实形态）。"""
     d = _build_minimal_project(tmp_path, state=State.WRITING)
     (d / "discussion.md").write_text("# 讨论纪要\n\n已收敛。", encoding="utf-8")
-    from agent.core.state_machine import StateMachine
+    from agent.core.engine.state_machine import StateMachine
 
     sm = StateMachine(d)
     sm.load()

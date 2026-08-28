@@ -12,8 +12,8 @@ import frontmatter
 import pytest
 
 from agent.client import LLMClient, LLMResponse
-from agent.core.setting_manager import SettingManager
-from agent.core.state_machine import State, StateMachine
+from agent.core.story.setting_manager import SettingManager
+from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m3_outline import M3OutlineWorkflow, M3Result
 
 

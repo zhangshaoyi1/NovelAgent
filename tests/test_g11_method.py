@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.agents.planner import PlannerAgent
-from agent.core.method_style import load_method_text
+from agent.core.story.method_style load_method_text
 from agent.prompts import G11_METHOD_INSTRUCTION_TEMPLATE
 
 

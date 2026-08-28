@@ -25,18 +25,18 @@ import frontmatter
 from rich.console import Console
 from rich.panel import Panel
 
-from agent.core.conflict_service import ConflictArbiter, ConflictReport
-from agent.core.evidence_chain import EvidenceChain, EvidenceRef
-from agent.core.exceptions import PreValidationBlocked
-from agent.core.genre_pack import GenrePackRegistry, first_genre
-from agent.core.workflow_registry import workflow
-from agent.core.quality_checker import QualityChecker, LLMBackedChecker, Severity
-from agent.core.injected_trope_store import InjectedTropeStore
+from agent.core.infra.conflict_service import ConflictArbiter, ConflictReport
+from agent.core.story.evidence_chain import EvidenceChain, EvidenceRef
+from agent.core.base.exceptions import PreValidationBlocked
+from agent.core.registry.genre_pack import GenrePackRegistry, first_genre
+from agent.core.engine.workflow_registry import workflow
+from agent.core.quality.quality_checker import QualityChecker, LLMBackedChecker, Severity
+from agent.core.story.injected_trope_store import InjectedTropeStore
 from agent.client import LLMClient
-from agent.core.method_style import load_style_guide  # G11：风格指引读取
-from agent.core.setting_manager import SettingManager
-from agent.core.state_machine import Event, State, StateMachine
-from agent.core.confirmation import is_architecture_confirmed
+from agent.core.story.method_style import load_style_guide  # G11：风格指引读取
+from agent.core.story.setting_manager import SettingManager
+from agent.core.engine.state_machine import Event, State, StateMachine
+from agent.core.quality.confirmation import is_architecture_confirmed
 from agent.prompts import (
     M5_GENERATE_SYSTEM_PROMPT,
     M5_GENERATE_USER_TEMPLATE,
@@ -500,7 +500,7 @@ class M5WriteChapterWorkflow:
         open_debts: list = []
         reader_signals: list = []  # G12：读者反馈信号（kind=reader_feedback 分离，其余维持既有行为）
         try:
-            from agent.core.pacing_store import PacingStore
+            from agent.core.story.pacing_store import PacingStore
 
             all_debts = PacingStore(self.project_dir).get_open_debts(n=50)
             open_debts = [
@@ -523,7 +523,7 @@ class M5WriteChapterWorkflow:
         learnings: list = []
         learnings_text = "（暂无已沉淀的写法记忆）"
         try:
-            from agent.core.learning_store import LearningStore
+            from agent.core.story.learning_store import LearningStore
             from agent.prompts import format_learnings
 
             # 限额注入（避免 prompt 膨胀；按存储顺序取前 20 条）
@@ -546,7 +546,7 @@ class M5WriteChapterWorkflow:
         _payoff_task, _emotion_target = "", ""
         if getattr(self, "payoff_enabled", True):  # 默认开；--no-payoff 关闭
             try:
-                from agent.core.payoff_script import chapter_payoff, load_payoff_script
+                from agent.core.story.payoff_script import chapter_payoff, load_payoff_script
 
                 _script = load_payoff_script(self.project_dir, enabled=True)
                 _payoff_task, _emotion_target = chapter_payoff(_script, chapter_num)

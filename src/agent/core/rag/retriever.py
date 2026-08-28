@@ -1,4 +1,4 @@
-﻿"""召回器（增量 A / T02）
+"""召回器（增量 A / T02）
 
 ``Retriever.retrieve(query, top_k)``：向量召回 + BM25 兜底融合，返回 ``list[Chunk]``。
 
@@ -13,7 +13,6 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from agent.client import LLMClient
 from agent.core.rag._types import Chunk
 from agent.core.rag.bm25 import BM25Index
 from agent.core.rag.vector_store import LocalVectorStore
@@ -33,10 +32,15 @@ class Retriever:
     ) -> None:
         self.project_dir = Path(project_dir)
         self.rag_dir = self.project_dir / ".state" / "rag"
-        self.embedder = embedder or LLMClient()
+        self.embedder = embedder or self._default_embedder()
         self.store = store or LocalVectorStore(self.rag_dir / "index.json")
         self.bm25 = bm25 or BM25Index()
         self._loaded = False
+
+    @staticmethod
+    def _default_embedder() -> Any:
+        from agent.client import LLMClient
+        return LLMClient()
 
     def _ensure_loaded(self) -> None:
         if self._loaded:

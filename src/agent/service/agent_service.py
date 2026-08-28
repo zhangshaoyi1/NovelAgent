@@ -1,4 +1,4 @@
-﻿"""Service 层（Phase 3 · 接口预留，Web UI 本期不做）
+"""Service 层（Phase 3 · 接口预留，Web UI 本期不做）
 
 把「全流程自主写作」与「不崩体检」封装为一个**进程内、框架无关**的服务接口
 ``AgentService``，供 CLI 命令与（未来的）FastAPI / WebSocket 层共用。
@@ -31,7 +31,7 @@ from agent.core.llmops import (
 )
 from agent.client import ModelRouter
 from agent.core.tools.mcp_bridge import MCPBridge
-from agent.core.guardrails import build_guardrails
+from agent.core.quality.guardrails import build_guardrails
 
 
 class AgentService:
@@ -127,7 +127,7 @@ class AgentService:
         LLM 不可用时自动降级为离线安全默认。
         """
         from agent.agents.evaluator import EvaluatorAgent
-        from agent.core.reader_appeal import ReaderAppealScorer
+        from agent.core.quality.reader_appeal import ReaderAppealScorer
 
         score_fn = None
         if real_score:
@@ -200,7 +200,7 @@ class AgentService:
         把用户针对某章的反馈变成局部定向重写，而非整章回退/重跑。
         返回 RewriteResult.to_dict()。
         """
-        from agent.core.feedback_rewriter import FeedbackRewriter
+        from agent.core.quality.feedback_rewriter import FeedbackRewriter
 
         rewriter = FeedbackRewriter(
             project_dir=self.project_dir,

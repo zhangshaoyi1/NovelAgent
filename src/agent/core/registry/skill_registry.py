@@ -16,7 +16,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any, Optional
 
-from agent.core.registry import BaseRegistry
+from agent.core.base.registry import BaseRegistry
 
 
 class SkillInfo:

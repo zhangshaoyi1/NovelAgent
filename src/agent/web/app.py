@@ -31,9 +31,9 @@ from fastapi.templating import Jinja2Templates
 
 from agent.web import runner, state
 from agent.agents.registry import get_groups, roster_summary, RosterCategory
-from agent.core.philosophy import get_philosophy
+from agent.core.story.philosophy import get_philosophy
 from agent.workflows.m8_mode import ModeController, autonomy_label
-from agent.core.relation_manager import (
+from agent.core.story.relation_manager import (
     RelationManager,
     WorldNode,
     WorldEdge,

@@ -22,7 +22,7 @@ from jinja2 import Environment, FileSystemLoader
 
 from agent.cli._app import command, console, typer
 from agent.cli._shared import emit_result
-from agent.core.dashboard_aggregator import DashboardAggregator, DashboardData
+from agent.core.infra.dashboard_aggregator import DashboardAggregator, DashboardData
 
 
 # ============================================================

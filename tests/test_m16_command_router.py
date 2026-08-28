@@ -18,7 +18,7 @@ import pytest
 from typer.testing import CliRunner
 
 from agent.cli import app
-from agent.core.command_router import (
+from agent.core.engine.command_router import (
     COMMAND_REGISTRY,
     CommandMeta,
     CommandRouter,
@@ -26,7 +26,7 @@ from agent.core.command_router import (
     get_command_meta,
     parse_args,
 )
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.state_machine import State, StateMachine
 
 
 # ============================================================
@@ -185,7 +185,7 @@ class TestCommandsForState:
 
     def test_global_commands_in_all_states(self) -> None:
         """全局命令（/help /mode 等）应在所有状态可用"""
-        from agent.core.state_machine import State
+        from agent.core.engine.state_machine import State
 
         for state in State:
             cmds = commands_for_state(state.value)

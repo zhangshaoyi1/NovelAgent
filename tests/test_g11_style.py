@@ -14,7 +14,7 @@ from pathlib import Path
 import pytest
 from rich.console import Console
 
-from agent.core.method_style import STYLE_GUIDE_MAX_CHARS, load_style_guide
+from agent.core.story.method_style STYLE_GUIDE_MAX_CHARS, load_style_guide
 from agent.prompts import G11_STYLE_INSTRUCTION_TEMPLATE
 
 

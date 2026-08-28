@@ -21,7 +21,7 @@ import frontmatter
 import pytest
 
 from agent.client import LLMClient, LLMResponse
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m6_adjust import (
     M6AdjustRouteWorkflow,
     M6AdjustRelationWorkflow,

@@ -21,13 +21,13 @@ from pathlib import Path
 from rich.console import Console
 
 from agent.agents.evaluator import EvaluatorAgent
-from agent.core.chapters import (
+from agent.core.story.chapters import (
     list_chapter_files,
     read_chapters_text,
     strip_frontmatter,
     take_chapter_files,
 )
-from agent.core.reader_appeal import (
+from agent.core.quality.reader_appeal import (
     APPEAL_DIMENSIONS,
     GOLDEN_DIM_FLOOR,
     GOLDEN_JOIN_CHAR_LIMIT,

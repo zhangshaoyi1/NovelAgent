@@ -89,7 +89,7 @@ def rag_retrieve(query: str, top_k: int = 5) -> Any:
     },
 )
 def get_setting(kind: str, key: str = "") -> Any:
-    from agent.core.setting_manager import SettingManager
+    from agent.core.story.setting_manager import SettingManager
 
     sm = SettingManager(get_project_dir())
     if kind == "world":
@@ -134,7 +134,7 @@ def count_words(text: str) -> Any:
     },
 )
 def quality_check(chapter_text: str) -> Any:
-    from agent.core.quality_checker import QualityChecker
+    from agent.core.quality.quality_checker import QualityChecker
 
     report = QualityChecker(get_project_dir(), None).check(chapter_text)
     return {

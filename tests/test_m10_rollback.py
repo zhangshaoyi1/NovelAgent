@@ -19,7 +19,7 @@ from rich.console import Console
 from typer.testing import CliRunner
 
 from agent.cli import app
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m10_rollback import (
     M10ResumeWorkflow,
     M10RollbackWorkflow,

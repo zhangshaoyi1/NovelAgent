@@ -11,8 +11,8 @@ from __future__ import annotations
 import warnings
 from pathlib import Path
 
-from agent.core.genre_pack import GenreManifest, GenrePack, GenrePackRegistry
-from agent.core.hook_dispatcher import dispatch_genre_hooks
+from agent.core.registry.genre_pack import GenreManifest, GenrePack, GenrePackRegistry
+from agent.core.infra.hook_dispatcher import dispatch_genre_hooks
 from agent.workflows import m1_config
 
 

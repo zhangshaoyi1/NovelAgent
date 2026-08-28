@@ -4,7 +4,7 @@ import asyncio
 
 import pytest
 
-from agent.core.collab import (
+from agent.core.engine.collab import (
     AgentNode,
     CollaborationError,
     MessageBus,

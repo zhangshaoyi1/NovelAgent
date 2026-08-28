@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.core.payoff_script import (
+from agent.core.story.payoff_script import (
     PAYOFF_TYPE_POOL,
     build_payoff_script,
     chapter_payoff,

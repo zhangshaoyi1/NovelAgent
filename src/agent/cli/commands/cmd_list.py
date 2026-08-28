@@ -17,7 +17,7 @@ def commands(
     import json as _json
     from pathlib import Path
 
-    from agent.core.command_router import COMMAND_REGISTRY, commands_for_state
+    from agent.core.engine.command_router import COMMAND_REGISTRY, commands_for_state
 
     if not project_dir:
         # 全量清单

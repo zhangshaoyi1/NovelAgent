@@ -1,4 +1,4 @@
-﻿"""payoff_plan 命令 —— 爽点剧本生成（G12 P0-1，拍板 1：确定性模板，零 LLM）。
+"""payoff_plan 命令 —— 爽点剧本生成（G12 P0-1，拍板 1：确定性模板，零 LLM）。
 
 按压力阶段（铺垫/发展/高潮/结局）确定性生成章节级爽点剧本 + 情绪目标，
 写入 `.state/payoff_script.json`（用户可手编覆盖）；写章时自动注入。
@@ -38,7 +38,7 @@ def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None
     except Exception:  # noqa: BLE001
         pass
     try:
-        from agent.core.state_machine import StateMachine
+        from agent.core.engine.state_machine import StateMachine
 
         sm = StateMachine(project_dir)
         sm.load()
@@ -48,7 +48,7 @@ def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None
     except Exception:  # noqa: BLE001
         pass
     try:
-        from agent.core.chapters import list_chapter_files
+        from agent.core.story.chapters import list_chapter_files
 
         n = len(list_chapter_files(project_dir))
         if n > 0:
@@ -65,7 +65,7 @@ def build_plan(project_dir: str | Path, chapters: int | None = None) -> dict[str
         {"chapters": N, "script": {"chapters": [...], "generated_at"}, "file": 路径}
     """
     n = resolve_target_chapters(project_dir, chapters)
-    from agent.core.payoff_script import build_payoff_script, save_payoff_script
+    from agent.core.story.payoff_script import build_payoff_script, save_payoff_script
 
     items = build_payoff_script(n)
     path = save_payoff_script(project_dir, items)

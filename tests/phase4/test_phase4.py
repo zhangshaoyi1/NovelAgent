@@ -10,7 +10,7 @@
 
 from __future__ import annotations
 
-from agent.core.guardrails import (
+from agent.core.quality.guardrails import (
     GuardrailViolationError,
     Guardrails,
     GuardrailResult,

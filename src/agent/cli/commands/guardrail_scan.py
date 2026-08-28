@@ -36,7 +36,7 @@ def guardrail_scan(
     import json
     from pathlib import Path
 
-    from agent.core.guardrails import Guardrails
+    from agent.core.quality.guardrails import Guardrails
 
     project_path = Path(project_dir)
     enforce_gate(str(project_path), "guardrail_scan")

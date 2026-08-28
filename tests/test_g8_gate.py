@@ -19,7 +19,7 @@ import pytest
 from rich.console import Console
 
 from agent.agents.evaluator import EvaluatorAgent
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
 from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
 from tests.conftest import _build_minimal_project

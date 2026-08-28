@@ -16,7 +16,7 @@ import pytest
 from pathlib import Path
 from rich.console import Console
 
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
 from tests._g3_fakes import _StubEditor, _StubMemory, _StubPlanner, _make_plan
 from tests.conftest import _build_minimal_project

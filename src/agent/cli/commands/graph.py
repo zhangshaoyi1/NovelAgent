@@ -5,7 +5,7 @@ from pathlib import Path
 from rich.table import Table
 
 from agent.cli._app import app, command, console, typer
-from agent.core.relation_manager import NODE_KIND_LABELS, RelationManager
+from agent.core.story.relation_manager import NODE_KIND_LABELS, RelationManager
 
 
 @command(global_=True)

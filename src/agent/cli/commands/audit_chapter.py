@@ -29,7 +29,7 @@ def audit_chapter(
     import frontmatter
 
     from agent.client import LLMClient
-    from agent.core.setting_manager import SettingManager
+    from agent.core.story.setting_manager import SettingManager
     from agent.workflows.m12_audit import ContentAuditor
 
     project_path = Path(project_dir)

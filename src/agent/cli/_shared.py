@@ -17,7 +17,7 @@ _SKILL_REGISTRY: Any = None
 def _get_registry() -> Any:
     global _SKILL_REGISTRY
     if _SKILL_REGISTRY is None:
-        from agent.core.skill_registry import get_skill_registry
+        from agent.core.registry.skill_registry import get_skill_registry
 
         _SKILL_REGISTRY = get_skill_registry()
     return _SKILL_REGISTRY
@@ -37,7 +37,7 @@ def with_next_steps(error: dict, step: str, project_dir: str) -> dict:
     Returns:
         只增 next_steps 的新信封（原 error 不变）。
     """
-    from agent.core.events import next_steps_for
+    from agent.core.engine.events import next_steps_for
 
     out = dict(error)
     out["next_steps"] = next_steps_for(step, project_dir)
@@ -63,8 +63,8 @@ def enforce_gate(project_dir: str, command: str, *, json_mode: bool = False) -> 
     """
     from pathlib import Path
 
-    from agent.core.command_router import COMMAND_REGISTRY
-    from agent.core.state_machine import StateMachine
+    from agent.core.engine.command_router import COMMAND_REGISTRY
+    from agent.core.engine.state_machine import StateMachine
 
     cmd = "/" + command.replace("_", "-")
     known = {c.name for c in COMMAND_REGISTRY}

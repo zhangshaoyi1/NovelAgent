@@ -33,8 +33,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
-from agent.core.state_machine import Event, State, StateMachine
-from agent.core.workflow_registry import workflow
+from agent.core.engine.state_machine import Event, State, StateMachine
+from agent.core.engine.workflow_registry import workflow
 from agent.utils import safe_remove
 
 

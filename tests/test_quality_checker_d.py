@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 from agent.client import LLMResponse
-from agent.core.quality_checker import (
+from agent.core.quality.quality_checker import (
     Issue,
     LLMBackedChecker,
     LLMQualityRule,

@@ -26,7 +26,7 @@ from agent.agents.evaluator import (
 )
 from agent.agents.editor import EditConflict, EditorAgent, EditReport
 from agent.agents.planner import MasterPlan, PlannerAgent
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.state_machine import State, StateMachine
 from agent.memory import MemoryLayer
 from agent.memory.consolidated import ConsolidatedMemory
 from agent.memory.conversation import ConversationMemory

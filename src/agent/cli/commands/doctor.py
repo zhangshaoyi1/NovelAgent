@@ -6,7 +6,7 @@ from pathlib import Path
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import emit_result
 
-from agent.core.doctor import Doctor, doctor_to_dict
+from agent.core.infra.doctor import Doctor, doctor_to_dict
 
 # 状态 → rich 颜色映射（ok/info/warn/error）
 _STATUS_COLOR = {

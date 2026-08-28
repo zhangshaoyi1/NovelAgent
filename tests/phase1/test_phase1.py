@@ -12,8 +12,8 @@ from __future__ import annotations
 
 import pytest
 
-from agent.core.agent_loop import AgentAction, AgentLoop, LoopResult
-from agent.core.structured_output import pydantic_to_json_schema
+from agent.core.engine.agent_loop import AgentAction, AgentLoop, LoopResult
+from agent.core.base.structured_output import pydantic_to_json_schema
 from agent.core.tools.base import ToolResult
 from agent.core.tools import registry
 from agent.core.writer_agent import WriterAgent

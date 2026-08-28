@@ -15,7 +15,7 @@
 
 from __future__ import annotations
 
-from agent.core.workflow_registry import workflow
+from agent.core.engine.workflow_registry import workflow
 
 import json
 from dataclasses import dataclass, field
@@ -29,13 +29,13 @@ from rich.prompt import Confirm, Prompt
 
 from agent import __version__
 from agent.client import LLMClient
-from agent.core.genre_pack import GenrePackRegistry
-from agent.core.genre_merger import GenreMerger, save_conflicts
-from agent.core.setting_manager import SettingManager
-from agent.core.state_machine import Event, State, StateMachine
+from agent.core.registry.genre_pack import GenrePackRegistry
+from agent.core.registry.genre_merger import GenreMerger, save_conflicts
+from agent.core.story.setting_manager import SettingManager
+from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.prompts import M1_SYSTEM_PROMPT, M1_USER_PROMPT_TEMPLATE
 from agent.utils import parse_llm_json
-from agent.core.hook_dispatcher import dispatch_genre_hooks
+from agent.core.infra.hook_dispatcher import dispatch_genre_hooks
 
 # 模板路径（题材包模板改由 GenrePackRegistry 动态加载，见 T-2）
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"

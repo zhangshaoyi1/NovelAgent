@@ -4,8 +4,7 @@
 
 流程：
 1. 解析项目目录（--dir 优先，--name 落到 novels/<书名>）
-2. 缺 world.md 时先非交互 ``start`` 生成约束文档
-3. 驱动 ``autowrite`` 走多角色流水线直至完本
+2. 直接驱动 ``autowrite`` 走多角色流水线，缺 world.md 时 autowrite 自主规划生成
 
 数据默认落在 ``NOVEL_DATA_ROOT``（默认 ``<仓库>/../novels``），agent 仓库保持纯代码。
 """
@@ -37,20 +36,6 @@ def resolve_project_dir(name: str = "", directory: str = "") -> Path:
     raise ValueError("必须提供 directory（续写）或 name（新书）")
 
 
-def _read_state(project_dir: Path) -> str:
-    """读取项目当前状态机状态（.state/state.json）。"""
-    state_file = project_dir / ".state" / "state.json"
-    if not state_file.exists():
-        return "INIT"
-    try:
-        import json
-
-        data = json.loads(state_file.read_text(encoding="utf-8"))
-        return data.get("state", "INIT")
-    except Exception:
-        return "INIT"
-
-
 def run_compose(
     name: str = "",
     directory: str = "",
@@ -79,48 +64,18 @@ def run_compose(
     py = sys.executable
     cli = [py, "-m", "agent.cli"]
 
-    # 第一步：若缺 world.md，先非交互开新书生成约束文档
+    # 缺 world.md 时不再手动 start，由 autowrite 自主规划生成（autowrite 已支持）
     if not (project_dir / "world.md").exists():
         if not name:
-            # 续写模式但没有 world.md —— 说明项目还没初始化
-            state = _read_state(project_dir)
             print(
-                "✗ 目标目录无 world.md，无法直接进入写作。\n"
-                f"  当前状态: {state}（需先初始化新书）。\n"
-                "  请改用开新书方式并提供 --name，或先手动运行：\n"
-                f"    python -m agent.cli start -d {project_dir} --title \"书名\" "
-                f"--scope {scope} --story-core \"核心梗\""
+                "✗ 目标目录无 world.md，且未提供 --name。\n"
+                "  请先提供 --name 开新书（autowrite 将自主规划生成约束文档），\n"
+                "  或先用 --dir 指定已有项目目录续写。"
             )
             return 2
-        print(f"[compose] 初始化新书并生成约束文档（world.md）...")
-        start_cmd = cli + [
-            "start",
-            "-d", str(project_dir),
-            "--title", name,
-            "--scope", scope,
-            "--genre", genre,
-            "--story-core", story_core,
-        ]
-        if env:
-            start_cmd += ["--env", env]
-        rc = subprocess.run(start_cmd, cwd=str(AGENT_ROOT)).returncode
-        if rc != 0:
-            print("✗ start 失败，终止")
-            return rc
-    else:
-        # 续写模式：提前校验状态，避免 autowrite 直接失败
-        state = _read_state(project_dir)
-        if state in ("INIT",):
-            print(
-                "✗ 项目尚未初始化完成（当前状态 INIT，缺约束文档流程）。\n"
-                "  请先运行 start 完成初始化，再用 --dir 续写：\n"
-                f"    python -m agent.cli start -d {project_dir} --title \"书名\""
-            )
-            return 2
-        print(f"[compose] 续写模式（当前状态 {state}），直接进入多角色推进。")
+        print("[compose] 新书模式，autowrite 将自主规划生成设定集/架构/大纲/角色...")
 
-    # 第二步：多角色自主写作（Planner/Writer/Editor/Evaluator）
-    print("[compose] 启动多角色自主写作（约束文档已具备，进入推进阶段）...")
+    print("[compose] 启动多角色自主写作...")
     auto_cmd = cli + [
         "autowrite",
         "-d", str(project_dir),
@@ -164,7 +119,7 @@ def run_compose(
 
         # G14：全量段落去重扫描（完本关卡，检测跨章重复内容）
         try:
-            from agent.core.guardrails import Guardrails, save_fingerprints
+            from agent.core.quality.guardrails import Guardrails, save_fingerprints
 
             gr = Guardrails(check_junk=False, check_title=False, check_dup=True, check_meta_leak=True)
             db: dict[str, list] = {}

@@ -168,13 +168,13 @@ class StateMachine:
     # ------ 门禁查询（T-6：门禁改由命令元数据派生）------
     def is_command_allowed(self, command: str) -> bool:
         """查询命令在当前状态下是否可用（基于 CommandMeta.allowed_states/is_global）"""
-        from agent.core.command_router import command_allowed_in_state
+        from agent.core.engine.command_router import command_allowed_in_state
 
         return command_allowed_in_state(command, self.state)
 
     def allowed_commands(self) -> list[str]:
         """当前状态下所有可用命令（基于命令元数据）"""
-        from agent.core.command_router import commands_for_state
+        from agent.core.engine.command_router import commands_for_state
 
         return [m.name for m in commands_for_state(self.state.value)]
 

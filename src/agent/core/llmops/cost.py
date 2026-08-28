@@ -144,7 +144,7 @@ def build_cost_summary(
     金额口径（拍板 5）：仅 token + 基线 + 告警；不折算 USD、不补记 cost_per_call（R3-4）。
     内部 except Exception 降级返回「无追踪数据」占位，不阻断主流程（仿 _check_budget）。
     """
-    from agent.core.chapters import list_chapter_files
+    from agent.core.story.chapters import list_chapter_files
     from agent.core.llmops.trace import TraceStore, get_tracer
 
     try:

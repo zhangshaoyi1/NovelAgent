@@ -21,7 +21,7 @@ import frontmatter
 import pytest
 
 from agent.client import LLMClient, LLMResponse
-from agent.core.state_machine import Event, State, StateMachine
+from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.workflows.m14_architecture import M14ArchitectureWorkflow
 from agent.workflows.m4_character import M4CharacterWorkflow
 

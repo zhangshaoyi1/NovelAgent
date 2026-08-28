@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 
 from agent.cli import app
 from agent.client import LLMClient, LLMResponse
-from agent.core.pacing_store import Debt, PacingStore
+from agent.core.story.pacing_store import Debt, PacingStore
 from agent.workflows.m16_pacing import PacingExtraction, PacingTracker
 from typer.testing import CliRunner
 

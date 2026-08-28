@@ -21,7 +21,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from agent.core.genre_pack import GenrePack
+from agent.core.registry.genre_pack import GenrePack
 
 
 @dataclass

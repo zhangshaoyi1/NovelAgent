@@ -17,7 +17,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent.client import LLMClient, LLMResponse
-from agent.core.reader_appeal import (
+from agent.core.quality.reader_appeal import (
     APPEAL_DIMENSIONS,
     ReaderAppealReport,
     ReaderAppealScorer,

@@ -3,7 +3,7 @@ from __future__ import annotations
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import *
 
-from agent.core.state_machine import State
+from agent.core.engine.state_machine import State
 
 @command(allowed_states=(State.PAUSED,))
 def resume(

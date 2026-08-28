@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from agent.core.exceptions import FrozenFieldError
-from agent.core.setting_manager import SettingManager
+from agent.core.base.exceptions import FrozenFieldError
+from agent.core.story.setting_manager import SettingManager
 
 
 @pytest.fixture

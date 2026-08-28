@@ -159,7 +159,7 @@ def test_breaker_preserves_written_chapters(tmp_path: Path, monkeypatch) -> None
     chapters_dir.mkdir(parents=True, exist_ok=True)
     (chapters_dir / "ch_001.md").write_text("# 第一章\n已写内容", encoding="utf-8")
 
-    from agent.core.state_machine import StateMachine, State
+    from agent.core.engine.state_machine import StateMachine, State
 
     sm = StateMachine(tmp_path)
     sm.state = State.WRITING

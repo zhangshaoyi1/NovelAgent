@@ -11,8 +11,8 @@ import frontmatter
 from pathlib import Path
 
 from agent.client import LLMResponse
-from agent.core.setting_manager import SettingManager
-from agent.core.state_machine import State, StateMachine
+from agent.core.story.setting_manager import SettingManager
+from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m4_character import M4CharacterWorkflow
 
 

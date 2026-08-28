@@ -6,7 +6,7 @@ from pathlib import Path
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import *
 
-from agent.core.state_machine import State
+from agent.core.engine.state_machine import State
 
 
 def _rescue_disk_chapter(project_path: Path) -> dict | None:
@@ -23,7 +23,7 @@ def _rescue_disk_chapter(project_path: Path) -> dict | None:
 
     try:
         import frontmatter as _fm
-        from agent.core.state_machine import StateMachine
+        from agent.core.engine.state_machine import StateMachine
 
         _sm = StateMachine(project_path)
         _sm.load()
@@ -80,7 +80,7 @@ def write(
     mode: str = typer.Option(
         "auto", "--mode",
         help="写章引擎模式：auto(默认,自主 Agentic Loop) / heavy(更严) / "
-             "light(更轻) / pipeline(旧版 M5 硬编码七步)。",
+             "light(更轻)。",
     ),
 ) -> None:
     """章节创作 - 生成下一章正文
@@ -92,19 +92,13 @@ def write(
       - auto（默认）：自主 Agentic Loop，全自主写章
       - heavy：更严（更多修订轮次）
       - light：更轻（仅首稿 + 单次自检，不修订）
-      - pipeline：旧版 M5 硬编码七步（回退/对照用）
 
     状态转换：CHARACTER_DESIGN → WRITING（首次）/ WRITING → WRITING（后续）
 
     Args:
         project_dir: 小说项目目录
     """
-    from agent.core.conflict_service import ConflictArbiter
-    from agent.core.exceptions import PreValidationBlocked
-    from agent.core.genre_pack import GenrePackRegistry
-    from agent.workflows.m5_write_chapter import (
-        M5WriteChapterWorkflow,
-    )
+    from agent.core.base.exceptions import PreValidationBlocked
 
     # D：--env 透传（命令级设置环境变量，下游所有 LLMClient() 自动读取）
     if env_file:
@@ -132,22 +126,9 @@ def write(
     # 统一门禁：当前阶段是否允许 /write（来自 command_router / StateMachine）
     enforce_gate(str(project_path), "write", json_mode=json_output)
 
-    # --mode 引擎选择：pipeline 走旧版 M5 硬编码七步；其余走自主 Agentic Loop
+    # --mode 引擎选择：pipeline 已移除，统一走 Agentic Loop
     workflow_console = make_quiet_console() if json_output else console
-    if mode == "pipeline":
-        # E3 前置式冲突检测门禁：注入冲突仲裁器（生成前拦截高严重度冲突）
-        # --json 时把仲裁器与 M5 的 rich 输出导向 stderr，避免污染 stdout 的 JSON
-        conflict_arbiter = ConflictArbiter(project_dir=project_path, console=workflow_console)
-        # E2 题材动态注入：注入题材包注册表（运行时加载套路到 M5）
-        genre_registry = GenrePackRegistry()
-        workflow = M5WriteChapterWorkflow(
-            project_dir=project_path,
-            conflict_arbiter=conflict_arbiter,
-            genre_registry=genre_registry,
-            console=workflow_console,
-            strict_review=strict_review,
-        )
-    elif mode in ("auto", "heavy", "light"):
+    if mode in ("auto", "heavy", "light"):
         from agent.workflows.agentic_write import AgenticWriteWorkflow
 
         workflow = AgenticWriteWorkflow(
@@ -162,20 +143,20 @@ def write(
                     "success": False,
                     "error": {
                         "code": "bad_mode",
-                        "message": f"非法 --mode: {mode}，可选 auto/heavy/light/pipeline",
+                        "message": f"非法 --mode: {mode}，可选 auto/heavy/light",
                     },
                 },
                 json_mode=True,
             )
         else:
-            console.print(f"[bold red]✗[/bold red] 非法 --mode: {mode}，可选 auto/heavy/light/pipeline")
+            console.print(f"[bold red]✗[/bold red] 非法 --mode: {mode}，可选 auto/heavy/light")
         raise typer.Exit(code=2)
     try:
         result = workflow.run()
         # Phase 5（巡检自愈）：写章成功 → 清除历史 last_error（区分系统异常 vs 正常）
         # 注意：StateMachine 构造后必须 load() 才能 save()，否则会覆盖 progress 全部字段
         try:
-            from agent.core.state_machine import StateMachine
+            from agent.core.engine.state_machine import StateMachine
 
             _sm = StateMachine(project_path)
             _sm.load()
@@ -204,7 +185,7 @@ def write(
             )
             return
         status = "通过" if result.quality_passed else "未完全通过"
-        engine_label = "Agentic" if mode != "pipeline" else "M5"
+        engine_label = "Agentic"
         console.print(
             f"\n[bold green]✓ {engine_label} 写章完成[/bold green] "
             f"第 {result.chapter_num} 章 · {result.word_count} 字 · "
@@ -223,7 +204,7 @@ def write(
         # Phase 5（巡检自愈）：记录 last_error + 累加连续失败计数，供自动化区分「等待用户决策」并触发告警
         # 注意：StateMachine 构造后必须 load() 才能 save()，否则会覆盖 progress 全部字段
         try:
-            from agent.core.state_machine import StateMachine
+            from agent.core.engine.state_machine import StateMachine
 
             _sm = StateMachine(project_path)
             _sm.load()
@@ -261,7 +242,7 @@ def write(
         _rescued = _rescue_disk_chapter(project_path)
         if _rescued is not None:
             try:
-                from agent.core.state_machine import StateMachine as _SM2
+                from agent.core.engine.state_machine import StateMachine as _SM2
 
                 _s2 = _SM2(project_path)
                 _s2.load()
@@ -280,7 +261,7 @@ def write(
         # Phase 5（巡检自愈）：记录 last_error + 累加连续失败计数，供自动化区分「系统异常」并触发告警
         # 注意：StateMachine 构造后必须 load() 才能 save()，否则会覆盖 progress 全部字段
         try:
-            from agent.core.state_machine import StateMachine
+            from agent.core.engine.state_machine import StateMachine
 
             _sm = StateMachine(project_path)
             _sm.load()
@@ -297,5 +278,5 @@ def write(
                 json_mode=True,
             )
         else:
-            console.print(f"\n[bold red]✗ M5 失败[/bold red] {e}")
+            console.print(f"\n[bold red]✗ 写章失败[/bold red] {e}")
         raise typer.Exit(code=1) from e

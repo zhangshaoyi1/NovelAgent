@@ -12,7 +12,7 @@ def list_snapshots(
     """M7 设定集快照 - 列出所有快照"""
     from pathlib import Path
 
-    from agent.core.setting_manager import SettingManager
+    from agent.core.story.setting_manager import SettingManager
 
     project_path = Path(project_dir)
     enforce_gate(str(project_path), "list_snapshots")

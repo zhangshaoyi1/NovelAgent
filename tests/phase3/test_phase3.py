@@ -17,7 +17,7 @@ from agent.core.llmops import (
     TracedLLMClient,
     set_tracer,
 )
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.state_machine import State, StateMachine
 
 
 def _make_project(tmp_path: Path, n_chapters: int = 0, foreshadows: str = "") -> Path:

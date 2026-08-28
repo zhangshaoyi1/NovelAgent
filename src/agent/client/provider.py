@@ -15,7 +15,7 @@ from urllib.request import Request, urlopen
 
 from agent.client.config import LLMConfig
 from agent.client.types import LLMResponse
-from agent.core.exceptions import LLMError
+from agent.core.base.exceptions import LLMError
 
 
 class LLMProvider(ABC):

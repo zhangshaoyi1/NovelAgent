@@ -15,7 +15,7 @@ from pathlib import Path
 import frontmatter
 import pytest
 
-from agent.core.genre_pack import (
+from agent.core.registry.genre_pack import (
     GenreManifest,
     GenrePack,
     GenrePackRegistry,

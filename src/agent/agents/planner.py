@@ -25,9 +25,9 @@ from pydantic import BaseModel, Field, ValidationError
 from rich.console import Console
 
 from agent.client import LLMClient
-from agent.core.method_style import load_method_text  # G11：写作方法模板
-from agent.core.setting_manager import SettingManager
-from agent.core.structured_output import StructuredOutputError
+from agent.core.story.method_style import load_method_text  # G11：写作方法模板
+from agent.core.story.setting_manager import SettingManager
+from agent.core.base.structured_output import StructuredOutputError
 from agent.prompts import G11_METHOD_INSTRUCTION_TEMPLATE  # G11：方法模板注入常量
 
 

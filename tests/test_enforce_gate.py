@@ -13,8 +13,8 @@ from pathlib import Path
 import pytest
 import typer
 
-from agent.core.command_router import COMMAND_REGISTRY
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.command_router import COMMAND_REGISTRY
+from agent.core.engine.state_machine import State, StateMachine
 
 
 def test_gate_map_covers_all_registered_commands() -> None:

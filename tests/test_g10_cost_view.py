@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.core.events import ProgressEventBus
+from agent.core.engine.events import ProgressEventBus
 
 
 class _FakeTracer:

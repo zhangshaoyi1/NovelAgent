@@ -2,7 +2,7 @@
 
 import pytest
 
-from agent.core.context import ContextEngine, ContextItem
+from agent.core.infra.context import ContextEngine, ContextItem
 
 
 def _items() -> list[ContextItem]:

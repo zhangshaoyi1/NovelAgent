@@ -64,7 +64,7 @@ def reset_state(
 
     try:
         if target:
-            from agent.core.state_machine import State
+            from agent.core.engine.state_machine import State
 
             target_state = State(target.upper())
             result = recovery.reset_to_state(target_state)

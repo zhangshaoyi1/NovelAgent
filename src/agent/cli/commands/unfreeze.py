@@ -13,7 +13,7 @@ def unfreeze(
     """M7 冻结字段管理 - 解冻指定字段（仅当前会话有效）"""
     from pathlib import Path
 
-    from agent.core.setting_manager import SettingManager
+    from agent.core.story.setting_manager import SettingManager
 
     project_path = Path(project_dir)
     enforce_gate(str(project_path), "unfreeze")

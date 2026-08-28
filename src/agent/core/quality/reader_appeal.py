@@ -24,14 +24,13 @@ from typing import Any
 
 from rich.console import Console
 
-from agent.core.chapters import (  # G6：公共章节读取 helper（消除根因 B6-3 重复实现）
+from agent.core.story.chapters import (  # G6：公共章节读取 helper（消除根因 B6-3 重复实现）
     iter_chapter_texts,
     list_chapter_files,
     read_chapters_text,
     strip_frontmatter,
     take_chapter_files,
 )
-from agent.client import LLMClient
 from agent.utils import parse_llm_json
 
 
@@ -256,7 +255,7 @@ class ReaderAppealScorer:
 
     def __init__(
         self,
-        llm_client: LLMClient | None = None,
+        llm_client: Any | None = None,
         console: Console | None = None,
     ) -> None:
         self._llm = llm_client
@@ -265,8 +264,9 @@ class ReaderAppealScorer:
         self._last_eval: dict[str, dict] = {}
 
     @property
-    def llm(self) -> LLMClient:
+    def llm(self) -> Any:
         if self._llm is None:
+            from agent.client import LLMClient
             self._llm = LLMClient()
         return self._llm
 

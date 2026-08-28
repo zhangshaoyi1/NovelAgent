@@ -79,7 +79,7 @@ def list_projects() -> list[dict[str, Any]]:
 
 def get_project_state(name: str) -> dict[str, Any]:
     """读取项目状态机：当前状态 / 模式 / 进度 / 当前可用命令。"""
-    from agent.core.state_machine import StateMachine
+    from agent.core.engine.state_machine import StateMachine
 
     pdir = project_path(name)
     sm = StateMachine(pdir)
@@ -150,7 +150,7 @@ def get_chapters(name: str) -> list[dict[str, Any]]:
 
 def get_command_meta() -> list[dict[str, Any]]:
     """全量命令元数据（名称 / 描述 / 用法 / 门禁），供前端渲染可用操作。"""
-    from agent.core.command_router import COMMAND_REGISTRY
+    from agent.core.engine.command_router import COMMAND_REGISTRY
 
     return [
         {
@@ -169,7 +169,7 @@ def list_genres() -> list[dict[str, Any]]:
 
     返回 [{id, label, description}]，不加载全量内容（成本可控）。
     """
-    from agent.core.genre_pack import GenrePackRegistry
+    from agent.core.registry.genre_pack import GenrePackRegistry
 
     try:
         return GenrePackRegistry().list_genres_light() or []

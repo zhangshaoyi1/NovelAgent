@@ -31,7 +31,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from agent.client import LLMClient
-from agent.core.setting_manager import SettingManager
+from agent.core.story.setting_manager import SettingManager
 from agent.prompts import (
     M12_CONFLICT_SYSTEM_PROMPT,
     M12_CONFLICT_USER_TEMPLATE,
@@ -45,7 +45,7 @@ from agent.utils import parse_llm_json
 
 # ============================================================
 # F12.1 设定冲突仲裁
-from agent.core.conflict_service import Conflict, ConflictReport, ConflictArbiter
+from agent.core.infra.conflict_service import Conflict, ConflictReport, ConflictArbiter
 # ============================================================
 # F12.2 内容审核
 # ============================================================

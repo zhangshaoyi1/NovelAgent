@@ -37,7 +37,7 @@ def decide_mainline_advance(
         返回 None 的情形：无支线 / 当前支线未定 / 已到最后一条支线 /
         已进入结局模式（拍板 5：结局段禁新线）/ 尚未越过区间上界。
     """
-    from agent.core.setting_manager import SettingManager
+    from agent.core.story.setting_manager import SettingManager
 
     project_dir = Path(project_dir)
     progress = state_machine.progress or {}

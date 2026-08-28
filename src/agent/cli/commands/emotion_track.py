@@ -35,7 +35,7 @@ def build_track(project_dir: str | Path) -> dict[str, Any]:
         {"chapters": [{"chapter", "target_tension", "written", "emotion"}],
          "written": 已写章数, "total": 目标章数, "empty": bool}
     """
-    from agent.core.payoff_script import load_payoff_script
+    from agent.core.story.payoff_script import load_payoff_script
 
     script = load_payoff_script(project_dir, enabled=True)
     chapters = script.get("chapters") or []
@@ -45,7 +45,7 @@ def build_track(project_dir: str | Path) -> dict[str, Any]:
     # 已写章数：state.progress.total_written → chapters/ 文件数
     written = 0
     try:
-        from agent.core.state_machine import StateMachine
+        from agent.core.engine.state_machine import StateMachine
 
         sm = StateMachine(project_dir)
         sm.load()
@@ -54,7 +54,7 @@ def build_track(project_dir: str | Path) -> dict[str, Any]:
         pass
     if written <= 0:
         try:
-            from agent.core.chapters import list_chapter_files
+            from agent.core.story.chapters import list_chapter_files
 
             written = len(list_chapter_files(project_dir))
         except Exception:  # noqa: BLE001

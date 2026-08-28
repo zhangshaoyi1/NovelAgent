@@ -6,8 +6,8 @@ from pathlib import Path
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import *
 
-from agent.core.command_router import commands_for_state
-from agent.core.state_machine import State
+from agent.core.engine.command_router import commands_for_state
+from agent.core.engine.state_machine import State
 
 
 @command(global_=True)

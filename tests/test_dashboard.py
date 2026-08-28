@@ -21,12 +21,12 @@ import pytest
 from typer.testing import CliRunner
 
 from agent.cli import app
-from agent.core.dashboard_aggregator import (
+from agent.core.infra.dashboard_aggregator import (
     ChapterInfo,
     DashboardAggregator,
     ForeshadowRow,
 )
-from agent.core.state_machine import State
+from agent.core.engine.state_machine import State
 from tests.conftest import make_project
 
 REPO_ROOT = Path(__file__).resolve().parent.parent

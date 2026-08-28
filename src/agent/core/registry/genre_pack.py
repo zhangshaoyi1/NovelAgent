@@ -31,7 +31,7 @@ from typing import Any
 
 import frontmatter
 
-from agent.core.registry import BaseRegistry
+from agent.core.base.registry import BaseRegistry
 
 
 # ============================================================

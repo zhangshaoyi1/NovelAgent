@@ -16,8 +16,8 @@ from pathlib import Path
 
 import pytest
 from agent.cli import app
-from agent.core.doctor import Doctor
-from agent.core.state_machine import State
+from agent.core.infra.doctor import Doctor
+from agent.core.engine.state_machine import State
 from typer.testing import CliRunner
 
 from tests.conftest import make_project
@@ -55,7 +55,7 @@ class TestDoctorHealthy:
         """Doctor 结果可经 doctor_to_dict 序列化，字段齐全"""
         _set_api_key(monkeypatch)
         d = make_project(tmp_path, n_chapters=3, state=State.WRITING)
-        from agent.core.doctor import doctor_to_dict
+        from agent.core.infra.doctor import doctor_to_dict
 
         data = doctor_to_dict(Doctor(d).check())
         assert isinstance(data, list) and data

@@ -29,10 +29,10 @@ from typing import Any, Callable
 from rich.console import Console
 
 from agent.client import LLMClient
-from agent.core.state_machine import Event, State, StateMachine
+from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.tools.builtins import set_project_context
-from agent.core.writer_agent import WriterAgent
-from agent.core.workflow_registry import workflow
+from agent.agents.writer_agent import WriterAgent
+from agent.core.engine.workflow_registry import workflow
 from agent.prompts import (
     M5_GENERATE_USER_TEMPLATE,
     M5_QUALITY_CHECK_SYSTEM_PROMPT,
@@ -49,8 +49,8 @@ from agent.workflows.m5_write_chapter import (
     M5WriteChapterWorkflow,
     PreValidationBlocked,
 )
-from agent.core.confirmation import is_architecture_confirmed
-from agent.core.evidence_chain import EvidenceChain
+from agent.core.quality.confirmation import is_architecture_confirmed
+from agent.core.story.evidence_chain import EvidenceChain
 from agent.prompts import format_open_debts, format_rag_context
 
 

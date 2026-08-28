@@ -24,7 +24,7 @@ from typing import Any, Callable
 
 from rich.console import Console
 
-from agent.core.consistency_checker import CheckTrigger, ConsistencyChecker, Severity
+from agent.core.quality.consistency_checker import CheckTrigger, ConsistencyChecker, Severity
 
 
 @dataclass

@@ -18,8 +18,8 @@ import frontmatter
 
 from agent.cli._app import app, command, console, typer
 from agent.cli._shared import emit_result, enforce_gate
-from agent.core.chapters import list_chapter_files, strip_frontmatter
-from agent.core.state_machine import State
+from agent.core.story.chapters import list_chapter_files, strip_frontmatter
+from agent.core.engine.state_machine import State
 
 
 @command(allowed_states=(State.WRITING, State.PAUSED, State.COMPLETED))

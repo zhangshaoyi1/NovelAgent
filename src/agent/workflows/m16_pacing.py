@@ -14,8 +14,8 @@ from pathlib import Path
 from typing import Any
 
 from agent.client import LLMClient
-from agent.core.pacing_store import Debt, Ledger, PacingStore
-from agent.core.workflow_registry import workflow
+from agent.core.story.pacing_store import Debt, Ledger, PacingStore
+from agent.core.engine.workflow_registry import workflow
 from agent.prompts import M16_PACING_SYSTEM_PROMPT, M16_PACING_USER_TEMPLATE
 from agent.utils import parse_llm_json
 

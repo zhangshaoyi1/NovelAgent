@@ -1,4 +1,4 @@
-﻿"""A3 反馈→定向改写闭环（用户好用核心能力）
+"""A3 反馈→定向改写闭环（用户好用核心能力）
 
 把用户针对某一章的反馈（"这章太拖" / "主角太蠢" / "感情戏不够"）变成**局部定向重写**，
 而不是只能整章回退或整本重跑。这是把"枪手"变成"听话的枪手"的关键黏性闭环。
@@ -29,9 +29,8 @@ from typing import Any
 import frontmatter
 from rich.console import Console
 
-from agent.core.guardrails import GateMode, Guardrails, build_guardrails
-from agent.client import LLMClient
-from agent.core.setting_manager import SettingManager
+from agent.core.quality.guardrails import GateMode, Guardrails, build_guardrails
+from agent.core.story.setting_manager import SettingManager
 
 
 # ============================================================
@@ -126,7 +125,7 @@ class FeedbackRewriter:
     def __init__(
         self,
         project_dir: str | Path,
-        llm_client: LLMClient | None = None,
+        llm_client: Any | None = None,
         guardrails: Guardrails | None = None,
         console: Console | None = None,
         learning_store: Any | None = None,
@@ -142,15 +141,16 @@ class FeedbackRewriter:
 
     # ---------------------------------------------------------- LLM 惰性
     @property
-    def llm(self) -> LLMClient:
+    def llm(self) -> Any:
         if self._llm is None:
+            from agent.client import LLMClient
             self._llm = LLMClient()
         return self._llm
 
     @property
     def learning_store(self):
         if self._learning_store is None:
-            from agent.core.learning_store import LearningStore
+            from agent.core.story.learning_store import LearningStore
 
             self._learning_store = LearningStore(self.project_dir)
         return self._learning_store

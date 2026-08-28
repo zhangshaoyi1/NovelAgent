@@ -20,8 +20,8 @@ import typer
 
 from agent.cli._shared import enforce_gate
 from agent.cli.commands.autowrite import autowrite
-from agent.core.events import build_run_summary, next_steps_for
-from agent.core.state_machine import State
+from agent.core.engine.events import build_run_summary, next_steps_for
+from agent.core.engine.state_machine import State
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
 from tests._g3_fakes import _StubEditor, _StubMemory, _StubPlanner, _make_plan
 from tests.conftest import _build_minimal_project

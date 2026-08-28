@@ -9,7 +9,7 @@ from typing import Optional
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import emit_result
 
-from agent.core.pacing_store import PacingStore
+from agent.core.story.pacing_store import PacingStore
 from agent.workflows.m16_pacing import PacingTracker
 
 

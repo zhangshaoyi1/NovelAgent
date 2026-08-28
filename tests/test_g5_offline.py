@@ -15,7 +15,7 @@ from pathlib import Path
 from rich.console import Console
 
 from agent.agents.evaluator import EvaluatorAgent
-from agent.core.reader_appeal import (
+from agent.core.quality.reader_appeal import (
     APPEAL_DIMENSIONS,
     APPEAL_DIM_FLOOR,
     APPEAL_PASS_LINE,

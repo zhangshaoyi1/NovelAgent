@@ -29,11 +29,11 @@ from rich.panel import Panel
 from rich.table import Table
 
 from agent.client import LLMClient
-from agent.core.setting_manager import SettingManager
-from agent.core.state_machine import Event, State, StateMachine
-from agent.core.confirmation import is_architecture_confirmed
-from agent.core.genre_pack import first_genre
-from agent.core.workflow_registry import workflow
+from agent.core.story.setting_manager import SettingManager
+from agent.core.engine.state_machine import Event, State, StateMachine
+from agent.core.quality.confirmation import is_architecture_confirmed
+from agent.core.registry.genre_pack import first_genre
+from agent.core.engine.workflow_registry import workflow
 from agent.prompts import M3_SYSTEM_PROMPT, M3_USER_PROMPT_TEMPLATE
 from agent.utils import parse_llm_json
 
@@ -208,7 +208,7 @@ class M3OutlineWorkflow:
         # G11：写作方法模板注入（project/method.md 存在即追加；缺失/关闭不注入）
         if self.method_enabled:
             try:
-                from agent.core.method_style import load_method_text
+                from agent.core.story.method_style import load_method_text
                 from agent.prompts import G11_METHOD_INSTRUCTION_TEMPLATE
 
                 method_text, _name = load_method_text(self.project_dir, enabled=True)

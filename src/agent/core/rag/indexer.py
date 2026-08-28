@@ -1,4 +1,4 @@
-﻿"""索引器（增量 A / T02）
+"""索引器（增量 A / T02）
 
 ``Indexer`` 负责把项目知识（world / sublines / characters / relations / foreshadows /
 已写章节）切片、嵌入、写入本地向量库 + BM25 兜底索引。
@@ -19,7 +19,6 @@ import re
 from pathlib import Path
 from typing import Any
 
-from agent.client import LLMClient
 from agent.core.rag._types import Chunk
 from agent.core.rag.bm25 import BM25Index
 from agent.core.rag.vector_store import LocalVectorStore
@@ -35,13 +34,18 @@ class Indexer:
     ) -> None:
         self.project_dir = Path(project_dir)
         self.rag_dir = self.project_dir / ".state" / "rag"
-        self.embedder = embedder or LLMClient()
+        self.embedder = embedder or self._default_embedder()
         self.store = LocalVectorStore(self.rag_dir / "index.json")
         self.bm25 = BM25Index()
         # 加载已有索引（增量 index_chapter 基于现有索引追加）
         self.store.load()
         if self.store.chunks:
             self.bm25.index(self.store.chunks)
+
+    @staticmethod
+    def _default_embedder() -> Any:
+        from agent.client import LLMClient
+        return LLMClient()
 
     # ============================================================
     # 切片

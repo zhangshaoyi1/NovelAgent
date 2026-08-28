@@ -4,7 +4,7 @@ from rich.console import Console
 from rich.panel import Panel
 
 from agent.cli._app import app, command, console
-from agent.core.philosophy import render_text
+from agent.core.story.philosophy import render_text
 
 
 @command(global_=True)

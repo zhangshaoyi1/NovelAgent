@@ -26,7 +26,7 @@ for _finder, _name, _ispkg in pkgutil.iter_modules([str(_workflows_dir)]):
 
 
 # 提供便捷查询接口（委托到 WorkflowRegistry）
-from agent.core.workflow_registry import get_workflow, list_workflows, registry
+from agent.core.engine.workflow_registry import get_workflow, list_workflows, registry
 
 __all__ = [
     "get_workflow",

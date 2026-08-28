@@ -3,6 +3,7 @@
 - PlannerAgent：架构师（产出 Master Plan）
 - EditorAgent：主编 / 一致性仲裁
 - EvaluatorAgent：评测员（全书「不崩」终审 + 自动回溯修复）
+- WriterAgent：自主写章 Agent（Phase 1，Writer + Critic 内联）
 
 ⚠ 旧版文件名（*_agent.py）已废弃，新代码使用新文件名（无后缀）。
 """
@@ -24,6 +25,7 @@ from agent.agents.planner import (
     PlannerAgent,
     QualityTargets,
 )
+from agent.agents.writer_agent import WriterAgent
 
 __all__ = [
     "PlannerAgent",
@@ -39,4 +41,5 @@ __all__ = [
     "NovelHealthReport",
     "DimensionResult",
     "RepairPlan",
+    "WriterAgent",
 ]

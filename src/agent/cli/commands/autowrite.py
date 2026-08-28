@@ -15,7 +15,7 @@ from typing import Any
 
 from agent.cli._app import app, command, console, typer
 from agent.cli._shared import *  # enforce_gate / emit_result / make_quiet_console
-from agent.core.state_machine import State
+from agent.core.engine.state_machine import State
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
 
 
@@ -323,7 +323,7 @@ def autowrite(
     guardrails_obj = None
     gate_mode = "block"  # G10（拍板 5）：默认 block（AI 味命中拒落盘）；--ai-gate-mode advisory 显式放宽
     if bool(_cli_value(ai_gate, True)) and not bool(_cli_value(no_ai_gate, False)):
-        from agent.core.guardrails import (
+        from agent.core.quality.guardrails import (
             build_guardrails,
             load_fingerprints,
         )
@@ -346,7 +346,7 @@ def autowrite(
         gate_mode = gate_mode if gate_mode in ("advisory", "block") else "block"  # 非法值回退默认治理
 
     # ---- G10：预算计划解析（拍板 6：--no-auto-downgrade 最高 → --budget-plan 文件存在时键覆盖 CLI 默认 → CLI 默认）----
-    from agent.core.budget_plan import load_budget_plan
+    from agent.core.llm.budget_plan import load_budget_plan
 
     _bp_path = Path(_cli_value(budget_plan, None)) if _cli_value(budget_plan, None) else (
         project_path / ".state" / "budget.json"
@@ -391,7 +391,7 @@ def autowrite(
     _method_val = _cli_value(method, None)
     if _method_val and not bool(_cli_value(no_method, False)):
         try:
-            from agent.core.method_style import load_method_text
+            from agent.core.story.method_style import load_method_text
 
             _mt, _mn = load_method_text(
                 project_path, enabled=True, method=str(_method_val)
@@ -498,7 +498,7 @@ def autowrite(
                 _env["style"] = None
             else:
                 try:
-                    from agent.core.method_style import load_style_guide
+                    from agent.core.story.method_style import load_style_guide
 
                     _sg = load_style_guide(
                         project_path,
@@ -519,7 +519,7 @@ def autowrite(
                 _env["method"] = None
             else:
                 try:
-                    from agent.core.method_style import load_method_text
+                    from agent.core.story.method_style import load_method_text
 
                     _mt, _mn = load_method_text(project_path, enabled=True)
                     _env["method"] = {
@@ -534,7 +534,7 @@ def autowrite(
                 _env["payoff"] = None
             else:
                 try:
-                    from agent.core.payoff_script import load_payoff_script
+                    from agent.core.story.payoff_script import load_payoff_script
 
                     _ps = load_payoff_script(project_path, enabled=True)
                     _env["payoff"] = {

@@ -15,7 +15,7 @@ from pathlib import Path
 
 from pydantic import BaseModel
 
-from agent.core.structured_output import (
+from agent.core.base.structured_output import (
     StructuredOutputError,
     extract_json,
     pydantic_to_json_schema,

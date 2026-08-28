@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Type, Optional
 
-from agent.core.registry import BaseRegistry
+from agent.core.base.registry import BaseRegistry
 
 
 class Workflow:
@@ -49,7 +49,7 @@ def workflow(
 
     用法::
 
-        from agent.core.workflow_registry import workflow
+        from agent.core.engine.workflow_registry import workflow
 
         @workflow("m1_config")
         class M1ConfigWorkflow:

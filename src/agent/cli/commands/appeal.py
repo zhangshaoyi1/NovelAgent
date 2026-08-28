@@ -1,4 +1,4 @@
-﻿"""appeal 命令 —— B1 迷爱看评分（读者吸引力）
+"""appeal 命令 —— B1 迷爱看评分（读者吸引力）
 
 对指定章节（或自定义文本）跑真 LLM「迷爱看」6 维评分：钩子强度 / 爽点密度 / 代入感 /
 人物弧光 / 世界观新颖度 / 情绪曲线。直接回答「读者会不会爱看」。
@@ -19,7 +19,7 @@ from pathlib import Path
 import frontmatter
 from agent.cli._app import app, command, console, typer
 from agent.cli._shared import emit_result, make_quiet_console, print_cost_summary
-from agent.core.state_machine import State
+from agent.core.engine.state_machine import State
 
 
 @command(allowed_states=(State.WRITING, State.PAUSED, State.COMPLETED))
@@ -93,7 +93,7 @@ def appeal(
                 synopsis = wc[idx: idx + 300]
 
     from agent.client import LLMClient
-    from agent.core.reader_appeal import ReaderAppealScorer
+    from agent.core.quality.reader_appeal import ReaderAppealScorer
 
     # ---- G7（补充边界 3，修复 R3-3）：接线 tracer —— 复用 agent_service.py 行 80-82 模式 ----
     from agent.core.llmops import TraceStore, TracedLLMClient, set_tracer
@@ -109,7 +109,7 @@ def appeal(
 
     # ---- G7：人话总结行填充（拍板 2；--no-human-summary 时不填充 → 展示层跳过）----
     if not bool(getattr(no_human_summary, "default", no_human_summary)):
-        from agent.core.reader_appeal import build_appeal_summary_lines
+        from agent.core.quality.reader_appeal import build_appeal_summary_lines
 
         report.summary_lines = build_appeal_summary_lines(report)
 

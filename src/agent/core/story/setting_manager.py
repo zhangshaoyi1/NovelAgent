@@ -25,7 +25,7 @@ from typing import Any
 
 import frontmatter
 
-from agent.core.exceptions import FrozenFieldError
+from agent.core.base.exceptions import FrozenFieldError
 from agent.utils import safe_remove
 
 

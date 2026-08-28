@@ -3,7 +3,7 @@
 import asyncio
 import time
 
-from agent.core.agent_loop import AgentAction, AgentLoop
+from agent.core.engine.agent_loop import AgentAction, AgentLoop
 from agent.core.tools.base import Tool, ToolRegistry, ToolResult
 
 

@@ -40,7 +40,7 @@ class TestBaseRegistry:
 
 class TestWorkflowRegistry:
     def test_workflow_decorator(self):
-        from agent.core.workflow_registry import workflow, registry, get_workflow, list_workflows
+        from agent.core.engine.workflow_registry import workflow, registry, get_workflow, list_workflows
 
         @workflow("test_wf")
         class TestWorkflow:
@@ -51,7 +51,7 @@ class TestWorkflowRegistry:
         assert "test_wf" in list_workflows()
 
     def test_workflow_default_name(self):
-        from agent.core.workflow_registry import workflow, registry, get_workflow
+        from agent.core.engine.workflow_registry import workflow, registry, get_workflow
 
         # 不传 id 时用类名小写
         @workflow()

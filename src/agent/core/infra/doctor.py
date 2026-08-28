@@ -1,4 +1,4 @@
-﻿"""健康体检 doctor（增量 F）
+"""健康体检 doctor（增量 F）
 
 只读诊断：分模块检查项目目录 / 状态机 / 设定集(DB) / RAG 索引 / 依赖可用性，
 给出修复建议命令（fix_command）。doctor 只读取、绝不修改任何项目文件。
@@ -23,7 +23,7 @@ from typing import Any
 
 import frontmatter
 
-from agent.core.state_machine import State
+from agent.core.engine.state_machine import State
 
 
 @dataclass

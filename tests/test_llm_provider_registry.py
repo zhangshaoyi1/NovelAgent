@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.core.exceptions import LLMError
+from agent.core.base.exceptions import LLMError
 from agent.client import (
     LLMClient,
     LLMConfig,

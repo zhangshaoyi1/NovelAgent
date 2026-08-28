@@ -14,8 +14,8 @@ import frontmatter
 import pytest
 
 from agent.client import LLMClient, LLMResponse
-from agent.core.feedback_rewriter import FeedbackRewriter, RewriteResult
-from agent.core.guardrails import Guardrails
+from agent.core.quality.feedback_rewriter FeedbackRewriter, RewriteResult
+from agent.core.quality.guardrails Guardrails
 from agent.service.agent_service import AgentService
 
 
@@ -137,7 +137,7 @@ def test_rewrite_records_learning(tmp_path):
     rewriter = FeedbackRewriter(d, llm_client=_fake_llm(REWRITTEN))
     rewriter.rewrite(2, "感情戏不够")
 
-    from agent.core.learning_store import LearningStore
+    from agent.core.story.learning_store import LearningStore
 
     items = LearningStore(d).load()
     fb = [x for x in items if x.category == "feedback_rewrite"]

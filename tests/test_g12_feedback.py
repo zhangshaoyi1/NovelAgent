@@ -14,7 +14,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.core.pacing_store import PacingStore
+from agent.core.story.pacing_store import PacingStore
 from agent.cli.commands.reader_feedback import add_feedback, list_feedback
 
 

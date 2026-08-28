@@ -13,7 +13,7 @@ import json
 from pathlib import Path
 
 from agent.cli import app
-from agent.core.learning_store import Learning, LearningStore
+from agent.core.story.learning_store import Learning, LearningStore
 from agent.client import LLMResponse
 from agent.workflows.m17_learn import LearningMiner
 from typer.testing import CliRunner

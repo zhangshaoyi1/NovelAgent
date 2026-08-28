@@ -6,8 +6,8 @@ from pathlib import Path
 
 import pytest
 
-from agent.core.command_router import CommandRouter
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.command_router import CommandRouter
+from agent.core.engine.state_machine import State, StateMachine
 
 
 @pytest.fixture

@@ -13,7 +13,7 @@ def list_genres() -> None:
     使用示例：
       novel-agent list-genres
     """
-    from agent.core.genre_pack import GenrePackRegistry
+    from agent.core.registry.genre_pack import GenrePackRegistry
 
     registry = GenrePackRegistry()
     genres = registry.list_available()

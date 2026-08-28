@@ -15,8 +15,8 @@ from __future__ import annotations
 import typer
 
 from agent.cli._app import app, command, console
-from agent.core.compose_runner import run_compose
-from agent.core.state_machine import State
+from agent.core.infra.compose_runner import run_compose
+from agent.core.engine.state_machine import State
 
 
 @command(

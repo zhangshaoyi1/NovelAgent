@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from agent.client import LLMClient, LLMResponse
-from agent.core.reader_appeal import (
+from agent.core.quality.reader_appeal import (
     _EVAL_DIM_LABELS,
     _EVAL_SYSTEM_PROMPT,
     ReaderAppealScorer,

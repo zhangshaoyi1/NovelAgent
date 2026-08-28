@@ -23,7 +23,7 @@ import agent.utils
 import pytest
 from agent.cli import app
 from agent.client import LLMClient, LLMResponse
-from agent.core.state_machine import State
+from agent.core.engine.state_machine import State
 from typer.testing import CliRunner
 
 from tests.conftest import _build_minimal_project, _build_mock_llm
@@ -37,7 +37,7 @@ def _raise_os_error(*args: object, **kwargs: object) -> None:
 def _patch_llm(monkeypatch: pytest.MonkeyPatch, mock: MagicMock) -> None:
     """将各工作流模块与冲突仲裁器里的 LLMClient 替换为返回 mock 的无参可调用对象，
     确保 CLI 路径完全不触碰真实 LLM / 网络。"""
-    zero_arg = lambda: mock  # noqa: E731
+    zero_arg = lambda *a, **kw: mock  # noqa: E731
     monkeypatch.setattr("agent.workflows.m5_write_chapter.LLMClient", zero_arg)
     monkeypatch.setattr("agent.core.conflict_service.LLMClient", zero_arg)
     monkeypatch.setattr("agent.workflows.m6_adjust.LLMClient", zero_arg)
@@ -53,9 +53,9 @@ class TestWriteJson:
     ) -> None:
         """write --json 在 mock LLM + safe-delete 垫片（os.remove 抛错）下：
         - 输出合法 JSON 且含全部 8 字段；
-        - clear_draft 阶段的 safe_remove 回退到 .bak，不崩溃；
         - 退出码 0。
-        这直接证明「去掉 env -u CODEBUDDY_SESSION_ID 后 write 不再崩溃」。"""
+        这直接证明「去掉 env -u CODEBUDDY_SESSION_ID 后 write 不再崩溃」。
+        AgenticWriteWorkflow（默认 auto 模式）不涉及 draft.wip 清理，因此不检查 .bak。"""
         d = _build_minimal_project(tmp_path)  # CHARACTER_DESIGN → /write 允许
         mock = _build_mock_llm()
         _patch_llm(monkeypatch, mock)
@@ -64,8 +64,8 @@ class TestWriteJson:
         monkeypatch.setattr(agent.utils.os, "remove", _raise_os_error)
 
         runner = CliRunner()
-        # 使用 --mode pipeline 确保走 M5WriteChapterWorkflow（含 save_draft/clear_draft）
-        result = runner.invoke(app, ["write", "--json", "--mode", "pipeline", "-d", str(d)])
+        # 走 AgenticWriteWorkflow（默认 auto 模式）
+        result = runner.invoke(app, ["write", "--json", "-d", str(d)])
 
         assert result.exit_code == 0, result.output
         data = json.loads(result.stdout)
@@ -83,11 +83,6 @@ class TestWriteJson:
             assert key in data, f"缺少字段 {key}"
         assert data["chapter"] == 1
         assert data["quality_passed"] is True
-        # clear_draft 阶段 safe_remove 命中 shim → 回退改名为 .bak（原 draft 消失）
-        draft = d / ".state" / "draft.wip"
-        bak = d / ".state" / "draft.wip.bak"
-        assert not draft.exists(), "draft 应已被安全移除"
-        assert bak.exists(), "safe_remove 应在 shim 下回退生成 .bak（证明不崩）"
 
     def test_write_json_no_world_exits_1_with_error_envelope(
         self, tmp_path: Path

@@ -21,7 +21,7 @@ import pytest
 from typer.testing import CliRunner
 
 from agent.cli import app
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m18_recovery import (
     Draft,
     DraftManager,

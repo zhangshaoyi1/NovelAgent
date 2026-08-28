@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.agents.evaluator import DimensionResult, EvaluatorAgent, NovelHealthReport
-from agent.core.reader_appeal import (
+from agent.core.quality.reader_appeal import (
     APPEAL_DIMENSIONS,
     ReaderAppealReport,
     build_appeal_summary_lines,

@@ -30,9 +30,9 @@ def inject_genre(
     """
     from pathlib import Path
 
-    from agent.core.genre_pack import GenrePackRegistry
-    from agent.core.injected_trope_store import InjectedTropeStore
-    from agent.core.setting_manager import SettingManager
+    from agent.core.registry.genre_pack import GenrePackRegistry
+    from agent.core.story.injected_trope_store import InjectedTropeStore
+    from agent.core.story.setting_manager import SettingManager
 
     project_path = Path(project_dir)
     enforce_gate(str(project_path), "inject_genre")

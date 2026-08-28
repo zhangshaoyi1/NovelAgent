@@ -11,7 +11,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from agent.cli.commands.emotion_track import build_track, render_ascii
-from agent.core.payoff_script import build_payoff_script, save_payoff_script
+from agent.core.story.payoff_script build_payoff_script, save_payoff_script
 
 
 def _make_project_with_script(tmp_path: Path, total: int = 10) -> Path:
@@ -28,7 +28,7 @@ def test_build_track_empty(tmp_path: Path) -> None:
 
 
 def test_build_track_written(tmp_path: Path) -> None:
-    from agent.core.state_machine import StateMachine
+    from agent.core.engine.state_machine import StateMachine
 
     proj = _make_project_with_script(tmp_path, total=10)
     sm = StateMachine(proj)

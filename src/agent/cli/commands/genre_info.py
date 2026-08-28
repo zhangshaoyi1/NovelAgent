@@ -15,7 +15,7 @@ def genre_info(
     使用示例：
       novel-agent genre-info xiuxian
     """
-    from agent.core.genre_pack import GenrePackRegistry
+    from agent.core.registry.genre_pack import GenrePackRegistry
 
     registry = GenrePackRegistry()
     try:

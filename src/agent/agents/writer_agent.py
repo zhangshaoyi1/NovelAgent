@@ -1,4 +1,4 @@
-﻿"""WriterAgent —— 自主写章 Agent（Phase 1，Writer + Critic 内联）
+"""WriterAgent —— 自主写章 Agent（Phase 1，Writer + Critic 内联）
 
 把 Phase 0 工具层 + Phase 1 Agentic Loop 组装为一个**可自主写一章**的 Agent：
 
@@ -27,11 +27,11 @@ from typing import Any, Awaitable, Callable, Optional
 from pydantic import ValidationError
 from rich.console import Console
 
-from agent.core.agent_loop import AgentAction, AgentLoop
+from agent.core.engine.agent_loop import AgentAction, AgentLoop
 from agent.client import LLMClient
 from agent.core.tools import registry as default_registry
 from agent.core.tools.base import Tool, ToolRegistry, ToolResult
-from agent.core.structured_output import StructuredOutputError
+from agent.core.base.structured_output import StructuredOutputError
 
 # 写作人设（与 M5 创作系统提示同源，保证风格一致）
 _WRITER_BASE = (
@@ -168,7 +168,7 @@ class WriterAgent:
                     temperature=0.82,
                     max_tokens=6000,
                     enable_thinking=False,
-                    strict=True,  # G4 开启 strict=True 强校验
+                    strict=True,
                 )
                 return AgentAction(**data)
             except (ValidationError, StructuredOutputError) as ve:  # noqa: BLE001 - G4 精确捕获

@@ -33,7 +33,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from agent.core.workflow_registry import workflow
+from agent.core.engine.workflow_registry import workflow
 
 import frontmatter
 from jinja2 import Environment, FileSystemLoader, select_autoescape
@@ -42,9 +42,9 @@ from rich.panel import Panel
 from rich.table import Table
 
 from agent.client import LLMClient
-from agent.core.setting_manager import SettingManager
-from agent.core.state_machine import State, StateMachine
-from agent.core.confirmation import is_architecture_confirmed
+from agent.core.story.setting_manager import SettingManager
+from agent.core.engine.state_machine import State, StateMachine
+from agent.core.quality.confirmation import is_architecture_confirmed
 from agent.prompts import (
     M6_ADJUST_ROUTE_SYSTEM_PROMPT,
     M6_ADJUST_ROUTE_USER_TEMPLATE,

@@ -18,7 +18,7 @@ from types import SimpleNamespace
 from rich.console import Console
 
 from agent.agents.evaluator import NovelHealthReport
-from agent.core.guardrails import (
+from agent.core.quality.guardrails import (
     AI_FLAVOR_RULE_ID,
     GateMode,
     Guardrails,

@@ -20,7 +20,7 @@ import typer
 from typer.testing import CliRunner
 
 from agent.cli.commands.autowrite import autowrite
-from agent.core.guardrails import _DEFAULT_AI_FLAVOR_WORDS
+from agent.core.quality.guardrails _DEFAULT_AI_FLAVOR_WORDS
 from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
 
 

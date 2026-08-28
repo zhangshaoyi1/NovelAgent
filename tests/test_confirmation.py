@@ -11,7 +11,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.core.confirmation import is_architecture_confirmed
+from agent.core.quality.confirmation import is_architecture_confirmed
 
 # 不应再直接 import m14_architecture 的工作流（T-4 解耦目标）
 # 注意：agent 包实际位于 <repo_root>/src/agent（pytest pythonpath=["src"]），

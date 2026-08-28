@@ -37,10 +37,10 @@ from typing import Any, Callable, Optional
 
 from rich.console import Console
 
-from agent.core.chapters import iter_chapter_texts  # G6：公共章节读取 helper（根因 B6-3）
-from agent.core.state_machine import StateMachine
+from agent.core.story.chapters import iter_chapter_texts  # G6：公共章节读取 helper（根因 B6-3）
+from agent.core.engine.state_machine import StateMachine
 from agent.workflows.m10_rollback import M10RollbackWorkflow
-from agent.core.reader_appeal import (  # G5：迷爱看六维双闸
+from agent.core.quality.reader_appeal import (  # G5：迷爱看六维双闸
     ReaderAppealScorer,
     APPEAL_DIMENSIONS,
     APPEAL_PASS_LINE,
@@ -1053,7 +1053,7 @@ class EvaluatorAgent:
     def _mainline_stats(self) -> tuple[set[str], int]:
         """双保险统计（补充边界 3）：progress.mainline_visited ∪ 章 frontmatter subline 反推。"""
         import frontmatter as _fm
-        from agent.core.setting_manager import SettingManager
+        from agent.core.story.setting_manager import SettingManager
 
         sm = StateMachine(self.project_dir)
         try:

@@ -8,7 +8,7 @@
 新增命令只需在该命令模块写一次：
 
     from agent.cli.registry import command
-    from agent.core.state_machine import State
+    from agent.core.engine.state_machine import State
 
     @command(allowed_states=(State.WRITING,))
     def write(...): ...
@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from typing import Any, Callable, Iterable, Optional
 
-from agent.core.command_router import COMMAND_REGISTRY, CommandMeta
+from agent.core.engine.command_router import COMMAND_REGISTRY, CommandMeta
 
 
 def command(

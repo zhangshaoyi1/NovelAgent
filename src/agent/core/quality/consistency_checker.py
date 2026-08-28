@@ -541,7 +541,7 @@ class ConsistencyChecker:
     def _get_arbiter(self) -> "Any":
         """懒加载 ConflictArbiter（避免循环导入）"""
         if self._arbiter is None:
-            from agent.core.conflict_service import ConflictArbiter
+            from agent.core.infra.conflict_service import ConflictArbiter
 
             self._arbiter = ConflictArbiter(self.project_dir)
         return self._arbiter

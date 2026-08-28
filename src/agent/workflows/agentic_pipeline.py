@@ -29,10 +29,10 @@ from typing import Any, Callable, Optional
 from rich.console import Console
 
 from agent.client import LLMClient
-from agent.core.state_machine import Event, State, StateMachine, TRANSITIONS
-from agent.core.setting_manager import SettingManager
-from agent.core.confirmation import is_architecture_confirmed
-from agent.core.workflow_registry import workflow
+from agent.core.engine.state_machine import Event, State, StateMachine, TRANSITIONS
+from agent.core.story.setting_manager import SettingManager
+from agent.core.quality.confirmation import is_architecture_confirmed
+from agent.core.engine.workflow_registry import workflow
 import frontmatter
 
 
@@ -293,7 +293,7 @@ class AgenticPipelineWorkflow:
         self._quality_flags: list[dict[str, Any]] = []
 
         # ---- G9：事件总线（未订阅 on_event / progress_file=None 时零落盘开销）----
-        from agent.core.events import ProgressEventBus
+        from agent.core.engine.events import ProgressEventBus
 
         self._event_bus = ProgressEventBus(
             on_event=on_event,
@@ -377,7 +377,7 @@ class AgenticPipelineWorkflow:
                 pass
             score_fn = None
             try:
-                from agent.core.reader_appeal import ReaderAppealScorer
+                from agent.core.quality.reader_appeal import ReaderAppealScorer
 
                 # 默认接真 LLM 评分（B1）；LLM 不可用时 scorer 内部自动降级为离线安全默认。
                 score_fn = ReaderAppealScorer(llm_client=self.llm).score
@@ -386,7 +386,7 @@ class AgenticPipelineWorkflow:
             appeal_scorer = None
             if self.appeal_gate:
                 try:
-                    from agent.core.reader_appeal import ReaderAppealScorer
+                    from agent.core.quality.reader_appeal import ReaderAppealScorer
 
                     appeal_scorer = ReaderAppealScorer(llm_client=self.llm)
                 except Exception:  # noqa: BLE001
@@ -920,7 +920,7 @@ class AgenticPipelineWorkflow:
     def _emit_failure(self, step: str, reason: str, severity: str = "error") -> None:
         """G9：发射 failure 事件（含 next_steps；确定性零 LLM，不阻断主流程）。"""
         try:
-            from agent.core.events import next_steps_for
+            from agent.core.engine.events import next_steps_for
 
             self._emit_event(
                 "failure",
@@ -983,7 +983,7 @@ class AgenticPipelineWorkflow:
         self._quality_flags.append(flag)
         # 持久化（追加写，原子）
         try:
-            from agent.core.guardrails import DEFAULT_GUARDRAIL_CONFIG_PATH  # 仅引用，避免误用
+            from agent.core.quality.guardrails import DEFAULT_GUARDRAIL_CONFIG_PATH  # 仅引用，避免误用
             qf_path = self.project_dir / ".state" / "chapter_quality_flags.json"
             qf_path.parent.mkdir(parents=True, exist_ok=True)
             existing: list[dict[str, Any]] = []
@@ -1002,7 +1002,7 @@ class AgenticPipelineWorkflow:
     def _compute_eta_s(self, target: int) -> Optional[int]:
         """G9：ETA = 已写章平均耗时 × 剩余章数（拍板 4；无可计算时 None）。"""
         try:
-            from agent.core.events import compute_eta_s
+            from agent.core.engine.events import compute_eta_s
 
             return compute_eta_s(self._event_bus.events, target, self._current_total())
         except Exception:  # noqa: BLE001 - ETA 计算失败降级 None，不阻断
@@ -1036,7 +1036,7 @@ class AgenticPipelineWorkflow:
         try:
             import time
 
-            from agent.core.events import build_run_summary
+            from agent.core.engine.events import build_run_summary
 
             result.failures = [
                 e for e in self._event_bus.events if e.get("type") == "failure"
@@ -1381,7 +1381,7 @@ class AgenticPipelineWorkflow:
             try:
                 if self.guardrails is not None:
                     self.guardrails.register_fingerprints(ch_num, ch_text)
-                    from agent.core.guardrails import save_fingerprints
+                    from agent.core.quality.guardrails import save_fingerprints
                     fp_path = self.project_dir / ".state" / "chapter_fingerprints.json"
                     save_fingerprints(self.guardrails.fingerprint_db, fp_path)
             except Exception:  # noqa: BLE001 - 指纹持久化失败不阻断

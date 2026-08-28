@@ -14,7 +14,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from agent.core.learning_store import Learning, LearningStore
+from agent.core.story.learning_store import Learning, LearningStore
 from agent.prompts import E_LEARN_EXTRACT_SYSTEM_PROMPT, E_LEARN_EXTRACT_USER_TEMPLATE
 from agent.utils import parse_llm_json
 

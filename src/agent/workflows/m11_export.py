@@ -29,12 +29,12 @@ from typing import Any
 
 import frontmatter
 from rich.console import Console
-from agent.core.workflow_registry import workflow
+from agent.core.engine.workflow_registry import workflow
 from rich.panel import Panel
 
 from agent.client import LLMClient
-from agent.core.setting_manager import SettingManager
-from agent.core.state_machine import StateMachine
+from agent.core.story.setting_manager import SettingManager
+from agent.core.engine.state_machine import StateMachine
 from agent.utils import parse_llm_json
 
 

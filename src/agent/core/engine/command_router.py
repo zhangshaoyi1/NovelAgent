@@ -16,7 +16,7 @@ import re
 from dataclasses import dataclass
 from typing import Any, Callable
 
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.state_machine import State, StateMachine
 
 
 # ============================================================

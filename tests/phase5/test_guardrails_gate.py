@@ -2,7 +2,7 @@
 
 import json
 
-from agent.core.guardrails import (
+from agent.core.quality.guardrails import (
     DEFAULT_GUARDRAIL_CONFIG_PATH,
     GateMode,
     Guardrails,
@@ -105,7 +105,7 @@ def test_pipeline_hard_gate_blocks_publication(tmp_path):
     """硬门禁集成：命中禁用词的章节被拒绝发布并终止流水线。"""
     import tempfile
 
-    from agent.core.guardrails import Guardrails
+    from agent.core.quality.guardrails Guardrails
     from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
 
     class _StubChapter:
@@ -140,7 +140,7 @@ def test_pipeline_hard_gate_blocks_publication(tmp_path):
 
 def test_pipeline_advisory_mode_does_not_block(tmp_path):
     """advisory 默认模式：告警但不阻断出章。"""
-    from agent.core.guardrails import Guardrails
+    from agent.core.quality.guardrails Guardrails
     from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
 
     class _StubChapter:

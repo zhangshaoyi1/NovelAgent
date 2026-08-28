@@ -20,8 +20,8 @@ def load_genre(
     """
     from pathlib import Path
 
-    from agent.core.genre_pack import GenrePackRegistry
-    from agent.core.hook_dispatcher import dispatch_genre_hooks
+    from agent.core.registry.genre_pack import GenrePackRegistry
+    from agent.core.infra.hook_dispatcher import dispatch_genre_hooks
 
     registry = GenrePackRegistry()
     try:

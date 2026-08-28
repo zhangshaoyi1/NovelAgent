@@ -18,8 +18,8 @@ import typer
 from typer.testing import CliRunner
 
 from agent.cli import app  # 触发全部命令注册（导入副作用）
-from agent.core.command_router import COMMAND_REGISTRY, get_command_meta
-from agent.core.state_machine import State, StateMachine
+from agent.core.engine.command_router import COMMAND_REGISTRY, get_command_meta
+from agent.core.engine.state_machine import State, StateMachine
 
 
 def test_all_auxiliary_commands_registered() -> None:
