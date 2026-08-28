@@ -13,6 +13,7 @@ API：
 - POST /api/projects     新建项目（非交互 start）
 - POST /api/run          通用命令运行（command + args）
 - GET  /api/runs/{id}/events  SSE 事件流
+- GET  /api/runs/{id}        run 状态查询（前端轮询兜底，防 SSE 丢事件假死）
 - GET  /api/state/{name} 项目状态 JSON（前端轮询刷新用）
 - GET  /api/genres       题材列表
 """
@@ -370,3 +371,23 @@ async def run_events(run_id: str) -> StreamingResponse:
             )
 
     return StreamingResponse(gen(), media_type="text/event-stream")
+
+
+@app.get("/api/runs/{run_id}")
+def run_status(run_id: str) -> JSONResponse:
+    """run 状态查询：供前端在 SSE 失效/丢事件时轮询兜底，弥补「假死」体验。"""
+    run = runner.run_manager.runs.get(run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    data: dict[str, Any] = {
+        "done": run["done"],
+        "exit_code": run["exit_code"],
+        "project": run["project"],
+        "command": run["command"],
+    }
+    if run["done"]:
+        try:
+            data["state"] = state.get_project_state(run["project"]).get("state")
+        except Exception:  # noqa: BLE001 - 状态读取失败不阻断返回
+            data["state"] = None
+    return JSONResponse(data)

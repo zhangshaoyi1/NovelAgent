@@ -76,12 +76,14 @@ async function runCommand(project, command, argv, consoleObj, onDone) {
 }
 
 function streamEvents(runId, consoleObj, onDone) {
-  const es = new EventSource('/api/runs/' + runId + '/events');
-  es.addEventListener('log', (e) => appendLog(consoleObj.logEl, JSON.parse(e.data).text));
-  es.addEventListener('progress', (e) => appendProgress(consoleObj.timelineEl, JSON.parse(e.data)));
-  es.addEventListener('done', (e) => {
-    const d = JSON.parse(e.data);
-    es.close();
+  let finished = false;
+  let es = null;
+
+  /* 幂等收尾：SSE 与轮询兜底都可能触发，只执行一次 */
+  const finish = (d) => {
+    if (finished) return;
+    finished = true;
+    if (es) es.close();
     const ok = d.exit_code === 0;
     consoleObj.statusEl.innerHTML = ok
       ? '<span class="badge ok">完成 ✓</span>'
@@ -89,8 +91,56 @@ function streamEvents(runId, consoleObj, onDone) {
     if (d.state) consoleObj.statusEl.insertAdjacentHTML('beforeend',
       ` <span class="badge">新状态：${d.state}</span>`);
     if (typeof onDone === 'function') onDone(d);
-  });
-  es.onerror = () => { es.close(); };
+  };
+
+  es = new EventSource('/api/runs/' + runId + '/events');
+  es.addEventListener('log', (e) => appendLog(consoleObj.logEl, JSON.parse(e.data).text));
+  es.addEventListener('progress', (e) => appendProgress(consoleObj.timelineEl, JSON.parse(e.data)));
+  es.addEventListener('done', (e) => finish(JSON.parse(e.data)));
+
+  // 实时通道失败兜底：EventSource 默认自动重连，连续多次仍失败才转轮询
+  let errors = 0;
+  es.onerror = () => {
+    if (finished) return;
+    errors++;
+    if (errors >= 3) {
+      es.close();
+      appendLog(consoleObj.logEl, '实时通道中断，转为轮询结果…');
+      pollRunStatus(runId, consoleObj, finish);
+    }
+  };
+
+  // 看门狗：无论如何长时间没收到 done 就启动轮询兜底，
+  // 即使 SSE 丢失了 done 事件也能取回结果，避免界面「假死」。
+  setTimeout(() => {
+    if (!finished) pollRunStatus(runId, consoleObj, finish);
+  }, 25000);
+}
+
+/* 轮询兜底：SSE 失效 / 丢事件时直接从后端取回 run 结束状态 */
+const _runPollers = new Set();
+function pollRunStatus(runId, consoleObj, finish) {
+  if (_runPollers.has(runId)) return;
+  _runPollers.add(runId);
+
+  async function tick() {
+    let j = null;
+    try {
+      const resp = await fetch('/api/runs/' + runId);
+      if (resp.status === 404) { _runPollers.delete(runId); return; }
+      if (!resp.ok) throw new Error('HTTP ' + resp.status);
+      j = await resp.json();
+    } catch (e) {
+      j = null; // 网络抖动，稍后重试
+    }
+    if (j && j.done) {
+      _runPollers.delete(runId);
+      finish({ exit_code: j.exit_code == null ? 0 : j.exit_code, state: j.state });
+      return;
+    }
+    setTimeout(tick, 2000);
+  }
+  tick();
 }
 
 /* 新建项目（POST /api/projects）并跟踪 start 进度 */
