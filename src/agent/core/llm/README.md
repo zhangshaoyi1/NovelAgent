@@ -9,6 +9,7 @@
 | `budget_plan.py` | 预算规划（BudgetPlan, ChapterBudget - token 用量预估） |
 | `llm_client.py` | CoreLLMClient（核心 LLM 客户端抽象） |
 | `model_routing.py` | 模型路由（ModelRouter - 按用途选择模型） |
+| `embedding_router.py` | Embedding 路由（将 embedding provider 选择逻辑从 client/ 上移至此层，避免 client/ 直接依赖 core/rag/） |
 
 ## 依赖规则
 - 依赖 base/（异常定义）
