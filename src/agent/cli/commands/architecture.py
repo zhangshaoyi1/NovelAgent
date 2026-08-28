@@ -28,8 +28,11 @@ def architecture(
     from agent.workflows.m14_architecture import M14ArchitectureWorkflow
 
     project_path = Path(project_dir)
-    enforce_gate(str(project_path), "architecture")
-    if not (project_path / "world.md").exists():
+    # 门禁：初稿生成须在 ARCHITECTING 阶段；带 --feedback 的迭代修订对任意状态放行
+    #（由 workflow 校验 architecture.md 已存在），满足「任何阶段都能按意见修改架构」。
+    if not feedback:
+        enforce_gate(str(project_path), "architecture")
+    if not (project_path / "world.md").exists() and not feedback:
         console.print(
             f"[bold red]✗[/bold red] {project_path / 'world.md'} 不存在，请先运行 start"
         )

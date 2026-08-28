@@ -330,6 +330,12 @@ class M1ConfigWorkflow:
             info_density=style.get("info_density", ""),
             story_core=user_input.story_core,
         )
+        # A 系列：问答面板确定的作者偏好注入初始生成 prompt
+        from agent.workflows.qa_sync import format_qa_constraints
+
+        qa_text = format_qa_constraints(self.project_dir, "world")
+        if qa_text:
+            user_prompt += qa_text
 
         resp = self.llm.chat_creative(
             messages=[

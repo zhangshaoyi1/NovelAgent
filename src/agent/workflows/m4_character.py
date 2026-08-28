@@ -86,14 +86,22 @@ class M4CharacterWorkflow:
     # ============================================================
     # 入口
     # ============================================================
-    def run(self) -> M4Result:
+    def run(self, feedback: str = "") -> M4Result:
         """运行 M4 工作流
+
+        Args:
+            feedback: 作者修改意见（非空则基于现有角色产物迭代修订，不改变状态）
 
         Raises:
             RuntimeError: 状态不符 / world.md 不存在 / 架构未确认
         """
         self.state_machine.load()
-        if self.state_machine.state not in (State.OUTLINING, State.CHARACTER_DESIGN):
+        # 迭代修订（feedback 非空）对任意状态放行（命令层已将门禁交给前置文件校验）；
+        # 仅初稿生成要求处于大纲之后阶段。
+        if not feedback and self.state_machine.state not in (
+            State.OUTLINING,
+            State.CHARACTER_DESIGN,
+        ):
             raise RuntimeError(
                 f"当前状态 {self.state_machine.state.value} 不允许角色设计，"
                 f"需先运行 /outline 进入 OUTLINING 状态"
@@ -114,8 +122,11 @@ class M4CharacterWorkflow:
         world_info = self._extract_world_info(world_data)
         title = arch_data["title"]
 
-        self.console.print("\n[cyan]正在生成主角路线、角色档案与关系网...[/cyan]")
-        m4 = self._llm_generate_characters(world_info, arch_data, outline_data)
+        action = "迭代修订角色设计" if feedback else "生成主角路线、角色档案与关系网"
+        self.console.print(f"\n[cyan]正在{action}...[/cyan]")
+        m4 = self._llm_generate_characters(
+            world_info, arch_data, outline_data, feedback
+        )
 
         protagonist_route = m4.get("protagonist_route") or {}
         characters = m4.get("characters") or []
@@ -232,6 +243,7 @@ class M4CharacterWorkflow:
         world_info: dict[str, Any],
         arch_data: dict[str, Any],
         outline_data: dict[str, Any],
+        feedback: str = "",
     ) -> dict[str, Any]:
         arch = arch_data["architecture"] or {}
         pt = arch.get("protagonist_triple", {}) or {}
@@ -266,6 +278,44 @@ class M4CharacterWorkflow:
             sublines_table=sublines_table,
             golden_finger_info=world_info.get("golden_finger_info", "") or "（世界设定未登记金手指，请按架构描述生成）",
         )
+        # A 系列：问答面板确定的作者偏好注入初始生成 prompt（迭代修订以作者意见为准）
+        if not feedback:
+            from agent.workflows.qa_sync import format_qa_constraints
+
+            qa_text = format_qa_constraints(self.project_dir, "characters")
+            if qa_text:
+                user_prompt += qa_text
+
+        # 反馈修订：带上现有角色产物 + 作者意见，让 LLM 在既有基础上修改而非推倒重来
+        if feedback:
+            current = ""
+            proto_file = self.project_dir / "protagonist_route.md"
+            chars = []
+            if proto_file.exists():
+                try:
+                    current = proto_file.read_text(encoding="utf-8")[-4000:]
+                except OSError:
+                    current = ""
+            chars_dir = self.project_dir / "characters"
+            if chars_dir.exists():
+                try:
+                    chars = sorted(
+                        p.name for p in chars_dir.glob("*.md")
+                    )[:10]
+                except OSError:
+                    chars = []
+            user_prompt += (
+                "\n\n【作者修改意见】请严格在『现有角色设计』基础上按以下意见修订，"
+                "只改动被要求的部分，其余保持稳定：\n"
+                f"{feedback}\n"
+                + (
+                    f"\n【现有角色文件】（供参考，非逐字保留）\n"
+                    f"主角路线：\n{current or '（无）'}\n"
+                    f"角色列表：" + (", ".join(chars) if chars else "（无）")
+                    if (current or chars)
+                    else ""
+                )
+            )
 
         raw = self.llm.chat_creative(
             messages=[

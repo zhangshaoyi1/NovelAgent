@@ -10,6 +10,9 @@ def design_characters(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"
     ),
+    feedback: str = typer.Option(
+        "", "--feedback", "-f", help="作者修改意见（非空则基于现有角色产物迭代修订）"
+    ),
 ) -> None:
     """M4 角色设计 - 主角路线 + 角色档案 + 关系网 + 伏笔表 + 金手指登记
 
@@ -21,17 +24,22 @@ def design_characters(
       - golden_finger_registration.md（金手指登记，冻结）
 
     架构未确认或未生成大纲时拒绝执行。
+    带 --feedback 时按作者意见在现有角色设计基础上迭代修订。
 
     Args:
         project_dir: 小说项目目录
+        feedback: 作者修改意见
     """
     from pathlib import Path
 
     from agent.workflows.m4_character import M4CharacterWorkflow
 
     project_path = Path(project_dir)
-    enforce_gate(str(project_path), "design_characters")
-    if not (project_path / "world.md").exists():
+    # 门禁：角色设计须在大纲后阶段；带 --feedback 的迭代修订对任意状态放行
+    #（由 workflow 校验前置文件已存在），满足「任何阶段都能按意见修改角色设计」。
+    if not feedback:
+        enforce_gate(str(project_path), "design_characters")
+    if not (project_path / "world.md").exists() and not feedback:
         console.print(
             f"[bold red]✗[/bold red] {project_path / 'world.md'} 不存在，请先运行 start"
         )
@@ -39,11 +47,12 @@ def design_characters(
 
     workflow = M4CharacterWorkflow(project_dir=project_path)
     try:
-        result = workflow.run()
+        result = workflow.run(feedback=feedback)
         console.print(
             f"\n[bold green]✓ M4 完成[/bold green] "
             f"{len(result.characters)} 名角色 / {len(result.foreshadows)} 条伏笔 / "
             f"{len(result.golden_finger_registration.get('growth_stages', []) or [])} 金手指阶段"
+            + ("（按意见修订）" if feedback else "")
         )
     except Exception as e:
         console.print(f"\n[bold red]✗ M4 失败[/bold red] {e}")

@@ -370,7 +370,10 @@ def autowrite(
         try:
             from agent.cli.commands.cost_plan import build_cost_plan  # 跨命令复用（设计 §12 #9）
 
-            _plan = build_cost_plan(project_path)  # chapters 走缺省链
+            # 传用户请求的目标章数（>0 时），避免预估落入缺省链（默认 300）而与实测目标不符
+            _plan = build_cost_plan(
+                project_path, chapters if chapters > 0 else None
+            )  # chapters 走缺省链
             _est = next(
                 (t for t in (_plan.get("tiers") or []) if t.get("tier") == _cost_tier_final),
                 {},

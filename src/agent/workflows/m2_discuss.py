@@ -204,6 +204,13 @@ class M2DiscussWorkflow:
             story_core=world_info["story_core"],
             user_input=self._format_history_for_prompt(history),
         )
+        # A 系列：问答面板确定的作者偏好注入首轮 prompt（后续轮次沿用上下文）
+        if not history:
+            from agent.workflows.qa_sync import format_qa_constraints
+
+            qa_text = format_qa_constraints(self.project_dir, "discussion")
+            if qa_text:
+                user_prompt += qa_text
 
         messages = [
             {"role": "system", "content": M2_SYSTEM_PROMPT},

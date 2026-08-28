@@ -166,31 +166,306 @@ function guideStep(project,  command, argv, label) {
   runCommand(project, command, argv, c, () => location.reload());
 }
 
+/* 阶段生成：跑对应命令让 Agent 生成真实内容，完成后刷新回显 */
+function genStage(project, command, argv, label) {
+  const c = startRunConsole('生成：' + (label || command));
+  runCommand(project, command.replace(/^\//, ''), argv, c, () => location.reload());
+}
+
+/* 脉络讨论：读取讨论输入框的内容，作为预设讨论发给 /discuss --message，完成后刷新回显讨论纪要 */
+function sendDiscussion(project) {
+  const el = document.getElementById('discuss-message');
+  const msg = (el && el.value.trim()) || '';
+  if (!msg) { alert('请先在上方输入你想讨论的内容'); return; }
+  const c = startRunConsole('讨论（脉络）');
+  runCommand(project, 'discuss', ['--message', msg], c, () => location.reload());
+}
+
+/* 反馈修改：把用户意见作为 feedback 传给对应命令，由 LLM 按其意见迭代修改并回显 */
+function reviseStage(project, stage, taId) {
+  const el = document.getElementById(taId);
+  const feedback = (el && el.value.trim()) || '';
+  if (!feedback) { alert('请先输入你想怎么改'); return; }
+  let command, argv, label;
+  if (stage === 'architecture') {
+    command = 'architecture'; argv = ['--feedback', feedback]; label = '迭代故事架构';
+  } else if (stage === 'outline') {
+    command = 'outline'; argv = ['--feedback', feedback]; label = '迭代创作大纲';
+  } else if (stage === 'characters') {
+    command = 'design_characters'; argv = ['--feedback', feedback]; label = '迭代角色设计';
+  } else {
+    alert('暂不支持该阶段的反馈修改'); return;
+  }
+  const c = startRunConsole(label);
+  runCommand(project, command, argv, c, () => location.reload());
+}
+
+/* 阶段产物保存到本地：把编辑后的 textarea 内容通过接口写回项目文件 */
+async function saveStage(project, rel, taId) {
+  const el = document.getElementById(taId);
+  if (!el) { alert('未找到编辑框'); return; }
+  const fd = new FormData();
+  fd.append('rel', rel);
+  fd.append('content', el.value);
+  try {
+    const res = await fetch('/p/' + project + '/save-stage', { method: 'POST', body: fd });
+    const data = await res.json();
+    if (data && data.ok) { alert('已保存到本地：' + data.message); }
+    else { alert('保存失败：' + ((data && data.message) || res.status)); }
+  } catch (e) {
+    alert('保存失败：' + e);
+  }
+}
+
+/* 确认某阶段：记录上游基线，消除「待复核」标记，随后刷新标签 */
+async function confirmStage(project, stageKey) {
+  const fd = new FormData();
+  fd.append('stage', stageKey);
+  let data;
+  try {
+    const res = await fetch('/api/stages/' + project + '/confirm', { method: 'POST', body: fd });
+    data = await res.json();
+  } catch (e) {
+    alert('确认失败：' + e);
+    return;
+  }
+  if (data && data.ok) {
+    refreshStageTags(project);
+  } else {
+    alert('确认失败：' + ((data && data.message) || '未知错误'));
+  }
+}
+
+/* 刷新页面上的阶段标签（已确认 / 待复核）与受影响提示 */
+async function refreshStageTags(project) {
+  let list = [];
+  try {
+    const res = await fetch('/api/stages/' + project);
+    const j = await res.json();
+    list = Array.isArray(j) ? j : [];
+  } catch (e) {
+    return;
+  }
+  const byKey = {};
+  list.forEach(function (s) { byKey[s.key] = s; });
+  document.querySelectorAll('.stage-card').forEach(function (card) {
+    // 阶段卡上找确认按钮，其 data-stage 标识阶段
+    const btn = card.querySelector('button[data-confirm-stage]');
+    if (!btn) return;
+    const key = btn.getAttribute('data-confirm-stage');
+    const st = byKey[key];
+    if (!st) return;
+    // 更新 h2 内的标签
+    const h2 = card.querySelector('h2');
+    if (!h2) return;
+    h2.querySelectorAll('.stage-tag').forEach(function (t) { t.remove(); });
+    if (st.confirmed) {
+      const span = document.createElement('span');
+      span.className = 'badge ok stage-tag';
+      span.textContent = '已确认';
+      h2.appendChild(span);
+    }
+    if (st.affected) {
+      const span = document.createElement('span');
+      span.className = 'badge warn stage-tag';
+      span.title = st.reason || '';
+      span.textContent = '⚠ 待复核';
+      h2.appendChild(span);
+    }
+    // 更新受影响提示行
+    let hint = card.querySelector('.stage-affected-hint');
+    if (st.affected) {
+      if (!hint) {
+        hint = document.createElement('p');
+        hint.className = 'muted small stage-affected-hint';
+        card.insertBefore(hint, card.querySelector('p.muted'));
+      }
+      hint.textContent = st.reason + '。点「🔍 复核检查单」让 Agent 找出未覆盖/冲突项，处理后重新确认。';
+    } else if (hint) {
+      hint.remove();
+    }
+    // 更新「复核检查单」按钮：仅受影响时显示
+    const rvBtn = card.querySelector('button[data-review-stage]');
+    if (rvBtn) rvBtn.style.display = st.affected ? '' : 'none';
+  });
+}
+
+/* ============================================================
+ * 复核检查单：上游改动后，逐条裁决 LLM 找出的未覆盖/冲突项
+ * ============================================================ */
+function ensureReviewModal() {
+  let overlay = document.getElementById('review-modal');
+  if (!overlay) {
+    overlay = document.createElement('div');
+    overlay.id = 'review-modal';
+    overlay.className = 'review-modal-overlay';
+    overlay.innerHTML = `
+      <div class="review-modal">
+        <div class="rm-head">
+          <span class="rm-title">复核检查单</span>
+          <button class="rm-close" onclick="closeReviewChecklist()">×</button>
+        </div>
+        <div class="rm-sub"></div>
+        <div class="rm-body"></div>
+      </div>`;
+    document.body.appendChild(overlay);
+  }
+  return overlay;
+}
+
+function closeReviewChecklist() {
+  const o = document.getElementById('review-modal');
+  if (o) o.style.display = 'none';
+}
+
+async function openReviewChecklist(project, stageKey) {
+  const overlay = ensureReviewModal();
+  overlay.style.display = 'flex';
+  overlay.querySelector('.rm-sub').textContent = '';
+  overlay.querySelector('.rm-body').innerHTML =
+    '<div class="rm-loading">读取复核检查单…</div>';
+  // 先读已保存条目；无则调用 LLM 生成
+  let items = [], summary = '', chapters = [];
+  try {
+    const res = await fetch('/api/review/' + project + '/items?stage=' + encodeURIComponent(stageKey));
+    const j = await res.json();
+    if (j && j.ok) { items = j.items || []; summary = j.summary || ''; chapters = j.affected_chapters || []; }
+  } catch (e) { /* 网络抖动忽略，直接走生成 */ }
+  if (items.length) {
+    renderReviewChecklist(overlay, project, stageKey, '', items, summary, chapters);
+  } else {
+    generateReviewChecklist(overlay, project, stageKey);
+  }
+}
+
+async function generateReviewChecklist(overlay, project, stageKey) {
+  const body = overlay.querySelector('.rm-body');
+  body.innerHTML = '<div class="rm-loading">Agent 正在对比上游改动，找出未覆盖 / 冲突项…</div>';
+  let j;
+  try {
+    const res = await fetch('/api/review/' + project + '?stage=' + encodeURIComponent(stageKey));
+    j = await res.json();
+  } catch (e) {
+    body.innerHTML = '<p class="rm-empty">生成失败：' + e + '</p>';
+    return;
+  }
+  if (!(j && j.ok)) {
+    body.innerHTML = '<p class="rm-empty">' + ((j && j.message) || '生成失败') + '</p>';
+    return;
+  }
+  renderReviewChecklist(overlay, project, stageKey,
+    (j.changed_upstreams || []).join('、'), j.items || [], j.summary || '',
+    j.affected_chapters || []);
+}
+
+function renderReviewChecklist(overlay, project, stageKey, changedLabel, items, summary, chapters) {
+  overlay.querySelector('.rm-sub').textContent = changedLabel ? '上游改动：' + changedLabel : '';
+  const body = overlay.querySelector('.rm-body');
+  const kindText = (k) => k === 'conflict' ? '冲突' : '未覆盖';
+  const sevText = { high: '高', medium: '中', low: '低' };
+  const statusText = { accepted: '已采纳', ignored: '已忽略' };
+  let html = '';
+  if (chapters && chapters.length) {
+    const sample = chapters.slice(0, 8).map(function (c) { return '第' + c.num + '章'; }).join('、');
+    const more = chapters.length > 8 ? '…等 ' + chapters.length + ' 章' : '';
+    html += `<p class="rm-chapters">⚠ 已写 ${chapters.length} 章，上游改动可能影响已写正文：${sample}${more}。建议抽查相关章节是否需要同步修订。</p>`;
+  }
+  if (items.length) {
+    html += '<p class="rm-total">共 ' + items.length + ' 条，请逐条裁决（采纳 = 据此调整下游内容；忽略 = 确认无需处理）。</p>';
+    items.forEach(function (it) {
+      const status = it.status || 'pending';
+      html += `<div class="rm-item" data-item-id="${it.id}">
+        <div class="rm-item-head">
+          <span class="rm-kind ${it.kind === 'conflict' ? 'rm-kind-conflict' : 'rm-kind-uncovered'}">${kindText(it.kind)}</span>
+          <span class="rm-sev rm-sev-${it.severity}">${sevText[it.severity] || it.severity}</span>
+          <strong class="rm-target">${escapeHtml(it.target || '')}</strong>
+        </div>
+        <p class="rm-issue">${escapeHtml(it.issue || '')}</p>
+        ${it.upstream_ref ? `<p class="rm-ref muted small">上游：${escapeHtml(it.upstream_ref)}</p>` : ''}
+        ${it.suggestion ? `<p class="rm-sug muted small">建议：${escapeHtml(it.suggestion)}</p>` : ''}
+        <div class="rm-actions">
+          ${status === 'pending'
+            ? `<button class="btn small" onclick="reviewDecision('${project}','${stageKey}','${it.id}','accepted')">✔ 采纳</button>
+               <button class="btn small" onclick="reviewDecision('${project}','${stageKey}','${it.id}','ignored')">忽略</button>`
+            : `<span class="badge ${status === 'accepted' ? 'ok' : ''}">${statusText[status]}</span>`}
+        </div>
+      </div>`;
+    });
+  } else {
+    html = '<p class="rm-empty">✓ 未发现需要调整的问题。</p>';
+  }
+  if (summary) html += `<p class="rm-summary">${escapeHtml(summary)}</p>`;
+  html += `<div class="rm-foot"><button class="btn small" onclick="generateReviewChecklist(
+    document.getElementById('review-modal'), '${project}', '${stageKey}')">🔄 重新生成</button></div>`;
+  body.innerHTML = html;
+}
+
+async function reviewDecision(project, stageKey, itemId, action) {
+  const fd = new FormData();
+  fd.append('stage', stageKey);
+  fd.append('item_id', itemId);
+  fd.append('action', action);
+  let j;
+  try {
+    const res = await fetch('/api/review/' + project + '/decision', { method: 'POST', body: fd });
+    j = await res.json();
+  } catch (e) {
+    alert('裁决失败：' + e);
+    return;
+  }
+  if (!(j && j.ok)) { alert('裁决失败：' + ((j && j.message) || '未知错误')); return; }
+  const item = document.querySelector('.rm-item[data-item-id="' + itemId + '"] .rm-actions');
+  if (item) {
+    const label = action === 'accepted' ? '已采纳' : '已忽略';
+    item.innerHTML = `<span class="badge ${action === 'accepted' ? 'ok' : ''}">${label}</span>`;
+  }
+}
+
+/* 转义 HTML，防止 LLM 输出注入 */
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 /* 向导：一键自动写书（compose 命令） */
+let composeMode = 'new'; // 'new' 开新书 / 'resume' 续写已有项目
+
+/* 开新书 / 续写已有项目 切换：只展示当前模式相关字段，减少选择负担 */
+function toggleComposeMode(mode) {
+  composeMode = mode;
+  document.querySelectorAll('.mode-switch-btn').forEach(function (b) {
+    b.classList.toggle('active', b.dataset.mode === mode);
+  });
+  const newEl = document.querySelector('.compose-new');
+  const resumeEl = document.querySelector('.compose-resume');
+  if (newEl) newEl.hidden = mode !== 'new';
+  if (resumeEl) resumeEl.hidden = mode !== 'resume';
+}
+
 function guideCompose(project) {
+  const mode = composeMode;
+  if (mode === 'resume') {
+    const dir = document.getElementById('compose-dir').value.trim();
+    if (!dir) { alert('请先在「已有项目」下拉框中选择要续写的项目'); return; }
+    const argv = ['--dir', dir, '--mode', document.getElementById('compose-mode').value];
+    const c = startRunConsole('一键续写（compose）');
+    runCommand(project, 'compose', argv, c, () => location.reload());
+    return;
+  }
+
   const name = document.getElementById('compose-name').value.trim();
-  const dir = document.getElementById('compose-dir').value.trim();
   const core = document.getElementById('compose-core').value.trim();
+  const genre = document.getElementById('compose-genre').value;
   const scope = document.getElementById('compose-scope').value;
-  const genre = document.getElementById('compose-genre').value.trim();
   const chapters = document.getElementById('compose-chapters').value.trim();
-  const mode = document.getElementById('compose-mode').value;
-  if (!name && !dir) {
-    alert('请至少填写「书名」或「已有项目目录」之一');
-    return;
-  }
-  if (!name && !core) {
-    alert('续写模式需填写「已有项目目录」；新书模式需填写「书名」与「一句话核心梗」');
-    return;
-  }
-  const argv = [];
-  if (name) argv.push('--name', name);
-  if (dir) argv.push('--dir', dir);
-  if (core) argv.push('--story-core', core);
-  argv.push('--scope', scope);
+  const cmode = document.getElementById('compose-mode').value;
+  if (!name) { alert('请填写「书名」'); return; }
+  if (!core) { alert('请填写「一句话核心梗」'); return; }
+
+  const argv = ['--name', name, '--story-core', core, '--scope', scope, '--mode', cmode];
   if (genre) argv.push('--genre', genre);
   if (chapters && chapters !== '0') argv.push('--chapters', chapters);
-  argv.push('--mode', mode);
   const c = startRunConsole('一键写书（compose）');
   runCommand(project, 'compose', argv, c, () => location.reload());
 }
@@ -273,4 +548,240 @@ document.addEventListener('DOMContentLoaded', function () {
       setAutonomy(project, v);
     }, 300);
   });
+});
+
+/* ============================================================
+ * Agent 引导式问答面板：挨个询问 → 选项 → 跳过(用默认) → 末轮补充 → 保存 / 据此生成
+ * ============================================================ */
+let qaState = null; // { project, stageKey, title, questions, answers, skipped, idx, sup }
+
+function ensureQaModal() {
+  let o = document.getElementById('qa-modal');
+  if (!o) {
+    o = document.createElement('div');
+    o.id = 'qa-modal';
+    o.className = 'qa-modal-overlay';
+    o.innerHTML = `
+      <div class="qa-modal">
+        <div class="qa-head"><span class="qa-title">问答引导</span>
+          <button class="qa-close" onclick="closeQaPanel()">×</button></div>
+        <div class="qa-progress"></div>
+        <div class="qa-body"></div>
+        <div class="qa-foot"></div>
+      </div>`;
+    document.body.appendChild(o);
+  }
+  return o;
+}
+
+function closeQaPanel() {
+  const o = document.getElementById('qa-modal');
+  if (o) o.style.display = 'none';
+}
+
+/* 打开问答面板：拉取模板 + 已保存结果，从第一问开始 */
+async function openQaPanel(project, stageKey) {
+  const o = ensureQaModal();
+  o.style.display = 'flex';
+  o.querySelector('.qa-progress').textContent = '';
+  o.querySelector('.qa-body').innerHTML = '<div class="qa-loading">加载问答模板…</div>';
+  o.querySelector('.qa-foot').innerHTML = '';
+  let j;
+  try {
+    const res = await fetch('/api/qa/' + project);
+    j = await res.json();
+  } catch (e) {
+    o.querySelector('.qa-body').innerHTML = '<p class="rm-empty">加载失败：' + escapeHtml(e) + '</p>';
+    return;
+  }
+  const tpl = j && j[stageKey];
+  if (!tpl || !tpl.questions || !tpl.questions.length) {
+    o.querySelector('.qa-body').innerHTML = '<p class="rm-empty">该阶段暂无可引导的问题。</p>';
+    return;
+  }
+  const saved = (tpl.saved && tpl.saved.answers) || {};
+  const savedSkip = (tpl.saved && tpl.saved.skipped) || {};
+  qaState = {
+    project: project,
+    stageKey: stageKey,
+    title: tpl.title || '',
+    questions: tpl.questions,
+    answers: {},
+    skipped: {},
+    sup: (tpl.saved && tpl.saved.supplementary) || '',
+    idx: 0,
+  };
+  // 预填已保存的回答，便于中途调整后重新保存
+  tpl.questions.forEach(function (q) {
+    if (saved[q.key]) { qaState.answers[q.key] = saved[q.key]; qaState.skipped[q.key] = !!savedSkip[q.key]; }
+  });
+  renderQaStep(o);
+}
+
+/* 渲染当前一问 + （末问）补充框，并重建底部按钮 */
+function renderQaStep(o) {
+  const s = qaState;
+  if (!s) return;
+  const total = s.questions.length;
+  const q = s.questions[s.idx];
+  const isLast = s.idx === total - 1;
+  const body = o.querySelector('.qa-body');
+  // 先取回补充框现值（重渲染时保留）
+  const supTa = body.querySelector('#qa-supplementary');
+  if (supTa) s.sup = supTa.value;
+
+  o.querySelector('.qa-progress').textContent =
+    (s.idx + 1) + ' / ' + total + ' · ' + s.title + ' · ' + q.key;
+
+  const cur = s.answers[q.key] || '';
+  const optsHtml = (q.options || []).map(function (op) {
+    const on = cur === op.label ? ' on' : '';
+    return `<button type="button" class="chip qa-opt${on}" data-label="${escapeHtml(op.label)}">${escapeHtml(op.label)}</button>`;
+  }).join('');
+
+  let html = `<div class="qa-q">${escapeHtml(q.question)}</div>`;
+  html += `<div class="qa-opts">${optsHtml}</div>`;
+  html += `<div class="qa-default muted small">💡 不选择则视为跳过，采用默认：<code>${escapeHtml(q.default_label || q.default || '无')}</code></div>`;
+  if (isLast) {
+    html += `<div class="qa-supp">
+      <label class="muted small">补充说明（可选）：把你额外想告诉 Agent 的偏好写在这里</label>
+      <textarea id="qa-supplementary" rows="3" placeholder="例如：男主再幽默一点；结局一定要留白……">${escapeHtml(s.sup)}</textarea>
+    </div>`;
+  }
+  body.innerHTML = html;
+
+  body.querySelectorAll('.qa-opt').forEach(function (b) {
+    b.addEventListener('click', function () {
+      body.querySelectorAll('.qa-opt').forEach(function (x) { x.classList.remove('on'); });
+      b.classList.add('on');
+      s.answers[q.key] = b.getAttribute('data-label');
+      s.skipped[q.key] = false;
+      renderQaFoot(o);
+    });
+  });
+  const supTa2 = body.querySelector('#qa-supplementary');
+  if (supTa2) supTa2.addEventListener('input', function () { s.sup = supTa2.value; });
+
+  renderQaFoot(o);
+}
+
+/* 底部按钮：上一问 / 跳过(用默认) / 下一问 / 保存 / 保存并据此生成 */
+function renderQaFoot(o) {
+  const s = qaState;
+  if (!s) return;
+  const q = s.questions[s.idx];
+  const isLast = s.idx === s.questions.length - 1;
+  const hasAnswer = !!(s.answers[q.key]);
+  const def = q.default_label || q.default || '默认';
+  let html = '<div class="qa-actions">';
+  if (s.idx > 0) html += `<button class="btn" onclick="qaPrev()">← 上一问</button>`;
+  if (!hasAnswer) html += `<button class="btn" onclick="qaSkip()">跳过（用默认：${escapeHtml(def)}）</button>`;
+  if (isLast) {
+    html += `<button class="btn primary" onclick="qaSave(false)">✔ 保存问答</button>`;
+    html += `<button class="btn primary" onclick="qaSave(true)">🚀 保存并据此生成</button>`;
+  } else {
+    html += `<button class="btn primary" onclick="qaNext()">下一问 →</button>`;
+  }
+  html += '</div>';
+  o.querySelector('.qa-foot').innerHTML = html;
+}
+
+function qaSkip() {
+  const s = qaState;
+  if (!s) return;
+  const q = s.questions[s.idx];
+  s.answers[q.key] = q.default_label || q.default || '';
+  s.skipped[q.key] = true;
+  if (s.idx < s.questions.length - 1) { s.idx++; renderQaStep(ensureQaModal()); }
+  else { renderQaStep(ensureQaModal()); }
+}
+
+/* 下一问：未选则视为跳过（用默认），避免卡住 */
+function qaNext() {
+  const s = qaState;
+  if (!s) return;
+  const q = s.questions[s.idx];
+  if (!s.answers[q.key]) {
+    s.answers[q.key] = q.default_label || q.default || '';
+    s.skipped[q.key] = true;
+  }
+  if (s.idx < s.questions.length - 1) { s.idx++; renderQaStep(ensureQaModal()); }
+}
+
+function qaPrev() {
+  const s = qaState;
+  if (!s) return;
+  if (s.idx > 0) { s.idx--; renderQaStep(ensureQaModal()); }
+}
+
+/* 保存问答；generate=true 时保存后直接触发该阶段生成命令 */
+async function qaSave(generate) {
+  const s = qaState;
+  if (!s) return;
+  const o = ensureQaModal();
+  const supTa = o.querySelector('#qa-supplementary');
+  if (supTa) s.sup = supTa.value;
+  // 兜底：未作答的题目一律按「跳过用默认」处理
+  s.questions.forEach(function (q) {
+    if (!s.answers[q.key]) {
+      s.answers[q.key] = q.default_label || q.default || '';
+      s.skipped[q.key] = true;
+    }
+  });
+  const fd = new FormData();
+  fd.append('stage', s.stageKey);
+  fd.append('payload', JSON.stringify({ answers: s.answers, skipped: s.skipped, supplementary: s.sup }));
+  let j;
+  try {
+    const res = await fetch('/api/qa/' + s.project, { method: 'POST', body: fd });
+    j = await res.json();
+  } catch (e) {
+    alert('保存失败：' + e);
+    return;
+  }
+  if (!(j && j.ok)) { alert('保存失败：' + ((j && j.message) || '未知错误')); return; }
+  refreshQaBadges();
+  if (generate) {
+    closeQaPanel();
+    // 复用阶段卡上的「生成」按钮，与手动点击走同一链路
+    const genBtn = document.querySelector('.stage-card button[data-gen-stage="' + s.stageKey + '"]');
+    if (genBtn) { genBtn.click(); return; }
+    location.reload();
+  } else {
+    o.querySelector('.qa-body').innerHTML = '<p class="rm-empty">✓ 问答已保存</p>';
+    o.querySelector('.qa-foot').innerHTML = '';
+    setTimeout(closeQaPanel, 700);
+  }
+}
+
+/* 刷新各阶段卡上的「已问答」徽标 */
+async function refreshQaBadges() {
+  const project = currentProjectName();
+  if (!project) return;
+  let j;
+  try {
+    const res = await fetch('/api/qa/' + project);
+    j = await res.json();
+  } catch (e) { return; }
+  if (!j) return;
+  document.querySelectorAll('.stage-card').forEach(function (card) {
+    const btn = card.querySelector('button[data-qa-btn]');
+    if (!btn) return;
+    const key = btn.getAttribute('data-qa-btn');
+    const saved = j[key] && j[key].saved;
+    const has = saved && saved.answers && Object.keys(saved.answers).length > 0;
+    const h2 = card.querySelector('h2');
+    if (!h2) return;
+    h2.querySelectorAll('.qa-tag').forEach(function (t) { t.remove(); });
+    if (has) {
+      const span = document.createElement('span');
+      span.className = 'badge ok qa-tag';
+      span.textContent = '已问答';
+      h2.appendChild(span);
+    }
+  });
+}
+
+document.addEventListener('DOMContentLoaded', function () {
+  refreshQaBadges();
 });

@@ -167,19 +167,15 @@ class M14ArchitectureWorkflow:
     def iterate(self, feedback: str) -> M14GenerateResult:
         """基于用户反馈迭代架构
 
+        迭代修订对任意状态放行（不改状态机、不推进阶段），仅要求 architecture.md 已存在；
+        因此用户在后续阶段（大纲/角色/写作/完成）也能回头按意见修改架构。
+
         Args:
             feedback: 作者修改意见（自然语言）
 
         Raises:
-            RuntimeError: architecture.md 不存在 / 状态不符
+            RuntimeError: architecture.md 不存在
         """
-        self.state_machine.load()
-        if self.state_machine.state != State.ARCHITECTING:
-            raise RuntimeError(
-                f"当前状态 {self.state_machine.state.value} 不允许迭代架构，"
-                f"需处于 ARCHITECTING 状态"
-            )
-
         if not self.architecture_file.exists():
             raise RuntimeError(
                 "architecture.md 不存在，请先运行 /architecture 生成初稿"
@@ -199,18 +195,22 @@ class M14ArchitectureWorkflow:
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         created_at = post.metadata.get("created_at", now)
+        # 迭代修订不推翻已确认状态：保留原 confirmed / confirmed_at（已确认则维持，
+        # 未确认则维持未确认），避免在后续阶段迭代导致下游阶段状态失真。
+        confirmed = post.metadata.get("confirmed") is True
+        confirmed_at = post.metadata.get("confirmed_at", "") if confirmed else ""
         new_version = current_version + 1
         self._save_architecture(
             title=title,
             architecture=new_arch,
-            confirmed=False,
-            confirmed_at="",
+            confirmed=confirmed,
+            confirmed_at=confirmed_at,
             version=new_version,
             created_at=created_at,
             updated_at=now,
         )
 
-        self._present_architecture(new_arch, version=new_version, confirmed=False)
+        self._present_architecture(new_arch, version=new_version, confirmed=confirmed)
         self.console.print(
             f"\n[bold green]✓ 架构已迭代到 v{new_version}[/bold green]："
             f"{self.architecture_file}"
@@ -349,37 +349,50 @@ class M14ArchitectureWorkflow:
     def _llm_generate_architecture(
         self, world_info: dict[str, str], discussion: str
     ) -> dict[str, Any]:
-        """调用 LLM 生成八维度架构"""
+        """调用 LLM 生成八维度架构
+
+        解析失败时重试一次（要求只输出纯 JSON）；两次均失败则明确抛错，
+        绝不静默写入残缺架构（否则作者在问答面板里确定的偏好会静默丢失）。
+        """
         user_prompt = M14_USER_PROMPT_TEMPLATE.format(
             title=world_info["title"],
             scope=world_info["scope"],
             tone=world_info["tone"],
             discussion=discussion or world_info["synopsis"] or "（无讨论纪要）",
         )
-        resp = self.llm.chat_creative(
-            messages=[
-                {"role": "system", "content": M14_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.7,
-            max_tokens=2500,
-            enable_thinking=False,
-        )
-        try:
-            return parse_llm_json(resp.text)
-        except ValueError:
-            # JSON 解析失败，降级为纯文本填充 story_core
-            return {
-                "story_core": resp.text[:200],
-                "protagonist_triple": {"who": "", "want": "", "obstacle": ""},
-                "main_plot": {"beginning": "", "development": "", "twist": "", "resolution": ""},
-                "sublines_preview": "",
-                "conflict_nodes": "",
-                "theme": "",
-                "ending": "",
-                "emotional_tone": "",
-                "synopsis": resp.text[:200],
-            }
+        # A 系列：问答面板确定的作者偏好注入初始生成 prompt
+        from agent.workflows.qa_sync import format_qa_constraints
+
+        qa_text = format_qa_constraints(self.project_dir, "architecture")
+        if qa_text:
+            user_prompt += qa_text
+
+        system_prompt = M14_SYSTEM_PROMPT
+        for attempt in (1, 2):
+            resp = self.llm.chat_creative(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.7,
+                max_tokens=4096,
+                enable_thinking=False,
+            )
+            try:
+                return parse_llm_json(resp.text)
+            except ValueError:
+                if attempt == 1:
+                    # 重试：强化「纯 JSON」约束，规避截断/多余文本导致的解析失败
+                    system_prompt = (
+                        M14_SYSTEM_PROMPT
+                        + "\n\n【重要】请只输出一个合法的 JSON 对象，"
+                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                    )
+                    continue
+                raise RuntimeError(
+                    "故事架构生成结果无法解析为 JSON（可能被截断或格式异常），"
+                    f"请重试。原始输出片段：{resp.text[:200]}"
+                )
 
     def _llm_iterate_architecture(
         self, title: str, current_arch: dict[str, Any], feedback: str
@@ -396,7 +409,7 @@ class M14ArchitectureWorkflow:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.7,
-            max_tokens=2500,
+            max_tokens=4096,
             enable_thinking=False,
         )
         try:

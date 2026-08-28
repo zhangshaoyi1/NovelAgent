@@ -81,14 +81,22 @@ class M3OutlineWorkflow:
     # ============================================================
     # 入口
     # ============================================================
-    def run(self) -> M3Result:
+    def run(self, feedback: str = "") -> M3Result:
         """运行 M3 工作流
+
+        Args:
+            feedback: 作者修改意见（非空则在此基础上迭代修订，不改变状态）
 
         Raises:
             RuntimeError: 状态不符 / world.md 不存在 / 架构未确认
         """
         self.state_machine.load()
-        if self.state_machine.state not in (State.ARCH_CONFIRMED, State.OUTLINING):
+        # 迭代修订（feedback 非空）对任意状态放行（命令层已将门禁交给前置文件校验）；
+        # 仅初稿生成要求处于架构确认后的阶段。
+        if not feedback and self.state_machine.state not in (
+            State.ARCH_CONFIRMED,
+            State.OUTLINING,
+        ):
             raise RuntimeError(
                 f"当前状态 {self.state_machine.state.value} 不允许生成大纲，"
                 f"需处于 ARCH_CONFIRMED 状态"
@@ -98,7 +106,7 @@ class M3OutlineWorkflow:
         if not world_data["exists"]:
             raise RuntimeError("world.md 不存在，请先运行 M1 配置")
 
-        # ★门禁：架构必须已确认
+        # ★门禁：架构必须已确认（生成或迭代大纲的前置）
         if not is_architecture_confirmed(self.project_dir):
             raise RuntimeError(
                 "故事架构尚未确认，请先运行 /confirm-architecture 后再生成大纲"
@@ -108,8 +116,9 @@ class M3OutlineWorkflow:
         world_info = self._extract_world_info(world_data)
         title = arch_data["title"]
 
-        self.console.print("\n[cyan]正在生成大纲与支线任务...[/cyan]")
-        outline = self._llm_generate_outline(world_info, arch_data)
+        action = "迭代修订大纲" if feedback else "生成大纲与支线任务"
+        self.console.print(f"\n[cyan]正在{action}...[/cyan]")
+        outline = self._llm_generate_outline(world_info, arch_data, feedback)
         synopsis = outline.get("synopsis", "")
         sublines = outline.get("sublines", []) or []
 
@@ -180,9 +189,16 @@ class M3OutlineWorkflow:
     # 内部：LLM 生成
     # ============================================================
     def _llm_generate_outline(
-        self, world_info: dict[str, str], arch_data: dict[str, Any]
+        self,
+        world_info: dict[str, str],
+        arch_data: dict[str, Any],
+        feedback: str = "",
     ) -> dict[str, Any]:
-        """调 LLM 生成 synopsis + sublines[]"""
+        """调 LLM 生成 synopsis + sublines[]
+
+        当 feedback 非空时，读取当前 outline.md 作为基础并结合意见修订，
+        LLM 在既有大纲基础上按作者意见修改，而非从零重写。
+        """
         arch = arch_data["architecture"] or {}
         pt = arch.get("protagonist_triple", {}) or {}
         mp = arch.get("main_plot", {}) or {}
@@ -218,6 +234,27 @@ class M3OutlineWorkflow:
                     )
             except Exception:  # noqa: BLE001 - 模板读取失败降级，不阻断大纲生成
                 pass
+        # A 系列：问答面板确定的作者偏好注入初始生成 prompt（迭代修订以作者意见为准）
+        if not feedback:
+            from agent.workflows.qa_sync import format_qa_constraints
+
+            qa_text = format_qa_constraints(self.project_dir, "outline")
+            if qa_text:
+                user_prompt += qa_text
+        # 反馈修订：带上现有大纲 + 作者意见，让 LLM 在既有基础上修改而非推倒重来
+        if feedback:
+            current = ""
+            if self.outline_file.exists():
+                try:
+                    current = self.outline_file.read_text(encoding="utf-8")[-4000:]
+                except OSError:
+                    current = ""
+            user_prompt += (
+                "\n\n【作者修改意见】请严格在『现有大纲』基础上按以下意见修订，"
+                "只改动被要求的部分，其余保持稳定：\n"
+                f"{feedback}\n"
+                + (f"\n【现有大纲】（供参考，非逐字保留）\n{current}" if current else "")
+            )
         # P1 修复（2026-08-21）：JSON 解析失败自动重试一次（截断多为瞬时，重试常可恢复），
         # 重试仍失败才降级占位（不再让用户被迫手动重建大纲）。
         last_text = ""

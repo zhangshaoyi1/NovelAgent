@@ -22,11 +22,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 from pathlib import Path
 from typing import Any
 
+import markdown as _md
+import frontmatter
 from fastapi import FastAPI, Form, HTTPException, Request
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -70,6 +73,7 @@ def home(request: Request) -> HTMLResponse:
 def project(request: Request, name: str) -> HTMLResponse:
     ps = state.get_project_state(name)
     meta = state.get_command_meta()
+    next_action = state.build_next_action(ps["state"], ps["available_commands"])
     return templates.TemplateResponse(
         request,
         "project.html",
@@ -78,6 +82,8 @@ def project(request: Request, name: str) -> HTMLResponse:
             "name": name,
             "ps": ps,
             "meta": meta,
+            "state_meta": state.STATE_META,
+            "next": next_action,
             "flow": state.STATE_FLOW,
             "conflict_pending": state.get_conflicts(name)["pending"],
         },
@@ -98,6 +104,38 @@ def conflicts_page(request: Request, name: str) -> HTMLResponse:
 def guide(request: Request, name: str) -> HTMLResponse:
     ps = state.get_project_state(name)
     genres = state.list_genres()
+    projects = state.list_projects()
+    avail = ps["available_commands"]
+    # 各阶段「产物文件 → 回显内容」（缺省为空，生成后再由页面刷新回显）
+    world = state.read_project_file(name, "world.md") or ""
+    discussion = state.read_project_file(name, "discussion.md") or ""
+    architecture = state.read_project_file(name, "architecture.md") or ""
+    outline = state.read_project_file(name, "outline.md") or ""
+    chars = [
+        {"rel": "characters/" + p.name, "name": p.stem, "content": state.read_project_file(name, "characters/" + p.name) or ""}
+        for p in sorted((state.project_path(name) / "characters").glob("*.md"))
+    ] if (state.project_path(name) / "characters").exists() else []
+    stages = [
+        {"key": "world", "num": "①", "label": "设定世界", "desc": "世界观设定集（题材 / 核心梗 / 世界规则）", "cmd": "/start",
+         "file": "world.md", "content": world, "editable": bool(world), "generate": "/start" in avail,
+         "gen_label": "生成世界观", "gen_argv": []},
+        {"key": "discussion", "num": "②", "label": "脉络讨论", "desc": "与 Agent 讨论故事脉络，产出讨论纪要",
+         "cmd": "/discuss", "file": "discussion.md", "content": discussion, "editable": bool(discussion),
+         "generate": "/discuss" in avail, "gen_label": "开始讨论",
+         "gen_argv": ["--message", "请基于当前世界观设定，提出3-5个关键创作问题并给出初步方向建议"]},
+        {"key": "architecture", "num": "③", "label": "故事架构", "desc": "整体故事架构初稿，可反馈迭代",
+         "cmd": "/architecture", "file": "architecture.md", "content": architecture, "editable": bool(architecture),
+         "generate": "/architecture" in avail, "gen_label": "生成架构", "gen_argv": []},
+        {"key": "confirm", "num": "④", "label": "架构确认", "desc": "确认后解锁下游（大纲 / 角色 / 写作）",
+         "cmd": "/confirm-architecture", "file": None, "content": None, "editable": False,
+         "generate": "/confirm-architecture" in avail, "gen_label": "确认并解锁", "gen_argv": ["--yes"]},
+        {"key": "outline", "num": "⑤", "label": "创作大纲", "desc": "章节大纲", "cmd": "/outline",
+         "file": "outline.md", "content": outline, "editable": bool(outline),
+         "generate": "/outline" in avail, "gen_label": "生成大纲", "gen_argv": []},
+        {"key": "characters", "num": "⑥", "label": "角色设计", "desc": "主要角色卡与关系",
+         "cmd": "/design-characters", "file": None, "content": None, "editable": bool(chars), "chars": chars,
+         "generate": "/design-characters" in avail, "gen_label": "设计角色", "gen_argv": []},
+    ]
     return templates.TemplateResponse(
         request,
         "guide.html",
@@ -106,9 +144,25 @@ def guide(request: Request, name: str) -> HTMLResponse:
             "name": name,
             "ps": ps,
             "genres": genres,
+            "projects": projects,
             "flow": state.STATE_FLOW,
+            "stages": stages,
+            "stage_status": state.stage_status_map(name),
         },
     )
+
+
+@app.post("/p/{name}/save-stage")
+async def save_stage(
+    request: Request,
+    name: str,
+    rel: str = Form(...),
+    content: str = Form(""),
+) -> JSONResponse:
+    """将某个阶段产物（回显编辑后的内容）写回本地。"""
+    ps = state.get_project_state(name)
+    ok, msg = state.write_project_file(name, rel, content, ps["available_commands"])
+    return JSONResponse({"ok": ok, "message": msg})
 
 
 @app.get("/p/{name}/write", response_class=HTMLResponse)
@@ -287,6 +341,122 @@ async def api_set_mode(name: str = Form(...), autonomy: int = Form(...)) -> JSON
 @app.get("/api/chapters/{name}")
 def api_chapters(name: str) -> JSONResponse:
     return JSONResponse(state.get_chapters(name))
+
+
+@app.get("/api/stages/{name}")
+def api_stages(name: str) -> JSONResponse:
+    """全部内容阶段状态（已确认 / 受影响·待复核 / 原因），供前端刷新标签。"""
+    return JSONResponse(state.all_stage_status(name))
+
+
+@app.post("/api/stages/{name}/confirm")
+async def api_confirm_stage(name: str, stage: str = Form(...)) -> JSONResponse:
+    """确认（或重新确认）某阶段：记录上游基线，消除受影响标记。"""
+    ok, msg = state.confirm_stage(name, stage)
+    return JSONResponse({"ok": ok, "message": msg})
+
+
+@app.get("/api/review/{name}")
+async def api_review(name: str, stage: str = "") -> JSONResponse:
+    """生成复核检查单：上游改动后，LLM 找下游阶段的未覆盖 / 冲突条目。
+
+    同步调用 M19（LLM 分析），结果存入 stages.json 供逐条裁决。
+    """
+    if stage not in state.STAGE_KEYS:
+        return JSONResponse({"ok": False, "message": f"未知阶段：{stage}"})
+    changed = state.changed_upstreams(name, stage)
+    if not changed:
+        return JSONResponse({"ok": False, "message": "该阶段无上游改动，无需复核"})
+    try:
+        from agent.workflows.m19_review_sync import M19ReviewSyncWorkflow
+
+        wf = M19ReviewSyncWorkflow(project_dir=state.project_path(name))
+        result = wf.review(target_stage=stage, changed_upstreams=changed)
+    except Exception as e:  # noqa: BLE001 - LLM 失败降级不阻断
+        return JSONResponse({"ok": False, "message": f"复核生成失败：{e}"})
+    items = state.save_review_items(
+        name, stage, [f.to_dict() for f in result.findings], result.summary
+    )
+    # 写作边界：上游阶段改动同样可能影响已写章节，列出清单供作者抽查
+    chapters = state.get_chapters(name)
+    return JSONResponse(
+        {
+            "ok": True,
+            "stage": stage,
+            "changed_upstreams": [state.STAGE_LABEL.get(k, k) for k in changed],
+            "summary": result.summary,
+            "items": items,
+            "affected_chapters": [{"num": c["num"], "name": c["name"]} for c in chapters],
+        }
+    )
+
+
+@app.get("/api/review/{name}/items")
+def api_review_items(name: str, stage: str = "") -> JSONResponse:
+    """读取已保存的复核检查单条目（不触发 LLM，供面板重开时回显）。"""
+    if stage not in state.STAGE_KEYS:
+        return JSONResponse({"ok": False, "message": f"未知阶段：{stage}"})
+    return JSONResponse(
+        {
+            "ok": True,
+            "stage": stage,
+            "summary": state.review_summary(name, stage),
+            "items": state.review_items(name, stage),
+            "affected_chapters": [
+                {"num": c["num"], "name": c["name"]} for c in state.get_chapters(name)
+            ],
+        }
+    )
+
+
+@app.post("/api/review/{name}/decision")
+async def api_review_decision(
+    name: str,
+    stage: str = Form(...),
+    item_id: str = Form(...),
+    action: str = Form(...),
+) -> JSONResponse:
+    """逐条裁决复核发现：采纳 / 忽略。"""
+    ok, msg = state.review_decision(name, stage, item_id, action)
+    return JSONResponse({"ok": ok, "message": msg})
+
+
+@app.get("/api/qa/{name}")
+def api_qa_templates(name: str) -> JSONResponse:
+    """返回全部内容阶段的问答模板 + 已保存的问答结果（供问答面板渲染）。"""
+    from agent.web.qa_templates import QA_TEMPLATES
+
+    result = {}
+    for key, tpl in QA_TEMPLATES.items():
+        result[key] = {
+            "title": tpl["title"],
+            "questions": tpl["questions"],
+            "saved": state.load_qa(name, key),
+        }
+    return JSONResponse(result)
+
+
+@app.post("/api/qa/{name}")
+async def api_qa_save(
+    name: str,
+    stage: str = Form(...),
+    payload: str = Form(...),
+) -> JSONResponse:
+    """保存某阶段的问答结果（payload 为 JSON：{answers, skipped, supplementary}）。"""
+    try:
+        data = json.loads(payload)
+    except json.JSONDecodeError:
+        return JSONResponse({"ok": False, "message": "问答数据解析失败"})
+    if stage not in state.STAGE_KEYS:
+        return JSONResponse({"ok": False, "message": f"未知阶段：{stage}"})
+    ok, msg = state.save_qa(
+        name,
+        stage,
+        data.get("answers"),
+        data.get("skipped"),
+        data.get("supplementary"),
+    )
+    return JSONResponse({"ok": ok, "message": msg})
 
 
 @app.post("/api/projects")
