@@ -1,4 +1,4 @@
-﻿"""B1 真 LLM 追读力 / 读者吸引力评分器（迷爱看核心）
+"""B1 真 LLM 追读力 / 读者吸引力评分器（迷爱看核心）
 
 把 Evaluator 现有 5 个「pass 默认」维度升级为**真实 LLM 评分**，并新增作者侧可直接使用的
 「迷爱看」6 维评分（钩子强度/爽点密度/代入感/人物弧光/世界观新颖度/情绪曲线）。
@@ -287,14 +287,16 @@ class ReaderAppealScorer:
                 f"请评估以下小说片段在「{_EVAL_DIM_LABELS.get(dimension, dimension)}」"
                 f"维度上的表现。\n\n{text[:8000]}"
             )
-            # G2：计数维需枚举 issue，提升 max_tokens 至 1500；评分维保持 400。
+            # 思考型模型（如 dots3-note-prev）即便 enable_thinking=False 也会产思考，
+            # 预算过小会被思考占满 → content 为空或 JSON 被截断、解析失败。
+            # 真实小说实测：评分/计数维均须 ≥8192 才稳定出完整 JSON。
             resp = self.llm.chat_utility(
                 messages=[
                     {"role": "system", "content": _EVAL_SYSTEM_PROMPT},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.2,
-                max_tokens=1500 if dimension in COUNT_DIMS else 400,
+                max_tokens=8192,
                 enable_thinking=False,
             )
             data = parse_llm_json(resp.text)
@@ -382,7 +384,8 @@ class ReaderAppealScorer:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.3,
-                max_tokens=1200,
+                # 思考型模型需留足预算才能产出完整 JSON（实测 ≥8192 稳）。
+                max_tokens=8192,
                 enable_thinking=False,
             )
             return self._parse_appeal(resp.text)
