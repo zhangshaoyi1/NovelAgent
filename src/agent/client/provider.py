@@ -156,18 +156,7 @@ class OpenAIProvider(LLMProvider):
             }
         return LLMResponse(text=text, usage=usage, model=model, raw=resp)
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        """委托到 OpenAICompatibleEmbedding（若另有 embedding_provider 则走基类）"""
-        if self.config.embedding_provider:
-            return super().embed(texts)
-        from agent.core.rag.embeddings import OpenAICompatibleEmbedding
-
-        provider = OpenAICompatibleEmbedding(
-            model=self.config.embedding_model or self.config.model,
-            base_url=self.config.embedding_base_url or self.config.base_url,
-            api_key=self.config.embedding_api_key or self.config.api_key,
-        )
-        return provider.embed(texts)
+    # embed() 继承自基类 LLMProvider.embed()，通过 embedding_router 统一路由
 
 
 @register_provider("ollama")
@@ -237,14 +226,4 @@ class OllamaProvider(LLMProvider):
         raw = {"choices": [{"message": {"content": text}}], "usage": result.get("usage")}
         return LLMResponse(text=text, usage=usage, model=model, raw=raw)
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        """委托到 OllamaEmbedding（若另有 embedding_provider 则走基类）"""
-        if self.config.embedding_provider:
-            return super().embed(texts)
-        from agent.core.rag.embeddings import OllamaEmbedding
-
-        provider = OllamaEmbedding(
-            model=self.config.embedding_model or self.config.model,
-            base_url=self.config.base_url or "http://localhost:11434",
-        )
-        return provider.embed(texts)
+    # embed() 继承自基类 LLMProvider.embed()，通过 embedding_router 统一路由
