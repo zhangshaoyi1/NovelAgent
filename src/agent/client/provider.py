@@ -51,29 +51,9 @@ class LLMProvider(ABC):
         基类统一实现：依据 ``embedding_provider`` 选择嵌入后端。
         不可达时返回空列表降级（绝不阻断写章）。
         """
-        from agent.core.rag.embeddings import (
-            OllamaEmbedding,
-            OpenAICompatibleEmbedding,
-            QwenLocalEmbedding,
-        )
+        from agent.core.llm.embedding_router import get_embedding_provider
 
-        ep = (self.config.embedding_provider or self.config.provider).lower()
-
-        if ep == "qwen_local":
-            provider = QwenLocalEmbedding(
-                model_name=self.config.embedding_model or "Qwen/Qwen2.5-0.5B-Instruct",
-            )
-        elif ep == "ollama":
-            provider = OllamaEmbedding(
-                model=self.config.embedding_model or self.config.model,
-                base_url=self.config.base_url or "http://localhost:11434",
-            )
-        else:
-            provider = OpenAICompatibleEmbedding(
-                model=self.config.embedding_model or self.config.model,
-                base_url=self.config.embedding_base_url or self.config.base_url,
-                api_key=self.config.embedding_api_key or self.config.api_key,
-            )
+        provider = get_embedding_provider(self.config)
         return provider.embed(texts)
 
     @staticmethod

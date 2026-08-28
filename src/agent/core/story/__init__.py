@@ -44,12 +44,8 @@ from agent.core.story.pacing_store import PacingStore, Debt
 from agent.core.story.payoff_script import build_payoff_script, load_payoff_script, chapter_payoff
 from agent.core.story.injected_trope_store import InjectedTropeStore
 from agent.core.story.learning_store import LearningStore
-from agent.core.story.method_style import (
-    load_style_guide,
-    load_method_text,
-    _strip_template_title,
-)
-from agent.core.story.worldbuilding_schema import (
+from agent.core.story.method_style import load_style_guide, load_method_text
+from agent.core.story.meta.worldbuilding_schema import (
     IcebergField,
     IcebergDimension,
     IcebergGroup,
@@ -57,12 +53,13 @@ from agent.core.story.worldbuilding_schema import (
     total_fields,
     summary,
 )
-from agent.core.story.philosophy import (
+from agent.core.story.meta.philosophy import (
     TAGLINE,
     OPENING,
     POSITIONING,
     PILLARS,
     CLOSING,
+    Pillar,
     render_text,
     render_markdown,
     get_philosophy,

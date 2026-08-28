@@ -79,7 +79,7 @@ from agent.core.story.payoff_script import build_payoff_script
 from agent.core.story.injected_trope_store import InjectedTropeStore
 from agent.core.story.learning_store import LearningStore
 from agent.core.story.method_style import load_style_guide, load_method_text
-from agent.core.story.worldbuilding_schema import (
+from agent.core.story.meta.worldbuilding_schema import (
     IcebergField,
     IcebergDimension,
     IcebergGroup,
@@ -87,7 +87,7 @@ from agent.core.story.worldbuilding_schema import (
     total_fields,
     summary,
 )
-from agent.core.story.philosophy import (
+from agent.core.story.meta.philosophy import (
     TAGLINE,
     OPENING,
     POSITIONING,
@@ -139,6 +139,7 @@ from agent.core.quality.reader_appeal import (
 
 # ── llm 层导出 ──────────────────────────────────────────────────────
 from agent.core.llm.budget_plan import load_budget_plan
+from agent.core.llm.embedding_router import get_embedding_provider
 
 # ── registry 层导出 ──────────────────────────────────────────────────
 from agent.core.registry.skill_registry import (
@@ -260,6 +261,7 @@ __all__ = [
     "APPEAL_GATE_PREFIX", "APPEAL_LABELS", "gate_chapter", "build_appeal_summary_lines",
     # llm
     "load_budget_plan",
+    "get_embedding_provider",
     "LLMClient",
     "ModelRouter",
     # registry

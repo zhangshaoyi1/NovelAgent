@@ -8,7 +8,9 @@
 """
 
 from agent.core.llm.budget_plan import load_budget_plan
+from agent.core.llm.embedding_router import get_embedding_provider
 
 __all__ = [
     "load_budget_plan",
+    "get_embedding_provider",
 ]

@@ -11,6 +11,7 @@
 | `event_model.py` | 事件模型定义（Event） |
 | `event_store.py` | 事件存储（FileEventStore - 文件持久化） |
 | `recovery.py` | 恢复引擎（RecoveryEngine - 事件回放恢复状态） |
+| `retry_events.py` | 事件化重试包装器（将 retry 事件通过 EventBus 发出） |
 
 ## 依赖规则
 - 依赖 base/、client/

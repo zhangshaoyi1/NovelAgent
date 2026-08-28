@@ -1,0 +1,24 @@
+refactor: 修复分层依赖，拆分 story/meta 子包提高内聚性
+
+- 修复 base/retry.py 反向依赖 event_sourcing 违反分层原则问题
+  - 删除 event_sourcing 导入，移除 emit_events 参数
+  - 在 event_sourcing/retry_events.py 新增 retry_with_events 包装器提供事件发送功能
+  - 修复后 base/ 恢复零依赖特性，正确：上层依赖下层
+
+- 修复 client/provider.py 依赖 core/rag/embeddings 违反分层原则问题
+  - 将 embedding provider 选择逻辑上移到 core/llm/embedding_router.py
+  - client/provider.py 改为从 core/llm/embedding_router 导入，保持 client/ 只依赖 base/ 和 llm/
+  - 修复后 client/ 不直接依赖 core/rag/，符合分层设计
+
+- 将 story/ 中 philosophy.py 和 worldbuilding_schema.py 拆分到 story/meta/ 子包
+  - 降低 story/ 主包的聚合度，提高内聚性（从 30+ 导出降到 28+）
+  - 更新所有 import 引用路径（core/__init__.py, story/__init__.py, cli/commands, web/app.py）
+  - story/meta/README.md 说明子包职责和依赖规则
+
+- 更新架构文档 README.md 反映最新结构
+
+所有分层依赖单向性修复完成：
+- base/ 不依赖任何其他 core 子包 ✓
+- client/ 只依赖 base/ 和 llm/ ✓
+- story/ 拆分后更内聚 ✓
+- 无循环依赖 ✓

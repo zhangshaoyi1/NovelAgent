@@ -7,7 +7,7 @@ from rich.console import Console
 from rich.table import Table
 
 from agent.cli._app import app, command, console
-from agent.core.story.worldbuilding_schema import get_iceberg, summary, total_fields
+from agent.core.story.meta.worldbuilding_schema import get_iceberg, summary, total_fields
 
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"

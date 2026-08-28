@@ -18,9 +18,6 @@ from typing import (
     Union,
 )
 
-from agent.core.event_sourcing.event_bus import EventBus
-from agent.core.event_sourcing.event_model import EventType
-
 logger = logging.getLogger(__name__)
 
 # 可重试异常类型
@@ -49,7 +46,6 @@ class RetryConfig:
         ConnectionResetError,
     )
     on_retry: Optional[RetryCallback] = None
-    emit_events: bool = True
 
 
 class RetryError(Exception):
@@ -84,7 +80,6 @@ def retry(
         ConnectionResetError,
     ),
     on_retry: Optional[RetryCallback] = None,
-    emit_events: bool = True,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """统一重试装饰器
 
@@ -100,7 +95,6 @@ def retry(
         max_wait=max_wait,
         retryable_exceptions=retryable_exceptions,
         on_retry=on_retry,
-        emit_events=emit_events,
     )
 
     def decorator(func: Callable[..., Any]) -> Callable[..., Any]:
@@ -119,40 +113,12 @@ def retry(
                                 on_retry(attempt, e, wait)
                             except Exception:
                                 pass
-                        if emit_events:
-                            try:
-                                bus = EventBus.get_instance()
-                                bus.emit_event(
-                                    EventType.RETRY_ATTEMPTED,
-                                    payload={
-                                        "attempt": attempt,
-                                        "max_attempts": max_attempts,
-                                        "exception": repr(e),
-                                        "wait": wait,
-                                        "func": func.__name__,
-                                    },
-                                )
-                            except Exception:
-                                pass
                         logger.warning(
                             "重试 %s/%s: %s, 等待 %.1fs",
                             attempt, max_attempts, repr(e), wait,
                         )
                         time.sleep(wait)
                     else:
-                        if emit_events:
-                            try:
-                                bus = EventBus.get_instance()
-                                bus.emit_event(
-                                    EventType.RETRY_EXHAUSTED,
-                                    payload={
-                                        "attempts": max_attempts,
-                                        "exception": repr(e),
-                                        "func": func.__name__,
-                                    },
-                                )
-                            except Exception:
-                                pass
                         raise RetryError(
                             f"重试耗尽: {func.__name__} 在 {max_attempts} 次后失败",
                             attempts=max_attempts,
@@ -180,40 +146,12 @@ def retry(
                                 on_retry(attempt, e, wait)
                             except Exception:
                                 pass
-                        if emit_events:
-                            try:
-                                bus = EventBus.get_instance()
-                                bus.emit_event(
-                                    EventType.RETRY_ATTEMPTED,
-                                    payload={
-                                        "attempt": attempt,
-                                        "max_attempts": max_attempts,
-                                        "exception": repr(e),
-                                        "wait": wait,
-                                        "func": func.__name__,
-                                    },
-                                )
-                            except Exception:
-                                pass
                         logger.warning(
                             "重试 %s/%s: %s, 等待 %.1fs",
                             attempt, max_attempts, repr(e), wait,
                         )
                         await asyncio.sleep(wait)
                     else:
-                        if emit_events:
-                            try:
-                                bus = EventBus.get_instance()
-                                bus.emit_event(
-                                    EventType.RETRY_EXHAUSTED,
-                                    payload={
-                                        "attempts": max_attempts,
-                                        "exception": repr(e),
-                                        "func": func.__name__,
-                                    },
-                                )
-                            except Exception:
-                                pass
                         raise RetryError(
                             f"重试耗尽: {func.__name__} 在 {max_attempts} 次后失败",
                             attempts=max_attempts,

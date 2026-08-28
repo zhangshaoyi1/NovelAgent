@@ -18,8 +18,7 @@
 | `injected_trope_store.py` | 注入套路存储 |
 | `learning_store.py` | 学习存储（长期记忆与用户偏好沉淀） |
 | `method_style.py` | 写作方法风格（叙事方法模板） |
-| `worldbuilding_schema.py` | 世界观 Schema 定义 |
-| `philosophy.py` | 设计哲学（产品理念文案） |
+| `meta/` | **子包**：元设计（世界观 Schema、设计哲学、写作方法论） |
 
 ## 依赖规则
 - 依赖 base/、client/
