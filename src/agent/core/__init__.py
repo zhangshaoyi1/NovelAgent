@@ -146,6 +146,12 @@ from agent.core.quality.reader_appeal import (
 # ── llm 层导出 ──────────────────────────────────────────────────────
 from agent.core.llm.budget_plan import load_budget_plan
 from agent.core.llm.embedding_router import get_embedding_provider
+from agent.core.llm.embeddings import (
+    EmbeddingProvider,
+    OllamaEmbedding,
+    OpenAICompatibleEmbedding,
+    QwenLocalEmbedding,
+)
 
 # ── registry 层导出 ──────────────────────────────────────────────────
 from agent.core.registry.skill_registry import (
@@ -185,11 +191,8 @@ def _lazy_import_rag():
         VectorStore,
         LocalVectorStore,
         BM25Index,
-        EmbeddingProvider,
-        OpenAICompatibleEmbedding,
-        OllamaEmbedding,
     )
-    return Chunk, Hit, Indexer, Retriever, VectorStore, LocalVectorStore, BM25Index, EmbeddingProvider, OpenAICompatibleEmbedding, OllamaEmbedding
+    return Chunk, Hit, Indexer, Retriever, VectorStore, LocalVectorStore, BM25Index
 
 def _lazy_import_llmops():
     from agent.core.llmops import (
@@ -218,7 +221,7 @@ def _lazy_import_orchestrator():
     return AutoPlanner, Decider, Executor, PlanAdjuster
 
 def _lazy_import_tools():
-    from agent.core.tools.base import Tool, ToolRegistry, ToolResult
+    from agent.core.engine.tool_contracts import Tool, ToolRegistry, ToolResult
     from agent.core.tools.builtins import set_project_context
     return Tool, ToolRegistry, ToolResult, set_project_context
 
@@ -267,6 +270,10 @@ __all__ = [
     # llm
     "load_budget_plan",
     "get_embedding_provider",
+    "EmbeddingProvider",
+    "OllamaEmbedding",
+    "OpenAICompatibleEmbedding",
+    "QwenLocalEmbedding",
     "LLMClient",
     "ModelRouter",
     # registry
@@ -284,7 +291,6 @@ __all__ = [
     # v1.0 新增模块（延迟导入后导出）
     "EventBus", "Event", "FileEventStore", "RecoveryEngine",
     "Chunk", "Hit", "Indexer", "Retriever", "VectorStore", "LocalVectorStore", "BM25Index",
-    "EmbeddingProvider", "OpenAICompatibleEmbedding", "OllamaEmbedding",
     "CostModel", "EvalHarness", "PromptRegistry", "TraceStore",
     "TracedLLMClient", "get_tracer", "set_tracer", "build_cost_summary",
     "AILikenessDetector", "PostProcessor",
@@ -295,7 +301,7 @@ __all__ = [
 
 # 惰性赋值给模块级变量（避免循环导入）
 EventBus, Event, FileEventStore, RecoveryEngine = _lazy_import_event_sourcing()
-Chunk, Hit, Indexer, Retriever, VectorStore, LocalVectorStore, BM25Index, EmbeddingProvider, OpenAICompatibleEmbedding, OllamaEmbedding = _lazy_import_rag()
+Chunk, Hit, Indexer, Retriever, VectorStore, LocalVectorStore, BM25Index = _lazy_import_rag()
 CostModel, EvalHarness, PromptRegistry, TraceStore, TracedLLMClient, get_tracer, set_tracer, build_cost_summary = _lazy_import_llmops()
 AILikenessDetector, PostProcessor = _lazy_import_anti_ai()
 SupervisorEngine, SupervisionReport = _lazy_import_supervisor()

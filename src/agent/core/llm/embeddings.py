@@ -8,8 +8,9 @@
 - ``QwenLocalEmbedding``：本地 Qwen 模型（transformers 离线推理，通过 ``HF_ENDPOINT``
   镜像下载）。
 
-``LLMProvider.embed`` / ``LLMClient.embed`` 均委托到本模块（单一实现，避免双份 HTTP 逻辑）。
-本模块不反向依赖 ``llm_client``，避免循环导入。
+归属 llm/（embedding 是模型调用能力，属 LLM 基础设施）；
+``LLMProvider.embed`` / ``LLMClient.embed`` / ``llm/embedding_router`` 均委托到本模块，
+rag/ 的 Indexer 经 ``embed_fn`` 参数注入使用，不直接依赖本模块。
 """
 
 from __future__ import annotations

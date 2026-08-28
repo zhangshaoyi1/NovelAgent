@@ -11,7 +11,7 @@
 - **可插拔 transport**：真实连接（stdio / http）在 ``connect()`` 时才尝试；测试用
   ``MockTransport`` 内存实现，无需网络即可验证 discover / call 全流程。
 - **复用 Phase 0**：本地工具经 ``Tool.to_mcp_manifest`` 导出为 MCP tool 描述
-  （``agent.core.tools.base``）。
+  （``agent.core.engine.tool_contracts``）。
 
 注：``genre_pack.mount_mcp`` 仍是**题材级 v2 钩子**（保留 NotImplemented 占位），本模块是
 Tool / MCP 层的通用实现，二者不冲突——题材包可后续内部调用本桥接器。
@@ -24,7 +24,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
-from agent.core.tools.base import ToolResult
+from agent.core.engine.tool_contracts import ToolResult
 
 
 # ============================================================
@@ -240,7 +240,7 @@ class MCPBridge:
     Args:
         config: 服务器清单 dict（见 ``MCPServerConfig``），可含 ``servers`` 键。
         config_path: 配置 JSON 路径（``.state/mcp.json``），与 ``config`` 二选一。
-        registry: 本地 ``ToolRegistry``（默认用全局 ``agent.core.tools.base.registry``）。
+        registry: 本地 ``ToolRegistry``（默认用全局 ``agent.core.engine.tool_contracts.registry``）。
         transports: 测试注入的预建 transport（server 名 -> BaseTransport）。
     """
 
@@ -259,7 +259,7 @@ class MCPBridge:
         self._server_tools: dict[str, list[MCPTool]] = {}
 
         if registry is None:
-            from agent.core.tools.base import registry as _reg
+            from agent.core.engine.tool_contracts import registry as _reg
 
             registry = _reg
         self.registry = registry

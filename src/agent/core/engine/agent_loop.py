@@ -30,7 +30,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from pydantic import BaseModel, Field
 
-from agent.core.tools.base import Tool, ToolRegistry, ToolResult
+from agent.core.engine.tool_contracts import Tool, ToolRegistry, ToolResult
 
 
 class AgentAction(BaseModel):

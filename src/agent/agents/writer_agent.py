@@ -28,9 +28,13 @@ from pydantic import ValidationError
 from rich.console import Console
 
 from agent.core.engine.agent_loop import AgentAction, AgentLoop
+from agent.core.engine.tool_contracts import (
+    Tool,
+    ToolRegistry,
+    ToolResult,
+    registry as default_registry,
+)
 from agent.client import LLMClient
-from agent.core.tools import registry as default_registry
-from agent.core.tools.base import Tool, ToolRegistry, ToolResult
 from agent.core.base.structured_output import StructuredOutputError
 
 # 写作人设（与 M5 创作系统提示同源，保证风格一致）
@@ -108,7 +112,9 @@ class WriterAgent:
             for t in tools:
                 self.registry.register(t)
         else:
-            # 默认使用全局 registry 中的内置工具（Phase 0 已注册）
+            # 默认使用全局 registry 中的内置工具（导入 builtins 触发注册）
+            import agent.core.tools.builtins  # noqa: F401
+
             self.registry = default_registry
             self.tools = default_registry.list()
 

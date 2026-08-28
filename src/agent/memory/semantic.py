@@ -1,4 +1,4 @@
-﻿"""语义记忆（SemanticMemory，Phase 2 → Phase 5 向量后端）
+"""语义记忆（SemanticMemory，Phase 2 → Phase 5 向量后端）
 
 长期事实记忆：世界观设定、角色事实、已确立的剧情节点、伏笔登记等"应该长期记得"
 的结构化事实。
@@ -42,14 +42,14 @@ def _cosine(a: list[float], b: list[float]) -> float:
 def build_default_embed_fn(provider: str = "openai") -> Callable[[list[str]], list[list[float]]]:
     """构造默认向量函数（懒加载，避免硬依赖 embeddings 模块）。
 
-    复用项目既有 ``agent.core.rag.embeddings``：openai 走 OpenAI 兼容端点，
+    复用项目既有 ``agent.core.llm.embeddings``：openai 走 OpenAI 兼容端点，
     ollama 走本地。调用方缺配置时 ``embed`` 会抛错，由 SemanticMemory 兜底回退。
 
     Args:
         provider: "openai" | "ollama"。
     """
     def fn(texts: list[str]) -> list[list[float]]:
-        from agent.core.rag.embeddings import (
+        from agent.core.llm.embeddings import (
             OllamaEmbedding,
             OpenAICompatibleEmbedding,
         )

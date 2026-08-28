@@ -3,6 +3,11 @@
 设计目标：把 NovelAgent 的现有能力（RAG 检索、设定读写、字数、质检、导出、伏笔）
 封装为**可被 LLM 调用的工具**，为上层的 Agentic Loop（缺口2）与 Function Calling（缺口1）铺路。
 
+契约归属 engine/（agent_loop 是工具的执行方，接口与实现分离）：
+- 本模块只含纯契约（Tool / ToolResult / ToolRegistry / @tool / registry 单例），零业务依赖
+- 具体工具实现在 tools/builtins.py（依赖 story/rag/quality），经注册表装配
+- engine 不反向依赖 tools/，避免 engine → tools → quality 的上行依赖链
+
 形态对齐 MCP（Model Context Protocol）的 tool 描述：
     {"name", "description", "inputSchema"}
 后续 ``genre_pack.mount_mcp``（v2 接口）可直接把本注册表暴露给外部 MCP server。

@@ -18,7 +18,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from agent.core.tools.base import ToolResult, tool
+from agent.core.engine.tool_contracts import ToolResult, tool
 
 # 项目上下文：由 Agent 循环在执行工具前注入
 _CTX: dict[str, str] = {}

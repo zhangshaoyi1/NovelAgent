@@ -8,10 +8,11 @@
 |------|------|
 | `_types.py` | 类型定义（Fragment, SearchResult） |
 | `bm25.py` | BM25 检索器（BM25Retriever） |
-| `embeddings.py` | 文本嵌入（Embedding, Embeddings - 支持多种 embedding 提供商） |
-| `indexer.py` | 索引器（Indexer - 自动索引设定、支线、角色、章节等） |
+| `indexer.py` | 索引器（Indexer - 自动索引设定、支线、角色、章节等；embedding 经 embed_fn 注入） |
 | `retriever.py` | 检索器（Retriever - 混合检索 BM25 + 向量） |
 | `vector_store.py` | 向量存储（VectorStore） |
+
+**注**：embedding 提供方已归位 `llm/embeddings.py`（模型调用能力属 LLM 基础设施）。
 
 ## 依赖规则
 - 依赖 base/、client/、story/

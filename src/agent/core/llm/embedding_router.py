@@ -1,7 +1,7 @@
 """Embedding 路由
 
-将 embedding provider 选择逻辑从 client/provider.py 上移到 core/llm/ 层，
-保持 client/ 仅依赖 base/ 和 llm/ 的分层原则。
+依据配置选择 embedding 后端（实现见同包 ``llm/embeddings.py``）。
+client/ 经本模块间接获得 embedding 能力，保持 client/ 仅依赖 base/ 和 llm/。
 """
 
 from __future__ import annotations
@@ -17,7 +17,7 @@ def get_embedding_provider(config: object) -> object:
     Returns:
         Embedding provider 实例，具有 embed(texts) 方法。
     """
-    from agent.core.rag.embeddings import (
+    from agent.core.llm.embeddings import (
         OllamaEmbedding,
         OpenAICompatibleEmbedding,
         QwenLocalEmbedding,
