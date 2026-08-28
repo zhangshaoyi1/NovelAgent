@@ -40,7 +40,7 @@ dist/skills/
 outputs/
 
 # 开发笔记/思考记录（非项目代码）
-.agents/notes/
+.agents/
 
 # 一次性调试脚本
 _debug_safe_remove.py
