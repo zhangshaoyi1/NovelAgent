@@ -11,6 +11,7 @@ NovelAgent 是一个**共创式长篇小说写作 Agent**：给它一段思路�
 
 它的核心能力：
 
+- **网页工作台**：`novel-agent web` 启动零构建 Web UI——引导向导七步走通创作闭环、实时写作间看 SSE 进度与成本一键续写、改了上游自动提示下游复核（**第六章**）；
 - **全自主写作**：`autowrite` 一键输入思路，全自动完成（支持 `auto` 全自主 / `light` 关键节点介入 / `heavy` 每章控制）；
 - **长篇一致性**：角色关系网、主角成长路线、伏笔表、金手指登记，随剧情演化但不矛盾；
 - **剧集树（支线 / 卷）**：按 `outline.md` + 每条支线的 `subline.md` 推进；
@@ -267,7 +268,158 @@ novel-agent rollback -d novels/my-novel -c 20 -y  # 跳过二次确认
 
 ---
 
-## 六、题材包（genre packs）
+## 六、Web 写作工作台（推荐入门方式）
+
+命令行适合批处理和自动化，**日常写作建议在网页里完成**。NovelAgent 自带一个**零构建的 Web UI**（FastAPI 服务端渲染 + Jinja2 + HTMX 局部刷新，无需 Node 工具链），把第四章那套创作闭环做成可视化工作台：左边推进度，右边出内容，写章过程实时可见。
+
+依赖 `fastapi` + `uvicorn` + `python-multipart`，已写入 `pyproject.toml`，随包安装。
+
+### 6.1 启动
+
+```bash
+novel-agent web                                  # 默认 http://127.0.0.1:8000
+novel-agent web --host 0.0.0.0 --port 8080       # 指定监听地址 / 端口
+```
+
+等价写法（未安装成命令时）：
+
+```bash
+python -m agent.cli web      # 走 CLI 的 web 命令
+python -m agent.web          # 直接跑 web 模块
+```
+
+浏览器打开后停止服务用 `Ctrl-C`。若报 `ModuleNotFoundError: No module named 'uvicorn'`，重跑 `pip install -e ./agent` 即可。
+
+### 6.2 Web 是怎么驱动写作的
+
+理解这一点，后面所有页面行为就都通了：
+
+```
+浏览器 ──POST /api/run──▶ FastAPI ──子进程──▶ python -m agent.cli <command> --dir <项目>
+   ▲                         │                          │
+   │                         │                          ├─ 写 stdout → SSE log 事件
+   └──── SSE 事件流 ─────────┤                          └─ 写 .state/progress.json → SSE progress 事件
+                             └── 进程结束 → SSE done 事件（退出码 + 看板摘要 + 最新状态）
+```
+
+- **不另写一套逻辑**：Web 端以子进程调用同一份 CLI，因此网页上的能力和命令行**永远一致**，不存在"网页少几个功能"。
+- **实时性来自两路**：子进程 stdout 逐行推 `log`；同时每 0.4 秒轮询项目 `.state/progress.json`（G9 进度事件总线已落盘），按事件 seq 增量推 `progress`。
+- **防假死**：SSE 之外还有 `GET /api/runs/{run_id}` 轮询兜底，断流时前端靠它收尾。
+- **不会卡死**：子进程 `stdin=DEVNULL`，任何需要交互输入的命令都会立刻 EOF 失败而不是挂起。
+- **门禁同源**：网页上能点哪些操作，由状态机的 `available_commands` 决定，与 CLI 的门禁完全对齐。
+
+### 6.3 引导向导：七步走通创作闭环
+
+`/p/{name}/guide` 是**新书上手的主路径**。它把第四章的流程拆成 7 个阶段页，每页做三件事：**回显上一阶段的产物 → 一键生成本阶段产物 → 就地编辑后保存**。
+
+| # | 阶段页 | 状态机状态 | 产物 | 一键动作 |
+|---|---|---|---|---|
+| ① | 开新书 | `INIT` | `world.md` | 生成世界观 |
+| ② | 脉络讨论 | `DISCUSSING` | `discussion.md` | 开始讨论 |
+| ③ | 故事架构 | `ARCHITECTING` | `architecture.md` | 生成架构 |
+| ④ | 架构确认 | `ARCH_CONFIRMED` | — | 确认并解锁下游 |
+| ⑤ | 创作大纲 | `OUTLINING` | `outline.md` | 生成大纲 |
+| ⑥ | 角色设计 | `CHARACTER_DESIGN` | `characters/*.md` | 设计角色 |
+| ⑦ | 写章节 | `WRITING` | `chapters/chNNN.md` | 进入写作间 |
+
+向导的实用细节：
+
+- **自动定位**：直接访问 `/p/{name}/guide` 会按项目当前状态重定向到你该去的那一页，不需要记 URL。
+- **进度条可点击**：七段进度条任意跳转，回看/补改已完成阶段。
+- **富文本回显 + 就地编辑**：产物不是源码直出，而是渲染后的富文本；点编辑可直接在网页里改 `world.md` / `outline.md` 并写回本地（`POST /p/{name}/save-stage`）。
+- **手动干预豁免**：已生成过产物的阶段允许直接编辑保存，不受状态机门禁限制——想手改大纲随时改。
+- **阶段状态标签**：每个阶段标注「已确认 / 受影响·待复核」，上游改了会标黄提醒（见 6.5）。
+
+### 6.4 实时写作间
+
+`/p/{name}/write` 是**日常产出章节的地方**，两种写法的区别要分清：
+
+| | 单章写入 | ⚡ 自动续写 |
+|---|---|---|
+| 底层命令 | `write` | `autowrite --chapters <N>` |
+| 产出 | 下一章 | 连续多章，跑到目标章数为止 |
+| 适合 | 想盯着质量逐章打磨 | 想一口气推进一批章节 |
+
+两者都可选**引擎模式**（`auto` 自主 Agentic Loop / `heavy` 更严 / `light` 更轻）和**严格质量审查**开关（关闭等价于 CLI 的 `--no-strict-review`，更快但质量偏弱）。
+
+**关于自动续写的目标章数**：界面上填的是"再写几章"，前端会把它叠加到当前已写章数上，换算成 `autowrite` 需要的**绝对目标章数**再下发。所以填 5 就是"再多 5 章"，不会因为重跑而从头写。
+
+写作过程中的可见性：
+
+- **实时控制台**：点任意运行动作会弹出运行控制台，分「日志 / 时间线 / 状态」三栏——日志是 CLI 实时输出，时间线是 G9 进度事件（第 N 章、当前阶段、耗时）。
+- **成本视图**：章节写入完成后，若触发成本预警会在对应卡片上直接显示预警等级。
+- **章节列表**：写作间底部实时刷新已生成章节，点标题直接跳文件查看。
+
+> 项目工作台 `/p/{name}` 的「✍️ 创作」卡片里同样有一键续写入口，不必每次都进写作间。
+
+### 6.5 改了上游，下游怎么跟上
+
+这是 Web 端相对 CLI 的**增量能力**，也是长篇最容易翻车的地方：改了世界观，大纲和已写章节还作数吗？
+
+**阶段复核检查单**（`GET /api/review/{name}?stage=<阶段>`）：
+
+1. 页面检测到某阶段的上游产物被改动过（比对 mtime 与基线），该阶段标为「受影响·待复核」；
+2. 点「生成检查单」，调用 M19 复核同步，由 LLM 找出下游阶段**未被覆盖**或**与新设定冲突**的条目；
+3. 逐条**采纳 / 忽略**裁决（`POST /api/review/{name}/decision`）；
+4. 采纳过的条目进 `adopted_history` 持久化，重新生成时不会重复提同一个问题；
+5. 同时列出**可能受影响的已写章节**清单，供你决定要不要抽查重写。
+
+复核完成后点「确认本阶段」记录新基线，黄色标记消除。写作边界也覆盖在内——上游改动同样可能波及已写章节。
+
+**阶段问答模板**（`/api/qa/{name}`）：每个内容阶段内置一组引导问题，回答后随项目保存；用于把作者的隐性意图显性化，比空跑生成更可控。答不上来的可以跳过，也可以补充自由描述。
+
+### 6.6 世界构建与调校
+
+| 页面 | 路径 | 能做什么 |
+|---|---|---|
+| 世界关系图谱 | `/p/{name}/graph` | 力导向图**可拖拽编排**，5 类节点（人物/势力/地点/物品/伏笔）按类型着色，点选编辑，全量保存含坐标；可一键填充示例图 |
+| Agent 阵容 | `/p/{name}/team` | 25 位专家 Agent 按四组（世界构建/情节叙事/成文润色/审校把关）展示职责与落地引擎 |
+| 冲突裁决 | `/p/{name}/conflicts` | 多题材同名设定冲突逐条裁决，写回 `world.md`（底层 `merge-genres`） |
+| 看板 | `/p/{name}/dashboard` | 成本 / 评测 / 模型路由 / MCP 汇总 |
+| 文件浏览 | `/p/{name}/files` | 浏览与查看项目全部产物 |
+
+**自主度滑块**（项目工作台「⚙️ 创作调校」）：0–100 连续调节，取代 CLI 的三档固定模式。左侧 `Director`（你掌控多）、中段 `Co-pilot`、右侧 `Auto Driver`（几乎全自动）。快捷按钮一键跳到 100 / 35。无论调到多高，`MAJOR_DECISION` 始终打断，作为安全底线。
+
+详情页底部的「高级命令」折叠区会列出**当前状态机允许的全部命令**并可直接运行——这是 Web 端没有阉割 CLI 的证明，命令行能跑的这里都能跑。
+
+### 6.7 页面与接口速查
+
+**页面**
+
+| 路径 | 用途 |
+|---|---|
+| `/` | 工作台：项目列表 / 新建项目（多题材 chips 选择） |
+| `/p/{name}` | 项目工作台：下一步 CTA + 创作旅程 + 自主度滑块 + 高级命令 |
+| `/p/{name}/guide` | 引导向导（自动重定向到当前阶段） |
+| `/p/{name}/guide/{stage}` | 单阶段页（world / discussion / architecture / confirm / outline / characters / write） |
+| `/p/{name}/write` | 实时写作间：单章 + 自动续写 + 成本 |
+| `/p/{name}/dashboard` | 看板 |
+| `/p/{name}/files` 、 `/p/{name}/file?path=` | 文件浏览 / 单文件查看 |
+| `/p/{name}/team` | Agent 阵容 |
+| `/p/{name}/graph` | 世界关系图谱 |
+| `/p/{name}/conflicts` | 冲突裁决 |
+
+**常用接口**（前端 HTMX/fetch 消费，自动化脚本也可直接打）
+
+| 方法 | 路径 | 作用 |
+|---|---|---|
+| `POST` | `/api/projects` | 新建项目（非交互 `start`） |
+| `POST` | `/api/run` | 通用命令运行：`project` / `command` / `argv_json` |
+| `GET` | `/api/runs/{id}/events` | SSE 事件流（`log` / `progress` / `done` / `ping`） |
+| `GET` | `/api/runs/{id}` | run 状态查询（SSE 失效时轮询兜底） |
+| `GET` | `/api/state/{name}` | 项目状态 JSON |
+| `POST` | `/p/{name}/save-stage` | 阶段产物写回本地 |
+| `GET` / `POST` | `/api/review/{name}` | 生成 / 读取复核检查单 |
+| `POST` | `/api/review/{name}/decision` | 复核条目裁决（采纳 / 忽略） |
+| `GET` / `POST` | `/api/qa/{name}` | 阶段问答模板 / 保存回答 |
+| `POST` | `/api/mode` | 设置自主度（0–100） |
+| `GET` / `POST` | `/api/relations/{name}` | 世界图谱读写（`/seed` 填充示例） |
+| `GET` / `POST` | `/api/conflicts/{name}`（`/resolve`） | 冲突列表 / 裁决执行 |
+| `GET` | `/api/chapters/{name}`、`/api/stages/{name}`、`/api/genres`、`/api/roster` | 章节 / 阶段状态 / 题材 / 阵容 |
+
+---
+
+## 七、题材包（genre packs）
 
 NovelAgent 内置多种题材的规则 / 套路 / 术语（修仙、武侠、都市、悬疑、科幻、重生、末世、玄学、男频爽文……），可注入写作流程：
 
@@ -295,7 +447,7 @@ novel-agent merge-genres -d novels/my-novel
 
 ---
 
-## 七、故障排查
+## 八、故障排查
 
 | 现象 | 原因 | 处理 |
 |---|---|---|
@@ -310,7 +462,7 @@ novel-agent merge-genres -d novels/my-novel
 
 ---
 
-## 八、命令速查表
+## 九、命令速查表
 
 > 命令名统一用连字符（文件名下划线转连字符）。`*` 表示全局命令（任意阶段可用）。
 
@@ -357,10 +509,11 @@ novel-agent merge-genres -d novels/my-novel
 | `mode`* | 查看 / 切换介入模式（heavy/light/auto） |
 | `doctor`* | 只读健康体检 + 修复建议 |
 | `dashboard`* | 只读可视化 HTML / 本地服务 |
-| `web`* | 启动 Web UI（FastAPI 服务，浏览器访问） |
+| `web`* | 启动 Web UI（FastAPI 服务，浏览器访问，见第六章） |
+| `cost`* | LLMOps 看板：调用追踪 / 成本基线 / 评测回归汇总 |
 | `context`* | 查看上下文拼装 |
 | `version`* | 版本 |
-| `help`* | 帮助 |
+| `commands`* / `help`* | 列出命令清单（加 `-d` 按当前状态过滤） |
 
 ### 安全 / 维护（`*`）
 | 命令 | 说明 |
@@ -370,41 +523,8 @@ novel-agent merge-genres -d novels/my-novel
 | `reset-state`* | 重置状态机 |
 | `reindex`* | 重建 RAG 索引 |
 | `resume`* | 异常恢复 |
-| `rollback-setting` | 回滚设定项 |
-
-### 5.7 网页界面（Web UI）
-
-NovelAgent 自带一个**零构建的 Web UI**（FastAPI 服务端渲染 + Jinja2 + HTMX 局部刷新，无需 Node 工具链），把 CLI 的创作闭环做成可视化工作台。依赖 `fastapi` + `uvicorn`（已随包安装，无需额外操作）。
-
-**启动方式：**
-
-**推荐（安装后全局可用）：**
-```bash
-novel-agent web                                  # 默认 http://127.0.0.1:8000
-novel-agent web --host 0.0.0.0 --port 8080       # 指定监听地址 / 端口
-```
-
-**备选（直接跑模块）：**
-```bash
-python -m agent.cli web                          # 等价于 CLI 的 web 命令
-python -m agent.web                              # 直接跑 web 模块
-```
-
-**常见问题：** 如报 `ModuleNotFoundError: No module named 'uvicorn'`，重跑 `pip install -e ./agent` 即可。
-
-**页面路由：**
-
-- **引导向导** `/`：项目列表 / 新建项目（含多题材 chips 选择 + 一键写书入口）；
-- **项目空间** `/p/{name}`：状态机进度 + 当前可用操作（按阶段门禁）+ **自主度连续滑块**；写作中状态顶部显示 **⚡ 自动续写** 卡片，可直接指定章节数一键续写；
-- **引导向导** `/p/{name}/guide`：按状态机阶段走通创作闭环；
-- **实时写作间** `/p/{name}/write`：写章 SSE 实时进度 + 成本视图；支持**单章写入**和**批量自动续写**（指定目标章节数，一键续写多章）；
-- **看板** `/p/{name}/dashboard`：成本 / 评测 / 模型路由 / MCP；
-- **文件浏览** `/p/{name}/files` 与单文件查看 `/p/{name}/file?path=`；
-- **冲突裁决** `/p/{name}/conflicts`：多题材同名设定冲突逐条裁决；
-- **Agent 阵容** `/p/{name}/roster`：25 位专家 Agent 分组展示；
-- **世界关系图谱** `/p/{name}/graph`：力导向图可拖拽编排、点选编辑。
-
-> Web 端与 CLI 共享同一套命令元数据（`available_commands` 一致），所以在网页上能跑的操作和命令行完全对齐。停止服务用 `Ctrl-C`。
+| `rollback-setting`* | 回滚设定项 |
+| `resize-scope`* | 调整项目体量（short/medium/long/mega/custom）并按新体量重生成大纲 |
 
 ### 题材 / 质量 / 分析（`*`）
 | 命令 | 说明 |
@@ -437,7 +557,7 @@ python -m agent.web                              # 直接跑 web 模块
 
 ---
 
-## 九、最小上手示例
+## 十、最小上手示例
 
 ```bash
 # 1) 安装
@@ -445,10 +565,14 @@ pip install -e ./agent
 
 # 2) 配置（新建 agent/.env，填入你的 LLM key，见第三章）
 
-# 3) 方式 A：全自主写作（推荐，一条命令完成）
+# 3) 方式 A：网页工作台（推荐新手，见第六章）
+novel-agent web
+# 浏览器打开 http://127.0.0.1:8000 → 新建项目 → 引导向导七步走 → 写作间一键续写
+
+# 3) 方式 B：全自主写作（一条命令完成）
 novel-agent autowrite -d novels/my-first-novel --brief "玄幻+废柴逆袭+爽文" --chapters 10
 
-# 3) 方式 B：分步共创（手把手推进）
+# 3) 方式 C：分步共创（手把手推进）
 novel-agent start    -d novels/my-first-novel
 novel-agent discuss  -d novels/my-first-novel
 novel-agent outline  -d novels/my-first-novel
