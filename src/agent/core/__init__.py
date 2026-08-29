@@ -24,8 +24,8 @@
 from __future__ import annotations
 
 # ── base 层导出 ────────────────────────────────────────────────────
+from agent.base.llm import LLMError
 from agent.core.base.exceptions import (
-    LLMError,
     FrozenFieldError,
     PreValidationBlocked,
 )
@@ -138,14 +138,14 @@ from agent.core.quality.scoring import (
 from agent.core.quality.rewrite import FeedbackRewriter
 
 # ── llm 层导出 ──────────────────────────────────────────────────────
-from agent.core.llm.budget_plan import load_budget_plan
-from agent.core.llm.embedding_router import get_embedding_provider
-from agent.core.llm.embeddings import (
+from agent.client.embedding_router import get_embedding_provider
+from agent.client.embeddings import (
     EmbeddingProvider,
     OllamaEmbedding,
     OpenAICompatibleEmbedding,
     QwenLocalEmbedding,
 )
+from agent.core.llm.budget_plan import load_budget_plan
 
 # ── registry 层导出 ──────────────────────────────────────────────────
 from agent.core.registry.skill_registry import (

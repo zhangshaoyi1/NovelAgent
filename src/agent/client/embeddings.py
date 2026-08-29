@@ -8,8 +8,10 @@
 - ``QwenLocalEmbedding``：本地 Qwen 模型（transformers 离线推理，通过 ``HF_ENDPOINT``
   镜像下载）。
 
-归属 llm/（embedding 是模型调用能力，属 LLM 基础设施）；
-``LLMProvider.embed`` / ``LLMClient.embed`` / ``llm/embedding_router`` 均委托到本模块，
+下沉说明（2026-08-29）：原位于 ``core/llm/embeddings.py``，因 embedding 属模型调用能力
+（LLM 基础设施），且 client 层具体 Provider 的 ``embed()`` 需要它——若继续留在 core，
+会造成 ``client→core`` 反向依赖。故移入 client 层，``core/llm`` 保留再导出适配。
+``LLMProvider.embed`` / ``LLMClient.embed`` / ``client/embedding_router`` 均委托到本模块，
 rag/ 的 Indexer 经 ``embed_fn`` 参数注入使用，不直接依赖本模块。
 """
 
@@ -183,3 +185,11 @@ class QwenLocalEmbedding(EmbeddingProvider):
             all_embeddings.extend(embeddings.cpu().tolist())
 
         return all_embeddings
+
+
+__all__ = [
+    "EmbeddingProvider",
+    "OpenAICompatibleEmbedding",
+    "OllamaEmbedding",
+    "QwenLocalEmbedding",
+]

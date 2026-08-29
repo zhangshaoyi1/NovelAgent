@@ -27,11 +27,9 @@ from urllib.error import URLError
 from dotenv import load_dotenv
 from pydantic import BaseModel
 
-from agent.client.config import LLMConfig
-from agent.client.provider import LLMProvider
-from agent.client.types import LLMResponse
-from agent.core.base.exceptions import LLMError
-from agent.core.base.structured_output import (
+from agent.base.llm import LLMConfig, LLMError, LLMProvider, LLMResponse
+# D-M（2026-08-29）：结构化输出自 base 引用（原 core.base → client→core 反向依赖）
+from agent.base.structured_output import (
     StructuredOutputError,
     extract_json,
     pydantic_to_json_schema,

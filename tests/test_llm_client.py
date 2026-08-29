@@ -9,7 +9,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from agent.core.base.exceptions import LLMError
+from agent.base.llm import LLMError
 from agent.client import (
     LLMClient,
     LLMConfig,

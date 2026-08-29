@@ -16,7 +16,7 @@ from __future__ import annotations
 import warnings
 from pathlib import Path
 
-import agent.utils
+import agent.base.utils
 import pytest
 from agent.utils import make_quiet_console, safe_remove
 
@@ -46,7 +46,7 @@ class TestSafeRemoveFileFallback:
         bak = f.with_name(f.name + ".bak")
 
         # 模拟 WorkBuddy safe-delete 垫片：拦截 os.remove
-        monkeypatch.setattr(agent.utils.os, "remove", _raise_os_error)
+        monkeypatch.setattr(agent.base.utils.os, "remove", _raise_os_error)
 
         # 不抛异常
         result = safe_remove(f)
@@ -65,9 +65,9 @@ class TestSafeRemoveFileFallback:
         f = tmp_path / "x.txt"
         f.write_text("y")
 
-        monkeypatch.setattr(agent.utils.os, "remove", _raise_os_error)
+        monkeypatch.setattr(agent.base.utils.os, "remove", _raise_os_error)
         # 连回退的清空内容也失败
-        monkeypatch.setattr(agent.utils.Path, "write_text", _raise_os_error)
+        monkeypatch.setattr(agent.base.utils.Path, "write_text", _raise_os_error)
 
         with warnings.catch_warnings():
             warnings.simplefilter("ignore")
@@ -103,7 +103,7 @@ class TestSafeRemoveDirFallback:
         trash_root = tmp_path / ".trash"
 
         # 模拟 WorkBuddy safe-delete 垫片：拦截 shutil.rmtree
-        monkeypatch.setattr(agent.utils.shutil, "rmtree", _raise_os_error)
+        monkeypatch.setattr(agent.base.utils.shutil, "rmtree", _raise_os_error)
 
         result = safe_remove(d)
 
@@ -124,7 +124,7 @@ class TestSafeRemoveDirFallback:
         (d / "a.txt").write_text("hi")
         custom_trash = tmp_path / "my_trash"
 
-        monkeypatch.setattr(agent.utils.shutil, "rmtree", _raise_os_error)
+        monkeypatch.setattr(agent.base.utils.shutil, "rmtree", _raise_os_error)
 
         result = safe_remove(d, trash_root=custom_trash)
 

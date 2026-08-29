@@ -133,12 +133,16 @@ class AgentService:
         if real_score:
             score_fn = ReaderAppealScorer(llm_client=self.traced_llm).score
 
+        # D-J：service 侧（高于 workflows）构造并注入回退能力，agents 不再直接 import workflows
+        from agent.workflows.m10_rollback import M10RollbackWorkflow
+
         evaluator = EvaluatorAgent(
             self.project_dir,
             auto_rollback=not no_rollback,
             rollback_window=rollback_window,
             max_rollback_attempts=max_rollback_attempts,
             score_fn=score_fn,
+            rollback_provider=M10RollbackWorkflow(self.project_dir),
         )
         if auto_repair:
 

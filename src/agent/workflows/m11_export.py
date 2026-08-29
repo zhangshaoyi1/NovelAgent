@@ -33,8 +33,10 @@ from agent.core.engine.workflow_registry import workflow
 from rich.panel import Panel
 
 from agent.client import LLMClient
+from agent.core.engine.tool_contracts import tool
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import StateMachine
+from agent.core.tools.builtins import get_project_dir
 from agent.utils import parse_llm_json
 
 
@@ -279,6 +281,41 @@ class ExportWorkflow:
             else:
                 html_lines.append(f"<p>{line}</p>")
         return "\n".join(html_lines)
+
+
+# ============================================================
+# export_chapters 工具注册（Phase 0 工具面）
+# 归属说明（2026-08-29）：原位于 core/tools/builtins.py，因该工具实现依赖
+# ExportWorkflow（workflows 层），若留在 core 会造成 core→workflows 反向依赖。
+# 现按 Registry/Provider 模式由本工作流层注册，core 仅提供 Tool 契约。
+# ============================================================
+@tool(
+    name="export_chapters",
+    description="把全部章节导出为 txt / markdown / epub，返回导出结果（路径/章数/字数）。",
+    parameters_schema={
+        "type": "object",
+        "properties": {
+            "fmt": {
+                "type": "string",
+                "enum": ["txt", "markdown", "epub"],
+                "description": "导出格式",
+            },
+            "title": {"type": "string", "description": "书名，可省略（从 world.md 读取）"},
+        },
+        "required": ["fmt"],
+    },
+)
+def export_chapters(fmt: str, title: str = "") -> Any:
+    """导出全书（工具面入口，项目目录取自 set_project_context 注入）"""
+    res = ExportWorkflow(get_project_dir()).export(fmt, title=title or None)
+    return {
+        "success": res.success,
+        "format": res.format,
+        "output_file": str(res.output_file),
+        "chapter_count": res.chapter_count,
+        "total_words": res.total_words,
+        "message": res.message,
+    }
 
 
 # ============================================================

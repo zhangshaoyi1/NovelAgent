@@ -19,7 +19,8 @@
   无 LLM 时给"通过型"安全默认（与项目"降级不阻断"一致，并在报告中标注来源）。
 
 自动回溯修复：
-- 任一**硬指标**或 overall 不达标 → 调用 ``M10RollbackWorkflow.rollback_to_chapter``
+- 任一**硬指标**或 overall 不达标 → 经注入的 ``rollback_provider`` 调用
+  ``M10RollbackWorkflow.rollback_to_chapter``（D-J：DI 注入，未注入时懒加载兜底）
   回退最近 ``rollback_window``（默认 5）章并归档。
 - 回退次数超过 ``max_rollback_attempts``（默认 3）→ ``escalated=True``，停止并上报人工。
 - 若提供 ``rewriter`` 回调，则在本 Agent 内完成"回退→重写→重评"闭环（Pipeline 用它）；
@@ -33,13 +34,14 @@ import re
 import statistics
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Optional
+from typing import Any, Callable, Optional, Protocol
 
 from rich.console import Console
 
 from agent.core.story.chapters import iter_chapter_texts  # G6：公共章节读取 helper（根因 B6-3）
 from agent.core.engine.state_machine import StateMachine
-from agent.workflows.m10_rollback import M10RollbackWorkflow
+# D-J（2026-08-29）：不再在 agents 层直接 import workflows（违反依赖方向）。
+# 回退能力经 ``rollback_provider`` 构造注入（见 RollbackProvider），未注入时懒加载兜底。
 from agent.core.quality.scoring.reader_appeal import (  # G5：迷爱看六维双闸
     ReaderAppealScorer,
     APPEAL_DIMENSIONS,
@@ -316,6 +318,19 @@ ScoreFn = Callable[[str, str], float]
 RewriterFn = Callable[[list[int]], None]
 
 
+class RollbackProvider(Protocol):
+    """分叉点回滚能力接口（D-J 反向依赖修复）。
+
+    接口定义在**消费方**（agents），由 workflow 层（``m10_rollback.M10RollbackWorkflow``）
+    实现，经 ``EvaluatorAgent(rollback_provider=...)`` 构造注入，使 agents 不再直接
+    import workflows。未注入时 ``trigger_rollback`` 懒加载 M10RollbackWorkflow 兜底。
+    """
+
+    def rollback_to_chapter(self, target_chapter: int) -> Any:
+        """回滚到指定章节（1-based），返回含 ``success`` 字段的结果对象。"""
+        ...
+
+
 class EvaluatorAgent:
     """评测员 Agent：全书"不崩"终审 + 自动回溯修复。
 
@@ -327,6 +342,8 @@ class EvaluatorAgent:
         max_rollback_attempts: 最大回溯次数（默认 3）；超过则上报人工。
         auto_rollback: 是否在不达标时自动回溯（默认 True）。
         quality_targets: 覆盖默认七维合格线（来自 MasterPlan）。
+        rollback_provider: 回退能力实现（D-J 反转：由 workflow 层注入
+            ``m10_rollback.M10RollbackWorkflow``）；None 时懒加载兜底。
     """
 
     def __init__(
@@ -338,6 +355,8 @@ class EvaluatorAgent:
         max_rollback_attempts: int = 3,
         auto_rollback: bool = True,
         quality_targets: dict[str, float] | None = None,
+        # ---- D-J（2026-08-29）：回退能力 DI（默认 None → 懒加载 M10RollbackWorkflow 兜底）----
+        rollback_provider: "RollbackProvider | None" = None,
         # ---- G5 新增：迷爱看六维双闸注入 ----
         appeal_scorer: "ReaderAppealScorer" | None = None,
         appeal_gate: bool = True,
@@ -364,6 +383,8 @@ class EvaluatorAgent:
         self.rollback_window = max(1, rollback_window)
         self.max_rollback_attempts = max(1, max_rollback_attempts)
         self.auto_rollback = auto_rollback
+        # D-J：回退能力 DI（None → trigger_rollback 懒加载 M10RollbackWorkflow 兜底）
+        self._rollback_provider: "RollbackProvider | None" = rollback_provider
         # 最近一次「不达标」体检报告（供 Pipeline 的 rewriter 编译针对性重写提示）
         self.last_failed_report: "Optional[NovelHealthReport]" = None
         qt = dict(quality_targets or {})
@@ -908,6 +929,15 @@ class EvaluatorAgent:
         except Exception:  # noqa: BLE001
             return 0
 
+    def _resolve_rollback(self) -> "RollbackProvider":
+        """返回回退能力：优先使用构造注入的 provider；否则懒加载 M10RollbackWorkflow 兜底。"""
+        if self._rollback_provider is not None:
+            return self._rollback_provider
+        # D-J 兜底：仅在真正触发回溯时才 import workflows（静态依赖已消除，便于 standalone/测试）
+        from agent.workflows.m10_rollback import M10RollbackWorkflow
+
+        return M10RollbackWorkflow(self.project_dir)
+
     def trigger_rollback(self, last_written: int | None = None) -> Optional[RepairPlan]:
         """回退最近 ``rollback_window`` 章并归档，返回修复方案；无法回退则返回 None。"""
         last = self._last_written() if last_written is None else last_written
@@ -915,8 +945,7 @@ class EvaluatorAgent:
             return None
         target = max(1, last - self.rollback_window + 1)
         try:
-            wf = M10RollbackWorkflow(self.project_dir)
-            res = wf.rollback_to_chapter(target)
+            res = self._resolve_rollback().rollback_to_chapter(target)
         except Exception as e:  # noqa: BLE001
             self.console.print(f"[red]回溯失败：{e}[/red]")
             return None

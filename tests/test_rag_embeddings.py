@@ -11,7 +11,7 @@ import json
 import urllib.error
 from unittest.mock import MagicMock, patch
 
-from agent.core.llm.embeddings import (
+from agent.client.embeddings import (
     EmbeddingProvider,
     OllamaEmbedding,
     OpenAICompatibleEmbedding,
@@ -65,7 +65,7 @@ class TestOllamaEmbedding:
     def test_embed_returns_vectors(self) -> None:
         resp_body = json.dumps({"embedding": [0.5, 0.6]}).encode("utf-8")
         with patch(
-            "agent.core.llm.embeddings.urllib.request.urlopen",
+            "agent.client.embeddings.urllib.request.urlopen",
             return_value=_FakeResp(resp_body),
         ):
             emb = OllamaEmbedding(model="m")
@@ -79,7 +79,7 @@ class TestOllamaEmbedding:
         # 第一次成功，第二次 urlopen 抛 URLError → 返回空向量（降级）
         good = json.dumps({"embedding": [0.7]}).encode("utf-8")
         with patch(
-            "agent.core.llm.embeddings.urllib.request.urlopen",
+            "agent.client.embeddings.urllib.request.urlopen",
             side_effect=[_FakeResp(good), urllib.error.URLError("boom")],
         ):
             emb = OllamaEmbedding(model="m")

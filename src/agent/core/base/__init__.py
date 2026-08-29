@@ -9,8 +9,8 @@
 依赖规则：仅依赖标准库，不依赖任何 agent 包内模块。
 """
 
+from agent.base.llm import LLMError
 from agent.core.base.exceptions import (
-    LLMError,
     FrozenFieldError,
     PreValidationBlocked,
 )

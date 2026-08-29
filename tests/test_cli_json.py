@@ -19,7 +19,7 @@ import json
 from pathlib import Path
 from unittest.mock import MagicMock
 
-import agent.utils
+import agent.base.utils
 import pytest
 from agent.cli import app
 from agent.client import LLMClient, LLMResponse
@@ -61,7 +61,7 @@ class TestWriteJson:
         _patch_llm(monkeypatch, mock)
 
         # 模拟 WorkBuddy safe-delete 垫片拦截 os.remove（FAIL_CLOSED）
-        monkeypatch.setattr(agent.utils.os, "remove", _raise_os_error)
+        monkeypatch.setattr(agent.base.utils.os, "remove", _raise_os_error)
 
         runner = CliRunner()
         # 走 AgenticWriteWorkflow（默认 auto 模式）

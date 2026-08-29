@@ -1,98 +1,26 @@
-"""LLM Provider 抽象层
+"""LLM Provider 具体实现（OpenAI / Ollama）
 
-屏蔽不同 LLM 提供商（OpenAI、Ollama 等）的差异。
+下沉说明（2026-08-29）：``LLMProvider`` 抽象基类 / ``register_provider`` / ``LLMConfig`` /
+``LLMResponse`` / ``LLMError`` 已下沉至 ``agent.base.llm``（消除 ``client→core`` 反向依赖）。
+本模块仅保留具体 Provider 实现，并从 base 导入协议类型；``embed()`` 经
+``client/embedding_router`` 实现（embedding 能力随 client 层，不依赖 core）。
 通过 PROVIDERS 注册表模式扩展，新增 Provider = 继承 LLMProvider 并注册。
 """
 
 from __future__ import annotations
 
 import json
-import time
-from abc import ABC, abstractmethod
-from typing import Any, Callable, ClassVar
+from typing import Any
 from urllib.error import URLError
 from urllib.request import Request, urlopen
 
-from agent.client.config import LLMConfig
-from agent.client.types import LLMResponse
-from agent.core.base.exceptions import LLMError
-
-
-class LLMProvider(ABC):
-    """LLM 提供商抽象接口
-
-    Provider 注册表模式（DeepSeek Harness 风格）：
-    - 新增 provider 只需继承 LLMProvider 并使用 @register_provider 装饰器
-    - 装饰器自动注册到 PROVIDERS 注册表，无需手动修改中心字典
-    - 对扩展开放，对修改关闭
-    """
-
-    PROVIDERS: ClassVar[dict[str, type["LLMProvider"]]] = {}
-
-    def __init__(self, config: LLMConfig) -> None:
-        self.config = config
-
-    @abstractmethod
-    def chat(
-        self,
-        messages: list[dict[str, str]],
-        model: str,
-        temperature: float,
-        max_tokens: int | None,
-        enable_thinking: bool | None,
-        timeout: int,
-        **kwargs: Any,
-    ) -> LLMResponse:
-        ...
-
-    def embed(self, texts: list[str]) -> list[list[float]]:
-        """生成文本嵌入向量
-
-        基类统一实现：依据 ``embedding_provider`` 选择嵌入后端。
-        不可达时返回空列表降级（绝不阻断写章）。
-        """
-        from agent.core.llm.embedding_router import get_embedding_provider
-
-        provider = get_embedding_provider(self.config)
-        return provider.embed(texts)
-
-    @staticmethod
-    def create(config: LLMConfig) -> "LLMProvider":
-        """根据配置创建 Provider（经 PROVIDERS 注册表，无 if/else）"""
-        provider_name = config.provider.lower() or "openai"
-        try:
-            provider_cls = LLMProvider.PROVIDERS[provider_name]
-        except KeyError:
-            available = ", ".join(sorted(LLMProvider.PROVIDERS)) or "(空)"
-            raise LLMError(
-                f"未知 LLM provider: {provider_name!r}。可用 provider: {available}"
-            ) from None
-        return provider_cls(config)
-
-
-def register_provider(
-    provider_name: str | None = None,
-) -> Callable[[type[LLMProvider]], type[LLMProvider]]:
-    """LLM Provider 注册装饰器
-
-    用法::
-
-        from agent.client.provider import register_provider
-
-        @register_provider("openai")
-        class OpenAIProvider(LLMProvider):
-            ...
-
-    通过装饰器自动注册到 LLMProvider.PROVIDERS 注册表，
-    新增 Provider 无需修改现有代码。
-    """
-
-    def decorator(cls: type[LLMProvider]) -> type[LLMProvider]:
-        name = provider_name or cls.__name__.removesuffix("Provider").lower()
-        LLMProvider.PROVIDERS[name] = cls
-        return cls
-
-    return decorator
+from agent.base.llm import (
+    LLMConfig,
+    LLMError,
+    LLMProvider,
+    LLMResponse,
+    register_provider,
+)
 
 
 @register_provider("openai")
@@ -156,7 +84,12 @@ class OpenAIProvider(LLMProvider):
             }
         return LLMResponse(text=text, usage=usage, model=model, raw=resp)
 
-    # embed() 继承自基类 LLMProvider.embed()，通过 embedding_router 统一路由
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """生成文本嵌入向量（经 client/embedding_router 路由）"""
+        from agent.client.embedding_router import get_embedding_provider
+
+        provider = get_embedding_provider(self.config)
+        return provider.embed(texts)
 
 
 @register_provider("ollama")
@@ -226,4 +159,9 @@ class OllamaProvider(LLMProvider):
         raw = {"choices": [{"message": {"content": text}}], "usage": result.get("usage")}
         return LLMResponse(text=text, usage=usage, model=model, raw=raw)
 
-    # embed() 继承自基类 LLMProvider.embed()，通过 embedding_router 统一路由
+    def embed(self, texts: list[str]) -> list[list[float]]:
+        """生成文本嵌入向量（经 client/embedding_router 路由）"""
+        from agent.client.embedding_router import get_embedding_provider
+
+        provider = get_embedding_provider(self.config)
+        return provider.embed(texts)

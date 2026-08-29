@@ -94,6 +94,9 @@ def evaluate(
 
         score_fn = ReaderAppealScorer(llm_client=traced_llm).score   # 改：裸 LLMClient → traced_llm
 
+    # D-J：CLI 侧（高于 workflows）构造并注入回退能力，agents 不再直接 import workflows
+    from agent.workflows.m10_rollback import M10RollbackWorkflow
+
     evaluator = EvaluatorAgent(
         project_path,
         console=workflow_console,
@@ -101,6 +104,7 @@ def evaluate(
         rollback_window=rollback_window,
         max_rollback_attempts=max_rollback,
         score_fn=score_fn,
+        rollback_provider=M10RollbackWorkflow(project_path, console=workflow_console),
         # G7：人话总结层展示开关（拍板 6：默认开，--no-human-summary 关闭）
         human_summary=not bool(getattr(no_human_summary, "default", no_human_summary)),
     )

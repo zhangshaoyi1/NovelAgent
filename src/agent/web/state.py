@@ -382,10 +382,11 @@ def get_conflicts(name: str) -> dict[str, Any]:
 
     返回 {sources, conflicts, pending, total}；无冲突记录时 pending=0。
     """
-    from agent.cli.commands.merge_genres import pending_conflicts
+    # D-K（2026-08-29）：读取入口收敛到 core（不再经 cli 中转，消除 web→cli 反向依赖）
+    from agent.core.registry.genre_merger import load_conflicts
 
     try:
-        data = pending_conflicts(project_path(name)) or {}
+        data = load_conflicts(project_path(name)) or {}
     except Exception:
         data = {}
     conflicts = data.get("conflicts", []) or []

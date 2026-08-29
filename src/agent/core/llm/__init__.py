@@ -5,17 +5,19 @@
 - Embedding：文本嵌入提供方（OpenAI 兼容 / Ollama / Qwen 本地）与路由选择
 - 向后兼容层：model_routing / llm_client 废弃适配器（不再在此导出）
 
-注意：核心 LLM 客户端实现位于 agent/client/，本包仅提供上层辅助设施。
+下沉说明（2026-08-29）：embedding 实现与路由已下沉至 agent/client/（client/embeddings.py、
+client/embedding_router.py），本包仅做再导出以保持 ``core.llm`` 公共 API 不变。
+核心 LLM 客户端实现位于 agent/client/，本包仅提供上层辅助设施。
 """
 
-from agent.core.llm.budget_plan import load_budget_plan
-from agent.core.llm.embedding_router import get_embedding_provider
-from agent.core.llm.embeddings import (
+from agent.client.embedding_router import get_embedding_provider
+from agent.client.embeddings import (
     EmbeddingProvider,
     OllamaEmbedding,
     OpenAICompatibleEmbedding,
     QwenLocalEmbedding,
 )
+from agent.core.llm.budget_plan import load_budget_plan
 
 __all__ = [
     "load_budget_plan",

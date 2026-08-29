@@ -398,6 +398,9 @@ class AgenticPipelineWorkflow:
                     appeal_scorer = None
             # G6：B4 golden_scorer 复用同一六维评分器实例（评前三章与评末章可共用，拍板 §12-3）
             golden_scorer = appeal_scorer if self.golden_three_gate else None
+            # D-J：由 workflow 侧注入回退能力（agents 不再直接 import workflows）
+            from agent.workflows.m10_rollback import M10RollbackWorkflow
+
             self.evaluator = EvaluatorAgent(
                 self.project_dir,
                 console=self.console,
@@ -405,6 +408,7 @@ class AgenticPipelineWorkflow:
                 max_rollback_attempts=self.max_rollback_attempts,
                 quality_targets=qt or None,
                 score_fn=score_fn,
+                rollback_provider=M10RollbackWorkflow(self.project_dir, console=self.console),
                 # G5：迷爱看六维双闸透传
                 appeal_scorer=appeal_scorer,
                 appeal_gate=self.appeal_gate,

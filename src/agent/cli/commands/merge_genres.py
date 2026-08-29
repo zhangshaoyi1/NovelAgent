@@ -229,9 +229,3 @@ def _write_back(pdir: Path, result, genre_list: list[str]) -> None:
         save_conflicts(pdir, result)
     except Exception:
         pass
-
-
-# 供其它模块（如 Web UI）读取待裁决冲突的轻量封装
-def pending_conflicts(project_dir: str | Path) -> dict | None:
-    """返回项目的待裁决冲突（.state/merge_conflicts.json），无则 None。"""
-    return load_conflicts(project_dir)

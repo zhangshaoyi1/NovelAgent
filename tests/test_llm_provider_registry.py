@@ -1,4 +1,4 @@
-﻿"""T-7 LLMProvider 注册表单元测试
+"""T-7 LLMProvider 注册表单元测试
 
 覆盖：
 - 注册新 provider 后 create 返回其实例（单一注册点，禁 if/else）
@@ -12,7 +12,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.core.base.exceptions import LLMError
+from agent.base.llm import LLMError
 from agent.client import (
     LLMClient,
     LLMConfig,

@@ -1,4 +1,4 @@
-﻿"""E1 本地模型支持 - 无网络回退（F-E1.4）单元测试
+"""E1 本地模型支持 - 无网络回退（F-E1.4）单元测试
 
 覆盖：
 - 主 Provider 网络错误 + 已配置备用 Provider → 自动回退成功
@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock
 
-from agent.core.base.exceptions import LLMError
+from agent.base.llm import LLMError
 from agent.client import (
     LLMClient,
     LLMConfig,

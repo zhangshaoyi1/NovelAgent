@@ -10,7 +10,9 @@ LLM 只需提供业务参数，无需关心项目路径。
 - count_words       字数统计（总字符 + 中文字数）
 - quality_check     章节规则层质量校验（无需网络）
 - foreshadow_read   读取伏笔登记表原文（ForeshadowManager 仍为桩，先读原文）
-- export_chapters   导出全书为 txt / markdown / epub
+
+下沉说明（2026-08-29）：``export_chapters`` 工具已迁至 ``workflows/m11_export.py``
+（工作流层注册），消除 ``core→workflows`` 反向依赖；本模块仅保留纯 core 能力工具。
 """
 
 from __future__ import annotations
@@ -164,32 +166,3 @@ def foreshadow_read() -> Any:
         return {"exists": False, "content": ""}
     return {"exists": True, "content": f.read_text(encoding="utf-8")}
 
-
-@tool(
-    name="export_chapters",
-    description="把全部章节导出为 txt / markdown / epub，返回导出结果（路径/章数/字数）。",
-    parameters_schema={
-        "type": "object",
-        "properties": {
-            "fmt": {
-                "type": "string",
-                "enum": ["txt", "markdown", "epub"],
-                "description": "导出格式",
-            },
-            "title": {"type": "string", "description": "书名，可省略（从 world.md 读取）"},
-        },
-        "required": ["fmt"],
-    },
-)
-def export_chapters(fmt: str, title: str = "") -> Any:
-    from agent.workflows.m11_export import ExportWorkflow
-
-    res = ExportWorkflow(get_project_dir()).export(fmt, title=title or None)
-    return {
-        "success": res.success,
-        "format": res.format,
-        "output_file": str(res.output_file),
-        "chapter_count": res.chapter_count,
-        "total_words": res.total_words,
-        "message": res.message,
-    }

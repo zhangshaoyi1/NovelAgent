@@ -22,6 +22,9 @@ from agent.core.base.structured_output import (
 )
 from agent.core.tools import registry
 from agent.core.tools.builtins import set_project_context
+# D-I（2026-08-29）：export_chapters 工具已迁至 workflows 层注册，
+# 导入 m11_export 以触发 @tool 注册（core 不再依赖 workflows）。
+from agent.workflows.m11_export import export_chapters  # noqa: F401, E501
 
 
 # ---------------------------------------------------------------------------

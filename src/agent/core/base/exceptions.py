@@ -2,15 +2,14 @@
 
 所有领域异常统一在此定义，避免散落在各业务模块、并被 CLI 直接捕获而耦合。
 此模块为叶子模块（不依赖 agent 包内其他模块），可安全被任意层导入。
+
+下沉说明（2026-08-29）：``LLMError`` 已随 LLM 协议类型一并下沉至
+``agent.base.llm``（消除 ``client→core`` 反向依赖），本模块仅保留领域异常。
 """
 
 from __future__ import annotations
 
 from typing import Any
-
-
-class LLMError(Exception):
-    """LLM 调用错误（配置缺失、重试后仍失败、双 Provider 均不可用等）"""
 
 
 class FrozenFieldError(PermissionError):
