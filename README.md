@@ -1,7 +1,7 @@
 # NovelAgent 使用指南（面向作者 / 使用者）
 
 > 本指南介绍 **NovelAgent 这个写作软件本身怎么用**：如何安装、配置大模型、把一本小说从 0 写到完结、以及日常查看 / 修改 / 导出。
-> 如果你要的是"用脚本自动批量写作（极品医仙那种一键驱动）"，那套能力已整合进 agent 仓库的 **`scripts/compose.py`（一键写书，见 novel-agent-driver 的 One-Shot Compose）**，本指南聚焦软件本身用法。
+> 如果你要的是"一口气写完整本"，直接用内置的 **`compose` 命令**（一条命令开新书并写到完本，见 §4.0）。本指南聚焦软件本身用法。
 
 ---
 
@@ -90,9 +90,31 @@ LLM_TIMEOUT=180
 LLM_MAX_RETRIES=3
 LLM_ENABLE_THINKING=false
 ```
-> 换成 OpenAI / DeepSeek / 其它 OpenAI 兼容服务，只需改 `LLM_BASE_URL`、`LLM_MODEL_ID`、`LLM_API_KEY` 三项。
+### 3.3 其它厂商配置
 
-### 3.3 本地模型（ollama，零成本离线写作）
+任何兼容 OpenAI 协议的服务都能用，改三项即可：`LLM_BASE_URL` / `LLM_MODEL_ID` / `LLM_API_KEY`。
+
+```dotenv
+# OpenAI
+LLM_API_KEY=sk-你的OpenAI密钥
+LLM_BASE_URL=https://api.openai.com/v1
+LLM_MODEL_ID=gpt-4o
+LLM_MODEL_UTILITY=gpt-4o-mini
+
+# DeepSeek
+LLM_API_KEY=你的DeepSeek密钥
+LLM_BASE_URL=https://api.deepseek.com/v1
+LLM_MODEL_ID=deepseek-chat
+
+# Moonshot Kimi
+LLM_API_KEY=你的Kimi密钥
+LLM_BASE_URL=https://api.moonshot.cn/v1
+LLM_MODEL_ID=moonshot-v1-32k
+```
+
+`LLM_MODEL_UTILITY`（轻量模型，做校验 / 摘要）留空则复用主模型；配上它能明显省钱省时。
+
+### 3.4 本地模型（ollama，零成本离线写作）
 ```dotenv
 LLM_PROVIDER=ollama
 LLM_BASE_URL=http://localhost:11434
@@ -100,7 +122,9 @@ LLM_MODEL_ID=qwen2.5:14b
 # 无需 LLM_API_KEY
 ```
 
-### 3.4 临时指定 .env
+> `.env` 含密钥，**不要提交到 git**（项目已配置 `.gitignore`）。
+
+### 3.5 临时指定 .env
 部分命令支持 `--env <路径>`（仅本次命令生效，透传给下游 LLM 客户端）：
 ```bash
 novel-agent write -d novels/my-novel --env ./another.env
@@ -135,10 +159,20 @@ novel-agent guardrail-scan -d novels/my-novel         # 成书质量护栏全量
 novel-agent rewrite -d novels/my-novel --chapter 12 --feedback "节奏太快，放慢并补细节"
 ```
 
-**一键完本（全自动写完整本，含 start→autowrite→去重）：**
+**一键完本：**
 ```bash
-novel-agent compose -d novels/my-novel --brief "..." --chapters 30
+# 开新书并写到完本
+novel-agent compose --name "我的修仙路" --scope long --genre xiuxian \
+    --story-core "废柴逆袭，一路打脸" --chapters 120
+
+# 续写已有项目（跑到目标章数）
+novel-agent compose -d novels/my-novel --chapters 30
+
+# 跳过完本自动体检（evaluate + foreshadow-report）
+novel-agent compose -d novels/my-novel --chapters 30 --no-checkup
 ```
+
+`compose` 生成约束文档后多角色推进至完本，写完全书自动做段落去重扫描。它**不是** `autowrite` 的别名——`autowrite` 是单轮全流程（规划→写→评→修），`compose` 是跨轮编排到完本。
 
 ### 4.1 开新书 —— `start`
 ```bash
@@ -184,7 +218,7 @@ novel-agent write -d novels/my-novel --no-strict-review   # 跳过 D 严格审�
 - 加 `--json` 会以 JSON 输出结果（供外部脚本 / 自动化驱动调用，stdout 是 JSON，rich UI 走 stderr）。
 - 可能触发 **前置冲突检测**（`pre_validation_blocked`）：当世界观出现高严重度冲突时，生成被暂停。此时按报告修改 `world.md` / `subline` / 角色档案，或用下面的 `adjust-*` 调整，再重跑 `write`。
 
-> 想"一口气写完整本"而不手动反复敲命令？见 **`scripts/compose.py`（One-Shot Compose）**，一条命令即可循环调用 `write` 并自动处理限流、续写、导出。
+> 想"一口气写完整本"而不手动反复敲命令？用 **`compose`**（见 §4.0），它会自动处理限流退避、续写与完本体检。
 
 ### 4.6 一致性演化 —— `adjust-relation` / `adjust-route`
 ```bash
@@ -452,7 +486,7 @@ novel-agent merge-genres -d novels/my-novel
 | 现象 | 原因 | 处理 |
 |---|---|---|
 | `LLM_API_KEY 未配置` / 找不到 key | `.env` 没放对或没加载 | 确认 `agent/.env` 存在且含 `LLM_API_KEY`；或命令加 `--env` |
-| `429` / `速率限制` / `rate limit` | LLM 服务商 RPM 限流 | `write` 会自动退避重试；频繁则调大 `LLM_TIMEOUT`、换额度更高模型，或改用 `scripts/compose.py` 一键驱动（含退避重试） |
+| `429` / `速率限制` / `rate limit` | LLM 服务商 RPM 限流 | `write` 会自动退避重试；频繁则调大 `LLM_TIMEOUT`、换额度更高模型，或改用 `compose` 一键驱动（含退避重试） |
 | `pre_validation_blocked` | 世界观高严重度冲突 | 按报告改 `world.md` / `subline` / 角色，或用 `adjust-*` 调整后再 `write` |
 | `ModuleNotFoundError: agent` | 没装包 / PYTHONPATH 没含 src | `pip install -e ./agent`，或运行前 `PYTHONPATH=.../agent/src` |
 | `ModuleNotFoundError: No module named 'uvicorn'` / `'fastapi'` | 早期安装漏装 Web 依赖 | 重跑 `pip install -e ./agent`（新版 `pyproject.toml` 已含 `fastapi`、`uvicorn`）；或单独 `pip install "fastapi>=0.110.0" "uvicorn[standard]>=0.29.0"` |
@@ -470,14 +504,14 @@ novel-agent merge-genres -d novels/my-novel
 | 命令 | 说明 | 主要参数 |
 |---|---|---|
 | `autowrite` | 全自主写作（规划→写→评→修） | `-d`, `--brief`, `--chapters`, `--mode` |
-| `compose` | 一键全自动写书（start→autowrite 至完本） | `-d`, `--brief`, `--chapters` |
+| `compose` | 一键全自动写书（开新书/续写至完本，含完本去重） | `--name`, `-d`, `--scope`, `--genre`, `--story-core`, `-n/--chapters`, `--mode`, `--no-checkup` |
 | `start` | 开新书，生成 world.md | `-d`, `--genres`（多题材） |
 | `discuss` | 脉络讨论，产出 discussion.md | `-d`, `-r/--max-rounds` |
 | `architecture` | 故事架构 | `-d` |
 | `confirm-architecture` | 确认架构（解锁大纲） | `-d` |
 | `outline` | 大纲 + 各支线 subline | `-d` |
 | `design-characters` | 角色 / 关系 / 伏笔 / 金手指 | `-d` |
-| `write` | 写下一章（核心循环） | `-d`, `--no-strict-review`, `--json`, `--env` |
+| `write` | 写下一章（核心循环） | `-d`, `--mode auto/heavy/light`, `--no-strict-review`, `--json`, `--env` |
 | `adjust-relation` | 调整角色关系网 | `-d`, `-i/--intent`, `--json` |
 | `adjust-route` | 调整主角成长路线 | `-d`, `-i/--intent`, `--json` |
 | `export` | 导出 txt/markdown/epub | `-d`, `-f/--format`, `-o/--output`, `-t/--title` |
@@ -578,7 +612,7 @@ novel-agent discuss  -d novels/my-first-novel
 novel-agent outline  -d novels/my-first-novel
 novel-agent design-characters -d novels/my-first-novel
 
-# 4) 写前 10 章（手动循环，或改用 scripts/compose.py 一键跑）
+# 4) 写前 10 章（手动循环，或改用 compose 一键跑）
 novel-agent write -d novels/my-first-novel
 # ……反复 write 直到满意……
 
@@ -586,4 +620,4 @@ novel-agent write -d novels/my-first-novel
 novel-agent export -d novels/my-first-novel -f txt
 ```
 
-更省事的全自动版本，见 **`scripts/compose.py`**（一键写完一本，非定时，可直接换书复用）。
+更省事的全自动版本：`novel-agent compose --name "..." --story-core "..." --chapters 30`（一键写完一本，非定时，可直接换书复用）。
