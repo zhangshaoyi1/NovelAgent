@@ -1,14 +1,16 @@
-﻿"""M4 硬编码崩点修复验证（P0-4）：注入非 JSON / 非 dict 响应
+"""M4 解析失败加固验证：注入非 JSON / 非 dict 响应
 
-纯离线：构造一个返回纯文本（非 JSON）的 fake LLM；M4 ``_llm_generate_characters``
-必须优雅降级（对齐 M1/M14/M3 的 ValueError 兜底），``run()`` 不 raise，且产出
-至少 1 个占位角色（M4 模板占位，非"主线待补充"空壳），下游不阻断。
+纯离线：构造一个持续返回纯文本（非 JSON）的 fake LLM；M4 ``_llm_generate_characters``
+解析失败自动重试一次，重试仍失败则响亮抛错（对齐 M1/M14/M3 策略），
+绝不静默降级为占位角色——否则真实角色设计会被静默丢弃（生成类写操作失败要响亮报错）。
 """
 
 from __future__ import annotations
 
 import frontmatter
 from pathlib import Path
+
+import pytest
 
 from agent.client import LLMResponse
 from agent.core.story.setting_manager import SettingManager
@@ -50,7 +52,8 @@ def _seed_project(tmp_path: Path) -> StateMachine:
     return st
 
 
-def test_m4_graceful_non_json_does_not_raise(tmp_path: Path) -> None:
+def test_m4_parse_failure_raises(tmp_path: Path) -> None:
+    """持续非 JSON 响应：两次尝试后必须响亮抛错，绝不静默写占位角色。"""
     st = _seed_project(tmp_path)
     sm = SettingManager(tmp_path)
     wf = M4CharacterWorkflow(
@@ -59,25 +62,16 @@ def test_m4_graceful_non_json_does_not_raise(tmp_path: Path) -> None:
         setting_manager=sm,
         state_machine=st,
     )
-    # 非 JSON 响应不应导致 run() 抛出
-    result = wf.run()
-    assert result is not None
-
-    # 至少 1 个占位角色（M4 模板占位，含必填字段）
-    char_files = list((tmp_path / "characters").glob("*.md"))
-    assert char_files, "非 JSON 响应下应渲染至少 1 个占位角色"
-    content = char_files[0].read_text(encoding="utf-8")
-    for kw in ("身份", "核心动机", "弧光", "语言指纹", "关系"):
-        assert kw in content, f"占位角色缺衔接字段：{kw}"
-
-    # 下游产物也应正常落盘（不阻断）
-    assert (tmp_path / "relations" / "graph.md").exists()
-    assert (tmp_path / "foreshadows.md").exists()
-    assert (tmp_path / "golden_finger_registration.md").exists()
+    with pytest.raises(RuntimeError):
+        wf.run()
+    # 不落盘占位角色（不产生残缺产物）
+    assert not (tmp_path / "characters").exists() or not list(
+        (tmp_path / "characters").glob("*.md")
+    ), "失败时不应写入占位角色文件"
 
 
-def test_m4_graceful_non_dict_does_not_raise(tmp_path: Path) -> None:
-    """返回 JSON 但顶层是 list（非 dict）也应降级不崩。"""
+def test_m4_non_dict_raises(tmp_path: Path) -> None:
+    """返回 JSON 但顶层是 list（非 dict）：两次尝试后也应响亮抛错。"""
 
     class _ListLLM:
         def chat_creative(self, messages, **kwargs) -> LLMResponse:
@@ -95,7 +89,8 @@ def test_m4_graceful_non_dict_does_not_raise(tmp_path: Path) -> None:
         setting_manager=sm,
         state_machine=st,
     )
-    result = wf.run()
-    assert result is not None
-    char_files = list((tmp_path / "characters").glob("*.md"))
-    assert char_files, "非 dict 响应下应渲染至少 1 个占位角色"
+    with pytest.raises(RuntimeError):
+        wf.run()
+    assert not (tmp_path / "characters").exists() or not list(
+        (tmp_path / "characters").glob("*.md")
+    ), "失败时不应写入占位角色文件"

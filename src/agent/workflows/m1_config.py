@@ -36,6 +36,15 @@ from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.prompts import M1_SYSTEM_PROMPT, M1_USER_PROMPT_TEMPLATE
 from agent.utils import parse_llm_json
 from agent.core.infra.hook_dispatcher import dispatch_genre_hooks
+from agent.core.story.volume import (
+    MAX_CHAPTER_LENGTH,
+    MIN_CHAPTER_LENGTH,
+    SCOPE_LABELS,
+    VALID_SCOPES,
+    describe_scope,
+    validate_custom,
+)
+from agent.workflows.qa_sync import format_qa_constraints
 
 # 模板路径（题材包模板改由 GenrePackRegistry 动态加载，见 T-2）
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -59,11 +68,13 @@ class M1Input:
     """M1 用户输入"""
 
     title: str = ""
-    scope: str = "long"  # short | medium | long
+    scope: str = "long"  # short | medium | long | mega | custom
     genres: list[str] | None = None  # 题材（可多选混搭）；None 时在 __post_init__ 归一化
     genre: str | None = None  # 向后兼容：显式传 genre 且未给 genres 时，折叠为单元素列表
     style: dict[str, Any] = field(default_factory=dict)
     story_core: str = ""
+    total_words: int | None = None  # 自定义体量（scope=='custom'）目标总字数（字）
+    chapter_length: int | None = None  # 自定义体量的单章字数（字）
 
     def __post_init__(self) -> None:
         # 归一化：genres 显式给定则用其值（忽略 genre）；否则由 genre 折叠；都缺省回退 [xiuxian]
@@ -83,12 +94,6 @@ class M1Result:
 @workflow("m1_config")
 class M1ConfigWorkflow:
     """M1 启动配置工作流"""
-
-    SCOPE_LABELS = {
-        "short": "短篇（< 5万字）",
-        "medium": "中篇（5-30万字）",
-        "long": "长篇（30万字+）",
-    }
 
     STYLE_DEFAULTS = {
         "tone": "热血",
@@ -140,7 +145,7 @@ class M1ConfigWorkflow:
 
         self.console.print(
             f"\n[bold green]已收集信息[/bold green]：{user_input.title} "
-            f"({self.SCOPE_LABELS.get(user_input.scope, user_input.scope)})"
+            f"({SCOPE_LABELS.get(user_input.scope, user_input.scope)})"
         )
 
         # 2. 加载并合并题材包模板（支持多题材混搭 + 冲突裁决）
@@ -194,9 +199,34 @@ class M1ConfigWorkflow:
 
         scope = Prompt.ask(
             "[bold]体量[/bold]",
-            choices=["short", "medium", "long"],
+            choices=list(VALID_SCOPES),
             default="long",
         )
+        total_words: int | None = None
+        chapter_length: int | None = None
+        if scope == "custom":
+            total_words = int(
+                Prompt.ask("[bold]目标总字数（字）[/bold]", default="1000000")
+            )
+            chapter_length = int(
+                Prompt.ask(
+                    "[bold]单章字数（字）[/bold]（推荐 2000-2500，范围 "
+                    f"{MIN_CHAPTER_LENGTH}-{MAX_CHAPTER_LENGTH}）",
+                    default="2500",
+                )
+            )
+            err = validate_custom(total_words, chapter_length)
+            if err:
+                self.console.print(f"[yellow]提示：{err}（已使用你输入的值）[/yellow]")
+        elif scope == "mega":
+            chapter_length = int(
+                Prompt.ask(
+                    "[bold]单章字数（字）[/bold]（推荐 2000-2500，范围 "
+                    f"{MIN_CHAPTER_LENGTH}-{MAX_CHAPTER_LENGTH}）",
+                    default="2500",
+                )
+            )
+            total_words = None  # mega 用内置区间（100万+）
 
         # 题材选项由 GenrePackRegistry 动态生成（T-2：去硬编码 xiuxian）
         genre_registry = GenrePackRegistry()
@@ -230,6 +260,8 @@ class M1ConfigWorkflow:
             genres=genres,
             style=style,
             story_core=story_core,
+            total_words=total_words,
+            chapter_length=chapter_length,
         )
 
     def _style_questionnaire(self) -> dict[str, Any]:
@@ -283,6 +315,9 @@ class M1ConfigWorkflow:
         else:
             for k, v in self.STYLE_DEFAULTS.items():
                 user_input.style.setdefault(k, v)
+        # mega/custom 显式给定单章字数时，覆盖 style.chapter_length（驱动每章正文长度）
+        if user_input.chapter_length and user_input.scope in ("mega", "custom"):
+            user_input.style["chapter_length"] = user_input.chapter_length
         return user_input
 
     # ------ 题材包模板（多题材合并）------
@@ -317,47 +352,59 @@ class M1ConfigWorkflow:
     def _generate_world(self, user_input: M1Input) -> dict[str, Any]:
         """调用 LLM 生成世界观
 
+        解析失败时重试一次（要求只输出纯 JSON）；两次均失败则明确抛错，
+        绝不静默写入残缺世界观（否则作者输入的 story_core / 风格偏好会静默丢失）。
+
         Returns:
             包含 synopsis/worldview/power_system/factions/golden_finger 的 dict
         """
         style = user_input.style
+        scope_desc = describe_scope(
+            user_input.scope,
+            total_words=user_input.total_words,
+            chapter_length=user_input.chapter_length
+            or style.get("chapter_length"),
+        )
         user_prompt = M1_USER_PROMPT_TEMPLATE.format(
             title=user_input.title,
-            scope=user_input.scope,
+            scope=scope_desc,
             tone=style.get("tone", ""),
             pov=style.get("pov", ""),
             rhythm=style.get("rhythm", ""),
             info_density=style.get("info_density", ""),
             story_core=user_input.story_core,
         )
-        # A 系列：问答面板确定的作者偏好注入初始生成 prompt
-        from agent.workflows.qa_sync import format_qa_constraints
 
         qa_text = format_qa_constraints(self.project_dir, "world")
         if qa_text:
             user_prompt += qa_text
 
-        resp = self.llm.chat_creative(
-            messages=[
-                {"role": "system", "content": M1_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.8,
-            max_tokens=2000,
-            enable_thinking=False,  # 结构化输出不需要思考，加速生成
-        )
-
-        try:
-            return parse_llm_json(resp.text)
-        except ValueError:
-            # JSON 解析失败，降级为纯文本填充
-            return {
-                "synopsis": resp.text[:200],
-                "worldview": resp.text,
-                "power_system": "",
-                "factions": "",
-                "golden_finger": "",
-            }
+        system_prompt = M1_SYSTEM_PROMPT
+        for attempt in (1, 2):
+            resp = self.llm.chat_creative(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.8,
+                max_tokens=4096,
+                enable_thinking=False,  # 结构化输出不需要思考，加速生成
+            )
+            try:
+                return parse_llm_json(resp.text)
+            except ValueError:
+                if attempt == 1:
+                    # 重试：强化「纯 JSON」约束，规避截断/多余文本导致的解析失败
+                    system_prompt = (
+                        M1_SYSTEM_PROMPT
+                        + "\n\n【重要】请只输出一个合法的 JSON 对象，"
+                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                    )
+                    continue
+                raise RuntimeError(
+                    "世界观生成结果无法解析为 JSON（可能被截断或格式异常），"
+                    f"请重试。原始输出片段：{resp.text[:200]}"
+                )
 
     # ------ 渲染 ------
     def _render_world(
@@ -385,6 +432,10 @@ class M1ConfigWorkflow:
         metadata = {
             "title": user_input.title,
             "scope": user_input.scope,
+            "scope_label": SCOPE_LABELS.get(user_input.scope, user_input.scope),
+            "scope_total_words": user_input.total_words,
+            "scope_chapter_length": user_input.chapter_length
+            or style.get("chapter_length"),
             "genres": user_input.genres,
             "genre_label": genre_label,
             "created_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),

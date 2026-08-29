@@ -46,14 +46,23 @@ def design_characters(
         raise typer.Exit(code=1)
 
     workflow = M4CharacterWorkflow(project_dir=project_path)
-    try:
-        result = workflow.run(feedback=feedback)
-        console.print(
-            f"\n[bold green]✓ M4 完成[/bold green] "
-            f"{len(result.characters)} 名角色 / {len(result.foreshadows)} 条伏笔 / "
-            f"{len(result.golden_finger_registration.get('growth_stages', []) or [])} 金手指阶段"
-            + ("（按意见修订）" if feedback else "")
-        )
-    except Exception as e:
-        console.print(f"\n[bold red]✗ M4 失败[/bold red] {e}")
-        raise typer.Exit(code=1) from e
+    # 失败自动重试一次：LLM 偶发输出截断/非 JSON 导致失败时，重跑常可恢复
+    #（生成类写操作失败仍响亮报错，绝不静默写残缺产物）。
+    for attempt in (1, 2):
+        try:
+            result = workflow.run(feedback=feedback)
+            console.print(
+                f"\n[bold green]✓ M4 完成[/bold green] "
+                f"{len(result.characters)} 名角色 / {len(result.foreshadows)} 条伏笔 / "
+                f"{len(result.golden_finger_registration.get('growth_stages', []) or [])} 金手指阶段"
+                + ("（按意见修订）" if feedback else "")
+            )
+            return
+        except Exception as e:
+            if attempt == 1:
+                console.print(
+                    f"[yellow]⚠ M4 首次失败（{e}），自动重试一次...[/yellow]"
+                )
+                continue
+            console.print(f"\n[bold red]✗ M4 失败[/bold red] {e}")
+            raise typer.Exit(code=1) from e

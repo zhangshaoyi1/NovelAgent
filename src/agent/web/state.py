@@ -488,6 +488,20 @@ def _stage_upstream_mtimes(pdir: Path, stage_key: str) -> dict[str, float]:
     return out
 
 
+def _stage_relevant_baseline(rec: dict[str, Any]) -> dict[str, Any]:
+    """决定「待复核」的比对基线：优先用复核基线，否则用确认基线。
+
+    复核基线（review_baseline）在「复核完成」时打点：
+    - 一次复核未发现需调整项（空检查单）→ 视为已看完上游 → 以此基线消除待复核；
+    - 检查单项被逐一裁决完毕 → 视为已处理 → 更新基线消除待复核。
+    之后若上游再次被改动（mtime > 复核基线），会自动重新标回「待复核」。
+    """
+    rb = rec.get("review_baseline")
+    if isinstance(rb, dict) and rb:
+        return rb
+    return rec.get("baseline") or {}
+
+
 def confirm_stage(name: str, stage_key: str) -> tuple[bool, str]:
     """确认（或重新确认）阶段：记录上游产物 mtime 基线，消除受影响标记。
 
@@ -506,11 +520,15 @@ def confirm_stage(name: str, stage_key: str) -> tuple[bool, str]:
     from datetime import datetime
 
     data = _load_stage_status(pdir)
-    data[stage_key] = {
-        "confirmed": True,
-        "confirmed_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        "baseline": _stage_upstream_mtimes(pdir, stage_key),
-    }
+    rec = data.get(stage_key) or {}
+    # 只更新确认字段与基线，保留已有的复核数据（reviews / adopted_history / review_summary），
+    # 避免确认以消除「待复核」时误清空作者已处理过的检查单与采纳记录。
+    rec["confirmed"] = True
+    rec["confirmed_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    rec["baseline"] = _stage_upstream_mtimes(pdir, stage_key)
+    # 显式确认视为「已看过当前上游」，清掉旧的复核基线，统一以该确认为基准。
+    rec.pop("review_baseline", None)
+    data[stage_key] = rec
     _save_stage_status(pdir, data)
     return True, f"已确认「{STAGE_LABEL.get(stage_key, stage_key)}」"
 
@@ -521,7 +539,7 @@ def stage_status(name: str, stage_key: str) -> dict[str, Any]:
     data = _load_stage_status(pdir)
     rec = data.get(stage_key, {}) or {}
     confirmed = rec.get("confirmed") is True
-    baseline = rec.get("baseline") or {}
+    baseline = _stage_relevant_baseline(rec)
     affected = False
     reason = ""
     changed_up: list[str] = []
@@ -562,12 +580,16 @@ def stage_status_map(name: str) -> dict[str, dict[str, Any]]:
 # ============================================================
 
 def changed_upstreams(name: str, stage_key: str) -> list[str]:
-    """返回自该阶段确认后发生改动的上游阶段 key 列表（未确认或无改动为空）。"""
+    """返回自最近一次「确认/复核完成」后发生改动的上游阶段 key 列表（无改动为空）。
+
+    比对基线优先用复核基线（review_baseline），无则退回确认基线，
+    保证重新复核时只把「上次没看过的新改动」拿给 LLM 对比，避免重复提出旧问题。
+    """
     pdir = project_path(name)
     rec = _load_stage_status(pdir).get(stage_key, {}) or {}
     if rec.get("confirmed") is not True:
         return []
-    baseline = rec.get("baseline") or {}
+    baseline = _stage_relevant_baseline(rec)
     cur = _stage_upstream_mtimes(pdir, stage_key)
     return [
         up
@@ -600,6 +622,10 @@ def save_review_items(
         )
     rec["review_summary"] = summary
     rec["reviews"] = items
+    # 复核未发现需调整项 → 相当于已看完当前上游，打复核基线以消除「待复核」；
+    # 存在待处理项则不打点，保持待复核提醒作者处理。
+    if not items:
+        rec["review_baseline"] = _stage_upstream_mtimes(pdir, stage_key)
     _save_stage_status(pdir, data)
     return items
 
@@ -619,7 +645,11 @@ def review_summary(name: str, stage_key: str) -> str:
 def review_decision(
     name: str, stage_key: str, item_id: str, action: str
 ) -> tuple[bool, str]:
-    """采纳 / 忽略某条复核发现：更新状态与处理时间。"""
+    """采纳 / 忽略某条复核发现：更新状态与处理时间。
+
+    采纳时同时把该条目追加进 ``adopted_history``（持久化、不随重新生成清空），
+    供下一次复核作为已确认上下文带进 prompt，避免重复提出、保证既有决策不丢失。
+    """
     if action not in ("accepted", "ignored"):
         return False, f"未知处理方式：{action}"
     pdir = project_path(name)
@@ -631,10 +661,35 @@ def review_decision(
 
             it["status"] = action
             it["handled_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            if action == "accepted":
+                history = rec.setdefault("adopted_history", [])
+                summary_item = {
+                    "kind": str(it.get("kind", "conflict")),
+                    "target": str(it.get("target", "")),
+                    "issue": str(it.get("issue", "")),
+                    "suggestion": str(it.get("suggestion", "")),
+                }
+                if not any(h.get("target") == summary_item["target"] for h in history):
+                    history.append(summary_item)
             _save_stage_status(pdir, data)
             label = "已采纳" if action == "accepted" else "已忽略"
+            # 全部检查单项裁决完毕 → 复核视为处理完成，打复核基线消除「待复核」，
+            # 之后只有上游再次改动才会重新标「待复核」。
+            all_done = all(
+                (x.get("status", "pending") in ("accepted", "ignored"))
+                for x in rec.get("reviews", [])
+            ) if rec.get("reviews") else False
+            if all_done:
+                rec["review_baseline"] = _stage_upstream_mtimes(pdir, stage_key)
+                _save_stage_status(pdir, data)
             return True, f"{label}「{it.get('target') or item_id}」"
     return False, "未找到该检查项"
+
+
+def adopted_history(name: str, stage_key: str) -> list[dict[str, Any]]:
+    """读取该阶段历史已采纳的复核条目（持久化，重生成后仍保留）。"""
+    rec = _load_stage_status(project_path(name)).get(stage_key, {}) or {}
+    return rec.get("adopted_history", []) or []
 
 
 # ============================================================

@@ -1,4 +1,4 @@
-﻿"""M3 大纲生成工作流单元测试
+"""M3 大纲生成工作流单元测试
 
 mock LLM，验证 outline.md 生成、subline 占位、门禁、状态转换。
 """
@@ -356,7 +356,7 @@ def test_m3_handles_empty_sublines(tmp_path: Path) -> None:
 
 
 def test_m3_handles_llm_json_parse_failure(tmp_path: Path) -> None:
-    """LLM 输出非 JSON 应降级，不应崩溃"""
+    """LLM 输出非 JSON 时重试一次，仍失败应明确抛错而非写入占位大纲。"""
     sm = SettingManager(tmp_path)
     sm.save_world(
         metadata={"title": "太虚镜", "scope": "long"},
@@ -386,6 +386,9 @@ def test_m3_handles_llm_json_parse_failure(tmp_path: Path) -> None:
         setting_manager=SettingManager(tmp_path),
         state_machine=StateMachine(tmp_path),
     )
-    result = wf.run()  # 不抛异常
-    assert result.outline_file.exists()
-    assert len(result.sublines) >= 1
+    with pytest.raises(RuntimeError, match="无法解析为 JSON"):
+        wf.run()
+    # 不应写入占位大纲
+    assert not (tmp_path / "outline.md").exists()
+    # 重试一次：共调用两次
+    assert bad_llm.chat_creative.call_count == 2

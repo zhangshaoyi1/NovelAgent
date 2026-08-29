@@ -14,7 +14,13 @@ def start(
         "", "--title", help="小说标题（非空则走非交互配置，供 Web UI / 脚本使用）"
     ),
     scope: str = typer.Option(
-        "long", "--scope", help="体量: short(短篇) | medium(中篇) | long(长篇)"
+        "long", "--scope", help="体量: short(短篇) | medium(中篇) | long(长篇) | mega(百万字) | custom(自定义)"
+    ),
+    total_words: int = typer.Option(
+        0, "--total-words", help="自定义体量（--scope custom）目标总字数（字，必填）"
+    ),
+    chapter_length: int = typer.Option(
+        0, "--chapter-length", help="单章字数（字）；custom 必填，要求 1500-5000，推荐 2000-2500"
     ),
     genre: str = typer.Option(
         "xiuxian", "--genre", help="题材（单值，向后兼容；多题材请用 --genres）"
@@ -61,7 +67,12 @@ def start(
     try:
         if title:
             user_input = M1Input(
-                title=title, scope=scope, genres=genre_list, story_core=story_core
+                title=title,
+                scope=scope,
+                genres=genre_list,
+                story_core=story_core,
+                total_words=total_words if total_words > 0 else None,
+                chapter_length=chapter_length if chapter_length > 0 else None,
             )
             result = workflow.run(user_input=user_input)
         else:

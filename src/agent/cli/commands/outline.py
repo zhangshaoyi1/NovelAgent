@@ -41,13 +41,22 @@ def outline(
         raise typer.Exit(code=1)
 
     workflow = M3OutlineWorkflow(project_dir=project_path)
-    try:
-        result = workflow.run(feedback=feedback)
-        console.print(
-            f"\n[bold green]✓ M3 完成[/bold green] "
-            f"共 {len(result.sublines)} 条顶层支线"
-            + ("（按意见修订）" if feedback else "")
-        )
-    except Exception as e:
-        console.print(f"\n[bold red]✗ M3 失败[/bold red] {e}")
-        raise typer.Exit(code=1) from e
+    # 失败自动重试一次：LLM 偶发输出截断/非 JSON 导致失败时，重跑常可恢复
+    #（生成类写操作失败仍响亮报错，绝不静默写残缺产物）。
+    for attempt in (1, 2):
+        try:
+            result = workflow.run(feedback=feedback)
+            console.print(
+                f"\n[bold green]✓ M3 完成[/bold green] "
+                f"共 {len(result.sublines)} 条顶层支线"
+                + ("（按意见修订）" if feedback else "")
+            )
+            return
+        except Exception as e:
+            if attempt == 1:
+                console.print(
+                    f"[yellow]⚠ M3 首次失败（{e}），自动重试一次...[/yellow]"
+                )
+                continue
+            console.print(f"\n[bold red]✗ M3 失败[/bold red] {e}")
+            raise typer.Exit(code=1) from e

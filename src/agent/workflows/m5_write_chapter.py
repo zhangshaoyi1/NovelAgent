@@ -35,6 +35,7 @@ from agent.core.story.injected_trope_store import InjectedTropeStore
 from agent.client import LLMClient
 from agent.core.story.method_style import load_style_guide  # G11：风格指引读取
 from agent.core.story.setting_manager import SettingManager
+from agent.core.story.volume import estimate_chapters  # B 方案：压力曲线回落用真实预计总章数
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.prompts import (
@@ -474,9 +475,9 @@ class M5WriteChapterWorkflow:
         # 前情提要
         prev_summary = self._load_prev_summary(chapter_num)
 
-        # 压力曲线阶段
+        # 压力曲线阶段（B 方案：曲线缺失/退化时按体量估算的真实总章数推导）
         pressure_stage, tension_level = self._determine_pressure_stage(
-            subline_data, chapter_num
+            subline_data, chapter_num, default_hi=world_info.get("expected_chapters", 200)
         )
 
         # A：RAG 语义召回（仅当 .state/rag/ 已建立；否则空，绝不阻断写章）
@@ -619,6 +620,15 @@ class M5WriteChapterWorkflow:
         # 金手指
         golden_finger = self._extract_section(content, "金手指登记") or ""
 
+        # B 方案：由体量估算全书总章数（曲线缺失/退化时按真实跨度推导压力阶段）
+        scope_key = metadata.get("scope", "medium")
+        scope_total_words = metadata.get("scope_total_words")
+        scope_cl = (
+            metadata.get("scope_chapter_length")
+            or (style.get("chapter_length") if isinstance(style, dict) else None)
+        )
+        expected_chapters = estimate_chapters(scope_key, scope_total_words, scope_cl)
+
         return {
             "title": metadata.get("title", ""),
             "scope": metadata.get("scope", ""),
@@ -633,6 +643,7 @@ class M5WriteChapterWorkflow:
             "synopsis": synopsis,
             "realm_system": realm_system,
             "golden_finger_info": golden_finger,
+            "expected_chapters": expected_chapters,
         }
 
     def _load_route_node(self, progress: dict[str, Any]) -> dict[str, str]:
@@ -903,14 +914,13 @@ class M5WriteChapterWorkflow:
         return text.strip()[:300] + "..."
 
     def _determine_pressure_stage(
-        self, subline_data: dict[str, Any], chapter_num: int
+        self, subline_data: dict[str, Any], chapter_num: int, default_hi: int = 200
     ) -> tuple[str, str]:
         """从 subline.md 的压力曲线表确定当前阶段。
 
-        P-B 修复：原先在「曲线表缺失」或「章节号未被任何区间覆盖」时一律回退 ``铺垫/低``，
-        一旦规划产出平坦曲线（如 setup 覆盖 1-117），全书会卡在铺垫。现改为：
-        ① 解析全部区间；② 命中区间直接采用；③ 未命中或曲线退化（铺垫段占比 > 50%
-        且存在后续阶段）时，按章节在全书跨度中的位置推导爬升曲线，并告警。
+        B 方案：default_hi 为体量估算的预计总章数（默认回退 200），
+        在「曲线缺失/退化/未命中」时按真实全书跨度推导压力阶段，
+        避免百万字（如 500 章）项目被 200 字面量上限误判阶段。
         """
         content = subline_data.get("content", "")
         section = self._extract_section(content, "剧集压力曲线")
@@ -919,7 +929,7 @@ class M5WriteChapterWorkflow:
                 "[pacing] subline「剧集压力曲线」缺失，第 %d 章按位置推导压力阶段",
                 chapter_num,
             )
-            return self._position_based_stage(chapter_num, 1, 200)
+            return self._position_based_stage(chapter_num, 1, default_hi)
 
         bands: list[tuple[str, int, int, str]] = []
         for line in section.splitlines():
@@ -936,7 +946,7 @@ class M5WriteChapterWorkflow:
                 "[pacing] subline「剧集压力曲线」无可解析区间，第 %d 章按位置推导",
                 chapter_num,
             )
-            return self._position_based_stage(chapter_num, 1, 200)
+            return self._position_based_stage(chapter_num, 1, default_hi)
 
         # 整体跨度
         min_lo = min(b[1] for b in bands)

@@ -167,7 +167,7 @@ class M3OutlineWorkflow:
         }
 
     @staticmethod
-    def _extract_world_info(world_data: dict[str, Any]) -> dict[str, str]:
+    def _extract_world_info(world_data: dict[str, Any]) -> dict[str, Any]:
         """从 world.md 提取信息"""
         metadata = world_data.get("metadata", {}) or {}
         content = world_data.get("content", "")
@@ -177,9 +177,30 @@ class M3OutlineWorkflow:
             if len(parts) > 1:
                 synopsis = parts[1].split("##", 1)[0].strip()[:500]
         style = metadata.get("style", {}) or {}
+        # 用体量详情构造给 LLM 的完整体量描述（含预计总章数），
+        # 兼容旧项目（无 scope_total_words/scope_chapter_length 时回退为档位描述）。
+        from agent.core.story.volume import describe_scope, estimate_chapters
+
+        scope_key = metadata.get("scope", "medium")
+        scope_total_words = metadata.get("scope_total_words")
+        scope_chapter_length = metadata.get("scope_chapter_length") or (
+            style.get("chapter_length") if isinstance(style, dict) else None
+        )
+        scope_desc = describe_scope(
+            scope_key,
+            total_words=scope_total_words,
+            chapter_length=scope_chapter_length,
+        )
+        expected_chapters = estimate_chapters(
+            scope_key,
+            total_words=scope_total_words,
+            chapter_length=scope_chapter_length,
+        )
         return {
             "title": metadata.get("title", ""),
-            "scope": metadata.get("scope", ""),
+            "scope_key": scope_key,
+            "scope": scope_desc,
+            "expected_chapters": expected_chapters,
             "genre": first_genre(metadata),
             "tone": style.get("tone", "") if isinstance(style, dict) else str(style),
             "synopsis": synopsis,
@@ -206,6 +227,10 @@ class M3OutlineWorkflow:
         user_prompt = M3_USER_PROMPT_TEMPLATE.format(
             title=arch_data["title"],
             scope=world_info.get("scope", ""),
+            expected_total_note=(
+                f"目标总章数约 {world_info.get('expected_chapters', 60)} 章，"
+                "各阶段压力曲线章节区间应尽量贴合该规模。"
+            ) + ("（当前为大纲迭代修订，可在既有框架上增删支线与调整区间。）" if feedback else ""),
             story_core=arch.get("story_core", ""),
             protagonist_who=pt.get("who", ""),
             protagonist_want=pt.get("want", ""),
@@ -255,17 +280,21 @@ class M3OutlineWorkflow:
                 f"{feedback}\n"
                 + (f"\n【现有大纲】（供参考，非逐字保留）\n{current}" if current else "")
             )
-        # P1 修复（2026-08-21）：JSON 解析失败自动重试一次（截断多为瞬时，重试常可恢复），
-        # 重试仍失败才降级占位（不再让用户被迫手动重建大纲）。
+        # P1 修复（2026-08-21）+ 迭代强化：JSON 解析失败自动重试一次
+        # （截断多为瞬时，重试常可恢复；重试时强化「纯 JSON」约束），
+        # 重试仍失败则明确抛错，绝不静默写入「架构拆解失败」占位大纲。
         last_text = ""
+        system_prompt = M3_SYSTEM_PROMPT
         for attempt in range(2):
             resp = self.llm.chat_creative(
                 messages=[
-                    {"role": "system", "content": M3_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.75,
-                max_tokens=3000,
+                # A 方案（2026-08-29）：4096 → 8192。百万字体量下同步+支线详情 JSON
+                # 体积大，4096 易截断导致 parse_llm_json 失败；8192 实测稳定。
+                max_tokens=8192,
                 enable_thinking=False,
             )
             last_text = resp.text
@@ -280,11 +309,15 @@ class M3OutlineWorkflow:
                     self.console.print(
                         "[yellow]⚠ 大纲 JSON 解析失败，自动重试一次...[/yellow]"
                     )
-        # JSON 解析失败（重试后）：降级为纯文本简介 + 空支线结构
-        return {
-            "synopsis": last_text[:300],
-            "sublines": [self._empty_subline("架构拆解失败，请手动补充")],
-        }
+                    system_prompt = (
+                        M3_SYSTEM_PROMPT
+                        + "\n\n【重要】请只输出一个合法的 JSON 对象，"
+                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                    )
+        raise RuntimeError(
+            "大纲生成结果无法解析为 JSON（可能被截断或格式异常），"
+            f"请重试。原始输出片段：{last_text[:200]}"
+        )
 
     @staticmethod
     def _empty_subline(name: str) -> dict[str, Any]:

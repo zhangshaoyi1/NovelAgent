@@ -149,7 +149,15 @@ textarea { resize: vertical; }
 .rm-body { flex: 1; overflow: auto; padding: 12px 16px; }
 .rm-loading { color: var(--muted); padding: 16px 0; }
 .rm-empty { color: var(--ok); font-weight: 600; padding: 8px 0; }
+.rm-empty-err { color: var(--err); font-weight: 400; }
 .rm-total { font-size: 12px; color: var(--muted); margin: 0 0 10px; }
+.rm-adopted { margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); }
+.rm-adopted-title { font-weight: 600; margin: 0 0 8px; color: var(--ok); font-size: 13px; }
+.rm-adopted-item { display: flex; flex-direction: column; margin-bottom: 8px; padding: 8px 10px;
+  background: #f0fdf4; border: 1px solid #dcfce7; border-radius: 8px; }
+.rm-adopted-target { font-weight: 600; margin-bottom: 2px; }
+.rm-adopted-issue { font-size: 13px; margin-bottom: 3px; }
+.rm-adopted-sug { font-size: 12px; color: var(--muted); font-style: italic; }
 .rm-chapters { font-size: 12.5px; color: #b45309; background: #fef3c7; border: 1px solid #fde68a;
   border-radius: 8px; padding: 8px 10px; margin: 0 0 10px; }
 .rm-summary { border-top: 1px dashed var(--line); margin-top: 12px; padding-top: 10px;
@@ -238,12 +246,48 @@ textarea { resize: vertical; }
 }
 .compose-form .field textarea { resize: vertical; line-height: 1.6; }
 .compose-row { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 12px; }
+/* 调整体量（resize_scope）：复用 compose 的字段风格 */
+.resize-box .field { display: flex; flex-direction: column; gap: 4px; font-size: 13px; color: var(--muted); }
+.resize-box .field input, .resize-box .field select {
+  font: inherit; padding: 8px 10px; border: 1px solid var(--line); border-radius: 8px;
+  background: #fff; color: var(--ink); width: 100%;
+}
+.resize-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; }
 /* 引导向导：阶段总览进度条 */
 .guide-nav { padding: 14px 18px; }
 .guide-nav .stepper { margin-bottom: 0; }
 .guide-nav .step-label { font-weight: 600; }
 .guide-nav .step.done .step-label, .guide-nav .step.current .step-label { color: var(--ink); }
+/* 7 页拆分的进度条可点击跳转 */
+.stepper a.step { text-decoration: none; cursor: pointer; border-radius: 6px; padding: 2px 6px; transition: background .15s; }
+.stepper a.step:hover { background: rgba(79,70,229,.08); }
 .lock-hint { display: flex; align-items: center; gap: 6px; }
+/* 富文本预览：渲染后的 MD 内容 */
+.md-preview {
+  border: 1px solid var(--line); border-radius: 8px; padding: 12px 16px;
+  background: #fff; overflow-x: auto; line-height: 1.75; font-size: 14px;
+}
+.md-preview h1, .md-preview h2, .md-preview h3, .md-preview h4 { margin: .6em 0 .3em; line-height: 1.35; }
+.md-preview h1 { font-size: 1.35em; border-bottom: 1px solid var(--line); padding-bottom: 4px; }
+.md-preview h2 { font-size: 1.2em; }
+.md-preview h3 { font-size: 1.08em; }
+.md-preview p { margin: .5em 0; }
+.md-preview ul, .md-preview ol { margin: .4em 0; padding-left: 1.5em; }
+.md-preview li { margin: .15em 0; }
+.md-preview table { border-collapse: collapse; margin: .6em 0; max-width: 100%; }
+.md-preview th, .md-preview td { border: 1px solid var(--line); padding: 5px 9px; }
+.md-preview th { background: rgba(127,127,127,.08); }
+.md-preview code { background: rgba(127,127,127,.14); padding: 1px 5px; border-radius: 4px; font-size: 13px; }
+.md-preview pre { background: #f6f6f8; border: 1px solid var(--line); padding: 10px 12px; border-radius: 8px; overflow-x: auto; }
+.md-preview pre code { background: transparent; padding: 0; }
+.md-preview blockquote { border-left: 3px solid var(--line); margin: .5em 0; padding-left: 10px; color: var(--muted); }
+.md-preview hr { border: none; border-top: 1px solid var(--line); margin: 1em 0; }
+/* 上 / 下一步分页 */
+.guide-pager { display: flex; justify-content: space-between; align-items: center; gap: 10px; margin-top: 14px; }
+.guide-pager .btn { min-width: 110px; text-align: center; }
+/* 架构确认审阅区 */
+.confirm-review { margin-top: 6px; }
+.confirm-review .md-preview { margin-top: 8px; }
 /* 开新书 / 续写 切换 */
 .mode-switch { display: flex; gap: 8px; flex-wrap: wrap; }
 .mode-switch-btn {

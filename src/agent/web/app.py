@@ -56,6 +56,26 @@ templates = Jinja2Templates(directory=str(_HERE / "templates"))
 app.mount("/static", StaticFiles(directory=str(_HERE / "static")), name="static")
 
 
+def _md_filter(text: str | None) -> str:
+    """把阶段产物 markdown 渲染为 HTML（剥离 YAML frontmatter，仅渲染正文）。
+
+    供模板 `{{ content|md|safe }}` 使用：生成/回显的内容默认以富文本预览呈现。
+    """
+    if not text:
+        return ""
+    try:
+        body = frontmatter.loads(text).content or text
+    except Exception:  # noqa: BLE001 - 无 frontmatter / 解析失败降级为原文
+        body = text
+    try:
+        return _md.markdown(body, extensions=["tables", "fenced_code", "sane_lists"])
+    except Exception:  # noqa: BLE001 - 渲染失败降级为转义原文，不阻断页面
+        return _md.markdown(body)
+
+
+templates.env.filters["md"] = _md_filter
+
+
 # ============================================================
 # 页面路由
 # ============================================================
@@ -100,25 +120,63 @@ def conflicts_page(request: Request, name: str) -> HTMLResponse:
     )
 
 
-@app.get("/p/{name}/guide", response_class=HTMLResponse)
-def guide(request: Request, name: str) -> HTMLResponse:
+# ============================================================
+# 引导向导：7 个阶段各一页，整体样式统一（可点进度条 + 上/下一步）
+# ============================================================
+
+# 7 个阶段页面（key 用于路由 / 阶段数据对齐）
+GUIDE_PHASES = [
+    {"key": "world", "num": "1", "label": "开新书", "state": "INIT", "desc": "创建项目并生成世界观设定集"},
+    {"key": "discussion", "num": "2", "label": "脉络讨论", "state": "DISCUSSING", "desc": "与 Agent 讨论故事脉络，产出讨论纪要"},
+    {"key": "architecture", "num": "3", "label": "故事架构", "state": "ARCHITECTING", "desc": "生成整体故事架构初稿，可反馈迭代"},
+    {"key": "confirm", "num": "4", "label": "确认架构", "state": "ARCH_CONFIRMED", "desc": "确认后解锁下游（大纲 / 角色 / 写作）"},
+    {"key": "outline", "num": "5", "label": "创作大纲", "state": "OUTLINING", "desc": "生成章节大纲"},
+    {"key": "characters", "num": "6", "label": "角色设计", "state": "CHARACTER_DESIGN", "desc": "设计主要角色与关系"},
+    {"key": "write", "num": "7", "label": "写章节", "state": "WRITING", "desc": "逐章推进正文"},
+]
+
+# 状态机状态 → 引导阶段 key（用于 /guide 重定向到当前阶段页）
+STATE_TO_GUIDE_KEY = {
+    "INIT": "world",
+    "CONFIGURING": "world",
+    "DISCUSSING": "discussion",
+    "ARCHITECTING": "architecture",
+    "ARCH_REVISION": "architecture",
+    "ARCH_CONFIRMED": "confirm",
+    "OUTLINING": "outline",
+    "CHARACTER_DESIGN": "characters",
+    "WRITING": "write",
+    "PAUSED": "write",
+    "COMPLETED": "write",
+}
+
+GUIDE_PHASE_BY_KEY = {p["key"]: p["label"] for p in GUIDE_PHASES}
+
+
+def _guide_stages(name: str) -> list[dict[str, Any]]:
+    """构建 7 个阶段页面的数据（含产物回显 / 可用命令 / 确认态）。"""
     ps = state.get_project_state(name)
-    genres = state.list_genres()
-    projects = state.list_projects()
     avail = ps["available_commands"]
-    # 各阶段「产物文件 → 回显内容」（缺省为空，生成后再由页面刷新回显）
     world = state.read_project_file(name, "world.md") or ""
     discussion = state.read_project_file(name, "discussion.md") or ""
     architecture = state.read_project_file(name, "architecture.md") or ""
     outline = state.read_project_file(name, "outline.md") or ""
-    chars = [
-        {"rel": "characters/" + p.name, "name": p.stem, "content": state.read_project_file(name, "characters/" + p.name) or ""}
-        for p in sorted((state.project_path(name) / "characters").glob("*.md"))
-    ] if (state.project_path(name) / "characters").exists() else []
-    stages = [
-        {"key": "world", "num": "①", "label": "设定世界", "desc": "世界观设定集（题材 / 核心梗 / 世界规则）", "cmd": "/start",
-         "file": "world.md", "content": world, "editable": bool(world), "generate": "/start" in avail,
-         "gen_label": "生成世界观", "gen_argv": []},
+    chars: list[dict[str, Any]] = []
+    cdir = state.project_path(name) / "characters"
+    if cdir.exists():
+        chars = [
+            {
+                "rel": "characters/" + p.name,
+                "name": p.stem,
+                "content": state.read_project_file(name, "characters/" + p.name) or "",
+            }
+            for p in sorted(cdir.glob("*.md"))
+        ]
+    write_avail = "/write" in avail
+    return [
+        {"key": "world", "num": "①", "label": "设定世界", "desc": "世界观设定集（题材 / 核心梗 / 世界规则）",
+         "cmd": "/start", "file": "world.md", "content": world, "editable": bool(world),
+         "generate": "/start" in avail, "gen_label": "生成世界观", "gen_argv": []},
         {"key": "discussion", "num": "②", "label": "脉络讨论", "desc": "与 Agent 讨论故事脉络，产出讨论纪要",
          "cmd": "/discuss", "file": "discussion.md", "content": discussion, "editable": bool(discussion),
          "generate": "/discuss" in avail, "gen_label": "开始讨论",
@@ -127,29 +185,63 @@ def guide(request: Request, name: str) -> HTMLResponse:
          "cmd": "/architecture", "file": "architecture.md", "content": architecture, "editable": bool(architecture),
          "generate": "/architecture" in avail, "gen_label": "生成架构", "gen_argv": []},
         {"key": "confirm", "num": "④", "label": "架构确认", "desc": "确认后解锁下游（大纲 / 角色 / 写作）",
-         "cmd": "/confirm-architecture", "file": None, "content": None, "editable": False,
+         "cmd": "/confirm-architecture", "file": None, "content": architecture, "editable": False,
          "generate": "/confirm-architecture" in avail, "gen_label": "确认并解锁", "gen_argv": ["--yes"]},
-        {"key": "outline", "num": "⑤", "label": "创作大纲", "desc": "章节大纲", "cmd": "/outline",
-         "file": "outline.md", "content": outline, "editable": bool(outline),
+        {"key": "outline", "num": "⑤", "label": "创作大纲", "desc": "章节大纲",
+         "cmd": "/outline", "file": "outline.md", "content": outline, "editable": bool(outline),
          "generate": "/outline" in avail, "gen_label": "生成大纲", "gen_argv": []},
         {"key": "characters", "num": "⑥", "label": "角色设计", "desc": "主要角色卡与关系",
          "cmd": "/design-characters", "file": None, "content": None, "editable": bool(chars), "chars": chars,
          "generate": "/design-characters" in avail, "gen_label": "设计角色", "gen_argv": []},
+        {"key": "write", "num": "⑦", "label": "写章节", "desc": "进入实时写作间逐章推进正文",
+         "cmd": "/write", "file": None, "content": None, "editable": False,
+         "generate": write_avail, "gen_label": "写下一章", "gen_argv": []},
     ]
-    return templates.TemplateResponse(
-        request,
-        "guide.html",
-        {
-            "request": request,
-            "name": name,
-            "ps": ps,
-            "genres": genres,
-            "projects": projects,
-            "flow": state.STATE_FLOW,
-            "stages": stages,
-            "stage_status": state.stage_status_map(name),
-        },
-    )
+
+
+def _guide_ctx(name: str, stage_key: str) -> dict[str, Any]:
+    """单个引导阶段的页面上下文（阶段卡 + 上/下一步 + 进度条状态）。"""
+    ps = state.get_project_state(name)
+    stages = _guide_stages(name)
+    keys = [p["key"] for p in GUIDE_PHASES]
+    if stage_key not in keys:
+        stage_key = STATE_TO_GUIDE_KEY.get(ps["state"], "world")
+    stage = next((s for s in stages if s["key"] == stage_key), stages[0])
+    cur_idx = keys.index(stage_key)
+    prev_key = keys[cur_idx - 1] if cur_idx > 0 else None
+    next_key = keys[cur_idx + 1] if cur_idx < len(keys) - 1 else None
+    phase = next((p for p in GUIDE_PHASES if p["key"] == stage_key), GUIDE_PHASES[0])
+    return {
+        "name": name,
+        "ps": ps,
+        "phases": GUIDE_PHASES,
+        "phase_by_key": GUIDE_PHASE_BY_KEY,
+        "phase": phase,
+        "stage": stage,
+        "stage_status": state.stage_status_map(name),
+        "flow": state.STATE_FLOW,
+        "prev_key": prev_key,
+        "next_key": next_key,
+        "genres": state.list_genres(),
+        "projects": state.list_projects(),
+        "avail": ps["available_commands"],
+    }
+
+
+@app.get("/p/{name}/guide", response_class=HTMLResponse)
+def guide(request: Request, name: str) -> HTMLResponse:
+    """引导向导入口：按当前状态重定向到对应阶段页面。"""
+    ps = state.get_project_state(name)
+    key = STATE_TO_GUIDE_KEY.get(ps["state"], "world")
+    return RedirectResponse(url=f"/p/{name}/guide/{key}")
+
+
+@app.get("/p/{name}/guide/{stage}", response_class=HTMLResponse)
+def guide_stage(request: Request, name: str, stage: str) -> HTMLResponse:
+    """单个引导阶段页面（7 个阶段各一页，样式统一）。"""
+    ctx = _guide_ctx(name, stage)
+    ctx["request"] = request
+    return templates.TemplateResponse(request, "guide_stage.html", ctx)
 
 
 @app.post("/p/{name}/save-stage")
@@ -371,7 +463,21 @@ async def api_review(name: str, stage: str = "") -> JSONResponse:
         from agent.workflows.m19_review_sync import M19ReviewSyncWorkflow
 
         wf = M19ReviewSyncWorkflow(project_dir=state.project_path(name))
-        result = wf.review(target_stage=stage, changed_upstreams=changed)
+        # 历史已采纳条目（持久化 adopted_history）+ 当前检查单中已采纳状态，合并去重，
+        # 保证重新生成时既有决策不丢失，避免重复提出同一问题。
+        prev_map = {h.get("target"): h for h in state.adopted_history(name, stage)}
+        for it in state.review_items(name, stage):
+            if it.get("status") == "accepted" and it.get("target") not in prev_map:
+                prev_map[it.get("target", "")] = {
+                    "kind": str(it.get("kind", "conflict")),
+                    "target": str(it.get("target", "")),
+                    "issue": str(it.get("issue", "")),
+                    "suggestion": str(it.get("suggestion", "")),
+                }
+        prev = list(prev_map.values())
+        result = wf.review(
+            target_stage=stage, changed_upstreams=changed, previous_adopted=prev
+        )
     except Exception as e:  # noqa: BLE001 - LLM 失败降级不阻断
         return JSONResponse({"ok": False, "message": f"复核生成失败：{e}"})
     items = state.save_review_items(
@@ -386,6 +492,7 @@ async def api_review(name: str, stage: str = "") -> JSONResponse:
             "changed_upstreams": [state.STAGE_LABEL.get(k, k) for k in changed],
             "summary": result.summary,
             "items": items,
+            "adopted": state.adopted_history(name, stage),
             "affected_chapters": [{"num": c["num"], "name": c["name"]} for c in chapters],
         }
     )
@@ -400,8 +507,11 @@ def api_review_items(name: str, stage: str = "") -> JSONResponse:
         {
             "ok": True,
             "stage": stage,
+            # 是否仍需复核（自上次复核后上游又有新改动）→ 前端据此决定是否重新生成
+            "needs_review": state.stage_status(name, stage)["affected"],
             "summary": state.review_summary(name, stage),
             "items": state.review_items(name, stage),
+            "adopted": state.adopted_history(name, stage),
             "affected_chapters": [
                 {"num": c["num"], "name": c["name"]} for c in state.get_chapters(name)
             ],
@@ -464,6 +574,8 @@ async def create_project(
     name: str = Form(...),
     title: str = Form(...),
     scope: str = Form("long"),
+    total_words: str = Form(""),
+    chapter_length: str = Form(""),
     genre: str = Form("xiuxian"),
     genres: str = Form(""),
     story_core: str = Form(""),
@@ -479,6 +591,10 @@ async def create_project(
     else:
         genre_argv = ["--genre", genre]
     argv = ["--title", title, "--scope", scope, *genre_argv, "--story-core", story_core]
+    if total_words.strip():
+        argv += ["--total-words", total_words.strip()]
+    if chapter_length.strip():
+        argv += ["--chapter-length", chapter_length.strip()]
     run_id = runner.run_manager.new_run(safe, "start", argv)
     asyncio.create_task(runner.run_manager.execute(run_id))
     return JSONResponse({"run_id": run_id, "project": safe})

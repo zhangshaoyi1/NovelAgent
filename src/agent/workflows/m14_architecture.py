@@ -33,6 +33,8 @@ from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.registry.genre_pack import first_genre
 from agent.prompts import (
+    M14_GAP_CHECK_SYSTEM_PROMPT,
+    M14_GAP_CHECK_USER_PROMPT_TEMPLATE,
     M14_ITERATE_SYSTEM_PROMPT,
     M14_ITERATE_USER_PROMPT_TEMPLATE,
     M14_SYSTEM_PROMPT,
@@ -192,6 +194,35 @@ class M14ArchitectureWorkflow:
 
         self.console.print("\n[cyan]正在根据反馈修订架构...[/cyan]")
         new_arch = self._llm_iterate_architecture(title, current_arch, feedback)
+
+        # 反馈落实核验：LLM 偶发会漏掉多要点反馈中的某几条。用轻量模型核对，
+        # 发现缺失则补一轮修订（附明确缺失清单），提高「按意见修改架构」可靠性。
+        missing = self._check_feedback_gaps(feedback, new_arch)
+        if missing:
+            self.console.print(
+                "[yellow]⚠ 以下反馈要点未在新架构中体现，正在补充修订…[/yellow]"
+            )
+            for m in missing:
+                self.console.print(f"    - {m}")
+            retry_feedback = (
+                feedback
+                + "\n\n【补充修订要求】上一轮修订遗漏了以下要点，本轮必须逐条落实到"
+                "对应字段（ending / main_plot / protagonist_triple 等）：\n"
+                + "\n".join(f"{i + 1}. {m}" for i, m in enumerate(missing))
+            )
+            new_arch = self._llm_iterate_architecture(
+                title, current_arch, retry_feedback
+            )
+            # 补充修订后再核对一次：仅告警、不阻断落盘（避免无限循环），
+            # 用户可在页面继续手动微调。
+            still_missing = self._check_feedback_gaps(feedback, new_arch)
+            if still_missing:
+                self.console.print(
+                    "[yellow]⚠ 补充修订后仍有要点未体现，已保留当前结果；"
+                    "可在页面继续按意见修改。[/yellow]"
+                )
+                for m in still_missing:
+                    self.console.print(f"    - {m}")
 
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         created_at = post.metadata.get("created_at", now)
@@ -397,29 +428,84 @@ class M14ArchitectureWorkflow:
     def _llm_iterate_architecture(
         self, title: str, current_arch: dict[str, Any], feedback: str
     ) -> dict[str, Any]:
-        """调用 LLM 基于反馈迭代架构"""
+        """调用 LLM 基于反馈迭代架构
+
+        解析失败自动重试一次（重试时强化「纯 JSON」约束），两次失败则明确抛错，
+        绝不静默返回旧架构（否则会写出版本号 +1 但内容未变的分支文件）。
+        """
         user_prompt = M14_ITERATE_USER_PROMPT_TEMPLATE.format(
             title=title,
             current_architecture=json.dumps(current_arch, ensure_ascii=False, indent=2),
             feedback=feedback,
         )
-        resp = self.llm.chat_creative(
-            messages=[
-                {"role": "system", "content": M14_ITERATE_SYSTEM_PROMPT},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.7,
-            max_tokens=4096,
-            enable_thinking=False,
-        )
+        system_prompt = M14_ITERATE_SYSTEM_PROMPT
+        last_text = ""
+        for attempt in range(2):
+            resp = self.llm.chat_creative(
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.7,
+                max_tokens=4096,
+                enable_thinking=False,
+            )
+            last_text = resp.text or ""
+            try:
+                new_arch = parse_llm_json(last_text)
+                if not isinstance(new_arch, dict):
+                    raise ValueError("顶层不是 JSON 对象")
+                # 合并：迭代结果可能只返回修改字段，用旧值兜底
+                merged = dict(current_arch)
+                merged.update(new_arch)
+                return merged
+            except ValueError:
+                if attempt == 0:
+                    self.console.print(
+                        "[yellow]⚠ 架构迭代 JSON 解析失败，自动重试一次...[/yellow]"
+                    )
+                    system_prompt = (
+                        M14_ITERATE_SYSTEM_PROMPT
+                        + "\n\n【重要】请只输出一个合法的 JSON 对象（结构与初版一致），"
+                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                    )
+                    continue
+                raise RuntimeError(
+                    "架构迭代结果无法解析为 JSON（可能被截断或格式异常），"
+                    f"请重试。原始输出片段：{last_text[:200]}"
+                )
+        raise RuntimeError("架构迭代结果无法解析为 JSON，请重试")
+
+    def _check_feedback_gaps(
+        self, feedback: str, revised: dict[str, Any]
+    ) -> list[str]:
+        """用轻量模型核对反馈要点是否都已落实，返回未落实要点清单。
+
+        核验失败时降级为『无缺失』（不阻断修订落盘，保持降级不阻断）。
+        """
         try:
-            new_arch = parse_llm_json(resp.text)
-            # 合并：迭代结果可能只返回修改字段，用旧值兜底
-            merged = dict(current_arch)
-            merged.update(new_arch)
-            return merged
-        except ValueError:
-            return current_arch
+            text = json.dumps(revised, ensure_ascii=False, indent=2)
+            resp = self.llm.chat_utility(
+                messages=[
+                    {"role": "system", "content": M14_GAP_CHECK_SYSTEM_PROMPT},
+                    {
+                        "role": "user",
+                        "content": M14_GAP_CHECK_USER_PROMPT_TEMPLATE.format(
+                            feedback=feedback, revised_architecture=text
+                        ),
+                    },
+                ],
+                temperature=0.1,
+                max_tokens=1000,
+                enable_thinking=False,
+            )
+            data = parse_llm_json(resp.text)
+            gaps = data.get("missing") or []
+            if not isinstance(gaps, list):
+                return []
+            return [str(g).strip() for g in gaps if str(g).strip()]
+        except Exception:  # noqa: BLE001 - 核验失败不阻断修订
+            return []
 
     @staticmethod
     def _empty_architecture() -> dict[str, Any]:

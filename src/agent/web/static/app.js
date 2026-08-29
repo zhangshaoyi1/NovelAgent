@@ -200,6 +200,17 @@ function reviseStage(project, stage, taId) {
   runCommand(project, command, argv, c, () => location.reload());
 }
 
+/* 富文本切换：编辑（textarea）<-> 预览（MD 渲染）。保存到本地后页面刷新，预览自动同步。 */
+function toggleStageEdit(key, btn) {
+  const ta = document.getElementById(key);
+  const pv = document.getElementById('prev-' + key);
+  if (!ta || !pv) return;
+  const editing = !ta.hidden;
+  ta.hidden = editing;       // 编辑态 → 切回预览
+  pv.hidden = !editing;      // 预览态 → 切到编辑
+  if (btn) btn.textContent = editing ? '✏️ 编辑' : '👁 预览';
+}
+
 /* 阶段产物保存到本地：把编辑后的 textarea 内容通过接口写回项目文件 */
 async function saveStage(project, rel, taId) {
   const el = document.getElementById(taId);
@@ -237,6 +248,54 @@ async function confirmStage(project, stageKey) {
 }
 
 /* 刷新页面上的阶段标签（已确认 / 待复核）与受影响提示 */
+/* ============================================================
+ * 调整体量（resize_scope）：改多大体量并重生成大纲
+ * ============================================================ */
+function toggleResizeBox() {
+  const box = document.getElementById('resize-box');
+  if (!box) return;
+  box.hidden = !box.hidden;
+  syncResizeCustom();
+}
+
+function syncResizeCustom() {
+  const sel = document.getElementById('resize-scope');
+  const custom = document.getElementById('resize-custom-fields');
+  if (sel && custom) custom.hidden = sel.value !== 'custom';
+}
+
+function resizeScope(project) {
+  const scope = document.getElementById('resize-scope').value;
+  const totalWords = document.getElementById('resize-total-words').value.trim();
+  const chapterLength = document.getElementById('resize-chapter-length').value.trim();
+
+  if (scope === 'custom' && !totalWords) {
+    alert('自定义体量必须填写目标总字数。');
+    return;
+  }
+  if (chapterLength) {
+    const cl = Number(chapterLength);
+    if (cl < 1500 || cl > 5000) {
+      alert('单章字数需在 1500-5000 字之间（推荐 2000-2500）。');
+      return;
+    }
+  }
+  const message = scope === 'custom'
+    ? `调整为：${scope}，总字数 ${totalWords} 字，单章 ${chapterLength || '未指定'} 字。确定继续？`
+    : `调整为：${scope === 'mega' ? '百万字（100万字以上）' : scope}${chapterLength ? '，单章 ' + chapterLength + ' 字' : ''}。确定继续？`;
+  if (!confirm(message)) return;
+
+  const argv = ['--scope', scope];
+  if (scope === 'custom') {
+    argv.push('--total-words', totalWords);
+  }
+  if (chapterLength) {
+    argv.push('--chapter-length', chapterLength);
+  }
+  const c = startRunConsole('调整体量（resize_scope）');
+  runCommand(project, 'resize-scope', argv, c, () => { document.getElementById('resize-box').hidden = true; location.reload(); });
+}
+
 async function refreshStageTags(project) {
   let list = [];
   try {
@@ -324,17 +383,21 @@ async function openReviewChecklist(project, stageKey) {
   overlay.querySelector('.rm-sub').textContent = '';
   overlay.querySelector('.rm-body').innerHTML =
     '<div class="rm-loading">读取复核检查单…</div>';
-  // 先读已保存条目；无则调用 LLM 生成
-  let items = [], summary = '', chapters = [];
+  // 先读已保存条目；若自上次复核后上游又改动（needs_review）则重新生成
+  let items = [], summary = '', adopted = [], chapters = [], needs = false;
   try {
     const res = await fetch('/api/review/' + project + '/items?stage=' + encodeURIComponent(stageKey));
     const j = await res.json();
-    if (j && j.ok) { items = j.items || []; summary = j.summary || ''; chapters = j.affected_chapters || []; }
-  } catch (e) { /* 网络抖动忽略，直接走生成 */ }
-  if (items.length) {
-    renderReviewChecklist(overlay, project, stageKey, '', items, summary, chapters);
-  } else {
+    if (j && j.ok) {
+      items = j.items || []; summary = j.summary || '';
+      adopted = j.adopted || []; chapters = j.affected_chapters || [];
+      needs = !!j.needs_review;
+    }
+  } catch (e) { /* 网络抖动忽略，走重新生成兜底 */ needs = true; }
+  if (needs) {
     generateReviewChecklist(overlay, project, stageKey);
+  } else {
+    renderReviewChecklist(overlay, project, stageKey, '', items, summary, chapters, adopted);
   }
 }
 
@@ -346,20 +409,23 @@ async function generateReviewChecklist(overlay, project, stageKey) {
     const res = await fetch('/api/review/' + project + '?stage=' + encodeURIComponent(stageKey));
     j = await res.json();
   } catch (e) {
-    body.innerHTML = '<p class="rm-empty">生成失败：' + e + '</p>';
+    body.innerHTML = '<p class="rm-empty rm-empty-err">生成失败：' + e + '</p>';
     return;
   }
   if (!(j && j.ok)) {
-    body.innerHTML = '<p class="rm-empty">' + ((j && j.message) || '生成失败') + '</p>';
+    body.innerHTML = '<p class="rm-empty rm-empty-err">' + ((j && j.message) || '生成失败') + '</p>';
     return;
   }
   renderReviewChecklist(overlay, project, stageKey,
     (j.changed_upstreams || []).join('、'), j.items || [], j.summary || '',
-    j.affected_chapters || []);
+    j.affected_chapters || [], j.adopted || []);
+  // 复核已写入数据 → 刷新页面阶段标签（无待处理项时「待复核」自动消除）
+  if (typeof refreshStageTags === 'function') refreshStageTags(project);
 }
 
-function renderReviewChecklist(overlay, project, stageKey, changedLabel, items, summary, chapters) {
+function renderReviewChecklist(overlay, project, stageKey, changedLabel, items, summary, chapters, adopted) {
   overlay.querySelector('.rm-sub').textContent = changedLabel ? '上游改动：' + changedLabel : '';
+  adopted = adopted || [];
   const body = overlay.querySelector('.rm-body');
   const kindText = (k) => k === 'conflict' ? '冲突' : '未覆盖';
   const sevText = { high: '高', medium: '中', low: '低' };
@@ -391,8 +457,19 @@ function renderReviewChecklist(overlay, project, stageKey, changedLabel, items, 
         </div>
       </div>`;
     });
+  } else if (items.length === 0 && !adopted.length) {
+    html = '<p class="rm-empty">✓ 当前无待复核改动。</p>';
   } else {
     html = '<p class="rm-empty">✓ 未发现需要调整的问题。</p>';
+  }
+  if (adopted.length) {
+    html += '<div class="rm-adopted"><p class="rm-adopted-title">✔ 已采纳的处理记录（带入下次复核）</p>';
+    adopted.forEach(function (a) {
+      const sug = a.suggestion ? `<span class="rm-adopted-sug">建议：${escapeHtml(a.suggestion)}</span>` : '';
+      html += `<div class="rm-adopted-item"><span class="rm-adopted-target">${escapeHtml(a.target || '')}</span>` +
+        `<span class="rm-adopted-issue">${escapeHtml(a.issue || '')}</span>${sug}</div>`;
+    });
+    html += '</div>';
   }
   if (summary) html += `<p class="rm-summary">${escapeHtml(summary)}</p>`;
   html += `<div class="rm-foot"><button class="btn small" onclick="generateReviewChecklist(
@@ -419,6 +496,8 @@ async function reviewDecision(project, stageKey, itemId, action) {
     const label = action === 'accepted' ? '已采纳' : '已忽略';
     item.innerHTML = `<span class="badge ${action === 'accepted' ? 'ok' : ''}">${label}</span>`;
   }
+  // 裁决改动会影响「待复核」标记（全部裁决完自动消除），刷新页面标签
+  if (typeof refreshStageTags === 'function') refreshStageTags(project);
 }
 
 /* 转义 HTML，防止 LLM 输出注入 */

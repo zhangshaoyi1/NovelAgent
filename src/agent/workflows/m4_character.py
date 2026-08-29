@@ -130,23 +130,8 @@ class M4CharacterWorkflow:
 
         protagonist_route = m4.get("protagonist_route") or {}
         characters = m4.get("characters") or []
-        # 若 LLM 未产出任何角色，渲染一个 M4 模板占位角色（对齐 P1-1：G2 Evaluator
-        # 需有可校验对象），而非产出空壳（根因 E 双重保险）。
-        if not characters:
-            characters = [{
-                "name": "主角（自主规划占位）",
-                "role": "protagonist",
-                "identity": "（占位）待规划补全",
-                "core_motivation": "（占位）",
-                "arc": {"start": "（占位）", "end": "（占位）"},
-                "language_fingerprint": {
-                    "catchphrase": "",
-                    "sentence_style": "",
-                    "vocabulary": "",
-                    "banned_words": [],
-                },
-                "relations": "（占位）",
-            }]
+        # 注：_llm_generate_characters 已保证 characters 非空且 route 含 nodes
+        #（两次解析失败会响亮抛错，不再静默降级为占位角色）。
         relation_graph = m4.get("relation_graph") or {}
         foreshadows = m4.get("foreshadows") or []
         golden_finger = m4.get("golden_finger_registration") or {}
@@ -323,20 +308,53 @@ class M4CharacterWorkflow:
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.75,
-            max_tokens=8000,
+            max_tokens=16384,
             enable_thinking=False,
         )
-        # 解析容错：对齐 M1/M14/M3 的 ValueError 降级策略，绝不硬编码抛错（根因 E）。
-        try:
-            data = parse_llm_json(raw.text)
-        except ValueError:
-            data = {}
-        if not isinstance(data, dict):
-            data = {}
-        # 缺角色列表时降级为空结构（非 dict 不抛），由上游编排决定是否重试/占位。
-        if not data.get("characters"):
-            data["characters"] = []
-        return data
+        # 解析容错：对齐 M1/M14/M3 策略——JSON 解析失败自动重试一次（截断多为
+        # 瞬时，重试时强化「纯 JSON」约束常可恢复），重试仍失败则明确抛错，
+        # 绝不静默降级为占位角色（否则真实角色设计会被静默丢弃）。
+        system_prompt = M4_SYSTEM_PROMPT
+        last_text = raw.text or ""
+        for attempt in range(2):
+            try:
+                data = parse_llm_json(last_text)
+                if not isinstance(data, dict):
+                    raise ValueError("顶层不是 JSON 对象")
+                chars = data.get("characters")
+                if not isinstance(chars, list) or not chars:
+                    raise ValueError("characters 缺失或为空")
+                route = data.get("protagonist_route") or {}
+                if not route.get("nodes"):
+                    raise ValueError("protagonist_route.nodes 缺失或为空")
+                return data
+            except ValueError:
+                if attempt == 0:
+                    self.console.print(
+                        "[yellow]⚠ 角色设计 JSON 解析失败，自动重试一次...[/yellow]"
+                    )
+                    system_prompt = (
+                        M4_SYSTEM_PROMPT
+                        + "\n\n【重要】请只输出一个合法的 JSON 对象，必须包含 "
+                        "protagonist_route（含 nodes）与 characters（至少 1 名角色），"
+                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                    )
+                    raw = self.llm.chat_creative(
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {"role": "user", "content": user_prompt},
+                        ],
+                        temperature=0.75,
+                        max_tokens=16384,
+                        enable_thinking=False,
+                    )
+                    last_text = raw.text or ""
+                    continue
+                raise RuntimeError(
+                    "角色设计结果无法解析为 JSON（可能被截断或格式异常），"
+                    f"请重试。原始输出片段：{last_text[:200]}"
+                )
+        raise RuntimeError("角色设计结果无法解析为 JSON，请重试")
 
     # ============================================================
     # 内部：渲染输出

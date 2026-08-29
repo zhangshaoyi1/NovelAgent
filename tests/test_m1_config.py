@@ -1,4 +1,4 @@
-﻿"""M1 启动配置工作流单元测试
+"""M1 启动配置工作流单元测试
 
 mock LLM，验证流程正确性，不真实调用 API。
 """
@@ -156,7 +156,7 @@ def test_m1_llm_called_with_correct_prompt(
 
 
 def test_m1_handles_llm_json_parse_failure(tmp_path: Path) -> None:
-    """LLM 返回非 JSON 时应降级为纯文本填充"""
+    """LLM 返回非 JSON 时重试一次，仍失败应明确抛错而非静默写残缺产物。"""
     bad_llm = MagicMock(spec=LLMClient)
     bad_llm.chat_creative.return_value = LLMResponse(
         text="这不是 JSON，只是普通文本输出",
@@ -170,12 +170,13 @@ def test_m1_handles_llm_json_parse_failure(tmp_path: Path) -> None:
         state_machine=StateMachine(tmp_path),
     )
     user_input = M1Input(title="降级测试", scope="short", story_core="核心")
-    result = workflow.run(user_input=user_input)
+    with pytest.raises(RuntimeError, match="无法解析为 JSON"):
+        workflow.run(user_input=user_input)
 
-    # 应该仍然生成 world.md，只是内容是降级文本
-    assert result.world_file.exists()
-    content = result.world_file.read_text(encoding="utf-8")
-    assert "降级测试" in content
+    # 不应静默写入残缺 world.md
+    assert not (tmp_path / "world.md").exists()
+    # 重试一次：共调用两次
+    assert bad_llm.chat_creative.call_count == 2
 
 
 def test_m1_creates_project_dir_if_not_exists(

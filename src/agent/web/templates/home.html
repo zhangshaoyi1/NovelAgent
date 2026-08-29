@@ -26,12 +26,19 @@
     <label>项目目录名<input name="name" placeholder="my-novel" required /></label>
     <label>小说标题<input name="title" placeholder="我的修仙小说" required /></label>
     <label>体量
-      <select name="scope">
+      <select name="scope" id="create-scope">
         <option value="short">短篇（&lt;5万字）</option>
         <option value="medium">中篇（5-30万字）</option>
         <option value="long" selected>长篇（30万字+）</option>
+        <option value="mega">百万字（100万字以上）</option>
+        <option value="custom">自定义（输入总字数+单章字数）</option>
       </select>
     </label>
+    <span class="full volume-custom-fields" id="volume-custom-fields" hidden>
+      <label>目标总字数（字）<input name="total_words" id="create-total-words" type="number" min="10000" placeholder="如 1000000" /></label>
+      <label>单章字数（字）<input name="chapter_length" id="create-chapter-length" type="number" min="1500" max="5000" placeholder="2000-2500（范围1500-5000）" /></label>
+      <span class="muted small">单章字数限 1500-5000，推荐 2000-2500。</span>
+    </span>
     <label class="full">题材（可多选混搭）
       <div class="genre-chips" id="genre-chips"></div>
       <input type="hidden" name="genres" id="genres-input" value="" />
@@ -113,8 +120,24 @@
   document.getElementById('create-form').addEventListener('submit', e => {
     e.preventDefault();
     const f = e.target;
+    const scopeSel = document.getElementById('create-scope');
+    if (scopeSel.value === 'custom') {
+      const tw = f.elements.total_words;
+      const cl = f.elements.chapter_length;
+      if (!tw.value || parseInt(tw.value, 10) <= 0) { alert('自定义体量请填写目标总字数。'); tw.focus(); return; }
+      const cln = parseInt(cl.value, 10);
+      if (!cl.value || cln < 1500 || cln > 5000) { alert('单章字数需在 1500-5000 字之间（推荐 2000-2500）。'); cl.focus(); return; }
+    }
     const data = new URLSearchParams(new FormData(f));
     createProject(data, () => location.href = '/p/' + sanitize(f.name.value) + '/guide');
   });
+  // 体量切换：custom 时显示自定义字段
+  (function bindScopeToggle() {
+    const sel = document.getElementById('create-scope');
+    const box = document.getElementById('volume-custom-fields');
+    function sync() { box.hidden = sel.value !== 'custom'; }
+    sel.addEventListener('change', sync);
+    sync();
+  })();
 </script>
 {% endblock %}

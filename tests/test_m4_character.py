@@ -1,4 +1,4 @@
-﻿"""M4 角色路线与关系网工作流单元测试
+"""M4 角色路线与关系网工作流单元测试
 
 覆盖：
 - 门禁（状态、架构确认、world.md 不存在、outline.md 不存在）
@@ -513,8 +513,9 @@ class TestHappyPath:
         sm.load()
         assert sm.state == State.CHARACTER_DESIGN
 
-    def test_empty_characters_fallback(self, tmp_path: Path) -> None:
-        """LLM 返回空列表时不要崩，且按 G3/P1-1 至少渲染 1 个 M4 模板占位角色"""
+    def test_empty_characters_raises(self, tmp_path: Path) -> None:
+        """LLM 返回空角色/空路线时：两次尝试后响亮抛错，绝不静默写占位角色
+        （生成类写操作失败要响亮报错，不能静默写残缺产物）。"""
         d = _build_minimal_project(tmp_path)
         modified = dict(M4_LLM_OUTPUT)
         modified["characters"] = []
@@ -522,18 +523,5 @@ class TestHappyPath:
         modified["relation_graph"] = {}
         modified["foreshadows"] = []
         wf = M4CharacterWorkflow(project_dir=d, llm_client=_build_mock_llm(modified))
-        r = wf.run()
-        # 其余 4 类产物仍正常生成
-        assert r.protagonist_route_file.exists()
-        assert r.graph_file.exists()
-        assert r.foreshadows_file.exists()
-        assert r.golden_finger_file.exists()
-        # G3（T3）：空角色集不再产出空壳，而是渲染 ≥1 个占位角色（M4 模板字段齐全）
-        assert len(r.character_files) >= 1
-        ph = r.character_files[0]
-        ph_txt = ph.read_text(encoding="utf-8")
-        assert "核心动机" in ph_txt
-        assert "语言指纹" in ph_txt
-        # 伏笔表有默认示例
-        txt = r.foreshadows_file.read_text(encoding="utf-8")
-        assert "F-01" in txt
+        with pytest.raises(RuntimeError):
+            wf.run()

@@ -118,6 +118,7 @@ class M19ReviewSyncWorkflow:
         self,
         target_stage: str,
         changed_upstreams: list[str],
+        previous_adopted: list[dict[str, Any]] | None = None,
     ) -> M19ReviewResult:
         """生成目标下游阶段的复核检查单。
 
@@ -125,6 +126,9 @@ class M19ReviewSyncWorkflow:
             target_stage: 待复核的下游阶段 key（STAGE_FILES 之一）
             changed_upstreams: 自确认后发生改动的上游阶段 key 列表
                 （由调用方按 mtime 基线推导，本工作流只负责读取内容对比）
+            previous_adopted: 本阶段历史上已「采纳」的复核条目
+                （作者已确认的处理意见），将其带入 prompt 使 LLM 不重复提出、
+                并与它们保持一致，避免每次重新生成丢失既有决策。
 
         Returns:
             M19ReviewResult：未覆盖 / 冲突条目 + 总体结论
@@ -149,7 +153,10 @@ class M19ReviewSyncWorkflow:
             f"（上游改动：{', '.join(STAGE_LABEL.get(u, u) for u in changed_upstreams)}）...[/cyan]"
         )
         findings, summary = self._llm_review(
-            target_stage, upstream_content[:MAX_UPSTREAM_TOTAL], target_content
+            target_stage,
+            upstream_content[:MAX_UPSTREAM_TOTAL],
+            target_content,
+            previous_adopted or [],
         )
 
         result = M19ReviewResult(
@@ -191,26 +198,53 @@ class M19ReviewSyncWorkflow:
         return text[:max_chars]
 
     # ============================================================
+    # 内部：历史已采纳条目格式化为 prompt 上下文
+    # ============================================================
+    def _format_adopted_note(self, adopted: list[dict[str, Any]]) -> str:
+        """把历史已采纳的复核条目拼成 prompt 片段（作者已确认，勿重复提出）。"""
+        if not adopted:
+            return "（无）"
+        lines: list[str] = []
+        for a in adopted:
+            target = str(a.get("target") or "")
+            issue = str(a.get("issue") or "")
+            suggestion = str(a.get("suggestion") or "")
+            line = f"- {target}：{issue}"
+            if suggestion:
+                line += f"（建议：{suggestion}）"
+            lines.append(line)
+        return "\n".join(lines)
+
+    # ============================================================
     # 内部：LLM 复核
     # ============================================================
     def _llm_review(
-        self, target_stage: str, upstream_content: str, target_content: str
+        self,
+        target_stage: str,
+        upstream_content: str,
+        target_content: str,
+        previous_adopted: list[dict[str, Any]],
     ) -> tuple[list[ReviewFinding], str]:
         """调 LLM 产出检查单 JSON；解析失败/为空时降级为『未发现明显问题』。"""
+        adopted_note = self._format_adopted_note(previous_adopted)
         user_prompt = M19_REVIEW_USER_TEMPLATE.format(
             target_label=STAGE_LABEL.get(target_stage, target_stage),
             upstream_content=upstream_content or "（无）",
             target_content=target_content or "（无）",
+            adopted_history=adopted_note,
         )
         last_text = ""
+        system_prompt = M19_REVIEW_SYSTEM_PROMPT
         for attempt in range(2):
             resp = self.llm.chat_creative(
                 messages=[
-                    {"role": "system", "content": M19_REVIEW_SYSTEM_PROMPT},
+                    {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.4,
-                max_tokens=2000,
+                # 复核 prompt 携带大量上下游内容，2000 tokens 会被截断导致 JSON 解析失败
+                # （实测 4096 稳定）；截断多为瞬时，重试时强化「纯 JSON」约束可显著降低失败率。
+                max_tokens=4096,
                 enable_thinking=False,
             )
             last_text = resp.text
@@ -224,10 +258,16 @@ class M19ReviewSyncWorkflow:
                     self.console.print(
                         "[yellow]⚠ 复核 JSON 解析失败，自动重试一次...[/yellow]"
                     )
+                    system_prompt = (
+                        M19_REVIEW_SYSTEM_PROMPT
+                        + "\n\n【重要】请只输出一个合法的 JSON 对象，"
+                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                    )
+        # 两次均失败：明确提示，绝不把 LLM 原始文本塞进 summary（否则前端会显示乱码）。
         self.console.print(
-            "[yellow]⚠ 复核 JSON 解析失败（重试后），降级为『未发现明显问题』。[/yellow]"
+            "[yellow]⚠ 复核 JSON 解析失败（重试后），未生成检查单。[/yellow]"
         )
-        return [], last_text[:200] or "复核结果解析失败，请稍后重试。"
+        return [], "⚠ 复核结果解析失败，请点击「重新生成」重试。"
 
     # ============================================================
     # 呈现
