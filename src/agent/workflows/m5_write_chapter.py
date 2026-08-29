@@ -109,6 +109,22 @@ _ENGLISH_REPLACE_GUIDE = (
     "（如『分配权重的后门代码』）。仅替换英文部分，保持情节/人物/对话/结构完全不变，直接输出完整正文。"
 )
 
+# ===== 章节元信息清理（去除 LLM 误输出的标题/批注，保证字数统计与成稿干净）=====
+# 开头的 markdown 标题行（模型常自报标题，落盘时由 _save_chapter 统一补「# 第N章 · 书名」）
+_HEADING_RE = re.compile(r"^[ \t]*#+\s*.*$")
+# 标题提取：『第X章 · 书名』『第X章 书名』等
+_TITLE_SPLIT_SEPS = ("·", "．", "。", ":")
+_CHAPTER_ORDINAL_RE = re.compile(r"^第\s*(?:\d+|[一二三四五六七八九十百千万]+)\s*章\s*")
+# 结尾/任意位置的元信息行：『原文标题：…』『原标题：…』『章节名：…』
+_TITLE_META_RE = re.compile(r"^(?:原文标题|原标题|题目|章节名|章节标题)\s*[:：]\s*.*$")
+# 整行被（）包裹且含执导/批注词的可疑注记（如『（此处为快节奏场景，黑袍修士……）』）
+_EDITOR_NOTE_WHOLE_LINE_RE = re.compile(r"^（[^）]*）$")
+# 执导/批注关键词（命中即视为模型自陈述/编辑注记，非正文叙事）
+_EDITOR_HINT_WORDS_RE = re.compile(
+    r"(此处|本段|这里|这段|应当|应该|避免|为了|符合|压力曲线|铺垫|指导|批注|不要|"
+    r"采用|营造|采用短促|禁用词|埋下伏笔|作为揭示|核心)"
+)
+
 
 def _strip_frontmatter(text: str) -> str:
     """去掉可能存在的 YAML frontmatter（保险起见，正文本身不应带，但修订回传可能夹带）"""
@@ -353,8 +369,10 @@ class M5WriteChapterWorkflow:
         )
         quality_passed = bool(quality_report.get("overall_pass", False))
 
-        # ------ 4. 提取章节标题 ------
+        # ------ 4. 提取章节标题 + 清理正文元信息 ------
         chapter_title = self._extract_title(final_text, ctx)
+        # 落盘/计数前去掉模型误输出的标题行、原文标题、编辑批注，保证字数统计正确、无双标题
+        final_text = self._clean_chapter_body(final_text)
 
         # ------ 5. 依据链（E4 结构化） ------
         evidence_chain = self._build_evidence_chain(ctx)
@@ -1405,16 +1423,93 @@ class M5WriteChapterWorkflow:
     # 4. 章节标题
     # ============================================================
     def _extract_title(self, text: str, ctx: dict[str, Any]) -> str:
-        """从正文第一行提取标题，或生成默认"""
-        first_line = text.strip().split("\n")[0].strip()
-        # 去掉 markdown 标题标记
-        first_line = re.sub(r"^#+\s*", "", first_line)
-        # 如果太长（>20字），截取
-        if len(first_line) > 30:
-            first_line = first_line[:30] + "..."
-        if not first_line or first_line.startswith("第"):
-            return f"第{ctx['chapter_num']}章"
-        return first_line
+        """提取章节名：优先取 markdown 标题行『第X章 · 书名』中的书名，否则取默认。
+
+        修正：模型常在正文首行自报标题（如『# 第二章 · 幼犬噬主』），
+        旧逻辑只判断首行是否以「第」开头而退回『第N章』占位，导致成稿双标题
+        （落盘模板『# 第 2 章 · 第2章』 + 正文残留『# 第二章 · 幼犬噬主』）。
+        现改为从标题行中提取真正的书名（『·』后 / 去『第N章』前缀）。
+        """
+        for line in text.split("\n"):
+            s = line.strip()
+            if not s:
+                continue
+            if not s.startswith("#"):
+                break  # 已到正文，未命中标题行 → 走默认
+            head = re.sub(r"^#+\s*", "", s).strip()
+            for sep in _TITLE_SPLIT_SEPS:
+                if sep in head:
+                    after = head.split(sep, 1)[1].strip()
+                    if after:
+                        return after[:30]
+            # 无分隔符：去掉『第N章』前缀后再取（如『第5章 鬼市』→『鬼市』）
+            after_no = _CHAPTER_ORDINAL_RE.sub("", head).strip()
+            if after_no:
+                return after_no[:30]
+            if not re.match(r"^第", head):
+                return head[:30]
+            # 命中『第X章』但无书名 → 继续，最终走默认
+        return f"第{ctx['chapter_num']}章"
+
+    @staticmethod
+    def _clean_chapter_body(text: str) -> str:
+        """去掉 LLM 误输出的元信息，只保留可读正文。
+
+        处理：
+        1. 开头连续的 markdown 标题行（模型自报标题，落盘统一补标题，避免双标题）。
+        2. 任意位置的『原文标题：…』『原标题：…』等元信息行。
+        3. 整行被（）包裹且含执导/批注词的编辑注记（如『（此处为快节奏场景……）』）。
+        """
+        lines = text.split("\n")
+        # 1) 去掉开头空行与 markdown 标题行（模型自报标题，落盘统一补标题，避免双标题）
+        while lines and (not lines[0].strip() or _HEADING_RE.match(lines[0])):
+            lines.pop(0)
+        # 2) 过滤元信息行（保留空行结构，便于后续段落压缩）
+        out: list[str] = []
+        for ln in lines:
+            s = ln.strip()
+            if not s:
+                out.append(ln)
+                continue
+            if _TITLE_META_RE.match(s):
+                continue
+            if (
+                _EDITOR_NOTE_WHOLE_LINE_RE.match(s)
+                and _EDITOR_HINT_WORDS_RE.search(s)
+            ):
+                continue
+            out.append(ln)
+        # 3) 去掉末尾多余空行
+        while out and not out[-1].strip():
+            out.pop()
+        return "\n".join(out)
+
+    @staticmethod
+    def _dedup_repeated_chapter(text: str) -> str:
+        """去掉 LLM 把整章正文重复输出两遍的情况（正文中途再次出现『# 第N章·…』标题）。
+
+        复现：LLM 自报标题 + 完整正文后，又重复了一遍『# 第一章 · …』+ 正文，
+        导致落盘出现重复内容、字数虚增。本方法在 ``_clean_chapter_body`` 之后、
+        字数统计之前调用：若正文中段再次出现章节标题行（非开头），则在中段标题处截断，
+        只保留第一遍正文（去掉后续重复内容）。
+        """
+        import re as _re
+
+        # 章节标题形如：# 第 1 章 · 标题 / # 第一章 · 标题 / # 第1章· 标题。
+        # 关键：LLM 重复正文时该标题常被直接拼在一段末尾（无换行），因此**不**锚定行首，
+        # 用 `#` 前置即可（小说正文里 # 与『第N章』连写几乎不会合法出现）。
+        title_re = _re.compile(r"#\s*第\s*[0-9一二三四五六七八九十百千]+\s*章\s*[·:：,，、\-\s]")
+        matches = list(title_re.finditer(text))
+        if not matches:
+            return text
+        # 正文开头正常应无章节标题（落盘统一由 _save_chapter 生成 `# 第 N 章 · 标题`），
+        # 所以出现的首个标题视为重复起点，截断到它之前即可。
+        first = matches[0]
+        # 保险：若标题恰在正文开头（极端情形 _clean_chapter_body 未剔除干净），跳过去重
+        if first.start() <= 1:
+            return text
+        head = text[: first.start()].rstrip()
+        return head
 
     # ============================================================
     # 5. 依据链
@@ -1504,6 +1599,16 @@ class M5WriteChapterWorkflow:
             "evidence_chain": evidence_chain.to_dict(),
         }
         # ---- G-EN：落盘前绝对零英文关卡（单一写盘点，任何写章路径都过此门）----
+        # 同时做元信息清理兜底（剔除模型误输出的标题/原文标题/编辑批注），
+        # 保证不同写章入口（M5 / agentic_write）成稿都干净、字数统计准确。
+        text = self._clean_chapter_body(text)
+        # P-DEDUP：剔除 LLM 把整章正文重复输出两遍的情况（正文中途再次出现章节标题）。
+        # 必须在字数统计之前，保证字数基于去重后的最终文本。
+        text = self._dedup_repeated_chapter(text)
+        # P-FMT：统一写盘点强制段落格式化（M5 / agentic_write 共用本方法）。
+        # 兜底 LLM 完全不输出段落分隔的情况（正文被压成单段），按句自动分段。
+        # 注意：这段必须在 word_count 计算之前，保证字数统计基于最终落盘文本。
+        text = self._format_chapter_body(text)
         # 不论上游 _quality_check_and_revise 的 G-EN 块是否生效，这里都再做一次确定性兜底，
         # 保证写到磁盘的正文一定零英文（已知词翻译、未知串剔除）。
         clean_text, _still = hard_replace_english(text)

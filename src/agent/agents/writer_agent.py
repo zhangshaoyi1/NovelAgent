@@ -64,6 +64,18 @@ _WRITER_BASE = (
     "自检字数 / 自评质量；准备好后，把 action 设为 'finish' 并在 draft 中提交**完整章节正文**。"
 )
 
+# 结构化解析失败后的强制 JSON 回退指令：模型常把「正文当纯文本」而非 JSON 信封输出
+# （尤其 creative + 高 temperature 时）。首次失败后追加该指令重试一次，强制其只吐 JSON。
+# 符合 G4 / M14 既定约定「解析失败重试一次（要求纯 JSON），两次均失败则明确报错」。
+_RETRY_JSON_PROMPT = (
+    "\n\n【输出格式硬约束】上一条输出没能被解析为 JSON，此条必须只输出一个合法 JSON 对象。"
+    "禁止任何解释文字、禁止 ```json 代码围栏、禁止把章节正文直接作为纯文本输出。"
+    "JSON 结构如下（字段名必须逐字一致）：\n"
+    '{"think": "简短思考", "action": "finish 或 tool_call", '
+    '"tool": null, "args": {}, "draft": "完整章节正文或工具参数"}'
+    "\n若 action 为 tool_call，则填 tool/args 并留空 draft；若为 finish，则 draft 填完整章节正文。"
+)
+
 # 各 tier 的最大起草次数（含首稿；修订次数 = 起草次数 - 1）
 TIER_MAX_DRAFTS: dict[str, int] = {
     "light": 1,  # 仅首稿 + 单次自检，不修订
@@ -137,24 +149,33 @@ class WriterAgent:
         llm = self.llm
 
         def decide(messages: list[dict[str, str]]) -> AgentAction:
-            try:
-                data = llm.chat_structured(
-                    messages,
-                    AgentAction,
-                    use="creative",
-                    temperature=0.82,
-                    max_tokens=6000,
-                    enable_thinking=False,
-                    strict=True,  # G4 开启 strict=True 强校验
-                )
-                return AgentAction(**data)
-            except (ValidationError, StructuredOutputError) as ve:  # noqa: BLE001 - G4 精确捕获
-                # Writer 的 AgentAction 为关键字段（action 必填），重试或抛
-                self.console.print(
-                    f"[yellow]Writer 结构化输出校验失败（{ve}），重试[/yellow]"
-                )
-                # 占位实现：抛异常，让外环重试（T3 验收：不破坏 G3 降级不阻断）
-                raise
+            retry_messages = messages
+            for attempt in (0, 1):
+                try:
+                    data = llm.chat_structured(
+                        retry_messages,
+                        AgentAction,
+                        use="creative",
+                        temperature=0.82,
+                        max_tokens=6000,
+                        enable_thinking=False,
+                        strict=True,  # G4 开启 strict=True 强校验
+                    )
+                    return AgentAction(**data)
+                except (ValidationError, StructuredOutputError) as ve:  # noqa: BLE001 - G4 精确捕获
+                    if attempt == 1:
+                        # 两次均失败 → 明确报错，让外环重试（T3 验收：不破坏 G3 降级不阻断）
+                        self.console.print(
+                            f"[yellow]Writer 结构化输出校验失败（重试一次后仍失败：{ve}）[/yellow]"
+                        )
+                        raise
+                    # 首次失败 → 追加「强制纯 JSON」指令重试一次，避免同参数重跑再翻车
+                    self.console.print(
+                        "[yellow]Writer 结构化输出解析失败，追加纯 JSON 指令重试…[/yellow]"
+                    )
+                    retry_messages = list(messages) + [
+                        {"role": "user", "content": _RETRY_JSON_PROMPT}
+                    ]
 
         return decide
 
@@ -166,24 +187,33 @@ class WriterAgent:
         llm = self.llm
 
         async def decide_async(messages: list[dict[str, str]]) -> AgentAction:
-            try:
-                data = await llm.chat_structured_async(
-                    messages,
-                    AgentAction,
-                    use="creative",
-                    temperature=0.82,
-                    max_tokens=6000,
-                    enable_thinking=False,
-                    strict=True,
-                )
-                return AgentAction(**data)
-            except (ValidationError, StructuredOutputError) as ve:  # noqa: BLE001 - G4 精确捕获
-                # Writer 的 AgentAction 为关键字段（action 必填），重试或抛
-                self.console.print(
-                    f"[yellow]Writer 结构化输出校验失败（{ve}），重试[/yellow]"
-                )
-                # 占位实现：抛异常，让外环重试（T3 验收：不破坏 G3 降级不阻断）
-                raise
+            retry_messages = messages
+            for attempt in (0, 1):
+                try:
+                    data = await llm.chat_structured_async(
+                        retry_messages,
+                        AgentAction,
+                        use="creative",
+                        temperature=0.82,
+                        max_tokens=6000,
+                        enable_thinking=False,
+                        strict=True,
+                    )
+                    return AgentAction(**data)
+                except (ValidationError, StructuredOutputError) as ve:  # noqa: BLE001 - G4 精确捕获
+                    if attempt == 1:
+                        # 两次均失败 → 明确报错，让外环重试（T3 验收：不破坏 G3 降级不阻断）
+                        self.console.print(
+                            f"[yellow]Writer 结构化输出校验失败（重试一次后仍失败：{ve}）[/yellow]"
+                        )
+                        raise
+                    # 首次失败 → 追加「强制纯 JSON」指令重试一次
+                    self.console.print(
+                        "[yellow]Writer 结构化输出解析失败，追加纯 JSON 指令重试…[/yellow]"
+                    )
+                    retry_messages = list(messages) + [
+                        {"role": "user", "content": _RETRY_JSON_PROMPT}
+                    ]
 
         return decide_async
 

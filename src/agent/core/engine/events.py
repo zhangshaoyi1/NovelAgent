@@ -56,6 +56,9 @@ class ProgressEventBus:
         progress_file: progress.json 路径；None 表示不落盘（--no-progress）。
         cost_provider: G10 可选成本视图回调（返回 {tokens_used/budget/remaining}）；
             None 表示不附加成本字段（G9 行为逐字节一致，零改动保护）。
+        event_bus: 可选统一事件总线（core.event_sourcing.EventBus）；非 None 时每个事件
+            同时转发到总线并持久化到 <project_dir>/.events/events.jsonl（全项目统一落盘）。
+            未接线 None 时零开销，行为与现状完全一致。
     """
 
     def __init__(
@@ -63,10 +66,12 @@ class ProgressEventBus:
         on_event: Callable[[dict[str, Any]], None] | None = None,
         progress_file: str | Path | None = ".state/progress.json",
         cost_provider: Callable[[], dict[str, Any]] | None = None,  # G10（拍板 2）
+        event_bus: Any = None,  # 统一事件总线（转发到 .events/events.jsonl）
     ) -> None:
         self.on_event = on_event
         self.progress_file = Path(progress_file) if progress_file else None
         self.cost_provider = cost_provider  # G10：未接线 None 时零开销
+        self.event_bus = event_bus  # 统一事件总线（None 不转发，零开销）
         self.events: list[dict[str, Any]] = []
         self.seq = 0
         self._t0 = time.monotonic()
@@ -103,6 +108,26 @@ class ProgressEventBus:
                 self.on_event(event)  # 回调异常不外抛（下方 except 兜底）
             if self.progress_file is not None:
                 _atomic_write_progress(self.progress_file, self.events, {})
+            # 统一落盘：转发到 EventBus → FileEventStore → <project_dir>/.events/events.jsonl
+            if self.event_bus is not None:
+                try:
+                    self.event_bus.emit_event(
+                        event_type=str(event.get("type", type_)),
+                        correlation_id=str(event.get("correlation_id", "")),
+                        payload=dict(event),
+                        context={
+                            "seq": event.get("seq"),
+                            "elapsed_s": event.get("elapsed_s"),
+                            "project_dir": str(
+                                Path(self.progress_file).resolve().parent.parent
+                            )
+                            if self.progress_file is not None
+                            else "",
+                            "origin": "ProgressEventBus",
+                        },
+                    )
+                except Exception:  # noqa: BLE001 - 转发失败不阻断主流程
+                    pass
         except Exception:  # noqa: BLE001 - 事件发射异常不阻断主流程（拍板 3）
             pass
 

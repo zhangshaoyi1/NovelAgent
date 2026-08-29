@@ -133,6 +133,7 @@
 {% endblock %}
 {% block scripts %}
 <script>
+  window.__chaptersCount = {{ ps.chapters_count | default(0, true) }};
   /* 下一步：一键运行推荐命令（无需自定义输入的命令） */
   function runNext() {
     const argv = {{ next.argv | tojson if next.type == 'run' else [] }};
@@ -146,10 +147,12 @@
     runCommand(project, command, args, c, () => location.reload());
   }
   function autoWriteChapters() {
-    const chapters = parseInt(document.getElementById('aw-chapters').value, 10) || 5;
+    const batch = parseInt(document.getElementById('aw-chapters').value, 10) || 5;
     const mode = document.getElementById('aw-mode').value;
-    const argv = ['--chapters', String(chapters), '--mode', mode];
-    const c = startRunConsole('自动续写 ' + chapters + ' 章（' + mode + '）');
+    // 续写批次数叠加到已写章数 → 绝对目标（server 端拿当前章数兜底）
+    const target = (window.__chaptersCount || 0) + batch;
+    const argv = ['--chapters', String(target), '--mode', mode];
+    const c = startRunConsole('自动续写 ' + batch + ' 章（' + mode + '）');
     runCommand('{{ name }}', 'autowrite', argv, c, () => location.reload());
   }
 </script>

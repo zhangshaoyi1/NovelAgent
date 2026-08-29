@@ -85,9 +85,15 @@ function streamEvents(runId, consoleObj, onDone) {
     finished = true;
     if (es) es.close();
     const ok = d.exit_code === 0;
-    consoleObj.statusEl.innerHTML = ok
+    const code = d.exit_code;
+    let badge = ok
       ? '<span class="badge ok">完成 ✓</span>'
-      : `<span class="badge err">失败（退出码 ${d.exit_code}）</span>`;
+      : `<span class="badge err">失败（退出码 ${code}）</span>`;
+    // 门禁拒绝（退出码 2）常是「该步骤已完成/当前阶段不可执行」，给个友好说明
+    if (code === 2) {
+      badge = '<span class="badge err">拦截：当前阶段不可执行该操作（可能早已完成）</span>';
+    }
+    consoleObj.statusEl.innerHTML = badge;
     if (d.state) consoleObj.statusEl.insertAdjacentHTML('beforeend',
       ` <span class="badge">新状态：${d.state}</span>`);
     if (typeof onDone === 'function') onDone(d);
@@ -135,6 +141,10 @@ function pollRunStatus(runId, consoleObj, finish) {
     }
     if (j && j.done) {
       _runPollers.delete(runId);
+      // 轮询兜底也把后台累计的日志渲染进日志区，避免「黑框空 + 失败」
+      if (Array.isArray(j.logs)) {
+        for (const txt of j.logs) appendLog(consoleObj.logEl, txt);
+      }
       finish({ exit_code: j.exit_code == null ? 0 : j.exit_code, state: j.state });
       return;
     }

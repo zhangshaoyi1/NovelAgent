@@ -40,7 +40,7 @@ class CommandMeta:
 # CommandMeta.allowed_states / is_global 派生（唯一真相源）。
 COMMAND_REGISTRY: list[CommandMeta] = [
     CommandMeta("/start", "开新书", "/start [--dir <dir>]", allowed_states=(State.INIT,)),
-    CommandMeta("/discuss", "进入脉络讨论", "/discuss [--dir <dir>] [--max-rounds <n>]", allowed_states=(State.CONFIGURING, State.DISCUSSING)),
+    CommandMeta("/discuss", "进入脉络讨论", "/discuss [--dir <dir>] [--max-rounds <n>]", allowed_states=(State.CONFIGURING, State.DISCUSSING, State.ARCHITECTING)),
     CommandMeta("/architecture", "生成/迭代故事架构", "/architecture [--dir <dir>] [--feedback <text>]", allowed_states=(State.ARCHITECTING,)),
     CommandMeta("/confirm-architecture", "确认故事架构（门禁）", "/confirm-architecture [--dir <dir>]", allowed_states=(State.ARCHITECTING, State.ARCH_REVISION)),
     CommandMeta("/revise-architecture", "修订已确认架构", "/revise-architecture [--dir <dir>]", allowed_states=(State.ARCH_CONFIRMED, State.WRITING)),

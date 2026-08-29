@@ -208,7 +208,7 @@ def test_ending_mode_not_exited_after_rewrite(tmp_path: Path) -> None:
     sm.save()
 
     p = _make_pipeline(d, _FakeWriter(d), ending_gate=True, ending_ratio=0.25, target=30)
-    p._maybe_enter_ending_mode(30)  # 已进入 → 不重复触发、不清除
+    p._maybe_enter_ending_mode()  # 已进入 → 不重复触发、不清除
     sm.load()
     assert sm.progress["ending_mode"] is True
     assert sm.progress["ending_mode_at"] == 23

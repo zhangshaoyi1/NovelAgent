@@ -294,11 +294,16 @@ class AgenticPipelineWorkflow:
 
         # ---- G9：事件总线（未订阅 on_event / progress_file=None 时零落盘开销）----
         from agent.core.engine.events import ProgressEventBus
+        # ---- 统一事件落盘：按项目注册 FileEventStore → <project_dir>/.events/events.jsonl ----
+        from agent.core.event_sourcing.event_bus import EventBus
+
+        EventBus.get_instance().configure(self.project_dir)
 
         self._event_bus = ProgressEventBus(
             on_event=on_event,
             progress_file=progress_file,
             cost_provider=self._current_cost_fields,  # G10（拍板 2）：每事件附加成本字段
+            event_bus=EventBus.get_instance(),        # 统一总线：全部事件转发落盘 .events/events.jsonl
         )
         self._chapter_t0: float = 0.0  # 本章起点（墙钟，供 chapter_elapsed_s/ETA）
 
@@ -446,6 +451,29 @@ class AgenticPipelineWorkflow:
         except Exception:  # noqa: BLE001
             pass
         return 100
+
+    def _book_total(self) -> int:
+        """全书设计总章数（用于结局模式/主线决策），与 Evaluator 同源。
+
+        关键：与『本轮续写写几章』（batch）解耦。续写批次把绝对目标传进
+        ``--chapters`` 时，target 只是本轮写章上限，绝不能把 batch 当全书目标，
+        否则会在 batch 量就过早进入结局模式。判定顺序：
+        1) ``.state/plan.json`` 的 total_chapters（规划产物，最权威）；
+        2) ``_resolve_target()``（--chapters 绝对目标 / plan 总章数 / 兜底 100）。
+
+        注意：**禁止**用「当前 chapters 目录是否为空」这类运行期判定。它会在写
+        完第一章后即变为非空，导致全书章数在一次连续写入中漂移、结局判定失效。
+        本方法只读稳定来源（plan.json / target），每次返回一致值。
+        """
+        try:
+            plan_file = self.project_dir / ".state" / "plan.json"
+            if plan_file.exists():
+                data = json.loads(plan_file.read_text(encoding="utf-8"))
+                if data.get("total_chapters"):
+                    return int(data["total_chapters"])
+        except Exception:  # noqa: BLE001 - 读取失败走兜底
+            pass
+        return self._resolve_target()
 
     # ---------------------------------------------------------------- 设定集自检/引导（G3）
     def _ensure_setting_set(self) -> None:
@@ -1073,26 +1101,32 @@ class AgenticPipelineWorkflow:
             result.cost = None
 
     # ---------------------------------------------------------------- G8 主线推进 + 结局模式
-    def _maybe_enter_ending_mode(self, target: int) -> None:
-        """结局模式触发（拍板 2：chapter > target*(1-ending_ratio)）。
+    def _maybe_enter_ending_mode(self) -> None:
+        """结局模式触发（拍板 2：chapter > book_total*(1-ending_ratio)）。
 
         一旦进入不退出（拍板 4）：`progress.ending_mode=true` 持久化到 state.json，
         回溯重写（G1）后 M5/AgenticWrite 仍读到 true → 重写仍在结局模式。
         ending_ratio 已在 __init__ 钳制到 [0, 0.5]。
+
+        用 ``_book_total()``（全书设计总章数，plan.json→100）而非本轮写章上限
+        target：续写批次的 ``--chapters N`` 只是本轮写到几章，不能用它触发结局，
+        否则把批次数当全书目标而过早进入结局模式。
         """
         try:
             self.state_machine.load()
             progress = dict(self.state_machine.progress or {})
             if progress.get("ending_mode"):
                 return  # 不退出（拍板 4）
+            book_total = self._book_total()
             chapter = int(progress.get("total_written", 0)) + 1
-            if chapter > target * (1 - self.ending_ratio):
+            if chapter > book_total * (1 - self.ending_ratio):
                 progress["ending_mode"] = True
                 progress["ending_mode_at"] = chapter
                 self.state_machine.progress = progress
                 self.state_machine.save()
                 self.console.print(
-                    f"[cyan]进入结局模式：第 {chapter} 章起（最后 {int(self.ending_ratio * 100)}%）[/cyan]"
+                    f"[cyan]进入结局模式：第 {chapter} 章起"
+                    f"（全书 {book_total} 章 · 最后 {int(self.ending_ratio * 100)}%）[/cyan]"
                 )
                 # ---- G9（补充边界 6）：记录型事件（只记录不反写，G8 语义零改动）----
                 self._emit_event("ending_mode", chapter=chapter, ending_ratio=self.ending_ratio)
@@ -1226,7 +1260,7 @@ class AgenticPipelineWorkflow:
             budget_over = self._check_budget("write_chapter")
             # 2) G8 决策点（顺序前提至降档判定之前；逻辑零改动）
             if self.ending_gate:
-                self._maybe_enter_ending_mode(target)
+                self._maybe_enter_ending_mode()
             if self.mainline_gate:
                 self._maybe_advance_mainline(target)
             # 3) G10 降档判定：超限且非最低档 → 自动降档继续；否则走既有 G4 熔断

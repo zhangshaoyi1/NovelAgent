@@ -13,10 +13,10 @@ from __future__ import annotations
 import pytest
 
 from agent.core.engine.agent_loop import AgentAction, AgentLoop, LoopResult
-from agent.core.base.structured_output import pydantic_to_json_schema
+from agent.core.base.structured_output import StructuredOutputError, pydantic_to_json_schema
 from agent.core.engine.tool_contracts import ToolResult
 from agent.core.tools import registry
-from agent.agents.writer_agent import WriterAgent
+from agent.agents.writer_agent import WriterAgent, _RETRY_JSON_PROMPT
 from agent.workflows.agentic_write import AgenticWriteWorkflow
 
 
@@ -157,6 +157,64 @@ def test_writer_auto_caps_revisions():
     text, rev, passed = agent.run("写第1章", ctx={})
     assert passed is False
     assert rev == 2  # auto: 首稿 + 最多 2 次修订
+
+
+# ---------------------------------------------------------------------------
+# 2b. WriterAgent 结构化输出解析失败 → 追加纯 JSON 指令重试一次（G4+/M14 约定）
+# ---------------------------------------------------------------------------
+class _FakeLLM:
+    """模拟 LLMClient.chat_structured：可编程失败/成功，并记录每次调用轨迹。"""
+
+    def __init__(self, script):  # script: list[callable(messages,**kw)->dict 或 raise]
+        self.results = list(script)
+        self.calls: list[list[dict]] = []
+
+    def chat_structured(self, messages, schema, **kw):
+        self.calls.append(messages)
+        cb = self.results.pop(0)
+        if isinstance(cb, Exception):
+            raise cb
+        return cb(messages, **kw)
+
+
+def test_writer_structured_parse_retries_once_with_json_prompt():
+    # 第一次 chat_structured 解析失败 → 第二次必须带着纯 JSON 指令成功
+    raised = {"n": 0}
+
+    def fail_once(messages, **kw):
+        raised["n"] += 1
+        raise StructuredOutputError("解析失败（模拟模型输出正文而非 JSON）")
+
+    def succeed_after_retry(messages, **kw):
+        # 重试调用必须追加了 _RETRY_JSON_PROMPT
+        assert messages[-1]["role"] == "user"
+        assert _RETRY_JSON_PROMPT in messages[-1]["content"]
+        return {"think": "重试成功", "action": "finish", "draft": "第7章正文"}
+
+    agent = WriterAgent(
+        project_dir=".",
+        tier="light",
+        llm_client=_FakeLLM([fail_once, succeed_after_retry]),
+    )
+    text, rev, passed = agent.run("写第7章", ctx={})
+    assert text == "第7章正文"
+    assert raised["n"] == 1  # 只失败一次，第二次已带指令重试
+
+
+def test_writer_structured_parse_raises_after_two_failures():
+    # 两次均失败 → decide 在第二次明确抛错，AgentLoop 无法提交 → run 报 RuntimeError
+    agent = WriterAgent(
+        project_dir=".",
+        tier="light",
+        llm_client=_FakeLLM(
+            [StructuredOutputError("失败A"), StructuredOutputError("失败B")]
+        ),
+    )
+    with pytest.raises(RuntimeError):
+        agent.run("写第8章", ctx={})
+    # 至少尝试了 writer 级重试（≥2 次）；AgentLoop 后续还会用自己的"重新输出 JSON"
+    # 恢复消息继续重试直到 max_iterations，绝不静默降级 / 无限卡死即可
+    assert len(agent.llm.calls) >= 2
 
 
 # ---------------------------------------------------------------------------

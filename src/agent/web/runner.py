@@ -55,6 +55,7 @@ class RunManager:
             "command": command,
             "argv": argv,
             "queue": asyncio.Queue(),
+            "logs": [],
             "done": False,
             "exit_code": None,
             "proc": None,
@@ -107,8 +108,12 @@ class RunManager:
                 line = await proc.stdout.readline()
                 if not line:
                     break
-                text = strip_rich(line.decode("utf-8", "replace"))
-                await run["queue"].put({"type": "log", "data": {"text": text.rstrip("\r\n")}})
+                text = strip_rich(line.decode("utf-8", "replace")).rstrip("\r\n")
+                # 累计日志：SSE 掉线时轮询兜底也能回看
+                run["logs"].append(text)
+                if len(run["logs"]) > 300:
+                    run["logs"] = run["logs"][-300:]
+                await run["queue"].put({"type": "log", "data": {"text": text}})
 
         async def tail_progress() -> None:
             nonlocal seen_seq, last_mtime

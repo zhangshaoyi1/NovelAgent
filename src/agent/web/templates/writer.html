@@ -49,7 +49,9 @@
 {% endblock %}
 {% block scripts %}
 <script>
+  let existingChapters = 0; // 当前的已写章数，续写时把批次数换算为绝对目标
   function renderChapters(list) {
+    existingChapters = list.length;
     const box = document.getElementById('chapters');
     if (!list.length) { box.innerHTML = '<p class="muted">还没有章节，点上方"写下一章"或"一键续写"。</p>'; return; }
     box.innerHTML = '<ul class="chapter-list">' + list.map(c =>
@@ -77,14 +79,15 @@
     });
   }
 
-  /** 一键续写：autowrite 批量写入 N 章 */
+  /** 一键续写：autowrite 批量写入 N 章（批次数 N 叠加到已写章数，取绝对目标） */
   function autoWriteChapters() {
-    const chapters = parseInt(document.getElementById('aw-chapters').value, 10) || 5;
+    const batch = parseInt(document.getElementById('aw-chapters').value, 10) || 5;
     const mode = document.getElementById('aw-mode').value;
     const strict = document.getElementById('aw-strict').checked;
-    const argv = ['--chapters', String(chapters), '--mode', mode];
+    const target = existingChapters + batch; // 绝对目标章数
+    const argv = ['--chapters', String(target), '--mode', mode];
     if (!strict) argv.push('--no-strict-review');
-    const c = startRunConsole('自动续写 ' + chapters + ' 章（' + mode + '）');
+    const c = startRunConsole('自动续写 ' + batch + ' 章（' + mode + '）');
     runCommand('{{ name }}', 'autowrite', argv, c, (d) => {
       loadChapters();
       if (d.summary && d.summary.cost_alert) {

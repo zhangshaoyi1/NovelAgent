@@ -41,14 +41,18 @@
   {% endif %}
   <p class="muted">{{ st.desc }}</p>
 
-  {# —— 脉络讨论：始终提供输入框 —— #}
+  {# —— 脉络讨论：仅在当前阶段可行时提供输入框 —— #}
   {% if st.key == 'discussion' %}
-  <div class="discuss-box">
-    <textarea id="discuss-message" rows="3" placeholder="输入你想与 Agent 讨论的内容，例如：主角的成长弧线怎么设计？世界观里最关键的规则冲突是什么？……"></textarea>
-    <div class="actions-row">
-      <button class="btn primary" onclick="sendDiscussion('{{ name }}')">💬 发送讨论</button>
+    {% if '/discuss' in avail %}
+    <div class="discuss-box">
+      <textarea id="discuss-message" rows="3" placeholder="输入你想与 Agent 讨论的内容，例如：主角的成长弧线怎么设计？世界观里最关键的规则冲突是什么？……"></textarea>
+      <div class="actions-row">
+        <button class="btn primary" onclick="sendDiscussion('{{ name }}')">💬 发送讨论</button>
+      </div>
     </div>
-  </div>
+    {% else %}
+    <p class="muted lock-hint">🔒 脉络讨论在当前阶段已锁定（{{ ps.state_label }}）。如需调整讨论，请回到仍开放讨论的上游阶段操作。</p>
+    {% endif %}
   {% endif %}
 
   {# —— 故事架构 / 大纲 / 角色（已生成后）：反馈修改 —— #}

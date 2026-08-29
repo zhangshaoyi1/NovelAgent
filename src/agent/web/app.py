@@ -670,6 +670,7 @@ def run_status(run_id: str) -> JSONResponse:
         "exit_code": run["exit_code"],
         "project": run["project"],
         "command": run["command"],
+        "logs": run.get("logs", []),
     }
     if run["done"]:
         try:
