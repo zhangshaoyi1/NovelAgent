@@ -21,6 +21,30 @@ NovelAgent 是一个**共创式长篇小说写作 Agent**：给它一段思路�
 - **笔枢对标能力**：Agent 阵容叙事（`roster`）、冰山建书 60+ 字段（`iceberg`）、双模式连续滑块（`mode --autonomy`）、可拖拽世界关系图谱（`graph`）；
 - **可逆操作**：快照、回滚、归档，写错了能后退。
 
+### 两种入口：CLI 与 Web 工作台（能力同源、完全一致）
+
+NovelAgent 提供**两种等价的使用入口**，可以混着用、随时切换：
+
+- **命令行（CLI）**：`novel-agent <命令>`，适合批处理、自动化、脚本驱动（CI / 定时任务 / 外部编排）。
+- **网页工作台（Web）**：`novel-agent web` 启动零构建 Web UI（FastAPI + Jinja2 + HTMX），把创作闭环做成可视化界面，适合日常写作、引导式上手、实时看进度与成本。
+
+> **能力完全一致**：Web 端以子进程调用同一份 CLI（`python -m agent.cli <command>`），因此"网页上能做的命令行都能做，命令行能跑的网页「高级命令」面板也都能跑"，不存在"网页少几个功能"。详见 §6。
+
+下面把"同一件事"在两种入口下的做法对照起来，后面章节再分别展开：
+
+| 想做的事 | CLI 命令 | Web 入口 |
+|---|---|---|
+| 启动软件 | — | `novel-agent web` → 浏览器打开 |
+| 开新书 / 引导式上手 | `start` / `compose` | `/p/{name}/guide` 七步向导 |
+| 写章节（逐章） | `write` | `/p/{name}/write` 写作间 |
+| 自动续写（多章） | `autowrite` | 写作间「⚡ 自动续写」 |
+| 一键写完整本 | `compose` | 工作台「✍️ 创作」卡片 |
+| 调自主度 / 模式 | `mode` | 工作台「⚙️ 创作调校」滑块 |
+| 看状态 / 进度 | `status` | 项目工作台 `/p/{name}` |
+| 角色 / 关系 / 伏笔 | `design-characters` / `adjust-*` | `/p/{name}/team`、`/p/{name}/graph` |
+| 体检 / 评测 | `doctor` / `evaluate` | `/p/{name}/dashboard` |
+| 导出成书 | `export` | 工作台导出入口 |
+
 命令行入口统一为 `novel-agent`（安装后），等价于 `python -m agent.cli`。所有命令都接受一个 `-d/--dir <项目目录>` 参数指向你的小说项目。
 
 > **状态机**：NovelAgent 内部有状态流转（INIT → 配置/讨论 → 架构确认 → 大纲 → 角色 → 写作 → 完结）。每个命令都有"门禁"——**在错误的阶段运行会被拒绝并提示下一步该做什么**。所以照着下面的顺序走即可，不用担心顺序乱。
@@ -240,6 +264,8 @@ novel-agent export -d novels/my-novel -f epub -o ./output    # 导出 EPUB 到�
 ```
 支持 `txt` / `markdown` / `epub`，默认输出到 `<项目>/exports/`。中途或完结都能导出。
 
+> 💡 **Web 等价**：本章每条命令在 Web 工作台都有对应入口——引导式流程见 `/p/{name}/guide` 七步向导，单章/续写见 `/p/{name}/write` 写作间，其余命令可在项目工作台「高级命令」折叠区直接运行（见 §6.6）。
+
 ---
 
 ## 五、日常辅助命令
@@ -300,11 +326,13 @@ novel-agent rollback -d novels/my-novel -c 20 -y  # 跳过二次确认
 | `version` | 打印版本 |
 | `help` | 查看帮助 |
 
+> 💡 **Web 等价**：上述查看 / 诊断 / 安全网命令同样可在 Web 项目工作台的「高级命令」面板一键运行，无需切回终端。
+
 ---
 
-## 六、Web 写作工作台（推荐入门方式）
+## 六、Web 工作台详解（与 CLI 一一对应）
 
-命令行适合批处理和自动化，**日常写作建议在网页里完成**。NovelAgent 自带一个**零构建的 Web UI**（FastAPI 服务端渲染 + Jinja2 + HTMX 局部刷新，无需 Node 工具链），把第四章那套创作闭环做成可视化工作台：左边推进度，右边出内容，写章过程实时可见。
+命令行适合批处理、自动化与脚本驱动；**Web 工作台适合日常写作与引导式上手**——两者底层调用同一套命令，能力完全一致。NovelAgent 自带一个**零构建的 Web UI**（FastAPI 服务端渲染 + Jinja2 + HTMX 局部刷新，无需 Node 工具链），把 §4/§5 的 CLI 创作闭环做成可视化工作台：左边推进度，右边出内容，写章过程实时可见。
 
 依赖 `fastapi` + `uvicorn` + `python-multipart`，已写入 `pyproject.toml`，随包安装。
 
@@ -499,22 +527,23 @@ novel-agent merge-genres -d novels/my-novel
 ## 九、命令速查表
 
 > 命令名统一用连字符（文件名下划线转连字符）。`*` 表示全局命令（任意阶段可用）。
+> 所有命令均可在 Web 项目工作台「高级命令」面板直接运行（与 CLI 一致）；下表「Web 入口」列仅标注核心创作命令的专属页面，其余命令走高级命令面板即可。
 
 ### 核心创作
-| 命令 | 说明 | 主要参数 |
-|---|---|---|
-| `autowrite` | 全自主写作（规划→写→评→修） | `-d`, `--brief`, `--chapters`, `--mode` |
-| `compose` | 一键全自动写书（开新书/续写至完本，含完本去重） | `--name`, `-d`, `--scope`, `--genre`, `--story-core`, `-n/--chapters`, `--mode`, `--no-checkup` |
-| `start` | 开新书，生成 world.md | `-d`, `--genres`（多题材） |
-| `discuss` | 脉络讨论，产出 discussion.md | `-d`, `-r/--max-rounds` |
-| `architecture` | 故事架构 | `-d` |
-| `confirm-architecture` | 确认架构（解锁大纲） | `-d` |
-| `outline` | 大纲 + 各支线 subline | `-d` |
-| `design-characters` | 角色 / 关系 / 伏笔 / 金手指 | `-d` |
-| `write` | 写下一章（核心循环） | `-d`, `--mode auto/heavy/light`, `--no-strict-review`, `--json`, `--env` |
-| `adjust-relation` | 调整角色关系网 | `-d`, `-i/--intent`, `--json` |
-| `adjust-route` | 调整主角成长路线 | `-d`, `-i/--intent`, `--json` |
-| `export` | 导出 txt/markdown/epub | `-d`, `-f/--format`, `-o/--output`, `-t/--title` |
+| 命令 | 说明 | 主要参数 | Web 入口 |
+|---|---|---|---|
+| `autowrite` | 全自主写作（规划→写→评→修） | `-d`, `--brief`, `--chapters`, `--mode` | 写作间「⚡ 自动续写」/ 工作台「✍️ 创作」 |
+| `compose` | 一键全自动写书（开新书/续写至完本，含完本去重） | `--name`, `-d`, `--scope`, `--genre`, `--story-core`, `-n/--chapters`, `--mode`, `--no-checkup` | 工作台「✍️ 创作」卡片 / 七步向导 |
+| `start` | 开新书，生成 world.md | `-d`, `--genres`（多题材） | 向导 ① 开新书 |
+| `discuss` | 脉络讨论，产出 discussion.md | `-d`, `-r/--max-rounds` | 向导 ② 脉络讨论 |
+| `architecture` | 故事架构 | `-d` | 向导 ③ 故事架构 |
+| `confirm-architecture` | 确认架构（解锁大纲） | `-d` | 向导 ④ 架构确认 |
+| `outline` | 大纲 + 各支线 subline | `-d` | 向导 ⑤ 创作大纲 |
+| `design-characters` | 角色 / 关系 / 伏笔 / 金手指 | `-d` | 向导 ⑥ 角色设计 |
+| `write` | 写下一章（核心循环） | `-d`, `--mode auto/heavy/light`, `--no-strict-review`, `--json`, `--env` | 写作间 单章写入 |
+| `adjust-relation` | 调整角色关系网 | `-d`, `-i/--intent`, `--json` | 项目「高级命令」面板 / 关系图谱页 |
+| `adjust-route` | 调整主角成长路线 | `-d`, `-i/--intent`, `--json` | 项目「高级命令」面板 |
+| `export` | 导出 txt/markdown/epub | `-d`, `-f/--format`, `-o/--output`, `-t/--title` | 工作台导出入口 |
 
 ### 成书质量
 | 命令 | 说明 |
