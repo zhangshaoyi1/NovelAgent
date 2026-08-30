@@ -91,6 +91,7 @@ class LLMResponse:
     usage: dict[str, int] = field(default_factory=dict)
     model: str = ""
     raw: Any = None
+    warnings: list[str] = field(default_factory=list)  # P1 校验告警（不阻断流程）
 
 
 class LLMProvider(ABC):

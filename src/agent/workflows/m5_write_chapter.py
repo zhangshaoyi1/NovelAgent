@@ -54,7 +54,7 @@ from agent.prompts import (
     G_CHARACTER_STATE_CONSTRAINT_TEMPLATE,  # 角色状态硬约束（来自 characters/*.md，不可违背）
 )
 from agent.utils import parse_llm_json
-
+from agent.base.validation import ValidationSpec
 logger = logging.getLogger(__name__)
 
 MAX_REVISIONS = 2
@@ -1265,6 +1265,7 @@ class M5WriteChapterWorkflow:
             temperature=0.85,
             max_tokens=4096,
             enable_thinking=False,
+            validators=[ValidationSpec.not_empty()],
         )
         # 后处理：规范化段落格式（安全网，即使 LLM 遗漏规则 15 也兜底）
         raw = resp.text.strip()
@@ -1301,6 +1302,7 @@ class M5WriteChapterWorkflow:
                     temperature=0.4,
                     max_tokens=4096,
                     enable_thinking=False,
+                    validators=[ValidationSpec.not_empty()],
                 )
                 text = rev_resp.text.strip()
             except Exception:  # noqa: BLE001 - 修订调用异常不阻断，交由兜底清理
@@ -1427,6 +1429,7 @@ class M5WriteChapterWorkflow:
                     temperature=0.6,
                     max_tokens=4096,
                     enable_thinking=False,
+                    validators=[ValidationSpec.not_empty()],
                 )
                 text = rev_resp.text.strip()
                 attempts = attempt + 1

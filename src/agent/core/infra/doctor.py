@@ -24,7 +24,7 @@ from typing import Any
 import frontmatter
 
 from agent.core.engine.state_machine import State
-
+from agent.base.validation import ValidationSpec
 
 @dataclass
 class CheckItem:
@@ -504,6 +504,7 @@ class Doctor:
                 [{"role": "user", "content": "ping"}],
                 max_tokens=1,
                 temperature=0,
+                validators=[ValidationSpec.not_empty()],
             )
             return bool(resp and resp.text is not None)
         except Exception:  # noqa: BLE001

@@ -38,7 +38,7 @@ from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import StateMachine
 from agent.core.tools.builtins import get_project_dir
 from agent.utils import parse_llm_json
-
+from agent.base.validation import ValidationSpec
 
 # ============================================================
 # F11.2 导出
@@ -620,6 +620,7 @@ class CompletionExtrasWorkflow:
                     {"role": "user", "content": f"小说标题：{title}\n简介摘要：{synopsis}"},
                 ],
                 temperature=0.7,
+                validators=[ValidationSpec.not_empty()],
             )
             return f"# 完本感言\n\n{resp.text.strip()}"
         except Exception:

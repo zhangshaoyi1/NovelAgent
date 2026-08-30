@@ -31,7 +31,7 @@ from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.registry.genre_pack import first_genre
 from agent.core.engine.workflow_registry import workflow
 from agent.prompts import M2_SYSTEM_PROMPT, M2_USER_PROMPT_TEMPLATE
-
+from agent.base.validation import ValidationSpec
 
 # 退出命令
 EXIT_COMMANDS = {"/next", "/done", "/exit", "/quit"}
@@ -225,6 +225,7 @@ class M2DiscussWorkflow:
             temperature=0.7,
             max_tokens=500,
             enable_thinking=False,
+            validators=[ValidationSpec.not_empty()],
         )
         return resp.text.strip()
 
@@ -255,6 +256,7 @@ class M2DiscussWorkflow:
             messages=[{"role": "user", "content": summary_prompt}],
             max_tokens=500,
             enable_thinking=False,
+            validators=[ValidationSpec.not_empty()],
         )
         return resp.text.strip()
 

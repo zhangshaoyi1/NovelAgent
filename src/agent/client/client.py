@@ -34,6 +34,13 @@ from agent.base.structured_output import (
     extract_json,
     pydantic_to_json_schema,
 )
+# 通用结果校验（§6）：声明式 ValidationSpec，在唯一出口统一校验每个 LLM 返回
+from agent.base.validation import (
+    DEFAULT_MAX_RETRIES,
+    ValidationEngine,
+    ValidationError,
+    ValidationSpec,
+)
 
 # ---- LLM 调用事件埋点 -------------------------------------------------------
 # 可注入 hook（默认 None 零开销）。client 层只持有一个可调用对象的引用，
@@ -227,6 +234,8 @@ class LLMClient:
         max_tokens: int | None = None,
         use: str = "creative",
         enable_thinking: bool | None = None,
+        validators: "list[ValidationSpec] | None" = None,
+        validation_attempt: int = 0,
         **kwargs: Any,
     ) -> LLMResponse:
         """通用 chat 接口
@@ -238,6 +247,10 @@ class LLMClient:
             max_tokens: 最大生成 token 数
             use: 用途（creative 创作 / utility 校验），影响默认模型选择
             enable_thinking: 思考开关（覆盖配置）
+            validators: 声明式结果校验规格（§6）。为空则不校验（零回归）。
+                P0 失败自动附修正提示重试，耗尽抛 ``ValidationError``；
+                P1 仅把问题写入 ``resp.warnings``。
+            validation_attempt: 内部递归重试计数，防无限循环，调用方勿传。
         """
         target_model = self._select_model(model, use)
         if enable_thinking is None:
@@ -266,7 +279,10 @@ class LLMClient:
                     "use": use,
                     "latency_ms": round((time.monotonic() - req_t0) * 1000.0, 2),
                 })
-                return resp
+                return self._validate_and_return(
+                    resp, messages, validators, validation_attempt,
+                    model, temperature, max_tokens, use, enable_thinking, **kwargs,
+                )
             except Exception as e:
                 last_exc = e
                 if self._is_network_error(e):
@@ -303,7 +319,10 @@ class LLMClient:
                     "use": use,
                     "latency_ms": round((time.monotonic() - req_t0) * 1000.0, 2),
                 })
-                return fb_resp
+                return self._validate_and_return(
+                    fb_resp, messages, validators, validation_attempt,
+                    model, temperature, max_tokens, use, enable_thinking, **kwargs,
+                )
             except Exception as e2:
                 last_exc = e2
 
@@ -319,6 +338,56 @@ class LLMClient:
         raise LLMError(
             f"LLM 调用失败（重试 {self.config.max_retries} 次后仍报错）: {last_exc}"
         ) from last_exc
+
+    def _validate_and_return(
+        self,
+        resp: LLMResponse,
+        messages: list[dict[str, str]],
+        validators: "list[ValidationSpec] | None",
+        validation_attempt: int,
+        model: str | None,
+        temperature: float,
+        max_tokens: int | None,
+        use: str,
+        enable_thinking: bool | None,
+        **kwargs: Any,
+    ) -> LLMResponse:
+        """结果校验收口：P0 失败带修正提示重试（耗尽抛 ValidationError），P1 仅告警。
+
+        仅在 ``validators`` 非空时生效；调用方不传则原样返回（零回归）。
+        """
+        if not validators:
+            return resp
+        vr = ValidationEngine.run(resp, validators)
+        if vr["p1"]:
+            resp.warnings.extend(vr["p1"])
+        if not vr["p0"]:
+            return resp
+        # P0 失败：带修正提示重试（防无限递归，受 DEFAULT_MAX_RETRIES 限制）
+        if validation_attempt < DEFAULT_MAX_RETRIES:
+            if self.console is not None:
+                self.console.print(
+                    f"[yellow]⚠ LLM 输出未通过结果校验（第 {validation_attempt + 1} 次），"
+                    f"重试修正：{vr['p0']}[/yellow]"
+                )
+            corrective = (
+                "⚠️ 你的上一次输出未通过结果校验："
+                + "；".join(vr["p0"])
+                + "。请严格按原始要求重新生成，确保满足上述约束。"
+            )
+            corrected = messages + [{"role": "user", "content": corrective}]
+            return self.chat(
+                corrected,
+                model=model,
+                temperature=temperature,
+                max_tokens=max_tokens,
+                use=use,
+                enable_thinking=enable_thinking,
+                validators=validators,
+                validation_attempt=validation_attempt + 1,
+                **kwargs,
+            )
+        raise ValidationError("；".join(vr["p0"]))
 
     def chat_creative(
         self, messages: list[dict[str, str]], **kwargs: Any

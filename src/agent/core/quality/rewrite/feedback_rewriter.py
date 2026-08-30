@@ -31,7 +31,7 @@ from rich.console import Console
 
 from agent.core.quality.guardrails import GateMode, Guardrails, build_guardrails
 from agent.core.story.setting_manager import SettingManager
-
+from agent.base.validation import ValidationSpec
 
 # ============================================================
 # 提示词（自包含，避免侵入 prompts.py）
@@ -295,6 +295,7 @@ class FeedbackRewriter:
             temperature=0.7,
             max_tokens=6000,
             enable_thinking=False,
+            validators=[ValidationSpec.not_empty()],
         )
         return resp.text.strip()
 
