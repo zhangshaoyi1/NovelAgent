@@ -18,6 +18,7 @@ rag/ 的 Indexer 经 ``embed_fn`` 参数注入使用，不直接依赖本模块�
 from __future__ import annotations
 
 import json
+import os
 import urllib.error
 import urllib.request
 from abc import ABC, abstractmethod
@@ -103,6 +104,17 @@ class OllamaEmbedding(EmbeddingProvider):
         return out
 
 
+def _warn_replaced_hf_endpoint(orig: str) -> None:
+    """HF_ENDPOINT 含 U+2011 时告警（仅打日志，不抛异常）。"""
+    import warnings
+
+    warnings.warn(
+        f"HF_ENDPOINT 含非标准连字符 U+2011（- 被写成 ‐），已临时归一化为标准 '-' 再下载模型。"
+        "建议修正系统环境变量：{orig}".format(orig=orig),
+        RuntimeWarning,
+    )
+
+
 class QwenLocalEmbedding(EmbeddingProvider):
     """本地 Qwen 模型嵌入（transformers 离线推理）
 
@@ -133,6 +145,15 @@ class QwenLocalEmbedding(EmbeddingProvider):
             return
         import torch
         from transformers import AutoModel, AutoTokenizer
+
+        # 防御性问题：HF_ENDPOINT 可能被误键入 U+2011（‑ 非断行连字符）而非普通 '-'
+        # （如 https://hf-mirror.com），huggingface_hub 解析 host 时抛 IDNA 错误，阻断加载。
+        # 此处归一化为 ASCII 普通连字符 -，避免依赖用户全局环境。
+        bad_hf = os.environ.get("HF_ENDPOINT")
+        if bad_hf and "\u2011" in bad_hf:
+            _orig = bad_hf
+            os.environ["HF_ENDPOINT"] = bad_hf.replace("\u2011", "-")
+            _warn_replaced_hf_endpoint(_orig)
 
         self._tokenizer = AutoTokenizer.from_pretrained(
             self.model_name, trust_remote_code=True
