@@ -43,7 +43,6 @@ COMMAND_REGISTRY: list[CommandMeta] = [
     CommandMeta("/discuss", "进入脉络讨论", "/discuss [--dir <dir>] [--max-rounds <n>]", allowed_states=(State.CONFIGURING, State.DISCUSSING, State.ARCHITECTING)),
     CommandMeta("/architecture", "生成/迭代故事架构", "/architecture [--dir <dir>] [--feedback <text>]", allowed_states=(State.ARCHITECTING,)),
     CommandMeta("/confirm-architecture", "确认故事架构（门禁）", "/confirm-architecture [--dir <dir>]", allowed_states=(State.ARCHITECTING, State.ARCH_REVISION)),
-    CommandMeta("/revise-architecture", "修订已确认架构", "/revise-architecture [--dir <dir>]", allowed_states=(State.ARCH_CONFIRMED, State.WRITING)),
     CommandMeta("/outline", "生成大纲", "/outline [--dir <dir>]", allowed_states=(State.ARCH_CONFIRMED, State.OUTLINING)),
     CommandMeta("/design-characters", "角色设计", "/design-characters [--dir <dir>]", allowed_states=(State.OUTLINING,)),
     CommandMeta("/write", "写下一章", "/write [--dir <dir>]", allowed_states=(State.CHARACTER_DESIGN, State.WRITING)),
@@ -55,7 +54,6 @@ COMMAND_REGISTRY: list[CommandMeta] = [
     CommandMeta("/rollback", "回滚到分叉点", "/rollback <chapter>", allowed_states=(State.WRITING,)),
     CommandMeta("/resume", "续作恢复", "/resume", allowed_states=(State.PAUSED,)),
     CommandMeta("/export", "导出", "/export <format>", allowed_states=(State.WRITING, State.COMPLETED)),
-    CommandMeta("/audit", "一致性审计", "/audit", allowed_states=(State.WRITING,)),
     CommandMeta("/snapshot", "创建设定集快照", "/snapshot [--dir <dir>] [--label <text>]", is_global=True),
     CommandMeta("/list-snapshots", "列出快照", "/list-snapshots [--dir <dir>]", is_global=True),
     CommandMeta("/rollback-setting", "回滚设定集", "/rollback-setting --dir <dir> --snapshot <name>", is_global=True),
@@ -64,7 +62,7 @@ COMMAND_REGISTRY: list[CommandMeta] = [
     CommandMeta("/foreshadow-report", "伏笔回收报告", "/foreshadow-report [--dir <dir>]", is_global=True),
     CommandMeta("/foreshadow-check", "伏笔检查", "/foreshadow-check [--dir <dir>] [--subline <id>]", is_global=True),
     CommandMeta("/status", "查看项目状态", "/status [--dir <dir>]", is_global=True),
-    CommandMeta("/help", "列出当前可用命令", "/help", is_global=True),
+    CommandMeta("/help", "列出命令清单（带 --dir 按状态过滤当前可用命令）", "/help [--dir <dir>]", is_global=True),
     CommandMeta("/reset-state", "重置到上一稳定点", "/reset-state", is_global=True),
 ]
 

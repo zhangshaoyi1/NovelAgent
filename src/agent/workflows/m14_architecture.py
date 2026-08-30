@@ -284,7 +284,7 @@ class M14ArchitectureWorkflow:
 
         post = frontmatter.load(self.architecture_file)
         if post.metadata.get("confirmed") is True:
-            raise RuntimeError("架构已确认，如需修改请先 /revise-architecture")
+            raise RuntimeError("架构已确认，当前不支持在线修订已确认架构；如需调整，请先 /reset-state 回到大纲阶段重新生成（将丢失已确认架构）")
 
         # 防误预览
         self.console.print(

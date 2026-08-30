@@ -4,11 +4,10 @@ from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.cli._app import app, command, console
+from agent.cli._app import console
 from agent.agents.registry import RosterCategory, get_groups, roster_summary
 
 
-@command(global_=True)
 def roster() -> None:
     """查看 NovelAgent 的「编制完整创作团队」阵容（对标笔枢 30+ 专家 Agent 叙事）
 
