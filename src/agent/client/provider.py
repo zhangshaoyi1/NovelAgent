@@ -74,7 +74,19 @@ class OpenAIProvider(LLMProvider):
     @staticmethod
     def _parse_response(resp: Any, model: str) -> LLMResponse:
         choice = resp.choices[0]
+        # 思考模型（含 reasoning_content 的厂商变体）在 content 空时可能把文本放推理字段
+        # （dots3-note-prev 等：短调用 max_tokens 被思考吃光，content=None）。此处降级把
+        # reasoning_content 作为兜底，避免下游拿到空文/误判失败；长写章 content 有值时不受影响。
         text = choice.message.content or ""
+        if not text:
+            rc = getattr(choice.message, "reasoning_content", None)
+            if isinstance(rc, list):
+                text = "".join(
+                    p.get("text", "") if isinstance(p, dict) else str(p)
+                    for p in rc
+                )
+            elif rc:
+                text = str(rc)
         usage = {}
         if resp.usage is not None:
             usage = {
