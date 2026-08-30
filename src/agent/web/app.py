@@ -16,6 +16,9 @@ API：
 - GET  /api/runs/{id}        run 状态查询（前端轮询兜底，防 SSE 丢事件假死）
 - GET  /api/state/{name} 项目状态 JSON（前端轮询刷新用）
 - GET  /api/genres       题材列表
+- GET  /prompts          提示词版本面板（md 清单 + 手动重载）
+- GET  /api/prompts      提示词清单 JSON
+- POST /api/prompts/reload  手动清缓存重载（HTMX 局部刷新表格）
 """
 
 from __future__ import annotations
@@ -23,6 +26,8 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from contextlib import asynccontextmanager
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -49,7 +54,20 @@ from agent.core.story.relation_manager import (
 # 使 Web 端的 available_commands 与 CLI 保持一致。
 import agent.cli.commands  # noqa: F401  副作用：命令元数据登记
 
-app = FastAPI(title="NovelAgent Web UI", version="0.1.0")
+
+@asynccontextmanager
+async def _lifespan(app: FastAPI):
+    """Web 长驻进程生命周期：启动/停止 PromptManager 热重载线程（阶段 C3）。"""
+    from agent.core.infra.prompt_manager import pm
+
+    pm.start_watcher()
+    try:
+        yield
+    finally:
+        pm.stop_watcher()
+
+
+app = FastAPI(title="NovelAgent Web UI", version="0.1.0", lifespan=_lifespan)
 
 _HERE = Path(__file__).resolve().parent
 templates = Jinja2Templates(directory=str(_HERE / "templates"))
@@ -678,3 +696,47 @@ def run_status(run_id: str) -> JSONResponse:
         except Exception:  # noqa: BLE001 - 状态读取失败不阻断返回
             data["state"] = None
     return JSONResponse(data)
+
+
+# ============================================================
+# 提示词版本面板（阶段 C4）
+# ============================================================
+def _prompt_rows() -> list[dict[str, Any]]:
+    from agent.core.infra.prompt_manager import pm
+
+    rows = pm.list_prompts()
+    for r in rows:
+        r["mtime_str"] = (
+            datetime.fromtimestamp(r["mtime"]).strftime("%Y-%m-%d %H:%M:%S")
+            if r["mtime"]
+            else "-"
+        )
+    return rows
+
+
+@app.get("/prompts", response_class=HTMLResponse)
+def prompts_page(request: Request) -> HTMLResponse:
+    """提示词版本面板：name / version / 来源 / 最近变更。"""
+    return templates.TemplateResponse(
+        request,
+        "prompts.html",
+        {"request": request, "rows": _prompt_rows()},
+    )
+
+
+@app.get("/api/prompts")
+def api_prompts() -> JSONResponse:
+    return JSONResponse({"prompts": _prompt_rows()})
+
+
+@app.post("/api/prompts/reload")
+def api_prompts_reload(request: Request) -> HTMLResponse:
+    """手动清缓存重载；返回更新后的表格片段供 HTMX 局部刷新。"""
+    from agent.core.infra.prompt_manager import pm
+
+    pm.reload()
+    return templates.TemplateResponse(
+        request,
+        "_prompts_table.html",
+        {"request": request, "rows": _prompt_rows()},
+    )

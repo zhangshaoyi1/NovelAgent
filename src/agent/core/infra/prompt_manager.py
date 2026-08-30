@@ -19,6 +19,7 @@
 from __future__ import annotations
 
 import re
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -212,10 +213,18 @@ class PromptManager:
     - genre 覆盖：``get("m1.world", genre="funeral")`` 优先 ``prompts/m1/world.funeral.md``。
     """
 
-    def __init__(self, root: Path = PROMPTS_DIR, hot_reload: bool = True) -> None:
+    def __init__(
+        self,
+        root: Path = PROMPTS_DIR,
+        hot_reload: bool = True,
+        watch_ttl: float = 5.0,
+    ) -> None:
         self.root = Path(root)
         self.hot_reload = hot_reload
+        self.watch_ttl = watch_ttl
         self._cache: dict[str, tuple[float, PromptDef]] = {}
+        self._watcher_stop = threading.Event()
+        self._watcher_thread: threading.Thread | None = None
 
     # ---- 路径解析 ----
     def _path_for(self, name: str, genre: str | None) -> Path | None:
@@ -285,6 +294,84 @@ class PromptManager:
     def reload(self) -> None:
         """清空缓存，强制下次 get 重新解析全部文件。"""
         self._cache.clear()
+
+    # ---- Web 长驻热重载（阶段 C3）----
+    def _snapshot(self) -> dict[str, float]:
+        """扫描 prompts/ 下所有 md 的 mtime 快照（相对路径 -> mtime）。"""
+        out: dict[str, float] = {}
+        try:
+            for p in self.root.rglob("*.md"):
+                try:
+                    out[str(p.relative_to(self.root))] = p.stat().st_mtime
+                except OSError:
+                    continue
+        except OSError:
+            pass
+        return out
+
+    def _watch_loop(self) -> None:
+        last = self._snapshot()
+        while not self._watcher_stop.wait(self.watch_ttl):
+            cur = self._snapshot()
+            if cur != last:
+                last = cur
+                self.reload()
+
+    def start_watcher(self) -> None:
+        """启动后台 TTL 轮询线程：md 变化即清缓存（Web 长驻进程用）。
+
+        CLI 短进程无需开启——``get`` 本身按 mtime 比对，改文件后下次 get 自动生效。
+        默认零依赖 TTL 轮询（watchdog 未安装也不会崩）；后续可无缝替换为
+        watchdog Observer 实现（接口不变）。
+        """
+        if self._watcher_thread is not None and self._watcher_thread.is_alive():
+            return
+        self._watcher_stop.clear()
+        t = threading.Thread(
+            target=self._watch_loop, name="prompt-watcher", daemon=True
+        )
+        t.start()
+        self._watcher_thread = t
+
+    def stop_watcher(self) -> None:
+        """停止热重载线程（幂等，可重复调用）。"""
+        self._watcher_stop.set()
+        self._watcher_thread = None
+
+    # ---- 提示词清单（阶段 C4 版本面板）----
+    def list_prompts(self) -> list[dict[str, Any]]:
+        """枚举 prompts/ 下全部 md，返回版本面板所需元数据（按路径排序）。
+
+        name 取相对路径 stem（如 ``m1/world`` -> ``m1.world``）；单文件解析失败
+        跳过（面板不阻断主流程）。
+        """
+        rows: list[dict[str, Any]] = []
+        for p in sorted(self.root.rglob("*.md")):
+            try:
+                rel = p.relative_to(self.root)
+            except ValueError:
+                continue
+            name = ".".join(rel.with_suffix("").parts)
+            try:
+                pd = self._load_file(p, name)
+            except Exception:  # noqa: BLE001 - 单文件解析失败跳过，不影响其余
+                continue
+            try:
+                mtime = p.stat().st_mtime
+            except OSError:
+                mtime = 0.0
+            rows.append(
+                {
+                    "name": name,
+                    "version": pd.version,
+                    "model": pd.model,
+                    "temperature": pd.temperature,
+                    "source": "md",
+                    "mtime": mtime,
+                    "rel_path": str(rel).replace("\\", "/"),
+                }
+            )
+        return rows
 
 
 # 模块级单例（Web 长驻进程共享一个，CLI 短进程也可直接用）

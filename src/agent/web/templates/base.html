@@ -12,6 +12,7 @@
     <div class="brand">📚 NovelAgent <span class="brand-sub">Web UI</span></div>
     <nav class="nav">
       <a href="/" {% if active=="home" %}class="active"{% endif %}>工作台</a>
+      <a href="/prompts" {% if active=="prompts" %}class="active"{% endif %}>提示词</a>
       {% if name %}
       <a href="/p/{{ name }}" {% if active=="project" %}class="active"{% endif %}>项目空间</a>
       <a href="/p/{{ name }}/guide" {% if active=="guide" %}class="active"{% endif %}>引导向导</a>
