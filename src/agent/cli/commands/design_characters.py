@@ -45,6 +45,11 @@ def design_characters(
         )
         raise typer.Exit(code=1)
 
+    # 接线：LLM 调用事件 → <project>/.events/events.jsonl（复用公共接线，避免复制）
+    from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
+
+    wire_llm_event_hook(project_path)
+
     workflow = M4CharacterWorkflow(project_dir=project_path)
     # 失败自动重试一次：LLM 偶发输出截断/非 JSON 导致失败时，重跑常可恢复
     #（生成类写操作失败仍响亮报错，绝不静默写残缺产物）。

@@ -35,6 +35,11 @@ def audit_setting(
         console.print(f"[bold red]✗[/bold red] 项目未初始化（缺少 world.md）")
         raise typer.Exit(code=1)
 
+    # 接线：LLM 调用事件 → <project>/.events/events.jsonl（复用公共接线，避免复制）
+    from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
+
+    wire_llm_event_hook(project_path)
+
     arbiter = ConflictArbiter(project_path, llm=LLMClient(), console=console)
     subline_id = subline if subline else None
     try:

@@ -53,7 +53,13 @@ def bookworm_review(
     from pathlib import Path
 
     # 统一门禁：当前阶段是否允许 /bookworm-review（来自 command_router / StateMachine）
-    enforce_gate(str(Path(project_dir)), "bookworm_review")
+    _project_path = Path(project_dir)
+    enforce_gate(str(_project_path), "bookworm_review")
+
+    # 接线：LLM 调用事件 → <project>/.events/events.jsonl（复用公共接线，避免复制）
+    from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
+
+    wire_llm_event_hook(_project_path)
 
     from agent.workflows.m15_bookworm import BookwormInput, BookwormSkill
 

@@ -38,6 +38,11 @@ def architecture(
         )
         raise typer.Exit(code=1)
 
+    # 接线：LLM 调用事件 → <project>/.events/events.jsonl（复用公共接线，避免复制）
+    from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
+
+    wire_llm_event_hook(project_path)
+
     workflow = M14ArchitectureWorkflow(project_dir=project_path)
     try:
         if feedback:

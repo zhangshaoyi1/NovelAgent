@@ -55,6 +55,11 @@ def start(
     enforce_gate(str(project_path), "start")
     project_path.mkdir(parents=True, exist_ok=True)
 
+    # 接线：LLM 调用事件 → <project>/.events/events.jsonl（复用公共接线，避免复制）
+    from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
+
+    wire_llm_event_hook(project_path)
+
     # 解析题材：--genres 优先，否则回退 --genre，最终默认 [xiuxian]
     if genres.strip():
         genre_list = [g.strip() for g in genres.replace("，", ",").split(",") if g.strip()]

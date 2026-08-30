@@ -31,7 +31,7 @@ from agent.base.llm import (
     LLMResponse,
     register_provider,
 )
-from agent.client.client import LLMClient
+from agent.client.client import LLMClient, set_llm_event_hook
 from agent.client.embeddings import (
     EmbeddingProvider,
     OllamaEmbedding,
@@ -44,6 +44,7 @@ from agent.client.router import ModelRouter, RouteCandidate, RouteDecision
 
 __all__ = [
     "LLMClient",
+    "set_llm_event_hook",
     "LLMConfig",
     "LLMError",
     "LLMProvider",

@@ -35,6 +35,28 @@ from agent.base.structured_output import (
     pydantic_to_json_schema,
 )
 
+# ---- LLM 调用事件埋点 -------------------------------------------------------
+# 可注入 hook（默认 None 零开销）。client 层只持有一个可调用对象的引用，
+# 不 import 任何上层模块，保持 "client 只依赖 base" 的分层约定；
+# 由上层（workflows/service）调用 set_llm_event_hook 注入转发到 EventBus 的回调，
+# 使每次 LLM chat / API(embed) 调用都落到 <project>/.events/events.jsonl。
+_LLM_EVENT_HOOK: Any = None
+
+
+def set_llm_event_hook(hook: Any) -> None:
+    """注入 LLM 调用事件回调（payload: dict，含 type/ok/provider/model/use/latency_ms）。"""
+    global _LLM_EVENT_HOOK
+    _LLM_EVENT_HOOK = hook
+
+
+def _notify_llm_event(payload: dict[str, Any]) -> None:
+    hook = _LLM_EVENT_HOOK
+    if hook is not None:
+        try:
+            hook(payload)
+        except Exception:  # noqa: BLE001 - 事件转发失败绝不阻断 LLM 调用
+            pass
+
 
 class LLMClient:
     """LLM 客户端（统一入口）
@@ -222,10 +244,12 @@ class LLMClient:
             enable_thinking = self.config.enable_thinking
 
         last_exc: Exception | None = None
+        req_t0 = time.monotonic()  # 单次 provider 调用计时起点（每次尝试/回退时重置）
 
         for attempt in range(self.config.max_retries + 1):
+            req_t0 = time.monotonic()
             try:
-                return self._provider.chat(
+                resp = self._provider.chat(
                     messages=messages,
                     model=target_model,
                     temperature=temperature,
@@ -234,6 +258,15 @@ class LLMClient:
                     timeout=self.config.timeout,
                     **kwargs,
                 )
+                _notify_llm_event({
+                    "type": "llm.chat",
+                    "ok": True,
+                    "provider": self.config.provider,
+                    "model": target_model,
+                    "use": use,
+                    "latency_ms": round((time.monotonic() - req_t0) * 1000.0, 2),
+                })
+                return resp
             except Exception as e:
                 last_exc = e
                 if self._is_network_error(e):
@@ -251,8 +284,9 @@ class LLMClient:
             fb_model = fb.config.model_utility or fb.config.model if use == "utility" else fb.config.model
             if not fb_model:
                 fb_model = target_model
+            req_t0 = time.monotonic()
             try:
-                return fb.chat(
+                fb_resp = fb.chat(
                     messages=messages,
                     model=fb_model,
                     temperature=temperature,
@@ -261,9 +295,27 @@ class LLMClient:
                     timeout=self.config.timeout,
                     **kwargs,
                 )
+                _notify_llm_event({
+                    "type": "llm.chat",
+                    "ok": True,
+                    "provider": fb.config.provider,
+                    "model": fb_model,
+                    "use": use,
+                    "latency_ms": round((time.monotonic() - req_t0) * 1000.0, 2),
+                })
+                return fb_resp
             except Exception as e2:
                 last_exc = e2
 
+        _notify_llm_event({
+            "type": "llm.error",
+            "ok": False,
+            "provider": self.config.provider,
+            "model": target_model,
+            "use": use,
+            "error": str(last_exc),
+            "latency_ms": round((time.monotonic() - req_t0) * 1000.0, 2),
+        })
         raise LLMError(
             f"LLM 调用失败（重试 {self.config.max_retries} 次后仍报错）: {last_exc}"
         ) from last_exc
@@ -387,9 +439,24 @@ class LLMClient:
 
         失败返回空列表，调用方降级，绝不阻断写作。
         """
+        t0 = time.monotonic()
         try:
-            return self._provider.embed(texts)
+            r = self._provider.embed(texts)
+            _notify_llm_event({
+                "type": "api.call",
+                "ok": True,
+                "provider": self.config.provider,
+                "latency_ms": round((time.monotonic() - t0) * 1000.0, 2),
+            })
+            return r
         except Exception as e:
+            _notify_llm_event({
+                "type": "api.call",
+                "ok": False,
+                "provider": self.config.provider,
+                "error": str(e),
+                "latency_ms": round((time.monotonic() - t0) * 1000.0, 2),
+            })
             if self.console is not None:
                 self.console.print(
                     f"[yellow]⚠ embed 失败，降级为无向量召回：{e}[/yellow]"

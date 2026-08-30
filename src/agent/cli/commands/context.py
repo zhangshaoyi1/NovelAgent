@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import *
@@ -32,6 +32,10 @@ def context(
 
     project_path = Path(project_dir)
     enforce_gate(str(project_path), "context")
+    # 接线：LLM 调用事件 → <project>/.events/events.jsonl（复用公共接线，避免复制）
+    from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
+
+    wire_llm_event_hook(project_path)
     loader = ContextLoader(project_path, llm=LLMClient(), console=console)
     subline_id = subline if subline else None
     try:

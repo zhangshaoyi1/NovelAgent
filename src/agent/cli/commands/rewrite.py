@@ -74,6 +74,11 @@ def rewrite(
 
     enforce_gate(str(project_path), "rewrite", json_mode=json_output)
 
+    # 接线：LLM 调用事件 → <project>/.events/events.jsonl（复用公共接线，避免复制）
+    from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
+
+    wire_llm_event_hook(project_path)
+
     from agent.core.quality.rewrite.feedback_rewriter import FeedbackRewriter
     from agent.core.quality.guardrails import build_guardrails
     from agent.client import LLMClient

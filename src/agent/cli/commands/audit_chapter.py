@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import *
@@ -46,6 +46,11 @@ def audit_chapter(
     _meta = world_data.get("metadata", {}) or {}
     _genres = _meta.get("genres") or []
     genre = str(_meta.get("genre_label") or (_genres[0] if _genres else "xiuxian"))
+
+    # 接线：LLM 调用事件 → <project>/.events/events.jsonl（复用公共接线，避免复制）
+    from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
+
+    wire_llm_event_hook(project_path)
 
     auditor = ContentAuditor(
         project_path, llm=LLMClient(), console=console, violence_policy=policy

@@ -299,6 +299,24 @@ class AgenticPipelineWorkflow:
 
         EventBus.get_instance().configure(self.project_dir)
 
+        # ---- LLM 调用事件接线：每次 chat/interface 调用 → .events/events.jsonl ----
+        # client 层只暴露 set_llm_event_hook（不依赖 core），此处把 LLM 调用事件
+        # 转发到统一 EventBus，使 events.jsonl 同时具备执行耗时与 LLM 调用画像。
+        from agent.client import set_llm_event_hook
+
+        def _llm_hook(payload: dict) -> None:
+            try:
+                EventBus.get_instance().emit_event(
+                    str(payload.get("type", "llm.chat")),
+                    correlation_id="",
+                    payload=dict(payload),
+                    context={"origin": "LLMClient"},
+                )
+            except Exception:  # noqa: BLE001 - 事件转发失败不阻断写章
+                pass
+
+        set_llm_event_hook(_llm_hook)
+
         self._event_bus = ProgressEventBus(
             on_event=on_event,
             progress_file=progress_file,
