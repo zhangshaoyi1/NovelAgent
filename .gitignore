@@ -45,3 +45,8 @@ outputs/
 
 # 一次性调试脚本
 _debug_safe_remove.py
+
+# 辅助/生成产物（运行日志、提交说明临时文件、脚本目录，不入库）
+.events/
+scripts/
+_final_commit_msg.txt
