@@ -299,23 +299,12 @@ class AgenticPipelineWorkflow:
 
         EventBus.get_instance().configure(self.project_dir)
 
-        # ---- LLM 调用事件接线：每次 chat/interface 调用 → .events/events.jsonl ----
-        # client 层只暴露 set_llm_event_hook（不依赖 core），此处把 LLM 调用事件
-        # 转发到统一 EventBus，使 events.jsonl 同时具备执行耗时与 LLM 调用画像。
-        from agent.client import set_llm_event_hook
+        # ---- LLM / RAG 调用事件接线：每次 chat/interface/recall 调用 → .events/events.jsonl ----
+        # 统一复用 agent_service / CLI 入口的接线（含 RAG recall/index 事件转发），
+        # 避免此处手写只覆盖 LLM 而漏掉 RAG 埋点。
+        from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
 
-        def _llm_hook(payload: dict) -> None:
-            try:
-                EventBus.get_instance().emit_event(
-                    str(payload.get("type", "llm.chat")),
-                    correlation_id="",
-                    payload=dict(payload),
-                    context={"origin": "LLMClient"},
-                )
-            except Exception:  # noqa: BLE001 - 事件转发失败不阻断写章
-                pass
-
-        set_llm_event_hook(_llm_hook)
+        wire_llm_event_hook(self.project_dir)
 
         self._event_bus = ProgressEventBus(
             on_event=on_event,
@@ -1156,32 +1145,26 @@ class AgenticPipelineWorkflow:
             pass
 
     def _maybe_advance_mainline(self, target: int) -> None:
-        """每 mainline_window 章执行一次确定性支线推进决策（拍板 1/补充边界 2）。
+        """每 mainline_window 章执行主线推进裁决（委托 MainlineOrchestrator，唯一仲裁点）。
 
         决策点写 `progress.current_subline` + `progress.mainline_visited`（去重），
-        合并写入（load → dict 副本 → 改 → save），保留既有键。
+        落盘由 orchestrator 统一完成；本方法仅负责触发与上报 G9 事件。
+        ``target`` 为兼容保留字段（尚无独立语义，推进由 orchestrator 依据状态裁决）。
         """
         try:
-            self.state_machine.load()
-            chapter = int((self.state_machine.progress or {}).get("total_written", 0)) + 1
-            if chapter <= 1 or (chapter - 1) % self.mainline_window != 0:
-                return  # 第 1 章前不决策；此后每 window 章一次
-            from agent.workflows.mainline import decide_mainline_advance
+            from agent.workflows.mainline_orchestrator import MainlineOrchestrator
 
-            new_subline = decide_mainline_advance(
-                self.project_dir, self.state_machine, self.mainline_window
-            )
+            from_subline = str(
+                (self.state_machine.progress or {}).get("current_subline", "") or ""
+            )  # G9：事件记录旧支线（裁决前）
+            new_subline = MainlineOrchestrator(
+                self.project_dir, self.state_machine, self.mainline_window, self.console
+            ).maybe_advance()
             if not new_subline:
                 return
             progress = dict(self.state_machine.progress or {})
-            from_subline = str(progress.get("current_subline", "") or "")  # G9：事件记录旧支线
-            progress["current_subline"] = new_subline
+            chapter = int(progress.get("total_written", 0)) + 1
             visited = list(progress.get("mainline_visited", []) or [])
-            if new_subline not in visited:
-                visited.append(new_subline)
-            progress["mainline_visited"] = visited
-            self.state_machine.progress = progress
-            self.state_machine.save()
             self.console.print(
                 f"[cyan]主线推进：第 {chapter} 章起切至支线 {new_subline}"
                 f"（已访问 {len(visited)} 条）[/cyan]"

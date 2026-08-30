@@ -24,6 +24,7 @@ def decide_mainline_advance(
     project_dir: str | Path,
     state_machine: Any,
     mainline_window: int = 5,
+    cap: Optional[int] = None,
 ) -> Optional[str]:
     """每 mainline_window 章执行一次的确定性支线推进决策。
 
@@ -31,6 +32,9 @@ def decide_mainline_advance(
         project_dir: 小说项目目录（读 sublines/plan.json/architecture）。
         state_machine: 已 load() 的状态机（读 progress 的 current_subline/total_written/ending_mode）。
         mainline_window: 决策窗口（章，默认 5，pipeline 保证 ≥1）。
+        cap: 可选的分支线预算硬上界（章）。由 MainlineOrchestrator 传入，
+            来自 .state/mainline.json 的 subline_share（比例/预算兜底）。提供时
+            取 ``min(多源上界, cap)``，保证任何支线不超过其预算份额。
 
     Returns:
         目标 subline_id（应切换到的下一条支线）或 None（不切换）。
@@ -64,6 +68,10 @@ def decide_mainline_advance(
         upper = e_ub
     else:
         upper = None  # 无区间数据 → 保底硬切
+
+    # ---- 预算硬上界（比例/均衡分账兜底）：cap 提供时取更早的那一个 ----
+    if cap is not None:
+        upper = min(upper, cap) if upper is not None else cap
 
     # ---- 切换条件：已越过区间上界；无区间数据时以决策窗口为保底 ----
     switch = (chapter > upper) if upper is not None else True

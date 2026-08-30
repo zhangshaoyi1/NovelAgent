@@ -28,18 +28,23 @@ def wire_llm_event_hook(project_dir: str) -> None:
     """
     # client 层不依赖 core，故在此延迟导入 set_llm_event_hook，避免循环依赖。
     from agent.client import set_llm_event_hook
+    # core.rag 不依赖 event_sourcing，故在此延迟导入 set_rag_event_hook。
+    from agent.core.rag._events import set_rag_event_hook
 
     EventBus.get_instance().configure(project_dir)
 
-    def _llm_hook(payload: dict) -> None:
-        try:
-            EventBus.get_instance().emit_event(
-                str(payload.get("type", "llm.chat")),
-                correlation_id="",
-                payload=dict(payload),
-                context={"origin": "LLMClient"},
-            )
-        except Exception:  # noqa: BLE001 - 事件转发失败不阻断 LLM 调用
-            pass
+    def _hook_factory(origin: str):
+        def _hook(payload: dict) -> None:
+            try:
+                EventBus.get_instance().emit_event(
+                    str(payload.get("type", "llm.chat")),
+                    correlation_id="",
+                    payload=dict(payload),
+                    context={"origin": origin},
+                )
+            except Exception:  # noqa: BLE001 - 事件转发失败不阻断调用
+                pass
+        return _hook
 
-    set_llm_event_hook(_llm_hook)
+    set_llm_event_hook(_hook_factory("LLMClient"))
+    set_rag_event_hook(_hook_factory("RAG"))

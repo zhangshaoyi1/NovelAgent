@@ -90,6 +90,8 @@ class AgenticWriteWorkflow:
         console: Console | None = None,
         tier: str = "auto",
         max_drafts: int | None = None,
+        # ---- 主线推进：每 mainline_window 章执行一次决策（与 agentic_pipeline 对齐；拍板 1）----
+        mainline_window: int = 5,
         # ---- G9 新增参数：章内子阶段事件（默认 None 零开销；由 pipeline 注入）----
         event_emitter: Callable[[dict[str, Any]], None] | None = None,
         # ---- G11 新增参数：风格模仿（默认开：project/style.md 存在即注入）----
@@ -104,6 +106,7 @@ class AgenticWriteWorkflow:
         self.tier = tier
         self.max_drafts = max_drafts
         self.state_machine = StateMachine(self.project_dir)
+        self.mainline_window = max(1, int(mainline_window))
         # G11：风格开关（透传给 M5._load_context 使用）
         self.style_enabled = style_enabled
         self.style_file = style_file
@@ -136,6 +139,32 @@ class AgenticWriteWorkflow:
             )
         if not is_architecture_confirmed(self.project_dir):
             raise RuntimeError("故事架构尚未确认，无法开始章节创作")
+
+    def _maybe_advance_mainline(self) -> None:
+        """写章前执行主线推进裁决（委托 MainlineOrchestrator，唯一仲裁点）。
+
+        必须在 ``_load_context`` 之前调用：支线切换要在上下文加载前落盘生效。
+        异常降级不阻断写章（G3 哲学）。
+        """
+        try:
+            from agent.workflows.mainline_orchestrator import MainlineOrchestrator
+
+            new_subline = MainlineOrchestrator(
+                self.project_dir, self.state_machine, self.mainline_window, self.console
+            ).maybe_advance()
+            if not new_subline:
+                return
+            chapter = int((self.state_machine.progress or {}).get("total_written", 0)) + 1
+            visited = list(
+                (self.state_machine.progress or {}).get("mainline_visited", []) or []
+            )
+            self.console.print(
+                f"[cyan]主线推进：第 {chapter} 章起切至支线 {new_subline}"
+                f"（已访问 {len(visited)} 条）[/cyan]"
+            )
+            self._emit_substage(f"mainline_advance:{new_subline}", chapter)
+        except Exception:  # noqa: BLE001 - 决策异常降级不阻断写章（G3 哲学）
+            pass
 
     # ------------------------------------------------------------------
     # 任务提示构建（复用 M5 创作模板，保证风格/信息一致）
@@ -216,8 +245,12 @@ class AgenticWriteWorkflow:
         wi = ctx["world_info"]
         is_climax = ctx.get("pressure_stage") == "高潮"
         # ---- 确定性字数下限门禁：LLM 审稿可能对过短章节放行，这里用硬阈值兜底 ----
+        # 先做与落盘一致的去元信息/去重清理，避免「提示词回显 / 编辑批注 / 重复正文」
+        # 抬高原始字数而漏判（ch081=244 字即因原始含回显文本而逃过门禁）。
+        cleaned = M5WriteChapterWorkflow._clean_chapter_body(text)
+        cleaned = M5WriteChapterWorkflow._dedup_repeated_chapter(cleaned)
         # 正文只统计可显示字符（去空白），与落盘字数统计口径一致。
-        cur_len = len(re.sub(r"\s+", "", text))
+        cur_len = len(re.sub(r"\s+", "", cleaned))
         target_len = int(wi.get("chapter_length") or 3000)
         # 阈值：低于目标 50% 视为「远未写够」，直接判不通过并给出具体扩写要求。
         # （目标3000字时下限为1500字；避免 LLM 审稿对 1100 字章放行。）
@@ -245,7 +278,7 @@ class AgenticWriteWorkflow:
             chapter_length=wi["chapter_length"],
             characters_fingerprint=ctx.get("characters_fingerprint", ""),
             is_climax="是" if is_climax else "否",
-            chapter_text=text,
+            chapter_text=cleaned,
         )
         try:
             resp = self.llm.chat_utility(
@@ -268,6 +301,9 @@ class AgenticWriteWorkflow:
     # ------------------------------------------------------------------
     def run(self, rewrite_hint: str | None = None) -> AgenticWriteResult:
         self._guard()
+
+        # ---- 主线推进：写章前先裁决是否切支线（必须在 _load_context 之前，分支线生效）----
+        self._maybe_advance_mainline()
 
         # 复用 M5 上下文加载（确定性、已验证）；不注入冲突仲裁以避免前置拦截副作用
         m5 = M5WriteChapterWorkflow(

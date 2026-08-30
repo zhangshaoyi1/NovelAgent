@@ -16,9 +16,11 @@
 from __future__ import annotations
 
 import re
+import time
 from pathlib import Path
 from typing import Any
 
+from agent.core.rag._events import notify_rag_event
 from agent.core.rag._types import Chunk
 from agent.core.rag.bm25 import BM25Index
 from agent.core.rag.vector_store import LocalVectorStore
@@ -125,8 +127,19 @@ class Indexer:
         except ValueError:
             source = f.name
         chunks = self._chunk(text, source, chapter_num, "chapter")
-        self._embed_and_add(chunks)
+        t0 = time.monotonic()
+        failed = self._embed_and_add(chunks)
         self.store.save()
+        notify_rag_event({
+            "type": "rag.index",
+            "ok": True,
+            "op": "index_chapter",
+            "chapter": chapter_num,
+            "chunks": len(chunks),
+            "embedding_failed": failed,
+            "total_chunks": len(self.store.chunks),
+            "latency_ms": round((time.monotonic() - t0) * 1000.0, 2),
+        })
 
     def reindex(self) -> dict[str, int]:
         """全量重建索引
@@ -181,6 +194,15 @@ class Indexer:
 
         failed = self._embed_and_add(all_chunks)
         self.store.save()
+        notify_rag_event({
+            "type": "rag.index",
+            "ok": True,
+            "op": "reindex",
+            "chunks": len(all_chunks),
+            "embedding_failed": failed,
+            "chapters": chapter_count,
+            "latency_ms": 0.0,
+        })
         return {
             "indexed_chunks": len(all_chunks),
             "embedding_failed": failed,

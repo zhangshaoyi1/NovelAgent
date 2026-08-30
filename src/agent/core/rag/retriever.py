@@ -10,9 +10,11 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from typing import Any
 
+from agent.core.rag._events import notify_rag_event
 from agent.core.rag._types import Chunk
 from agent.core.rag.bm25 import BM25Index
 from agent.core.rag.vector_store import LocalVectorStore
@@ -63,8 +65,29 @@ class Retriever:
         """
         self._ensure_loaded()
         if not self.store.chunks:
+            notify_rag_event({
+                "type": "rag.recall",
+                "ok": False,
+                "queries": [query],
+                "top_k_each": top_k,
+                "max_total": top_k,
+                "hits": 0,
+                "latency_ms": 0.0,
+                "reason": "empty_index",
+            })
             return []
-        return self._retrieve_once(query, top_k)
+        t0 = time.monotonic()
+        results = self._retrieve_once(query, top_k)
+        notify_rag_event({
+            "type": "rag.recall",
+            "ok": True,
+            "queries": [query],
+            "top_k_each": top_k,
+            "max_total": top_k,
+            "hits": len(results),
+            "latency_ms": round((time.monotonic() - t0) * 1000.0, 2),
+        })
+        return results
 
     def retrieve_multi(
         self, queries: list[str], top_k_each: int = 5, max_total: int = 12
@@ -85,12 +108,38 @@ class Retriever:
         """
         self._ensure_loaded()
         if not self.store.chunks or not queries:
-            return []
+            return self._emit_multi([], queries, top_k_each, max_total)
+        t0 = time.monotonic()
         merged: dict[tuple[str, int, str], Chunk] = {}
         for q in queries:
             for c in self._retrieve_once(q, top_k_each):
                 merged[(c.source, c.chapter_num, c.text)] = c
-        return list(merged.values())[:max_total]
+        results = list(merged.values())[:max_total]
+        notify_rag_event({
+            "type": "rag.recall",
+            "ok": True,
+            "queries": list(queries),
+            "top_k_each": top_k_each,
+            "max_total": max_total,
+            "hits": len(results),
+            "latency_ms": round((time.monotonic() - t0) * 1000.0, 2),
+        })
+        return results
+
+    def _emit_multi(
+        self, results: list, queries: list, top_k_each: int, max_total: int
+    ) -> list:
+        notify_rag_event({
+            "type": "rag.recall",
+            "ok": False,
+            "queries": list(queries),
+            "top_k_each": top_k_each,
+            "max_total": max_total,
+            "hits": 0,
+            "latency_ms": 0.0,
+            "reason": "empty_index_or_queries",
+        })
+        return results
 
     def _retrieve_once(self, query: str, top_k: int) -> list[Chunk]:
         """单次召回：向量 + BM25 RRF 融合（内部复用，供 retrieve / retrieve_multi）。"""
