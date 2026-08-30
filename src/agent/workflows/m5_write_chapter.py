@@ -635,7 +635,18 @@ class M5WriteChapterWorkflow:
             "payoff_task": _payoff_task,
             "emotion_target": _emotion_target,
             "reader_signals": reader_signals,
+            # ---- B1：写章防模板注入（本卷已用手段清单 + 灭门回忆计数；缺则降级为空）----
+            "reuse_guard_text": self._build_reuse_guard(chapter_num),
         }
+
+    def _build_reuse_guard(self, chapter_num: int) -> str:
+        """生成写章时防模板注入文本；读失败→"" 降级不阻断（B1）。"""
+        try:
+            from agent.core.story.reuse_guard import build_reuse_guard
+
+            return build_reuse_guard(self.project_dir, chapter_num)
+        except Exception:  # noqa: BLE001 - 降级不阻断
+            return ""
 
     def _load_architecture_ending(self) -> str:
         """读 architecture.md frontmatter 的 architecture.ending（m14 行 447/460 写入）。
@@ -1174,6 +1185,15 @@ class M5WriteChapterWorkflow:
                 + "\n\n【本项目已沉淀的写法记忆（长期积累，请自然融入本章，"
                 "不要生硬堆砌）】\n"
                 + learnings_text
+            )
+
+        # ---- B1：写章防模板注入（本卷已用手段清单 + 灭门回忆计数；只约束字数/花式，不硬删）----
+        reuse_guard_text = (ctx.get("reuse_guard_text") or "").strip()
+        if reuse_guard_text:
+            system_prompt = (
+                system_prompt
+                + "\n\n【本节为防模板的运行时提醒（参考，若与情节冲突以情节为准）】\n"
+                + reuse_guard_text
             )
 
         # ---- G8（补充边界 4）：结局模式指令注入（ending 为空降级「收尾」通用指令，不阻断）----
