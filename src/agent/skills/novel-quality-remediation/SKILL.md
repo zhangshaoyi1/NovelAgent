@@ -139,7 +139,7 @@ changan 复盘还暴露三类**根因在 agent 而非小说正文**的缺陷，�
 ## 标准工作流（runbook）
 
 ```bash
-cd D:/project/NovelAgent/agent
+cd <NovelAgent>/agent
 # 0) 先全量体检，拿到基线数字
 python -m agent.cli guardrail-scan -d <PROJECT> --scope junk,title,dup
 
