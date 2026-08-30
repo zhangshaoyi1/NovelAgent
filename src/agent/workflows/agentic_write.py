@@ -215,6 +215,31 @@ class AgenticWriteWorkflow:
     def _llm_quality_gate(self, text: str, ctx: Any) -> tuple[bool, dict[str, Any]]:
         wi = ctx["world_info"]
         is_climax = ctx.get("pressure_stage") == "高潮"
+        # ---- 确定性字数下限门禁：LLM 审稿可能对过短章节放行，这里用硬阈值兜底 ----
+        # 正文只统计可显示字符（去空白），与落盘字数统计口径一致。
+        cur_len = len(re.sub(r"\s+", "", text))
+        target_len = int(wi.get("chapter_length") or 3000)
+        # 阈值：低于目标 50% 视为「远未写够」，直接判不通过并给出具体扩写要求。
+        # （目标3000字时下限为1500字；避免 LLM 审稿对 1100 字章放行。）
+        min_len = max(600, int(target_len * 0.5))
+        if cur_len < min_len:
+            report = {
+                "overall_pass": False,
+                "rules": [],
+                "issues": [
+                    {
+                        "rule_id": "min_length",
+                        "severity": "blocking",
+                        "description": (
+                            f"本章正文过短：仅约 {cur_len} 字，远低于目标字数"
+                            f"约 {target_len} 字（下限 {min_len} 字）。"
+                            "请完整展开本章冲突、铺垫与结尾钩子，扩写到接近目标字数后再提交。"
+                        ),
+                    }
+                ],
+                "suggestions": "扩写本章，补充场景/动作/环境描写与章末悬念，确保字数接近目标。",
+            }
+            return False, report
         check_prompt = M5_QUALITY_CHECK_USER_TEMPLATE.format(
             tone=wi["tone"],
             chapter_length=wi["chapter_length"],

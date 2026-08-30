@@ -285,16 +285,17 @@ class M3OutlineWorkflow:
         # 重试仍失败则明确抛错，绝不静默写入「架构拆解失败」占位大纲。
         last_text = ""
         system_prompt = M3_SYSTEM_PROMPT
-        for attempt in range(2):
+        # dots3-note-prev 等模型在紧预算下偶发截断/空回，采用「充足预算 + 递增重试」：
+        # 初版 A 方案 8192 实测百万字稳定，这里保留充足预算并递增，规避偶发空回。
+        _budgets = (16384, 16384, 20480)
+        for attempt in range(len(_budgets)):
             resp = self.llm.chat_creative(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.75,
-                # A 方案（2026-08-29）：4096 → 8192。百万字体量下同步+支线详情 JSON
-                # 体积大，4096 易截断导致 parse_llm_json 失败；8192 实测稳定。
-                max_tokens=8192,
+                max_tokens=_budgets[attempt],
                 enable_thinking=False,
             )
             last_text = resp.text
@@ -305,15 +306,19 @@ class M3OutlineWorkflow:
                     data["sublines"] = [self._empty_subline("未命名支线")]
                 return data
             except ValueError:
-                if attempt == 0:
-                    self.console.print(
-                        "[yellow]⚠ 大纲 JSON 解析失败，自动重试一次...[/yellow]"
+                if attempt == len(_budgets) - 1:
+                    raise RuntimeError(
+                        "大纲生成结果无法解析为 JSON（可能被截断或格式异常），"
+                        f"请重试。原始输出片段：{last_text[:200]}"
                     )
-                    system_prompt = (
-                        M3_SYSTEM_PROMPT
-                        + "\n\n【重要】请只输出一个合法的 JSON 对象，"
-                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
-                    )
+                self.console.print(
+                    "[yellow]⚠ 大纲 JSON 解析失败，自动重试一次...[/yellow]"
+                )
+                system_prompt = (
+                    M3_SYSTEM_PROMPT
+                    + "\n\n【重要】请只输出一个合法的 JSON 对象，"
+                    "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                )
         raise RuntimeError(
             "大纲生成结果无法解析为 JSON（可能被截断或格式异常），"
             f"请重试。原始输出片段：{last_text[:200]}"

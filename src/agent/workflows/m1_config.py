@@ -380,31 +380,34 @@ class M1ConfigWorkflow:
             user_prompt += qa_text
 
         system_prompt = M1_SYSTEM_PROMPT
-        for attempt in (1, 2):
+        # 注意：dots3-note-prev 等模型在紧预算下会把长结构化输出截断/返回空，
+        # 故采用「充足预算 + 递增重试 + 纯 JSON 强化」的重试策略。
+        _budgets = (16384, 16384, 20480)
+        for attempt in range(len(_budgets)):
+            if attempt > 0:
+                # 重试：强化「纯 JSON」约束，规避截断/多余文本导致的解析失败
+                system_prompt = (
+                    M1_SYSTEM_PROMPT
+                    + "\n\n【重要】请只输出一个合法的 JSON 对象，"
+                    "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                )
             resp = self.llm.chat_creative(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.8,
-                max_tokens=4096,
+                max_tokens=_budgets[attempt],
                 enable_thinking=False,  # 结构化输出不需要思考，加速生成
             )
             try:
                 return parse_llm_json(resp.text)
             except ValueError:
-                if attempt == 1:
-                    # 重试：强化「纯 JSON」约束，规避截断/多余文本导致的解析失败
-                    system_prompt = (
-                        M1_SYSTEM_PROMPT
-                        + "\n\n【重要】请只输出一个合法的 JSON 对象，"
-                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                if attempt == len(_budgets) - 1:
+                    raise RuntimeError(
+                        "世界观生成结果无法解析为 JSON（可能被截断或格式异常），"
+                        f"请重试。原始输出片段：{resp.text[:200]}"
                     )
-                    continue
-                raise RuntimeError(
-                    "世界观生成结果无法解析为 JSON（可能被截断或格式异常），"
-                    f"请重试。原始输出片段：{resp.text[:200]}"
-                )
 
     # ------ 渲染 ------
     def _render_world(

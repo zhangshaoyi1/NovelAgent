@@ -63,6 +63,23 @@ MAX_REVISIONS = 2
 # 正文出现 2+ 连续「拉丁字母或下划线」即视为英文污染（单字母如 X光/S级 暂放行，避免过度纠偏）。
 # 注意：必须至少含一个拉丁字母，避免把纯下划线占位符（如 ________）误判为英文。
 _ENGLISH_RUN_RE = re.compile(r"[A-Za-z][A-Za-z_]*[A-Za-z]|[A-Za-z]{2,}")
+
+# 中文连续区间判定用的正则（区间包含 CJK 及常见中文标点）
+_CJK_RANGE_RE = re.compile(r"[\u4e00-\u9fff\u3000-\u303f\uff00-\uffef]")
+
+
+def _collapse_cjk_spaces(text: str) -> str:
+    """剔除中文字符之间的孤立空格。
+
+    拉丁残留剔除（hard_replace_english 第 2 步）会把原词删掉，却可能在中文字符之间
+    留下一个空格（如「发出 的摩擦声」）。这里将两侧都是中文/中文标点的空格直接删除，
+    避免成稿出现本应被清理掉、却残留在中文间隙的空白。
+    """
+    return re.sub(
+        r"(?<=" + _CJK_RANGE_RE.pattern + r") +(?=" + _CJK_RANGE_RE.pattern + r")",
+        "",
+        text,
+    )
 # 常见英文 token → 中文等价（仅作落盘前确定性兜底；主修复靠 LLM 修订把整句理顺）。
 # 注意：值尽量取「独立名词」避免与原句已有中文叠词（如原句已有『认证』就不写『贵宾认证』）。
 _ENGLISH_REPLACE_MAP = {
@@ -124,6 +141,8 @@ _EDITOR_HINT_WORDS_RE = re.compile(
     r"(此处|本段|这里|这段|应当|应该|避免|为了|符合|压力曲线|铺垫|指导|批注|不要|"
     r"采用|营造|采用短促|禁用词|埋下伏笔|作为揭示|核心)"
 )
+# 章节收尾标注：『（本章完）』『（全文完）』『（本章结束）』等，LLM 常直接贴在末句/末行后
+_END_MARK_RE = re.compile(r"[（(]\s*(?:本章完|全文完|本章结束)\s*[）)]")
 
 
 def _strip_frontmatter(text: str) -> str:
@@ -174,7 +193,16 @@ def hard_replace_english(text: str) -> tuple[str, list[str]]:
     residual = scan_english_contamination(out)
     if residual:
         out = _ENGLISH_RUN_RE.sub("", out)
-        out = re.sub(r"\s{2,}", " ", out).strip()
+        # 只压缩同行内连续空格，绝不动换行——否则 \n\n 段落分隔会被压成单空格，
+        # 导致整章正文变成一长段、丢失段落格式（历史 ch20 单段正文根因）。
+        out = re.sub(r"[ \t]+", " ", out)
+        # 行首尾空白清除（纯空白行保留为段落分隔的空行，不当作内容删除）
+        out = re.sub(r"[ \t]+(?=\n)", "", out)
+        out = re.sub(r"\n[ \t]+", "\n", out)
+        # 压缩过密空行：连同残留的连续换行，恢复为单一空行分隔
+        out = re.sub(r"\n{3,}", "\n\n", out)
+        out = out.strip()
+        out = _collapse_cjk_spaces(out)
         residual = scan_english_contamination(out)
     return out, residual
 
@@ -917,7 +945,14 @@ class M5WriteChapterWorkflow:
         return "本章伏笔任务：\n" + "\n".join(tasks)
 
     def _load_prev_summary(self, chapter_num: int) -> str:
-        """读取上一章的摘要（从 chapter 文件提取前 200 字）"""
+        """读取上一章的摘要（本章必须从这里无缝续写）。
+
+        连续性问题根治：旧实现只取上一章「开头 300 字」做前情，writer 无法得知上一章
+        「结尾」的真实状态，导致误把上一章开头场景重演、或自创与既定设定冲突的并行背景
+        （历史 ch6 时间回环、ch7「青阳/青门/婉儿死而复生」漂移根因）。
+        现改为：短章给全文；长章给出「开头 + 结尾」两段，【结尾】作为本章必须接续的
+        权威状态，并附严禁重演上一章已发生场景/对话的硬约束。
+        """
         if chapter_num <= 1:
             return "（第一章，无前情）"
         prev_file = self.chapters_dir / f"ch{chapter_num - 1:03d}.md"
@@ -929,7 +964,27 @@ class M5WriteChapterWorkflow:
             parts = text.split("---", 2)
             if len(parts) >= 3:
                 text = parts[2]
-        return text.strip()[:300] + "..."
+        body = text.strip()
+        body = re.sub(r"\s*\n\s*", "\n", body)
+        if len(body) <= 600:
+            return (
+                body
+                + "\n\n（上一章全文较短。本章必须从上一章结尾处无缝续写，"
+                "严禁重演上一章已出现的场景/对话。如果上一章已解决的冲突（如灭掉追兵、"
+                "抓住刺客），本章不得让同一事件再次原样发生。）"
+            )
+        head = body[:160].rstrip()
+        tail = body[-300:].rstrip()
+        return (
+            "【上一章开头（情景氛围）】"
+            + head
+            + "\n\n【上一章结尾 · 权威接续状态】本章必须从该状态之后无缝续写，不得回退、"
+            "不得重演上一章已经发生的场景与对话：\n"
+            + tail
+            + "\n\n【续写硬约束】1) 严格从上述「上一章结尾」的真实状态继续推进，不得重演/倒退。"
+            "2) 涉及无名身世、宗门、角色关系、金手指等既有设定，必须全线沿用前文与角色档案，"
+            "严禁凭空发明并行背景（如改名换姓、换师门、已死角色无故复活）。"
+        )
 
     def _determine_pressure_stage(
         self, subline_data: dict[str, Any], chapter_num: int, default_hi: int = 200
@@ -1482,6 +1537,8 @@ class M5WriteChapterWorkflow:
         # 3) 去掉末尾多余空行
         while out and not out[-1].strip():
             out.pop()
+        # 4) 去掉行尾/任意位置的章节收尾标注『（本章完）』等（LLM 常贴在末句后）
+        out = [_END_MARK_RE.sub("", ln).rstrip() for ln in out]
         return "\n".join(out)
 
     @staticmethod

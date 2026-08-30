@@ -157,7 +157,7 @@ class WriterAgent:
                         AgentAction,
                         use="creative",
                         temperature=0.82,
-                        max_tokens=6000,
+                        max_tokens=8192,
                         enable_thinking=False,
                         strict=True,  # G4 开启 strict=True 强校验
                     )
@@ -195,7 +195,7 @@ class WriterAgent:
                         AgentAction,
                         use="creative",
                         temperature=0.82,
-                        max_tokens=6000,
+                        max_tokens=8192,
                         enable_thinking=False,
                         strict=True,
                     )

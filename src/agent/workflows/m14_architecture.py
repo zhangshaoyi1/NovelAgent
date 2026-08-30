@@ -399,31 +399,34 @@ class M14ArchitectureWorkflow:
             user_prompt += qa_text
 
         system_prompt = M14_SYSTEM_PROMPT
-        for attempt in (1, 2):
+        # dots3-note-prev 等模型在紧预算下会把长结构化输出截断/返回空，
+        # 故采用「充足预算 + 递增重试 + 纯 JSON 强化」的重试策略。
+        _budgets = (16384, 16384, 20480)
+        for attempt in range(len(_budgets)):
+            if attempt > 0:
+                # 重试：强化「纯 JSON」约束，规避截断/多余文本导致的解析失败
+                system_prompt = (
+                    M14_SYSTEM_PROMPT
+                    + "\n\n【重要】请只输出一个合法的 JSON 对象，"
+                    "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                )
             resp = self.llm.chat_creative(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.7,
-                max_tokens=4096,
+                max_tokens=_budgets[attempt],
                 enable_thinking=False,
             )
             try:
                 return parse_llm_json(resp.text)
             except ValueError:
-                if attempt == 1:
-                    # 重试：强化「纯 JSON」约束，规避截断/多余文本导致的解析失败
-                    system_prompt = (
-                        M14_SYSTEM_PROMPT
-                        + "\n\n【重要】请只输出一个合法的 JSON 对象，"
-                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                if attempt == len(_budgets) - 1:
+                    raise RuntimeError(
+                        "故事架构生成结果无法解析为 JSON（可能被截断或格式异常），"
+                        f"请重试。原始输出片段：{resp.text[:200]}"
                     )
-                    continue
-                raise RuntimeError(
-                    "故事架构生成结果无法解析为 JSON（可能被截断或格式异常），"
-                    f"请重试。原始输出片段：{resp.text[:200]}"
-                )
 
     def _llm_iterate_architecture(
         self, title: str, current_arch: dict[str, Any], feedback: str
@@ -440,14 +443,15 @@ class M14ArchitectureWorkflow:
         )
         system_prompt = M14_ITERATE_SYSTEM_PROMPT
         last_text = ""
-        for attempt in range(2):
+        _budgets = (16384, 16384, 20480)
+        for attempt in range(len(_budgets)):
             resp = self.llm.chat_creative(
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.7,
-                max_tokens=4096,
+                max_tokens=_budgets[attempt],
                 enable_thinking=False,
             )
             last_text = resp.text or ""
@@ -460,21 +464,19 @@ class M14ArchitectureWorkflow:
                 merged.update(new_arch)
                 return merged
             except ValueError:
-                if attempt == 0:
-                    self.console.print(
-                        "[yellow]⚠ 架构迭代 JSON 解析失败，自动重试一次...[/yellow]"
+                if attempt == len(_budgets) - 1:
+                    raise RuntimeError(
+                        "架构迭代结果无法解析为 JSON（可能被截断或格式异常），"
+                        f"请重试。原始输出片段：{last_text[:200]}"
                     )
-                    system_prompt = (
-                        M14_ITERATE_SYSTEM_PROMPT
-                        + "\n\n【重要】请只输出一个合法的 JSON 对象（结构与初版一致），"
-                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
-                    )
-                    continue
-                raise RuntimeError(
-                    "架构迭代结果无法解析为 JSON（可能被截断或格式异常），"
-                    f"请重试。原始输出片段：{last_text[:200]}"
+                self.console.print(
+                    "[yellow]⚠ 架构迭代 JSON 解析失败，自动重试一次...[/yellow]"
                 )
-        raise RuntimeError("架构迭代结果无法解析为 JSON，请重试")
+                system_prompt = (
+                    M14_ITERATE_SYSTEM_PROMPT
+                    + "\n\n【重要】请只输出一个合法的 JSON 对象（结构与初版一致），"
+                    "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                )
 
     def _check_feedback_gaps(
         self, feedback: str, revised: dict[str, Any]
