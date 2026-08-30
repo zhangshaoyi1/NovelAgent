@@ -49,8 +49,6 @@ NovelAgent 提供**两种等价的使用入口**，可以混着用、随时切�
 
 > **状态机**：NovelAgent 内部有状态流转（INIT → 配置/讨论 → 架构确认 → 大纲 → 角色 → 写作 → 完结）。每个命令都有"门禁"——**在错误的阶段运行会被拒绝并提示下一步该做什么**。所以照着下面的顺序走即可，不用担心顺序乱。
 
-
-
 ---
 
 ## 二、安装
@@ -80,8 +78,8 @@ pip install -e ./agent
 
 ```bash
 novel-agent --help
-# 或（不安装包，直接从根目录把 src 加入 PYTHONPATH）：
-PYTHONPATH=D:/project/NovelAgent/agent/src python -m agent.cli --help
+# 或（不安装包，从仓库根目录把 src 加入 PYTHONPATH，<NovelAgent> 即仓库根）：
+PYTHONPATH=./agent/src python -m agent.cli --help
 ```
 
 能打印出命令列表即安装成功。
@@ -396,13 +394,14 @@ python -m agent.web          # 直接跑 web 模块
 
 浏览器打开后停止服务用 `Ctrl-C`。若报 `ModuleNotFoundError: No module named 'uvicorn'`，重跑 `pip install -e ./agent` 即可。
 
-> **小说数据默认放在哪？**
+> **小说数据默认放在哪？**  
 > Web 工作台扫描的小说目录是一个**独立的数据根目录**，不在 `agent/` 代码仓库内（代码与数据分离：`agent/` 只放代码，小说数据统一落在外面）。
-> - **默认位置**：`agent/` 仓库的**上一级**目录下的 `novels/`，即本仓库结构下的 **`D:\project\NovelAgent\novels\`**（Linux/macOS 下对应 `<NovelAgent>/novels/`）。
+>
+> - **默认位置**：`agent/` 仓库的**上一级**目录下的 `novels/`，即仓库结构下的 **`<NovelAgent>/novels/`**（`<NovelAgent>` 指本仓库根目录，Windows/Linux/macOS 均为此路径）。
 > - 进页面看到的「项目列表」、以及新建项目 `POST /api/projects` 落地的位置，都来自这个根目录下的子文件夹（每个子文件夹 = 一本小说）。
 > - **想换位置**：用环境变量 `NOVEL_DATA_ROOT` 覆盖即可，例如把数据根改到 `agent/` 内的 `projects/`：
 >   ```bash
->   NOVEL_DATA_ROOT=/d/project/NovelAgent/agent/projects novel-agent web
+>   NOVEL_DATA_ROOT=<NovelAgent>/agent/projects novel-agent web
 >   ```
 > - **CLI 对照**：CLI 命令的 `--dir` 帮助占位符写的是 `projects/my-novel`，那只是示例占位、并非硬编码默认值；CLI 每次需显式传 `-d`，而 Web 固定绑定上面的数据根，无需每次指定。
 
@@ -710,3 +709,4 @@ novel-agent export -d novels/my-first-novel -f txt
 ```
 
 更省事的全自动版本：`novel-agent compose --name "..." --story-core "..." --chapters 30`（一键写完一本，非定时，可直接换书复用）。
+
