@@ -236,7 +236,9 @@ def first_genre_label(metadata: dict) -> str:
     if not gid:
         return ""
     try:
-        pack = registry.get(gid)
+        # load（而非 get）：get 只查已加载缓存，冷进程下会误回退 id；
+        # load 会自动发现+加载并缓存（未注册题材抛错走 except 回退 id）。
+        pack = registry.load(gid)
         if pack is not None:
             return pack.manifest.display_name or gid
     except Exception:  # noqa: BLE001 - 题材包未注册时回退 id
@@ -462,3 +464,11 @@ class GenrePackRegistry(BaseRegistry[GenrePack]):
             v1 仅留接口，不实现具体逻辑。
         """
         raise NotImplementedError("MCP 挂载为 v2 功能，当前版本未实现")
+
+
+# ============================================================
+# 模块级单例
+# ============================================================
+# 题材包注册表进程内单例：first_genre_label 等辅助函数与运行时共享
+# 发现/加载缓存（未注册题材 load 抛 ValueError，由调用方捕获回退）。
+registry = GenrePackRegistry()
