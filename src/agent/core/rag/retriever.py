@@ -64,7 +64,36 @@ class Retriever:
         self._ensure_loaded()
         if not self.store.chunks:
             return []
+        return self._retrieve_once(query, top_k)
 
+    def retrieve_multi(
+        self, queries: list[str], top_k_each: int = 5, max_total: int = 12
+    ) -> list[Chunk]:
+        """多 query 保底召回：合并多个维度的召回结果，按 chunk 身份去重。
+
+        用于"关键设定必带召回"（A 类增强）：单 query 只按支线目标召回，易漂移设定
+        （角色生死、金手指规则、已揭示真相、人物恩怨）常召回不到；用一组固定维度
+        query 各自召回后合并，保证影响前后一致性的关键片段被带进上下文。
+
+        Args:
+            queries: 多个互补的查询（每个维度一个）。
+            top_k_each: 每个 query 的返回条数。
+            max_total: 去重合并后的总条数上限。
+
+        Returns:
+            去重合并后的 Chunk 列表。
+        """
+        self._ensure_loaded()
+        if not self.store.chunks or not queries:
+            return []
+        merged: dict[tuple[str, int, str], Chunk] = {}
+        for q in queries:
+            for c in self._retrieve_once(q, top_k_each):
+                merged[(c.source, c.chapter_num, c.text)] = c
+        return list(merged.values())[:max_total]
+
+    def _retrieve_once(self, query: str, top_k: int) -> list[Chunk]:
+        """单次召回：向量 + BM25 RRF 融合（内部复用，供 retrieve / retrieve_multi）。"""
         # 1) 向量召回
         qvec: list[float] | None = None
         try:

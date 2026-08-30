@@ -533,13 +533,24 @@ class M5WriteChapterWorkflow:
             try:
                 from agent.core.rag.retriever import Retriever
 
+                retriever = Retriever(self.project_dir)
                 subline_goal = self._extract_section(subline_data["content"], "支线目标")
-                query = (
-                    f"第{chapter_num}章 "
-                    f"{subline_data['metadata'].get('subline_name', subline_id)} "
-                    f"{subline_goal} {pressure_stage}"
+                subline_name = subline_data["metadata"].get("subline_name", subline_id)
+                # 主线 query（推进本章情节）
+                main_query = (
+                    f"第{chapter_num}章 {subline_name} {subline_goal} {pressure_stage}"
                 )
-                rag_context = Retriever(self.project_dir).retrieve(query, top_k=5)
+                # 易漂移维度保底 query（保证影响前后一致性的关键片段被带进上下文）
+                guard_queries = [
+                    f"第{chapter_num}章 {subline_name} {subline_goal} {pressure_stage}",
+                    "角色生死、是否死亡、是否复活、下落、身份",
+                    "金手指规则、能力上限、境界、修炼体系",
+                    "已揭开的真相、秘密、往事、身世",
+                    "人物关系、恩怨、敌对、师徒、盟友当前状态",
+                ]
+                rag_context = retriever.retrieve_multi(
+                    guard_queries, top_k_each=5, max_total=12
+                ) or retriever.retrieve(main_query, top_k=5)
             except Exception:  # noqa: BLE001 - RAG 失败降级为空，不影响写章
                 rag_context = []
 
