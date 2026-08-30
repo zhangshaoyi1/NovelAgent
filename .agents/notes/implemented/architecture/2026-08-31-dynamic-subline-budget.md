@@ -41,4 +41,8 @@ Status: implemented
 - `MainlineOrchestrator` 仍零 LLM、确定性执行，G8 拍板 1 语义不变；LLM 只影响「预算数值」，
   不介入「何时切」的判定。
 - 每 replan_window 章增加一次 LLM 调用；失败时零副作用（沿用现值/均分兜底），不阻断写章。
+- **已知坑（已修，2026-08-30）：`_ask_llm` 最初 `max_tokens=2048`。V4 Flash 常在 JSON 尾部前先输出
+  较长中文前言，2048 被前言吃光后 JSON 未被写出即被截断，`chat_structured` 首/次两次 `extract_json`
+  均只得纯散文 → `plan()` 静默返回 False（沿用上次预算）。症状：`subline_share` 在多窗口推进后
+  纹丝不动。修复：`max_tokens` 提至 8192，验证 `plan()` 可成功产出新预算。**
 - Agent Note / 代码同步提交。

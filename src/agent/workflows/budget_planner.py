@@ -159,7 +159,10 @@ class BudgetPlanner:
             _BudgetSchema,
             use="creative",
             temperature=0.5,
-            max_tokens=2048,
+            # 高 max_tokens：V4 Flash 常在 JSON 前先输出较长前言，2048 会被前言吃光、
+            # 截断到 JSON 之前的纯散文（见 .agents/notes/implemented/architecture/
+            # 2026-08-31-dynamic-subline-budget.md），导致 extract 失败并静默降级。
+            max_tokens=8192,
             enable_thinking=False,
             strict=True,
             name="subline_budget",
