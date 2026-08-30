@@ -6,7 +6,8 @@
 
 关键属性：
 - **零回归**：``get`` 找不到 md 时回退到 ``LEGACY_MAP`` 里登记的原始代码常量，
-  调用点不会因"提示词缺失"而崩；``prompts.py`` 保留到全量迁移完成。
+  调用点不会因"提示词缺失"而崩；阶段 C 起 ``agent.prompts`` 已删除，29 个全量迁移键以
+  ``prompts/*.md`` 为单一真源，仅 8 个阶段 A 内联兜底键仍在 ``LEGACY_MAP`` 登记。
 - **热重载**：默认按文件 mtime 比对，CLI 短进程/Web 长驻进程都能"改即生效"。
 - **与 §6 同源**：frontmatter 的 ``validation:`` 块直接编译成 ``ValidationSpec``，
   调用方可 ``llm.chat(msgs, validators=p.validation)`` 一处收口。
@@ -196,37 +197,11 @@ _register(
     "_REWRITE_USER_TEMPLATE",
 )
 _register("budget.branch", "agent.workflows.budget_planner", "_SYSTEM_PROMPT")
-_register("m1.world", "agent.prompts", "M1_SYSTEM_PROMPT", "M1_USER_PROMPT_TEMPLATE")
+# 注：以上 8 个键（agents.planner / agents.writer_retry / quality.* / budget.branch）的兜底常量
+# 仍保留在各自原模块（下划线前缀命名，如 ``_PLANNER_SYSTEM``），md 缺失时回退。
+# 阶段 B 全量迁移的 29 个键（m1.world / m2..m_d / e / g* 等）现已 100% 由 prompts/*.md 承载，
+# 不再登记 legacy 兜底（``agent.prompts`` 已于阶段 C 删除）；md 为单一真源。
 
-# ---- 阶段 B：prompts.py 全量迁移（M2/M3/M4/M5/M6/M12/M14/M15/M16/M19/m_d/E/G8/G11/G12/G）----
-_register("m2.discuss", "agent.prompts", 'M2_SYSTEM_PROMPT', 'M2_USER_PROMPT_TEMPLATE')
-_register("m3.outline", "agent.prompts", 'M3_SYSTEM_PROMPT', 'M3_USER_PROMPT_TEMPLATE')
-_register("m4.character", "agent.prompts", 'M4_SYSTEM_PROMPT', 'M4_USER_PROMPT_TEMPLATE')
-_register("m14.architecture", "agent.prompts", 'M14_SYSTEM_PROMPT', 'M14_USER_PROMPT_TEMPLATE')
-_register("m14.iterate", "agent.prompts", 'M14_ITERATE_SYSTEM_PROMPT', 'M14_ITERATE_USER_PROMPT_TEMPLATE')
-_register("m14.gap_check", "agent.prompts", 'M14_GAP_CHECK_SYSTEM_PROMPT', 'M14_GAP_CHECK_USER_PROMPT_TEMPLATE')
-_register("m5.generate", "agent.prompts", 'M5_GENERATE_SYSTEM_PROMPT', 'M5_GENERATE_USER_TEMPLATE')
-_register("m5.quality_check", "agent.prompts", 'M5_QUALITY_CHECK_SYSTEM_PROMPT', 'M5_QUALITY_CHECK_USER_TEMPLATE')
-_register("m5.revise", "agent.prompts", 'M5_REVISE_SYSTEM_PROMPT', 'M5_REVISE_USER_TEMPLATE')
-_register("m6.adjust_route", "agent.prompts", 'M6_ADJUST_ROUTE_SYSTEM_PROMPT', 'M6_ADJUST_ROUTE_USER_TEMPLATE')
-_register("m6.adjust_relation", "agent.prompts", 'M6_ADJUST_RELATION_SYSTEM_PROMPT', 'M6_ADJUST_RELATION_USER_TEMPLATE')
-_register("m6.impact_report", "agent.prompts", 'M6_IMPACT_REPORT_SYSTEM_PROMPT', 'M6_IMPACT_REPORT_USER_TEMPLATE')
-_register("m12.conflict", "agent.prompts", 'M12_CONFLICT_SYSTEM_PROMPT', 'M12_CONFLICT_USER_TEMPLATE')
-_register("m12.content_audit", "agent.prompts", 'M12_CONTENT_AUDIT_SYSTEM_PROMPT', 'M12_CONTENT_AUDIT_USER_TEMPLATE')
-_register("m12.summary", "agent.prompts", 'M12_SUMMARY_SYSTEM_PROMPT', 'M12_SUMMARY_USER_TEMPLATE')
-_register("m15.bookworm", "agent.prompts", 'M15_BOOKWORM_SYSTEM_PROMPT', 'M15_BOOKWORM_USER_TEMPLATE')
-_register("m16.pacing", "agent.prompts", 'M16_PACING_SYSTEM_PROMPT', 'M16_PACING_USER_TEMPLATE')
-_register("m19.review", "agent.prompts", 'M19_REVIEW_SYSTEM_PROMPT', 'M19_REVIEW_USER_TEMPLATE')
-_register("m_d.review", "agent.prompts", 'M_D_REVIEW_SYSTEM_PROMPT', 'M_D_REVIEW_USER_TEMPLATE')
-_register("e.learn_extract", "agent.prompts", 'E_LEARN_EXTRACT_SYSTEM_PROMPT', 'E_LEARN_EXTRACT_USER_TEMPLATE')
-_register("g11.method_instruction", "agent.prompts", None, 'G11_METHOD_INSTRUCTION_TEMPLATE')
-_register("g11.style_instruction", "agent.prompts", None, 'G11_STYLE_INSTRUCTION_TEMPLATE')
-_register("g12.emotion_instruction", "agent.prompts", None, 'G12_EMOTION_INSTRUCTION_TEMPLATE')
-_register("g12.payoff_instruction", "agent.prompts", None, 'G12_PAYOFF_INSTRUCTION_TEMPLATE')
-_register("g12.reader_feedback", "agent.prompts", None, 'G12_READER_FEEDBACK_TEMPLATE')
-_register("g8.ending_fallback_instruction", "agent.prompts", None, 'G8_ENDING_FALLBACK_INSTRUCTION')
-_register("g8.ending_instruction", "agent.prompts", None, 'G8_ENDING_INSTRUCTION_TEMPLATE')
-_register("g.character_state_constraint", "agent.prompts", None, 'G_CHARACTER_STATE_CONSTRAINT_TEMPLATE')
 
 
 class PromptManager:

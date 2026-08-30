@@ -1,27 +1,20 @@
 #!/usr/bin/env python3
-"""Prompt-migration lint gate (Phase B, 见 项目文档/提示词管理方案设计.md §9).
+"""Prompt-migration lint gate (阶段 B/C, 见 项目文档/提示词管理方案设计.md §9).
 
 目的
 ----
-阶段 B 把 `agent/prompts.py` 中全部提示词常量迁到 `agent/prompts/*.md`，
-由 `PromptManager`（`agent/core/infra/prompt_manager.py`，单例 `pm`）统一加载。
-调用方必须改用 `pm.get(key).render_system/render_user(...)`，禁止再直接
-`from agent.prompts import <常量>` 或裸引用已迁移常量名。
+阶段 B 把 ``agent/prompts.py`` 中全部提示词常量迁到 ``agent/prompts/*.md``，
+由 ``PromptManager``（``agent/core/infra/prompt_manager.py``，单例 ``pm``）统一加载。
+调用方必须改用 ``pm.get(key).render_system/render_user(...)``，禁止再直接
+``from agent.prompts import <常量>``、``import agent.prompts``，或裸引用已迁移常量名。
 
-本脚本就是 CI 卡口：扫描仓库内全部 `*.py`（豁免 `prompts.py` 与
-`prompt_manager.py` 自身），若存在对已迁移常量的裸引用则失败退出（exit 1）。
+阶段 C 已删除 ``agent/prompts.py``，因此本卡口改用**显式 canonical denylist**（即当初
+从 ``prompts.py`` 迁出的 50 个常量名），不再依赖 ``_register`` 动态解析——
+保证即便常量源头已删除，禁令依然有效，杜绝任何人把提示词"写回代码"。
 
-denylist 来源
-------------
-直接解析 `prompt_manager.py` 里所有 `_register(name, module, sys_attr, usr_attr)`
-调用中的大写蛇形属性名——即"已被迁移"的常量集合。这样卡口与迁移清单自动同步：
-新增 `_register` 自动纳入管控；从 `_register` 移除则自动放行。
-
-白名单
-------
-`prompts.py` 中以 `def format_*(...)` 形式存在的助手函数（format_learnings /
-format_open_debts / format_rag_context 等）不是提示词常量，仍允许 import。
-它们不会出现在 `_register` 中，因此天然不在 denylist 内。
+本脚本即 CI 卡口：扫描仓库内全部 ``*.py``（豁免 ``prompt_manager.py`` 与
+``prompt_helpers.py`` 自身），若存在对已迁移常量的裸引用、或重新 ``import agent.prompts``
+则失败退出（exit 1）。
 """
 
 from __future__ import annotations
@@ -33,79 +26,128 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent          # agent/scripts
 AGENT_ROOT = SCRIPT_DIR.parent                         # agent/
 PROMPT_MANAGER_PY = AGENT_ROOT / "src" / "agent" / "core" / "infra" / "prompt_manager.py"
+PROMPT_HELPERS_PY = AGENT_ROOT / "src" / "agent" / "core" / "infra" / "prompt_helpers.py"
 
-# 豁免文件：常量定义处 + 迁移加载器本身允许引用常量名
+# 豁免文件：迁移加载器本身 + 格式化助手允许提及常量名；本卡口脚本内含 denylist 清单
 EXEMPT = {
-    AGENT_ROOT / "src" / "agent" / "prompts.py",
     AGENT_ROOT / "src" / "agent" / "core" / "infra" / "prompt_manager.py",
+    PROMPT_HELPERS_PY,
+    SCRIPT_DIR / "lint_prompts.py",
 }
 
 # 显式白名单（防御性，正常情况 denylist 不会包含这些）
 ALLOW = {"format_learnings", "format_open_debts", "format_rag_context"}
 
+# canonical denylist：阶段 B 从 agent/prompts.py 迁出的全部 50 个常量名
+# （21 个 system + 29 个 user）。阶段 C 删除 prompts.py 后此处为唯一真相源。
+MIGRATED = {
+    # ---- system ----
+    "M1_SYSTEM_PROMPT",
+    "M2_SYSTEM_PROMPT",
+    "M3_SYSTEM_PROMPT",
+    "M4_SYSTEM_PROMPT",
+    "M14_SYSTEM_PROMPT",
+    "M14_ITERATE_SYSTEM_PROMPT",
+    "M14_GAP_CHECK_SYSTEM_PROMPT",
+    "M5_GENERATE_SYSTEM_PROMPT",
+    "M5_QUALITY_CHECK_SYSTEM_PROMPT",
+    "M5_REVISE_SYSTEM_PROMPT",
+    "M6_ADJUST_ROUTE_SYSTEM_PROMPT",
+    "M6_ADJUST_RELATION_SYSTEM_PROMPT",
+    "M6_IMPACT_REPORT_SYSTEM_PROMPT",
+    "M12_CONFLICT_SYSTEM_PROMPT",
+    "M12_CONTENT_AUDIT_SYSTEM_PROMPT",
+    "M12_SUMMARY_SYSTEM_PROMPT",
+    "M15_BOOKWORM_SYSTEM_PROMPT",
+    "M16_PACING_SYSTEM_PROMPT",
+    "M19_REVIEW_SYSTEM_PROMPT",
+    "M_D_REVIEW_SYSTEM_PROMPT",
+    "E_LEARN_EXTRACT_SYSTEM_PROMPT",
+    # ---- user ----
+    "M1_USER_PROMPT_TEMPLATE",
+    "M2_USER_PROMPT_TEMPLATE",
+    "M3_USER_PROMPT_TEMPLATE",
+    "M4_USER_PROMPT_TEMPLATE",
+    "M14_USER_PROMPT_TEMPLATE",
+    "M14_ITERATE_USER_PROMPT_TEMPLATE",
+    "M14_GAP_CHECK_USER_PROMPT_TEMPLATE",
+    "M5_GENERATE_USER_TEMPLATE",
+    "M5_QUALITY_CHECK_USER_TEMPLATE",
+    "M5_REVISE_USER_TEMPLATE",
+    "M6_ADJUST_ROUTE_USER_TEMPLATE",
+    "M6_ADJUST_RELATION_USER_TEMPLATE",
+    "M6_IMPACT_REPORT_USER_TEMPLATE",
+    "M12_CONFLICT_USER_TEMPLATE",
+    "M12_CONTENT_AUDIT_USER_TEMPLATE",
+    "M12_SUMMARY_USER_TEMPLATE",
+    "M15_BOOKWORM_USER_TEMPLATE",
+    "M16_PACING_USER_TEMPLATE",
+    "M19_REVIEW_USER_TEMPLATE",
+    "M_D_REVIEW_USER_TEMPLATE",
+    "E_LEARN_EXTRACT_USER_TEMPLATE",
+    "G11_METHOD_INSTRUCTION_TEMPLATE",
+    "G11_STYLE_INSTRUCTION_TEMPLATE",
+    "G12_EMOTION_INSTRUCTION_TEMPLATE",
+    "G12_PAYOFF_INSTRUCTION_TEMPLATE",
+    "G12_READER_FEEDBACK_TEMPLATE",
+    "G8_ENDING_FALLBACK_INSTRUCTION",
+    "G8_ENDING_INSTRUCTION_TEMPLATE",
+    "G_CHARACTER_STATE_CONSTRAINT_TEMPLATE",
+}
+DENYLIST = MIGRATED - ALLOW
 
-def collect_denylist() -> set[str]:
-    """从 prompt_manager.py 的 _register(...) 调用提取已迁移常量名。"""
-    text = PROMPT_MANAGER_PY.read_text(encoding="utf-8")
-    names: set[str] = set()
-    for call in re.finditer(r"_register\((.*?)\)", text, re.DOTALL):
-        body = call.group(1)
-        for sm in re.finditer(r"['\"]([A-Z][A-Z0-9_]*)['\"]", body):
-            names.add(sm.group(1))
-    return names - ALLOW
+# 重新引入 agent.prompts 模块（阶段 C 已删除）一律禁止
+IMPORT_RE = re.compile(r"^\s*(from\s+agent\.prompts\s+import|import\s+agent\.prompts)\b")
 
 
-def scan_file(path: Path, denylist: set[str]) -> list[tuple[int, str, str]]:
-    """返回该文件中的违规：(行号, 常量名, 该行内容)。"""
+def scan_file(path: Path) -> list[tuple[int, str, str]]:
+    """返回该文件中的违规：(行号, 规则, 该行内容)。"""
     try:
         text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeDecodeError):
         return []
     lines = text.splitlines()
     hits: list[tuple[int, str, str]] = []
-    for name in denylist:
-        pat = re.compile(r"\b" + re.escape(name) + r"\b")
-        for i, line in enumerate(lines, start=1):
-            if pat.search(line):
+    for i, line in enumerate(lines, start=1):
+        if IMPORT_RE.search(line):
+            hits.append((i, "import-agent.prompts", line.strip()))
+            continue
+        for name in DENYLIST:
+            if re.search(r"\b" + re.escape(name) + r"\b", line):
                 hits.append((i, name, line.strip()))
-                break  # 每个常量每文件只报一次
+                break  # 每个文件只报首个命中，避免噪音
     return hits
 
 
 def main() -> int:
-    denylist = collect_denylist()
-    if not denylist:
-        print("WARN: denylist 为空，请检查 prompt_manager.py 的 _register 解析。")
-        return 2
-
     violations: list[tuple[Path, int, str, str]] = []
     scanned = 0
     for py in sorted(AGENT_ROOT.rglob("*.py")):
         if py in EXEMPT:
             continue
-        # 跳过虚拟环境 / 缓存
         parts = py.parts
         if any(p in ("__pycache__", ".venv", "venv", "node_modules", ".git") for p in parts):
             continue
         scanned += 1
-        for ln, name, snippet in scan_file(py, denylist):
-            violations.append((py, ln, name, snippet))
+        for ln, rule, snippet in scan_file(py):
+            violations.append((py, ln, rule, snippet))
 
     if violations:
         print(
-            f"FAIL: 在 {len(violations)} 处发现对已迁移提示词常量的裸引用"
-            f"（denylist 共 {len(denylist)} 个常量，扫描 {scanned} 个文件）。"
+            f"FAIL: 在 {len(violations)} 处发现违规"
+            f"（denylist 共 {len(DENYLIST)} 个已迁移常量，扫描 {scanned} 个文件）。"
         )
-        for py, ln, name, snippet in violations:
+        for py, ln, rule, snippet in violations:
             rel = py.relative_to(AGENT_ROOT)
-            print(f"  {rel}:{ln}  {name}  ->  {snippet}")
+            print(f"  {rel}:{ln}  [{rule}]  ->  {snippet}")
         print(
             "\n修复方式：把对应调用改成 "
-            "pm.get(<key>).render_system/render_user(...)（见 提示词管理方案设计.md §9）。"
+            "pm.get(<key>).render_system/render_user(...)（见 提示词管理方案设计.md §9）；"
+            "格式化助手请改 from agent.core.infra.prompt_helpers import。"
         )
         return 1
 
-    print(f"PASS: 扫描 {scanned} 个文件，未发现对 {len(denylist)} 个已迁移常量的裸引用。")
+    print(f"PASS: 扫描 {scanned} 个文件，未发现对 {len(DENYLIST)} 个已迁移常量的裸引用 / 重新 import agent.prompts。")
     return 0
 
 

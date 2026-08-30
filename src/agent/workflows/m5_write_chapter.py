@@ -568,7 +568,7 @@ class M5WriteChapterWorkflow:
         learnings_text = "（暂无已沉淀的写法记忆）"
         try:
             from agent.core.story.learning_store import LearningStore
-            from agent.prompts import format_learnings
+            from agent.core.infra.prompt_helpers import format_learnings
 
             # 限额注入（避免 prompt 膨胀；按存储顺序取前 20 条）
             capped = LearningStore(self.project_dir).load()[:20]
@@ -1130,7 +1130,7 @@ class M5WriteChapterWorkflow:
             injected_tropes_text: E2 运行时注入的题材套路文本（追加到 system prompt）
         """
         wi = ctx["world_info"]
-        from agent.prompts import format_open_debts, format_rag_context
+        from agent.core.infra.prompt_helpers import format_open_debts, format_rag_context
 
         rag_context_text = format_rag_context(ctx.get("rag_context", []))
         open_debts_text = format_open_debts(ctx.get("open_debts", []))

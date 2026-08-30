@@ -1,18 +1,22 @@
 #!/usr/bin/env python3
-"""全量零回归：所有已迁移提示词，md 渲染 == 原常量模块（合成变量逐字比对）。
+"""保留 legacy 条目的零回归 + 删除断言。
 
-对每条已注册提示词（key，取自 prompt_manager.py 的 _register 调用）：
-- 取原始常量模块（agent.prompts / agent.agents.planner / agent.core.quality.* 等）
-  中的 system / user 常量值；
-- 用合成 dummy 变量分别渲染：原始 `.format()`（容忍字面 JSON 双括号）+ md（pm.get）；
+阶段 C 删除 ``agent/prompts.py`` 后，阶段 B 全量迁移的 29 个键已无代码常量可比对
+（md 为单一真源）；本脚本仅校验**仍登记 legacy 兜底**的 8 个键——它们的原始常量
+保留在各原模块（下划线前缀命名，如 ``_PLANNER_SYSTEM``），md 渲染需与之一致：
+
+- 对每条 ``_register`` 条目：取原模块中的 system / user 常量值；
+- 用合成 dummy 变量分别渲染：原始 ``.format()``（容忍字面 JSON 双括号）+ md（``pm.get``）；
 - 逐字比对 system、user。
 
-与 `lint_prompts.py` 互补：`lint_prompts.py` 防"新增内联残留"，本脚本防
-"md 与原始常量漂移"。两者都应纳入 CI。
+并显式断言 ``import agent.prompts`` 抛 ``ModuleNotFoundError``——即阶段 C 删除成功。
 
-注意：本脚本**不硬编码任何已迁移常量名**——(key, 模块, 属性名) 全部在运行时
-解析 prompt_manager.py 的 `_register(...)` 得到，因此本文件本身不会被
-`lint_prompts.py` 误报，且始终与迁移清单自动同步。
+与 `lint_prompts.py` 互补：后者防"新增内联残留"，本脚本防"md 与原始常量漂移" +
+防"误重新引入 prompts.py"。两者都应纳入 CI。
+
+注意：本脚本**不硬编码任何已迁移常量名**——(key, 模块, 属性名) 全部在运行时解析
+prompt_manager.py 的 ``_register(...)`` 得到，因此本文件本身不会被 `lint_prompts.py`
+误报，且始终与迁移清单自动同步。
 
 路径自洽：ROOT 由本文件位置推导（scripts/ -> agent/ -> src），不依赖绝对路径。
 """
@@ -28,8 +32,10 @@ SRC = AGENT_ROOT / "src"
 ROOT = str(SRC)                                        # 含 agent 包的源码根
 PROMPT_MANAGER_PY = SRC / "agent" / "core" / "infra" / "prompt_manager.py"
 sys.path.insert(0, ROOT)
+sys.path.insert(0, str(SCRIPT_DIR))  # 复用 lint_prompts 的 canonical denylist，避免重复硬编码
 
 from agent.core.infra.prompt_manager import PromptManager  # noqa: E402
+from lint_prompts import MIGRATED as MIGRATED_CONSTANTS  # noqa: E402  (阶段 C 已删除常量的真相源)
 
 
 def collect_entries():
@@ -95,6 +101,22 @@ def jinja_names(t: str) -> set:
 
 
 def main() -> int:
+    # 阶段 C 删除断言：旧的 prompts.py 模块级常量必须已不存在。
+    # 注：agent.prompts 现在是承载 *.md 的命名空间包（无 __init__.py），其本身应继续存在；
+    # 这里只校验"已迁移常量"不再作为该包属性出现（即 prompts.py 已删除）。
+    try:
+        pkg = importlib.import_module("agent.prompts")
+    except Exception as e:  # noqa: BLE001
+        print(f"FAIL: 无法导入 agent.prompts 包（md 容器）：{e}")
+        return 1
+    leaked = [n for n in MIGRATED_CONSTANTS if hasattr(pkg, n)]
+    if leaked:
+        print(
+            f"FAIL: agent.prompts 仍暴露 {len(leaked)} 个已迁移常量"
+            f"（阶段 C 应已删除 prompts.py）：{leaked[:5]} ..."
+        )
+        return 1
+
     entries = collect_entries()
     mgr = PromptManager(root=str(SRC / "agent" / "prompts"), hot_reload=False)
     fails = []
