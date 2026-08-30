@@ -1152,14 +1152,21 @@ class AgenticPipelineWorkflow:
         ``target`` 为兼容保留字段（尚无独立语义，推进由 orchestrator 依据状态裁决）。
         """
         try:
+            from agent.workflows.budget_planner import BudgetPlanner
             from agent.workflows.mainline_orchestrator import MainlineOrchestrator
 
             from_subline = str(
                 (self.state_machine.progress or {}).get("current_subline", "") or ""
             )  # G9：事件记录旧支线（裁决前）
-            new_subline = MainlineOrchestrator(
-                self.project_dir, self.state_machine, self.mainline_window, self.console
-            ).maybe_advance()
+            orch = MainlineOrchestrator(
+                self.project_dir,
+                self.state_machine,
+                self.mainline_window,
+                self.console,
+                budget_planner=BudgetPlanner(self.project_dir, console=self.console),
+            )
+            orch.replan_if_due()  # 每窗口先由 LLM 主编重规划分线预算
+            new_subline = orch.maybe_advance()
             if not new_subline:
                 return
             progress = dict(self.state_machine.progress or {})

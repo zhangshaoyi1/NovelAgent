@@ -147,11 +147,18 @@ class AgenticWriteWorkflow:
         异常降级不阻断写章（G3 哲学）。
         """
         try:
+            from agent.workflows.budget_planner import BudgetPlanner
             from agent.workflows.mainline_orchestrator import MainlineOrchestrator
 
-            new_subline = MainlineOrchestrator(
-                self.project_dir, self.state_machine, self.mainline_window, self.console
-            ).maybe_advance()
+            orch = MainlineOrchestrator(
+                self.project_dir,
+                self.state_machine,
+                self.mainline_window,
+                self.console,
+                budget_planner=BudgetPlanner(self.project_dir, console=self.console),
+            )
+            orch.replan_if_due()  # 每窗口先由 LLM 主编重规划分线预算
+            new_subline = orch.maybe_advance()
             if not new_subline:
                 return
             chapter = int((self.state_machine.progress or {}).get("total_written", 0)) + 1

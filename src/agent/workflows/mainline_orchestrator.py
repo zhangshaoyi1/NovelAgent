@@ -48,12 +48,44 @@ class MainlineOrchestrator:
         state_machine: StateMachine | None = None,
         mainline_window: int = 5,
         console: Console | None = None,
+        budget_planner: "BudgetPlanner | None" = None,
+        replan_window: int | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.state_machine = state_machine or StateMachine(self.project_dir)
         self.mainline_window = max(1, int(mainline_window))
         self.console = console or Console()
+        self.budget_planner = budget_planner
+        # 预算重规划窗口：默认与推进窗口一致（每 N 章重规划一次分线预算）
+        self.replan_window = max(1, int(replan_window or mainline_window))
         self._plan_file = self.project_dir / ".state" / "mainline.json"
+
+    # ------------------------------------------------------------------
+    # 主编预算动态重规划（LLM 规划预算，本类只做确定性执行）
+    # ------------------------------------------------------------------
+    def replan_if_due(self) -> bool:
+        """到重规划窗口时，调用注入的 BudgetPlanner 重新动态划分分线预算。
+
+        预算由 LLM 主编依据当前进度与内容动态生成（写入 ``subline_share``），
+        本类的推进裁决（:meth:`maybe_advance`）在下一窗口读到更新后的 cap。
+        未注入 planner 或未到窗口 / 异常 → 静默返回 False，绝不影响写章（G3）。
+        """
+        if self.budget_planner is None:
+            return False
+        try:
+            self.state_machine.load()
+            progress = self.state_machine.progress or {}
+            chapter = int(progress.get("total_written", 0)) + 1
+            if chapter <= 1 or (chapter - 1) % self.replan_window != 0:
+                return False
+            ok = bool(self.budget_planner.plan())
+            if ok:
+                self.console.print(
+                    f"[dim]主编预算已重规划，第 {chapter} 章起生效[/dim]"
+                )
+            return ok
+        except Exception:  # noqa: BLE001 - 规划异常降级不阻断（G3 哲学）
+            return False
 
     # ------------------------------------------------------------------
     # 预算计划（.state/mainline.json）
