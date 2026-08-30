@@ -30,11 +30,9 @@ Status: implemented
 
 * `core/story/reuse_guard.py`（B1）：读前文章节自动统计手段复用 + 灭门回忆计数，生成动态注入文本；只约束不硬删；读失败→"" 降级。
 
-- B1 注入点：`workflows/m5_write_chapter.py` `_build_context` 新增 `reuse_guard_text` key，在 system prompt 组装处与 learnings 同位注入。
+* B1 注入点：`workflows/m5_write_chapter.py` `_build_context` 新增 `reuse_guard_text` key，在 system prompt 组装处与 learnings 同位注入。
 
-- `cli/commands/repair.py`（A5）：`repair` 命令默认 dry-run；`--apply` 且偏好已确认才自动改；`--include-orientation` 强制连取向（慎用）；`--no-llm-scan` 禁 LLM；接入 tracer + `wire_llm_event_hook`（全入口统一）。
-
-- **RAG 关键设定保底召回**（B 方案，前置防线）：`core/rag/retriever.py` 新增 `retrieve_multi(queries, top_k_each, max_total)` 多 query 召回并按 chunk 身份去重合并；m5 改用一组「易漂移维度」query（章节/支线主线 + 角色生死复活下落身份 + 金手指规则境界 + 已揭真相秘密身世 + 人物恩怨关系状态），`top_k_each=5`、`max_total=12` 保底召回，覆盖单 query 漏召回导致的硬伤源头（如死而复生、下落断裂）。prompts.py 把 RAG 块标签改为「关键设定保底（含角色生死/金手指/已揭真相/人物恩怨，勿照抄，但不得与之矛盾）」，从"仅供参考"升级为"不得矛盾"的弱一致性约束。repair 仍保留作兜底。
+* `cli/commands/repair.py`（A5）：`repair` 命令默认 dry-run；`--apply` 且偏好已确认才自动改；`--include-orientation` 强制连取向（慎用）；`--no-llm-scan` 禁 LLM；接入 tracer + `wire_llm_event_hook`（全入口统一）。
 
 产物：`repair/bad_points.json`、`repair/pending_decisions.md`、`repair/preferences.md`。
 
