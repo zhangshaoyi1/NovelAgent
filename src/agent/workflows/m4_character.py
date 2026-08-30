@@ -37,7 +37,7 @@ from agent.client import LLMClient
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.quality.guardrails import is_architecture_confirmed
-from agent.core.registry.genre_pack import first_genre
+from agent.core.registry.genre_pack import first_genre, first_genre_label
 from agent.core.engine.workflow_registry import workflow
 from agent.utils import parse_llm_json
 
@@ -216,6 +216,7 @@ class M4CharacterWorkflow:
             "title": metadata.get("title", ""),
             "scope": metadata.get("scope", ""),
             "genre": first_genre(metadata),
+            "genre_label": first_genre_label(metadata),
             "tone": style.get("tone", "") if isinstance(style, dict) else str(style),
             "golden_finger_info": golden_finger_info,
         }
@@ -304,7 +305,7 @@ class M4CharacterWorkflow:
 
         raw = self.llm.chat_creative(
             messages=[
-                {"role": "system", "content": pm.get("m4.character").system},
+                {"role": "system", "content": pm.get("m4.character").render_system(genre=world_info.get("genre_label", ""))},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.75,
@@ -334,7 +335,7 @@ class M4CharacterWorkflow:
                         "[yellow]⚠ 角色设计 JSON 解析失败，自动重试一次...[/yellow]"
                     )
                     system_prompt = (
-                        pm.get("m4.character").system
+                        pm.get("m4.character").render_system(genre=world_info.get("genre_label", ""))
                         + "\n\n【重要】请只输出一个合法的 JSON 对象，必须包含 "
                         "protagonist_route（含 nodes）与 characters（至少 1 名角色），"
                         "不要包含 ```json 代码块标记，不要输出任何解释性文字。"

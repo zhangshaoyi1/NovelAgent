@@ -32,7 +32,7 @@ from agent.client import LLMClient
 from agent.core.engine.workflow_registry import workflow
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
-from agent.core.registry.genre_pack import first_genre
+from agent.core.registry.genre_pack import first_genre, first_genre_label
 from agent.utils import parse_llm_json
 
 # 模板目录
@@ -185,8 +185,21 @@ class M14ArchitectureWorkflow:
             # 兼容旧文件：无 architecture 字段时降级为空结构
             current_arch = self._empty_architecture()
 
+        # 题材标签：供 m14.iterate system prompt 的 {{ genre }} 注入（失败降级为空）
+        genre_label = ""
+        try:
+            world_data = self.sm.load_world()
+            if world_data.get("exists"):
+                genre_label = self._extract_world_info(world_data).get(
+                    "genre_label", ""
+                )
+        except Exception:  # noqa: BLE001 - world.md 读取失败降级，不阻断迭代
+            pass
+
         self.console.print("\n[cyan]正在根据反馈修订架构...[/cyan]")
-        new_arch = self._llm_iterate_architecture(title, current_arch, feedback)
+        new_arch = self._llm_iterate_architecture(
+            title, current_arch, feedback, genre_label=genre_label
+        )
 
         # 反馈落实核验：LLM 偶发会漏掉多要点反馈中的某几条。用轻量模型核对，
         # 发现缺失则补一轮修订（附明确缺失清单），提高「按意见修改架构」可靠性。
@@ -204,7 +217,7 @@ class M14ArchitectureWorkflow:
                 + "\n".join(f"{i + 1}. {m}" for i, m in enumerate(missing))
             )
             new_arch = self._llm_iterate_architecture(
-                title, current_arch, retry_feedback
+                title, current_arch, retry_feedback, genre_label=genre_label
             )
             # 补充修订后再核对一次：仅告警、不阻断落盘（避免无限循环），
             # 用户可在页面继续手动微调。
@@ -366,6 +379,7 @@ class M14ArchitectureWorkflow:
             "title": metadata.get("title", ""),
             "scope": metadata.get("scope", ""),
             "genre": first_genre(metadata),
+            "genre_label": first_genre_label(metadata),
             "tone": style.get("tone", "") if isinstance(style, dict) else str(style),
             "synopsis": synopsis,
         }
@@ -391,7 +405,7 @@ class M14ArchitectureWorkflow:
         if qa_text:
             user_prompt += qa_text
 
-        system_prompt = pm.get("m14.architecture").system
+        system_prompt = pm.get("m14.architecture").render_system(genre=world_info.get("genre_label", ""))
         # dots3-note-prev 等模型在紧预算下会把长结构化输出截断/返回空，
         # 故采用「充足预算 + 递增重试 + 纯 JSON 强化」的重试策略。
         _budgets = (16384, 16384, 20480)
@@ -399,7 +413,7 @@ class M14ArchitectureWorkflow:
             if attempt > 0:
                 # 重试：强化「纯 JSON」约束，规避截断/多余文本导致的解析失败
                 system_prompt = (
-                    pm.get("m14.architecture").system
+                    pm.get("m14.architecture").render_system(genre=world_info.get("genre_label", ""))
                     + "\n\n【重要】请只输出一个合法的 JSON 对象，"
                     "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
                 )
@@ -422,7 +436,11 @@ class M14ArchitectureWorkflow:
                     )
 
     def _llm_iterate_architecture(
-        self, title: str, current_arch: dict[str, Any], feedback: str
+        self,
+        title: str,
+        current_arch: dict[str, Any],
+        feedback: str,
+        genre_label: str = "",
     ) -> dict[str, Any]:
         """调用 LLM 基于反馈迭代架构
 
@@ -434,7 +452,7 @@ class M14ArchitectureWorkflow:
             current_architecture=json.dumps(current_arch, ensure_ascii=False, indent=2),
             feedback=feedback,
         )
-        system_prompt = pm.get("m14.iterate").system
+        system_prompt = pm.get("m14.iterate").render_system(genre=genre_label)
         last_text = ""
         _budgets = (16384, 16384, 20480)
         for attempt in range(len(_budgets)):
@@ -466,7 +484,7 @@ class M14ArchitectureWorkflow:
                     "[yellow]⚠ 架构迭代 JSON 解析失败，自动重试一次...[/yellow]"
                 )
                 system_prompt = (
-                    pm.get("m14.iterate").system
+                    pm.get("m14.iterate").render_system(genre=genre_label)
                     + "\n\n【重要】请只输出一个合法的 JSON 对象（结构与初版一致），"
                     "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
                 )

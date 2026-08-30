@@ -29,7 +29,7 @@ from rich.panel import Panel
 from agent.core.quality.consistency import ConflictArbiter, ConflictReport
 from agent.core.story.evidence_chain import EvidenceChain, EvidenceRef
 from agent.core.base.exceptions import PreValidationBlocked
-from agent.core.registry.genre_pack import GenrePackRegistry, first_genre
+from agent.core.registry.genre_pack import GenrePackRegistry, first_genre, first_genre_label
 from agent.core.engine.workflow_registry import workflow
 from agent.core.quality.scoring import QualityChecker, LLMBackedChecker, Severity
 from agent.core.story.injected_trope_store import InjectedTropeStore
@@ -243,6 +243,8 @@ class M5WriteChapterWorkflow:
         style_file: str | None = None,
         # ---- G12 新增参数：爽点剧本/情绪目标注入（默认开：.state/payoff_script.json 存在即注入）----
         payoff_enabled: bool = True,
+        # ---- P0 新增参数：去AI味（默认开；--no-deslop 关闭）----
+        deslop_enabled: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client or LLMClient()
@@ -271,6 +273,8 @@ class M5WriteChapterWorkflow:
         self.style_file = style_file
         # G12：爽点剧本/情绪目标注入（.state/payoff_script.json 存在即注入；--no-payoff 关闭）
         self.payoff_enabled = payoff_enabled
+        # P0：去AI味开关（质量门禁通过后、落盘前执行；--no-deslop 关闭）
+        self.deslop_enabled = deslop_enabled
 
     def _emit_substage(self, substage: str, chapter: int) -> None:
         """G9：章内子阶段事件（真实阶段边界，M5 精确）；未注入 emitter 时零开销。
@@ -288,6 +292,29 @@ class M5WriteChapterWorkflow:
                 })
             except Exception:  # noqa: BLE001 - 子阶段事件异常不阻断写章（拍板 3）
                 pass
+
+    def _maybe_deslop(self, text: str, ctx: dict[str, Any]) -> str:
+        """P0 去AI味：质量门禁通过后、落盘前执行（轻度规则/中重 LLM）。
+
+        与 agentic_write 共用策略：轻度走规则后处理（零 LLM），中/重度走 LLM 改写
+        （6 Gate + 三遍法）。任何失败降级返回原文，绝不阻断写章（G3 哲学）。
+        输入应为已 ``_clean_chapter_body`` 的正文（无标题行/元信息）。
+        """
+        if not self.deslop_enabled:
+            return text
+        try:
+            from agent.core.anti_ai.rewriter import DeslopRewriter
+
+            rewriter = DeslopRewriter(
+                self.llm, project_dir=self.project_dir, console=self.console
+            )
+            result = rewriter.rewrite(text, level="auto")
+            self._emit_substage(f"deslop:{result.level}", ctx["chapter_num"])
+            if result.changed and result.text.strip():
+                return result.text
+            return text
+        except Exception:  # noqa: BLE001 - 去AI味失败降级原文，不阻断写章
+            return text
 
     @property
     def mode_controller(self) -> "ModeController":
@@ -387,6 +414,9 @@ class M5WriteChapterWorkflow:
         chapter_title = self._extract_title(final_text, ctx)
         # 落盘/计数前去掉模型误输出的标题行、原文标题、编辑批注，保证字数统计正确、无双标题
         final_text = self._clean_chapter_body(final_text)
+
+        # ------ 4.5 P0 去AI味：质量门禁通过后、落盘前（轻度规则/中重 LLM；失败降级原文）------
+        final_text = self._maybe_deslop(final_text, ctx)
 
         # ------ 5. 依据链（E4 结构化） ------
         evidence_chain = self._build_evidence_chain(ctx)
@@ -687,6 +717,7 @@ class M5WriteChapterWorkflow:
             "title": metadata.get("title", ""),
             "scope": metadata.get("scope", ""),
             "genre": first_genre(metadata),
+            "genre_label": first_genre_label(metadata),
             "genres": list(metadata.get("genres") or []),
             "tone": style.get("tone", ""),
             "pov": style.get("pov", ""),
@@ -1165,7 +1196,7 @@ class M5WriteChapterWorkflow:
         )
 
         # E2 题材动态注入：将选中套路以 System Prompt 片段注入
-        system_prompt = pm.get("m5.generate").system
+        system_prompt = pm.get("m5.generate").render_system(genre=wi.get("genre_label", ""))
         if injected_tropes_text:
             system_prompt = (
                 system_prompt

@@ -29,7 +29,7 @@ from rich.prompt import Prompt
 from agent.client import LLMClient
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
-from agent.core.registry.genre_pack import first_genre
+from agent.core.registry.genre_pack import first_genre, first_genre_label
 from agent.core.engine.workflow_registry import workflow
 from agent.base.validation import ValidationSpec
 
@@ -191,6 +191,7 @@ class M2DiscussWorkflow:
             "title": metadata.get("title", ""),
             "scope": metadata.get("scope", ""),
             "genre": first_genre(metadata),
+            "genre_label": first_genre_label(metadata),
             "story_core": story_synopsis or metadata.get("title", ""),
             "style": str(metadata.get("style", {})),
         }
@@ -213,7 +214,7 @@ class M2DiscussWorkflow:
                 user_prompt += qa_text
 
         messages = [
-            {"role": "system", "content": pm.get("m2.discuss").system},
+            {"role": "system", "content": pm.get("m2.discuss").render_system(genre=world_info.get("genre_label", ""))},
             {"role": "user", "content": user_prompt},
         ]
         # 把对话历史作为多轮消息传入

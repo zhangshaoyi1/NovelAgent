@@ -225,6 +225,25 @@ def first_genre(metadata: dict) -> str:
     return str(metadata.get("genre", ""))
 
 
+def first_genre_label(metadata: dict) -> str:
+    """返回首个题材的中文显示名（如 '修仙'），取不到回退 id。
+
+    用于提示词 ``{{ genre }}`` 注入——修掉"系统提示写死修仙"的缺陷
+    （见 项目文档/提示词管理方案设计.md §7）。``first_genre`` 返回 id（如 ``xiuxian``），
+    本函数经题材包 registry 解析为中文标签，保证渲染出来是"规则怪谈"而非"rule_thriller"。
+    """
+    gid = first_genre(metadata)
+    if not gid:
+        return ""
+    try:
+        pack = registry.get(gid)
+        if pack is not None:
+            return pack.manifest.display_name or gid
+    except Exception:  # noqa: BLE001 - 题材包未注册时回退 id
+        pass
+    return gid
+
+
 def extract_trope_section(tropes_text: str, trope_name: str) -> tuple[str, str]:
     """从 tropes.md 文本中提取指定套路的内容段
 

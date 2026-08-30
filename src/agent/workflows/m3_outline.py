@@ -33,7 +33,7 @@ from agent.client import LLMClient
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.quality.guardrails import is_architecture_confirmed
-from agent.core.registry.genre_pack import first_genre
+from agent.core.registry.genre_pack import first_genre, first_genre_label
 from agent.core.engine.workflow_registry import workflow
 from agent.utils import parse_llm_json
 
@@ -202,6 +202,7 @@ class M3OutlineWorkflow:
             "scope": scope_desc,
             "expected_chapters": expected_chapters,
             "genre": first_genre(metadata),
+            "genre_label": first_genre_label(metadata),
             "tone": style.get("tone", "") if isinstance(style, dict) else str(style),
             "synopsis": synopsis,
         }
@@ -283,7 +284,7 @@ class M3OutlineWorkflow:
         # （截断多为瞬时，重试常可恢复；重试时强化「纯 JSON」约束），
         # 重试仍失败则明确抛错，绝不静默写入「架构拆解失败」占位大纲。
         last_text = ""
-        system_prompt = pm.get("m3.outline").system
+        system_prompt = pm.get("m3.outline").render_system(genre=world_info.get("genre_label", ""))
         # dots3-note-prev 等模型在紧预算下偶发截断/空回，采用「充足预算 + 递增重试」：
         # 初版 A 方案 8192 实测百万字稳定，这里保留充足预算并递增，规避偶发空回。
         _budgets = (16384, 16384, 20480)
@@ -314,7 +315,7 @@ class M3OutlineWorkflow:
                     "[yellow]⚠ 大纲 JSON 解析失败，自动重试一次...[/yellow]"
                 )
                 system_prompt = (
-                    pm.get("m3.outline").system
+                    pm.get("m3.outline").render_system(genre=world_info.get("genre_label", ""))
                     + "\n\n【重要】请只输出一个合法的 JSON 对象，"
                     "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
                 )
