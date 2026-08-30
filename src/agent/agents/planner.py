@@ -29,7 +29,6 @@ from agent.core.infra.prompt_manager import pm
 from agent.core.story.method_style import load_method_text  # G11：写作方法模板
 from agent.core.story.setting_manager import SettingManager
 from agent.core.base.structured_output import StructuredOutputError
-from agent.prompts import G11_METHOD_INSTRUCTION_TEMPLATE  # G11：方法模板注入常量
 
 
 # ============================================================
@@ -146,7 +145,7 @@ class PlannerAgent:
             method_text, _name = load_method_text(self.project_dir, enabled=True)
             if not method_text:
                 return ""
-            return G11_METHOD_INSTRUCTION_TEMPLATE.format(method_text=method_text)
+            return pm.get("g11.method_instruction").render_user(method_text=method_text)
         except Exception:  # noqa: BLE001 - 模板读取失败降级为空，不阻断
             return ""
 

@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -30,7 +31,6 @@ from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.registry.genre_pack import first_genre
 from agent.core.engine.workflow_registry import workflow
-from agent.prompts import M2_SYSTEM_PROMPT, M2_USER_PROMPT_TEMPLATE
 from agent.base.validation import ValidationSpec
 
 # 退出命令
@@ -199,7 +199,7 @@ class M2DiscussWorkflow:
         self, world_info: dict[str, str], history: list[ChatTurn]
     ) -> str:
         """LLM 根据上下文生成回应/提问"""
-        user_prompt = M2_USER_PROMPT_TEMPLATE.format(
+        user_prompt = pm.get("m2.discuss").render_user(
             title=world_info["title"],
             story_core=world_info["story_core"],
             user_input=self._format_history_for_prompt(history),
@@ -213,7 +213,7 @@ class M2DiscussWorkflow:
                 user_prompt += qa_text
 
         messages = [
-            {"role": "system", "content": M2_SYSTEM_PROMPT},
+            {"role": "system", "content": pm.get("m2.discuss").system},
             {"role": "user", "content": user_prompt},
         ]
         # 把对话历史作为多轮消息传入

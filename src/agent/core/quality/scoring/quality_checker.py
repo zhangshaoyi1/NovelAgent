@@ -13,13 +13,13 @@
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 import re
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from agent.prompts import M_D_REVIEW_SYSTEM_PROMPT, M_D_REVIEW_USER_TEMPLATE
 from agent.utils import parse_llm_json
 
 
@@ -167,14 +167,14 @@ class LLMQualityRule(QualityRule):
         """单维度 LLM 检查（供单独调用/降级；合并路径由 LLMBackedChecker 负责）"""
         if llm is None:
             return []
-        user = M_D_REVIEW_USER_TEMPLATE.format(
+        user = pm.get("m_d.review").render_user(
             chapter_text=text,
             dimensions=f"- {self.dimension}（{self.name}）：{self.prompt_template}",
         )
         try:
             resp = llm.chat_utility(
                 [
-                    {"role": "system", "content": M_D_REVIEW_SYSTEM_PROMPT},
+                    {"role": "system", "content": pm.get("m_d.review").system},
                     {"role": "user", "content": user},
                 ],
                 max_tokens=800,
@@ -218,14 +218,14 @@ class LLMBackedChecker:
         dimensions_block = "\n".join(
             f"- {r.dimension}（{r.name}）：{r.prompt_template}" for r in llm_rules
         )
-        user = M_D_REVIEW_USER_TEMPLATE.format(
+        user = pm.get("m_d.review").render_user(
             chapter_text=text, dimensions=dimensions_block
         )
 
         result = self._with_timeout(
             lambda: self.llm.chat_utility(
                 [
-                    {"role": "system", "content": M_D_REVIEW_SYSTEM_PROMPT},
+                    {"role": "system", "content": pm.get("m_d.review").system},
                     {"role": "user", "content": user},
                 ],
                 max_tokens=1500,

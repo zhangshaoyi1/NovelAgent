@@ -14,7 +14,6 @@ from pathlib import Path
 
 from agent.agents.planner import PlannerAgent
 from agent.core.story.method_style import load_method_text
-from agent.prompts import G11_METHOD_INSTRUCTION_TEMPLATE
 
 
 def _has_method_segment(text: str) -> bool:

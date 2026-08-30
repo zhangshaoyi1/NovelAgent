@@ -21,6 +21,7 @@
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,17 +34,6 @@ from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.tools.builtins import set_project_context
 from agent.agents.writer_agent import WriterAgent
 from agent.core.engine.workflow_registry import workflow
-from agent.prompts import (
-    M5_GENERATE_USER_TEMPLATE,
-    M5_QUALITY_CHECK_SYSTEM_PROMPT,
-    M5_QUALITY_CHECK_USER_TEMPLATE,
-    G8_ENDING_INSTRUCTION_TEMPLATE,  # G8（补充边界 4）：结局阶段指令（含架构 ending）
-    G8_ENDING_FALLBACK_INSTRUCTION,  # G8（补充边界 4）：ending 为空降级「收尾」通用指令
-    G11_STYLE_INSTRUCTION_TEMPLATE,  # G11：风格指引（project/style.md 注入）
-    G12_PAYOFF_INSTRUCTION_TEMPLATE,  # G12：爽点剧本
-    G12_EMOTION_INSTRUCTION_TEMPLATE,  # G12：情绪目标
-    G12_READER_FEEDBACK_TEMPLATE,  # G12：读者反馈
-)
 from agent.utils import parse_llm_json
 from agent.workflows.m5_write_chapter import (
     M5WriteChapterWorkflow,
@@ -180,7 +170,7 @@ class AgenticWriteWorkflow:
         wi = ctx["world_info"]
         rag_context_text = format_rag_context(ctx.get("rag_context", []))
         open_debts_text = format_open_debts(ctx.get("open_debts", []))
-        task = M5_GENERATE_USER_TEMPLATE.format(
+        task = pm.get("m5.generate").render_user(
             title=wi["title"],
             tone=wi["tone"],
             pov=wi["pov"],
@@ -213,26 +203,26 @@ class AgenticWriteWorkflow:
         if ctx.get("ending_mode"):
             ending = (ctx.get("ending") or "").strip()
             if ending:
-                task += G8_ENDING_INSTRUCTION_TEMPLATE.format(
+                task += pm.get("g8.ending_instruction").render_user(
                     subline_id=ctx.get("subline_id", ""),
                     mainline="、".join(ctx.get("mainline", []) or []) or "—",
                     ending=ending,
                 )
             else:
-                task += G8_ENDING_FALLBACK_INSTRUCTION
+                task += pm.get("g8.ending_fallback_instruction").render_user()
 
         # ---- G11：风格指引注入（style.md 存在即注入；缺失/关闭 → 与 G10 输出逐字节一致）----
         style_guide = (ctx.get("style_guide") or "").strip()
         if style_guide:
-            task += G11_STYLE_INSTRUCTION_TEMPLATE.format(style_guide=style_guide)
+            task += pm.get("g11.style_instruction").render_user(style_guide=style_guide)
 
         # ---- G12：爽点剧本 + 情绪目标 + 读者反馈注入（追加顺序：爽点 → 情绪 → 反馈）----
         payoff_task = (ctx.get("payoff_task") or "").strip()
         if payoff_task:
-            task += G12_PAYOFF_INSTRUCTION_TEMPLATE.format(payoff_task=payoff_task)
+            task += pm.get("g12.payoff_instruction").render_user(payoff_task=payoff_task)
         emotion_target = (ctx.get("emotion_target") or "").strip()
         if emotion_target:
-            task += G12_EMOTION_INSTRUCTION_TEMPLATE.format(emotion_target=emotion_target)
+            task += pm.get("g12.emotion_instruction").render_user(emotion_target=emotion_target)
         signals = ctx.get("reader_signals") or []
         if signals:
             lines = []
@@ -242,7 +232,7 @@ class AgenticWriteWorkflow:
                 marker = "（位于本章之前，请针对此反馈强化本章）" if planted and planted < ctx.get("chapter_num", 0) else ""
                 lines.append(f"- {desc}{marker}")
             if lines:
-                task += G12_READER_FEEDBACK_TEMPLATE.format(reader_signals="\n".join(lines))
+                task += pm.get("g12.reader_feedback").render_user(reader_signals="\n".join(lines))
         return task
 
     # ------------------------------------------------------------------
@@ -280,7 +270,7 @@ class AgenticWriteWorkflow:
                 "suggestions": "扩写本章，补充场景/动作/环境描写与章末悬念，确保字数接近目标。",
             }
             return False, report
-        check_prompt = M5_QUALITY_CHECK_USER_TEMPLATE.format(
+        check_prompt = pm.get("m5.quality_check").render_user(
             tone=wi["tone"],
             chapter_length=wi["chapter_length"],
             characters_fingerprint=ctx.get("characters_fingerprint", ""),
@@ -290,7 +280,7 @@ class AgenticWriteWorkflow:
         try:
             resp = self.llm.chat_utility(
                 messages=[
-                    {"role": "system", "content": M5_QUALITY_CHECK_SYSTEM_PROMPT},
+                    {"role": "system", "content": pm.get("m5.quality_check").system},
                     {"role": "user", "content": check_prompt},
                 ],
                 max_tokens=1500,

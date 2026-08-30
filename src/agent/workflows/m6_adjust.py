@@ -28,6 +28,7 @@
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -45,14 +46,6 @@ from agent.client import LLMClient
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
 from agent.core.quality.guardrails import is_architecture_confirmed
-from agent.prompts import (
-    M6_ADJUST_ROUTE_SYSTEM_PROMPT,
-    M6_ADJUST_ROUTE_USER_TEMPLATE,
-    M6_ADJUST_RELATION_SYSTEM_PROMPT,
-    M6_ADJUST_RELATION_USER_TEMPLATE,
-    M6_IMPACT_REPORT_SYSTEM_PROMPT,
-    M6_IMPACT_REPORT_USER_TEMPLATE,
-)
 from agent.utils import parse_llm_json
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -318,14 +311,14 @@ class M6AdjustRouteWorkflow:
         current_node_idx: int,
         user_intent: str,
     ) -> dict[str, Any]:
-        user_prompt = M6_ADJUST_ROUTE_USER_TEMPLATE.format(
+        user_prompt = pm.get("m6.adjust_route").render_user(
             current_route=current_route[:3000],
             current_chapter=current_chapter,
             current_node_idx=current_node_idx,
             user_intent=user_intent,
         )
         data = _chat_parse_with_retry(
-            self.llm, self.console, M6_ADJUST_ROUTE_SYSTEM_PROMPT, user_prompt,
+            self.llm, self.console, pm.get("m6.adjust_route").system, user_prompt,
             temperature=0.7, max_tokens=6000, label="M6 路线调整",
         )
         if "nodes" not in data:
@@ -396,7 +389,7 @@ class M6AdjustRouteWorkflow:
         # 已写章节摘要
         written_chapters = self._summarize_written_chapters()
 
-        user_prompt = M6_IMPACT_REPORT_USER_TEMPLATE.format(
+        user_prompt = pm.get("m6.impact_report").render_user(
             change_summary=change_summary,
             world_frozen=world_frozen,
             route_snippet=route_snippet,
@@ -405,7 +398,7 @@ class M6AdjustRouteWorkflow:
         )
         try:
             data = _chat_parse_with_retry(
-                self.llm, self.console, M6_IMPACT_REPORT_SYSTEM_PROMPT, user_prompt,
+                self.llm, self.console, pm.get("m6.impact_report").system, user_prompt,
                 temperature=0.2, max_tokens=3000, label="M6 影响报告", utility=True,
             )
         except ValueError:
@@ -721,14 +714,14 @@ class M6AdjustRelationWorkflow:
             f"{'archived' if e.get('archived') else 'active'} |"
             for e in edges
         )
-        user_prompt = M6_ADJUST_RELATION_USER_TEMPLATE.format(
+        user_prompt = pm.get("m6.adjust_relation").render_user(
             nodes_table=nodes_table,
             edges_table=edges_table,
             current_chapter=current_chapter,
             user_intent=user_intent,
         )
         data = _chat_parse_with_retry(
-            self.llm, self.console, M6_ADJUST_RELATION_SYSTEM_PROMPT, user_prompt,
+            self.llm, self.console, pm.get("m6.adjust_relation").system, user_prompt,
             temperature=0.7, max_tokens=5000, label="M6 关系调整",
         )
         return data
@@ -824,7 +817,7 @@ class M6AdjustRelationWorkflow:
         world_frozen = helper._extract_world_frozen()
         written_chapters = helper._summarize_written_chapters()
 
-        user_prompt = M6_IMPACT_REPORT_USER_TEMPLATE.format(
+        user_prompt = pm.get("m6.impact_report").render_user(
             change_summary=change_summary,
             world_frozen=world_frozen,
             route_snippet=route_snippet or "（路线调整时填充）",
@@ -833,7 +826,7 @@ class M6AdjustRelationWorkflow:
         )
         try:
             data = _chat_parse_with_retry(
-                self.llm, self.console, M6_IMPACT_REPORT_SYSTEM_PROMPT, user_prompt,
+                self.llm, self.console, pm.get("m6.impact_report").system, user_prompt,
                 temperature=0.2, max_tokens=3000, label="M6 影响报告", utility=True,
             )
         except ValueError:

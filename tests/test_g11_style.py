@@ -15,7 +15,7 @@ import pytest
 from rich.console import Console
 
 from agent.core.story.method_style import STYLE_GUIDE_MAX_CHARS, load_style_guide
-from agent.prompts import G11_STYLE_INSTRUCTION_TEMPLATE
+from agent.core.infra.prompt_manager import pm
 
 
 def _min_ctx(style_guide: str = "") -> dict:
@@ -104,7 +104,7 @@ def test_build_task_injects_style() -> None:
     task = wf._build_task(_min_ctx(style_guide="冷峻白描"))
     assert "# 风格指引" in task
     assert "冷峻白描" in task
-    assert G11_STYLE_INSTRUCTION_TEMPLATE.format(style_guide="冷峻白描") in task
+    assert pm.get("g11.style_instruction").render_user(style_guide="冷峻白描") in task
 
 
 def test_build_task_no_style_byte_identical() -> None:

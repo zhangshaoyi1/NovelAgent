@@ -20,6 +20,7 @@ F12.3 上下文分层加载
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -32,14 +33,6 @@ from rich.table import Table
 
 from agent.client import LLMClient
 from agent.core.story.setting_manager import SettingManager
-from agent.prompts import (
-    M12_CONFLICT_SYSTEM_PROMPT,
-    M12_CONFLICT_USER_TEMPLATE,
-    M12_CONTENT_AUDIT_SYSTEM_PROMPT,
-    M12_CONTENT_AUDIT_USER_TEMPLATE,
-    M12_SUMMARY_SYSTEM_PROMPT,
-    M12_SUMMARY_USER_TEMPLATE,
-)
 from agent.utils import parse_llm_json
 
 
@@ -147,7 +140,7 @@ class ContentAuditor:
         # 截断避免超长
         text = chapter_text[:8000]
 
-        user_msg = M12_CONTENT_AUDIT_USER_TEMPLATE.format(
+        user_msg = pm.get("m12.content_audit").render_user(
             genre=genre,
             violence_policy=policy_desc,
             chapter_text=text,
@@ -156,7 +149,7 @@ class ContentAuditor:
         try:
             resp = self.llm.chat_utility(
                 messages=[
-                    {"role": "system", "content": M12_CONTENT_AUDIT_SYSTEM_PROMPT},
+                    {"role": "system", "content": pm.get("m12.content_audit").system},
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=0.1,
@@ -325,7 +318,7 @@ class ChapterSummarizer:
         if len(chapter_text) > 8000:
             chapter_text = chapter_text[:8000]
 
-        user_msg = M12_SUMMARY_USER_TEMPLATE.format(
+        user_msg = pm.get("m12.summary").render_user(
             chapter_num=chapter_num,
             chapter_title=chapter_title,
             chapter_text=chapter_text,
@@ -334,7 +327,7 @@ class ChapterSummarizer:
         try:
             resp = self.llm.chat_utility(
                 messages=[
-                    {"role": "system", "content": M12_SUMMARY_SYSTEM_PROMPT},
+                    {"role": "system", "content": pm.get("m12.summary").system},
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=0.2,

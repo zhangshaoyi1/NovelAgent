@@ -1,4 +1,4 @@
-﻿"""M15 书虫 Skill（独立可移植）
+"""M15 书虫 Skill（独立可移植）
 
 基于 PRD F15.1-F15.6，实现以资深书虫视角评估小说标题/开头吸引力的 skill。
 
@@ -23,6 +23,7 @@
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 import json
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -34,7 +35,6 @@ from rich.panel import Panel
 from rich.table import Table
 
 from agent.client import LLMClient
-from agent.prompts import M15_BOOKWORM_SYSTEM_PROMPT, M15_BOOKWORM_USER_TEMPLATE
 from agent.utils import parse_llm_json
 
 
@@ -543,7 +543,7 @@ class BookwormSkill:
             genre_block = f"\n# 题材读者期待（{genre}）\n\n{self.genre_expectations[genre]}"
         elif genre:
             genre_block = f"\n# 题材读者期待\n\n（未内置 {genre} 题材期待，按通用网文标准评估）"
-        return M15_BOOKWORM_SYSTEM_PROMPT.format(
+        return pm.get("m15.bookworm").render_system(
             persona=self.persona,
             rubrics=self.rubrics,
             genre_expectations=genre_block,
@@ -551,7 +551,7 @@ class BookwormSkill:
 
     def _build_user_prompt(self, inp: BookwormInput) -> str:
         genre_line = f"【题材】{inp.genre}" if inp.genre else "【题材】未指定"
-        return M15_BOOKWORM_USER_TEMPLATE.format(
+        return pm.get("m15.bookworm").render_user(
             book_name=inp.book_name,
             title=inp.title,
             genre_line=genre_line,

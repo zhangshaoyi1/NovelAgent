@@ -10,12 +10,12 @@
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from agent.core.story.learning_store import Learning, LearningStore
-from agent.prompts import E_LEARN_EXTRACT_SYSTEM_PROMPT, E_LEARN_EXTRACT_USER_TEMPLATE
 from agent.utils import parse_llm_json
 
 
@@ -62,11 +62,11 @@ class LearningMiner:
             return []
 
         joined = "\n\n----\n\n".join(texts)
-        user = E_LEARN_EXTRACT_USER_TEMPLATE.format(chapter_text=joined)
+        user = pm.get("e.learn_extract").render_user(chapter_text=joined)
         try:
             resp = self.llm.chat_utility(
                 [
-                    {"role": "system", "content": E_LEARN_EXTRACT_SYSTEM_PROMPT},
+                    {"role": "system", "content": pm.get("e.learn_extract").system},
                     {"role": "user", "content": user},
                 ],
                 max_tokens=1500,

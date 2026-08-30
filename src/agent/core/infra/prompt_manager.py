@@ -38,9 +38,19 @@ def _split_sections(body: str) -> tuple[str, str]:
     """把 md body 按 ``# system`` / ``# user`` 切成 (system, user) 文本。
 
     没有对应标题时该段为空；都没有则整段当作 system。
+
+    提取规则：仅去掉标题行自身结尾的换行（结构性分隔），保留内容自身的首尾空白
+    （如 G* 注入模板以 ``\\n\\n`` 开头用于拼接时提供空行分隔），再去掉尾部换行。
+    md 写作约定为 ``# system\\n<内容>``（标题与内容间不额外留空行），这样内容自身的
+    前导换行能被精确保留，与原始常量逐字一致。
     """
-    sys_m = re.search(r"^#\s*system\s*$", body, re.MULTILINE)
-    usr_m = re.search(r"^#\s*user\s*$", body, re.MULTILINE)
+    # 收尾用 ``[^\S\n]*``（仅空格/制表，不含换行）+ lookahead，匹配停在标题行自身：
+    # 这样标题行后的换行（结构性分隔）会作为段首字符留给 ``_section_text`` 裁掉，
+    # 而内容自身的前导换行（如 G* 注入模板开头的 ``\n\n``）被完整保留。
+    # 若用 ``\s*$``，MULTILINE 下贪婪的 ``\s*`` 会跨过换行、把内容的 ``\n\n`` 一并吞掉，
+    # 导致拼接时丢失空行分隔。
+    sys_m = re.search(r"^#\s*system[^\S\n]*(?=\n|$)", body, re.MULTILINE)
+    usr_m = re.search(r"^#\s*user[^\S\n]*(?=\n|$)", body, re.MULTILINE)
     if sys_m is None and usr_m is None:
         return body.strip(), ""
     system = ""
@@ -48,10 +58,17 @@ def _split_sections(body: str) -> tuple[str, str]:
     if sys_m is not None:
         start = sys_m.end()
         end = usr_m.start() if usr_m is not None else len(body)
-        system = body[start:end].strip()
+        system = _section_text(body[start:end])
     if usr_m is not None:
-        user = body[usr_m.end():].strip()
+        user = _section_text(body[usr_m.end():])
     return system, user
+
+
+def _section_text(seg: str) -> str:
+    """去掉标题行结尾的单个换行（结构性分隔），保留内容自身首尾空白，再裁掉尾部换行。"""
+    if seg.startswith("\n"):
+        seg = seg[1:]
+    return seg.rstrip("\n")
 
 
 def _build_validation(spec: dict[str, Any] | None) -> list[ValidationSpec]:
@@ -150,12 +167,12 @@ def _has_jinja(s: str) -> bool:
 LEGACY_MAP: dict[str, Callable[[], tuple[str, str]]] = {}
 
 
-def _register(name: str, module: str, system_attr: str, user_attr: str | None = None) -> None:
+def _register(name: str, module: str, system_attr: str | None, user_attr: str | None = None) -> None:
     def _loader() -> tuple[str, str]:
         import importlib
 
         mod = importlib.import_module(module)
-        system = getattr(mod, system_attr)
+        system = getattr(mod, system_attr) if system_attr else ""
         user = getattr(mod, user_attr) if user_attr else ""
         return system, user
 
@@ -175,11 +192,41 @@ _register("quality.reader_appeal", "agent.core.quality.scoring.reader_appeal", "
 _register(
     "quality.rewrite",
     "agent.core.quality.rewrite.feedback_rewriter",
-    "REWRITE_SYSTEM_PROMPT",
-    "REWRITE_USER_TEMPLATE",
+    "_REWRITE_SYSTEM_PROMPT",
+    "_REWRITE_USER_TEMPLATE",
 )
 _register("budget.branch", "agent.workflows.budget_planner", "_SYSTEM_PROMPT")
 _register("m1.world", "agent.prompts", "M1_SYSTEM_PROMPT", "M1_USER_PROMPT_TEMPLATE")
+
+# ---- 阶段 B：prompts.py 全量迁移（M2/M3/M4/M5/M6/M12/M14/M15/M16/M19/m_d/E/G8/G11/G12/G）----
+_register("m2.discuss", "agent.prompts", 'M2_SYSTEM_PROMPT', 'M2_USER_PROMPT_TEMPLATE')
+_register("m3.outline", "agent.prompts", 'M3_SYSTEM_PROMPT', 'M3_USER_PROMPT_TEMPLATE')
+_register("m4.character", "agent.prompts", 'M4_SYSTEM_PROMPT', 'M4_USER_PROMPT_TEMPLATE')
+_register("m14.architecture", "agent.prompts", 'M14_SYSTEM_PROMPT', 'M14_USER_PROMPT_TEMPLATE')
+_register("m14.iterate", "agent.prompts", 'M14_ITERATE_SYSTEM_PROMPT', 'M14_ITERATE_USER_PROMPT_TEMPLATE')
+_register("m14.gap_check", "agent.prompts", 'M14_GAP_CHECK_SYSTEM_PROMPT', 'M14_GAP_CHECK_USER_PROMPT_TEMPLATE')
+_register("m5.generate", "agent.prompts", 'M5_GENERATE_SYSTEM_PROMPT', 'M5_GENERATE_USER_TEMPLATE')
+_register("m5.quality_check", "agent.prompts", 'M5_QUALITY_CHECK_SYSTEM_PROMPT', 'M5_QUALITY_CHECK_USER_TEMPLATE')
+_register("m5.revise", "agent.prompts", 'M5_REVISE_SYSTEM_PROMPT', 'M5_REVISE_USER_TEMPLATE')
+_register("m6.adjust_route", "agent.prompts", 'M6_ADJUST_ROUTE_SYSTEM_PROMPT', 'M6_ADJUST_ROUTE_USER_TEMPLATE')
+_register("m6.adjust_relation", "agent.prompts", 'M6_ADJUST_RELATION_SYSTEM_PROMPT', 'M6_ADJUST_RELATION_USER_TEMPLATE')
+_register("m6.impact_report", "agent.prompts", 'M6_IMPACT_REPORT_SYSTEM_PROMPT', 'M6_IMPACT_REPORT_USER_TEMPLATE')
+_register("m12.conflict", "agent.prompts", 'M12_CONFLICT_SYSTEM_PROMPT', 'M12_CONFLICT_USER_TEMPLATE')
+_register("m12.content_audit", "agent.prompts", 'M12_CONTENT_AUDIT_SYSTEM_PROMPT', 'M12_CONTENT_AUDIT_USER_TEMPLATE')
+_register("m12.summary", "agent.prompts", 'M12_SUMMARY_SYSTEM_PROMPT', 'M12_SUMMARY_USER_TEMPLATE')
+_register("m15.bookworm", "agent.prompts", 'M15_BOOKWORM_SYSTEM_PROMPT', 'M15_BOOKWORM_USER_TEMPLATE')
+_register("m16.pacing", "agent.prompts", 'M16_PACING_SYSTEM_PROMPT', 'M16_PACING_USER_TEMPLATE')
+_register("m19.review", "agent.prompts", 'M19_REVIEW_SYSTEM_PROMPT', 'M19_REVIEW_USER_TEMPLATE')
+_register("m_d.review", "agent.prompts", 'M_D_REVIEW_SYSTEM_PROMPT', 'M_D_REVIEW_USER_TEMPLATE')
+_register("e.learn_extract", "agent.prompts", 'E_LEARN_EXTRACT_SYSTEM_PROMPT', 'E_LEARN_EXTRACT_USER_TEMPLATE')
+_register("g11.method_instruction", "agent.prompts", None, 'G11_METHOD_INSTRUCTION_TEMPLATE')
+_register("g11.style_instruction", "agent.prompts", None, 'G11_STYLE_INSTRUCTION_TEMPLATE')
+_register("g12.emotion_instruction", "agent.prompts", None, 'G12_EMOTION_INSTRUCTION_TEMPLATE')
+_register("g12.payoff_instruction", "agent.prompts", None, 'G12_PAYOFF_INSTRUCTION_TEMPLATE')
+_register("g12.reader_feedback", "agent.prompts", None, 'G12_READER_FEEDBACK_TEMPLATE')
+_register("g8.ending_fallback_instruction", "agent.prompts", None, 'G8_ENDING_FALLBACK_INSTRUCTION')
+_register("g8.ending_instruction", "agent.prompts", None, 'G8_ENDING_INSTRUCTION_TEMPLATE')
+_register("g.character_state_constraint", "agent.prompts", None, 'G_CHARACTER_STATE_CONSTRAINT_TEMPLATE')
 
 
 class PromptManager:

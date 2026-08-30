@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -34,7 +35,6 @@ from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.core.registry.genre_pack import first_genre
 from agent.core.engine.workflow_registry import workflow
-from agent.prompts import M3_SYSTEM_PROMPT, M3_USER_PROMPT_TEMPLATE
 from agent.utils import parse_llm_json
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -224,7 +224,7 @@ class M3OutlineWorkflow:
         pt = arch.get("protagonist_triple", {}) or {}
         mp = arch.get("main_plot", {}) or {}
 
-        user_prompt = M3_USER_PROMPT_TEMPLATE.format(
+        user_prompt = pm.get("m3.outline").render_user(
             title=arch_data["title"],
             scope=world_info.get("scope", ""),
             expected_total_note=(
@@ -250,11 +250,10 @@ class M3OutlineWorkflow:
         if self.method_enabled:
             try:
                 from agent.core.story.method_style import load_method_text
-                from agent.prompts import G11_METHOD_INSTRUCTION_TEMPLATE
 
                 method_text, _name = load_method_text(self.project_dir, enabled=True)
                 if method_text:
-                    user_prompt += G11_METHOD_INSTRUCTION_TEMPLATE.format(
+                    user_prompt += pm.get("g11.method_instruction").render_user(
                         method_text=method_text
                     )
             except Exception:  # noqa: BLE001 - 模板读取失败降级，不阻断大纲生成
@@ -284,7 +283,7 @@ class M3OutlineWorkflow:
         # （截断多为瞬时，重试常可恢复；重试时强化「纯 JSON」约束），
         # 重试仍失败则明确抛错，绝不静默写入「架构拆解失败」占位大纲。
         last_text = ""
-        system_prompt = M3_SYSTEM_PROMPT
+        system_prompt = pm.get("m3.outline").system
         # dots3-note-prev 等模型在紧预算下偶发截断/空回，采用「充足预算 + 递增重试」：
         # 初版 A 方案 8192 实测百万字稳定，这里保留充足预算并递增，规避偶发空回。
         _budgets = (16384, 16384, 20480)
@@ -315,7 +314,7 @@ class M3OutlineWorkflow:
                     "[yellow]⚠ 大纲 JSON 解析失败，自动重试一次...[/yellow]"
                 )
                 system_prompt = (
-                    M3_SYSTEM_PROMPT
+                    pm.get("m3.outline").system
                     + "\n\n【重要】请只输出一个合法的 JSON 对象，"
                     "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
                 )

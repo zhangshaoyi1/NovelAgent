@@ -15,6 +15,7 @@
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -32,14 +33,6 @@ from agent.core.engine.workflow_registry import workflow
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.registry.genre_pack import first_genre
-from agent.prompts import (
-    M14_GAP_CHECK_SYSTEM_PROMPT,
-    M14_GAP_CHECK_USER_PROMPT_TEMPLATE,
-    M14_ITERATE_SYSTEM_PROMPT,
-    M14_ITERATE_USER_PROMPT_TEMPLATE,
-    M14_SYSTEM_PROMPT,
-    M14_USER_PROMPT_TEMPLATE,
-)
 from agent.utils import parse_llm_json
 
 # 模板目录
@@ -385,7 +378,7 @@ class M14ArchitectureWorkflow:
         解析失败时重试一次（要求只输出纯 JSON）；两次均失败则明确抛错，
         绝不静默写入残缺架构（否则作者在问答面板里确定的偏好会静默丢失）。
         """
-        user_prompt = M14_USER_PROMPT_TEMPLATE.format(
+        user_prompt = pm.get("m14.architecture").render_user(
             title=world_info["title"],
             scope=world_info["scope"],
             tone=world_info["tone"],
@@ -398,7 +391,7 @@ class M14ArchitectureWorkflow:
         if qa_text:
             user_prompt += qa_text
 
-        system_prompt = M14_SYSTEM_PROMPT
+        system_prompt = pm.get("m14.architecture").system
         # dots3-note-prev 等模型在紧预算下会把长结构化输出截断/返回空，
         # 故采用「充足预算 + 递增重试 + 纯 JSON 强化」的重试策略。
         _budgets = (16384, 16384, 20480)
@@ -406,7 +399,7 @@ class M14ArchitectureWorkflow:
             if attempt > 0:
                 # 重试：强化「纯 JSON」约束，规避截断/多余文本导致的解析失败
                 system_prompt = (
-                    M14_SYSTEM_PROMPT
+                    pm.get("m14.architecture").system
                     + "\n\n【重要】请只输出一个合法的 JSON 对象，"
                     "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
                 )
@@ -436,12 +429,12 @@ class M14ArchitectureWorkflow:
         解析失败自动重试一次（重试时强化「纯 JSON」约束），两次失败则明确抛错，
         绝不静默返回旧架构（否则会写出版本号 +1 但内容未变的分支文件）。
         """
-        user_prompt = M14_ITERATE_USER_PROMPT_TEMPLATE.format(
+        user_prompt = pm.get("m14.iterate").render_user(
             title=title,
             current_architecture=json.dumps(current_arch, ensure_ascii=False, indent=2),
             feedback=feedback,
         )
-        system_prompt = M14_ITERATE_SYSTEM_PROMPT
+        system_prompt = pm.get("m14.iterate").system
         last_text = ""
         _budgets = (16384, 16384, 20480)
         for attempt in range(len(_budgets)):
@@ -473,7 +466,7 @@ class M14ArchitectureWorkflow:
                     "[yellow]⚠ 架构迭代 JSON 解析失败，自动重试一次...[/yellow]"
                 )
                 system_prompt = (
-                    M14_ITERATE_SYSTEM_PROMPT
+                    pm.get("m14.iterate").system
                     + "\n\n【重要】请只输出一个合法的 JSON 对象（结构与初版一致），"
                     "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
                 )
@@ -489,10 +482,10 @@ class M14ArchitectureWorkflow:
             text = json.dumps(revised, ensure_ascii=False, indent=2)
             resp = self.llm.chat_utility(
                 messages=[
-                    {"role": "system", "content": M14_GAP_CHECK_SYSTEM_PROMPT},
+                    {"role": "system", "content": pm.get("m14.gap_check").system},
                     {
                         "role": "user",
-                        "content": M14_GAP_CHECK_USER_PROMPT_TEMPLATE.format(
+                        "content": pm.get("m14.gap_check").render_user(
                             feedback=feedback, revised_architecture=text
                         ),
                     },

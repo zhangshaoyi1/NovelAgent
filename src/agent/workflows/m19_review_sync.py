@@ -19,6 +19,7 @@
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 import json
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -29,7 +30,6 @@ from rich.console import Console
 
 from agent.client import LLMClient
 from agent.core.engine.workflow_registry import workflow
-from agent.prompts import M19_REVIEW_SYSTEM_PROMPT, M19_REVIEW_USER_TEMPLATE
 from agent.utils import parse_llm_json
 
 # 阶段产物路径（目录时聚合目录内所有 md）。与 web/state.py 的 STAGE_FILES 保持一致。
@@ -227,14 +227,14 @@ class M19ReviewSyncWorkflow:
     ) -> tuple[list[ReviewFinding], str]:
         """调 LLM 产出检查单 JSON；解析失败/为空时降级为『未发现明显问题』。"""
         adopted_note = self._format_adopted_note(previous_adopted)
-        user_prompt = M19_REVIEW_USER_TEMPLATE.format(
+        user_prompt = pm.get("m19.review").render_user(
             target_label=STAGE_LABEL.get(target_stage, target_stage),
             upstream_content=upstream_content or "（无）",
             target_content=target_content or "（无）",
             adopted_history=adopted_note,
         )
         last_text = ""
-        system_prompt = M19_REVIEW_SYSTEM_PROMPT
+        system_prompt = pm.get("m19.review").system
         for attempt in range(2):
             resp = self.llm.chat_creative(
                 messages=[
@@ -259,7 +259,7 @@ class M19ReviewSyncWorkflow:
                         "[yellow]⚠ 复核 JSON 解析失败，自动重试一次...[/yellow]"
                     )
                     system_prompt = (
-                        M19_REVIEW_SYSTEM_PROMPT
+                        pm.get("m19.review").system
                         + "\n\n【重要】请只输出一个合法的 JSON 对象，"
                         "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
                     )

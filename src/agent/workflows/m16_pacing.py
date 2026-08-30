@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -16,7 +17,6 @@ from typing import Any
 from agent.client import LLMClient
 from agent.core.story.pacing_store import Debt, Ledger, PacingStore
 from agent.core.engine.workflow_registry import workflow
-from agent.prompts import M16_PACING_SYSTEM_PROMPT, M16_PACING_USER_TEMPLATE
 from agent.utils import parse_llm_json
 
 
@@ -49,11 +49,11 @@ class PacingTracker:
         """
         if self.llm is None:
             return PacingExtraction()
-        user = M16_PACING_USER_TEMPLATE.format(chapter_text=chapter_text)
+        user = pm.get("m16.pacing").render_user(chapter_text=chapter_text)
         try:
             resp = self.llm.chat_utility(
                 [
-                    {"role": "system", "content": M16_PACING_SYSTEM_PROMPT},
+                    {"role": "system", "content": pm.get("m16.pacing").system},
                     {"role": "user", "content": user},
                 ],
                 max_tokens=1500,

@@ -20,6 +20,7 @@
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -38,7 +39,6 @@ from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.core.registry.genre_pack import first_genre
 from agent.core.engine.workflow_registry import workflow
-from agent.prompts import M4_SYSTEM_PROMPT, M4_USER_PROMPT_TEMPLATE
 from agent.utils import parse_llm_json
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
@@ -245,7 +245,7 @@ class M4CharacterWorkflow:
         else:
             sublines_table = str(sublines_text)[:1000]
 
-        user_prompt = M4_USER_PROMPT_TEMPLATE.format(
+        user_prompt = pm.get("m4.character").render_user(
             title=arch_data["title"],
             scope=world_info.get("scope", ""),
             tone=world_info.get("tone", ""),
@@ -304,7 +304,7 @@ class M4CharacterWorkflow:
 
         raw = self.llm.chat_creative(
             messages=[
-                {"role": "system", "content": M4_SYSTEM_PROMPT},
+                {"role": "system", "content": pm.get("m4.character").system},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.75,
@@ -314,7 +314,7 @@ class M4CharacterWorkflow:
         # 解析容错：对齐 M1/M14/M3 策略——JSON 解析失败自动重试一次（截断多为
         # 瞬时，重试时强化「纯 JSON」约束常可恢复），重试仍失败则明确抛错，
         # 绝不静默降级为占位角色（否则真实角色设计会被静默丢弃）。
-        system_prompt = M4_SYSTEM_PROMPT
+        system_prompt = pm.get("m4.character").system
         last_text = raw.text or ""
         for attempt in range(2):
             try:
@@ -334,7 +334,7 @@ class M4CharacterWorkflow:
                         "[yellow]⚠ 角色设计 JSON 解析失败，自动重试一次...[/yellow]"
                     )
                     system_prompt = (
-                        M4_SYSTEM_PROMPT
+                        pm.get("m4.character").system
                         + "\n\n【重要】请只输出一个合法的 JSON 对象，必须包含 "
                         "protagonist_route（含 nodes）与 characters（至少 1 名角色），"
                         "不要包含 ```json 代码块标记，不要输出任何解释性文字。"

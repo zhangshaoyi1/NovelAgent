@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from agent.core.infra.prompt_manager import pm
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -20,14 +21,6 @@ from rich.panel import Panel
 from rich.table import Table
 
 from agent.core.story.setting_manager import SettingManager
-from agent.prompts import (
-    M12_CONFLICT_SYSTEM_PROMPT,
-    M12_CONFLICT_USER_TEMPLATE,
-    M12_CONTENT_AUDIT_SYSTEM_PROMPT,
-    M12_CONTENT_AUDIT_USER_TEMPLATE,
-    M12_SUMMARY_SYSTEM_PROMPT,
-    M12_SUMMARY_USER_TEMPLATE,
-)
 from agent.utils import parse_llm_json
 
 
@@ -141,7 +134,7 @@ class ConflictArbiter:
         characters_content = self._load_characters_content()
 
         # 调用 LLM 检测冲突
-        user_msg = M12_CONFLICT_USER_TEMPLATE.format(
+        user_msg = pm.get("m12.conflict").render_user(
             world_content=world_content[:2000],
             subline_content=subline_content[:1500],
             characters_content=characters_content[:2000],
@@ -151,7 +144,7 @@ class ConflictArbiter:
         try:
             resp = self.llm.chat_utility(
                 messages=[
-                    {"role": "system", "content": M12_CONFLICT_SYSTEM_PROMPT},
+                    {"role": "system", "content": pm.get("m12.conflict").system},
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=0.1,
