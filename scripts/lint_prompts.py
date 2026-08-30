@@ -28,11 +28,14 @@ AGENT_ROOT = SCRIPT_DIR.parent                         # agent/
 PROMPT_MANAGER_PY = AGENT_ROOT / "src" / "agent" / "core" / "infra" / "prompt_manager.py"
 PROMPT_HELPERS_PY = AGENT_ROOT / "src" / "agent" / "core" / "infra" / "prompt_helpers.py"
 
-# 豁免文件：迁移加载器本身 + 格式化助手允许提及常量名；本卡口脚本内含 denylist 清单
+# 豁免文件：迁移加载器本身 + 格式化助手允许提及常量名；本卡口脚本内含 denylist 清单；
+# 阶段 C 单测（tests/test_prompt_manager_phase_c.py）故意以字符串字面量引用旧常量名 +
+# import agent.prompts，用于断言"已删除、不得回流"，属测试意图而非违规。
 EXEMPT = {
     AGENT_ROOT / "src" / "agent" / "core" / "infra" / "prompt_manager.py",
     PROMPT_HELPERS_PY,
     SCRIPT_DIR / "lint_prompts.py",
+    AGENT_ROOT / "tests" / "test_prompt_manager_phase_c.py",
 }
 
 # 显式白名单（防御性，正常情况 denylist 不会包含这些）
