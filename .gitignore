@@ -53,3 +53,7 @@ _final_commit_msg.txt
 
 # Windows 本地开发辅助脚本（PowerShell，非运行时依赖、无 CI 引用，不入库）
 tools/harness/
+
+# 错误日志与本地个人驱动脚本（运行产物/本机自动化工具，非项目代码，不入库）
+err.log
+_drive_web_write.py
