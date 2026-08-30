@@ -14,18 +14,24 @@ Status: implemented
 
 ## Decision
 
-- 新增 `workflows/budget_planner.py::BudgetPlanner`：LLM 主编预算规划器，走统一入口
+* 新增 `workflows/budget_planner.py::BudgetPlanner`：LLM 主编预算规划器，走统一入口
   `LLMClient.chat_structured`（strict 结构化 schema），读取当前进度、各支线主题、全书目标
   章数与 `phase_ratio` 软意图，动态产出各支线章数预算，写回 `.state/mainline.json` 的
   `subline_share`。
-- `MainlineOrchestrator` 注入可选的 `budget_planner`，新增 `replan_if_due()`：每 `replan_window`
-  （默认 = mainline_window）章先触发一次 LLM 重规划，随后 `maybe_advance()` 用更新后的
+
+* `MainlineOrchestrator` 注入可选的 `budget_planner`，新增 `replan_if_due()`：每 `replan_window`
+  （默认 = mainline\_window）章先触发一次 LLM 重规划，随后 `maybe_advance()` 用更新后的
   `subline_share` 作确定性 cap 切线。未注入 / 未到窗口 / 异常 → 静默 False（G3）。
-- 用户拍板取舍：
-  - 时机：每 N 章定期重规划（随故事演进自适应）。
-  - 失败降级：沿用上次 `subline_share`；无历史时按 `horizon_chapters / 支线数` 均衡分账。
-  - `--ratio` 语义：保留为软意图提示（`phase_ratio`），仅作 LLM 参考输入，不再当硬预算。
-- 写章入口 `agentic_write` / `agentic_pipeline` 的 `_maybe_advance_mainline` 统一改为
+
+* 用户拍板取舍：
+
+  * 时机：每 N 章定期重规划（随故事演进自适应）。
+
+  * 失败降级：沿用上次 `subline_share`；无历史时按 `horizon_chapters / 支线数` 均衡分账。
+
+  * `--ratio` 语义：保留为软意图提示（`phase_ratio`），仅作 LLM 参考输入，不再当硬预算。
+
+* 写章入口 `agentic_write` / `agentic_pipeline` 的 `_maybe_advance_mainline` 统一改为
   「注入 BudgetPlanner → `replan_if_due()` → `maybe_advance()`」，两条路径行为一致。
 
 ## Alternatives considered
@@ -37,12 +43,17 @@ Status: implemented
 
 ## Consequences
 
-- 预算来源从静态/均分升级为 LLM 动态规划，各支线篇幅随叙事分量自适应，支线不再被某条无限拖长。
-- `MainlineOrchestrator` 仍零 LLM、确定性执行，G8 拍板 1 语义不变；LLM 只影响「预算数值」，
+* 预算来源从静态/均分升级为 LLM 动态规划，各支线篇幅随叙事分量自适应，支线不再被某条无限拖长。
+
+* `MainlineOrchestrator` 仍零 LLM、确定性执行，G8 拍板 1 语义不变；LLM 只影响「预算数值」，
   不介入「何时切」的判定。
-- 每 replan_window 章增加一次 LLM 调用；失败时零副作用（沿用现值/均分兜底），不阻断写章。
-- **已知坑（已修，2026-08-30）：`_ask_llm` 最初 `max_tokens=2048`。V4 Flash 常在 JSON 尾部前先输出
-  较长中文前言，2048 被前言吃光后 JSON 未被写出即被截断，`chat_structured` 首/次两次 `extract_json`
-  均只得纯散文 → `plan()` 静默返回 False（沿用上次预算）。症状：`subline_share` 在多窗口推进后
-  纹丝不动。修复：`max_tokens` 提至 8192，验证 `plan()` 可成功产出新预算。**
-- Agent Note / 代码同步提交。
+
+* 每 replan\_window 章增加一次 LLM 调用；失败时零副作用（沿用现值/均分兜底），不阻断写章。
+
+* **已知坑（已修，2026-08-30）：`_ask_llm`** **最初** **`max_tokens=2048`。V4 Flash 常在 JSON 尾部前先输出
+  较长中文前言，2048 被前言吃光后 JSON 未被写出即被截断，`chat_structured`** **首/次两次** **`extract_json`
+  均只得纯散文 →** **`plan()`** **静默返回 False（沿用上次预算）。症状：`subline_share`** **在多窗口推进后
+  纹丝不动。修复：`max_tokens`** **提至 8192，验证** **`plan()`** **可成功产出新预算。**
+
+* Agent Note / 代码同步提交。
+
