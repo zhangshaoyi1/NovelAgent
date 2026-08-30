@@ -203,8 +203,18 @@ def _lazy_import_llmops():
             TracedLLMClient, get_tracer, set_tracer, build_cost_summary)
 
 def _lazy_import_anti_ai():
-    from agent.core.anti_ai import AILikenessDetector, PostProcessor
-    return AILikenessDetector, PostProcessor
+    from agent.core.anti_ai import (
+        AILikenessDetector,
+        PostProcessor,
+        AIFlavorScanner,
+        AIFlavorReport,
+        DeslopRewriter,
+        DeslopResult,
+    )
+    return (
+        AILikenessDetector, PostProcessor, AIFlavorScanner,
+        AIFlavorReport, DeslopRewriter, DeslopResult,
+    )
 
 def _lazy_import_supervisor():
     from agent.core.supervisor import SupervisorEngine, SupervisionReport
@@ -288,6 +298,7 @@ __all__ = [
     "CostModel", "EvalHarness", "PromptRegistry", "TraceStore",
     "TracedLLMClient", "get_tracer", "set_tracer", "build_cost_summary",
     "AILikenessDetector", "PostProcessor",
+    "AIFlavorScanner", "AIFlavorReport", "DeslopRewriter", "DeslopResult",
     "SupervisorEngine", "SupervisionReport",
     "AutoPlanner", "Decider", "Executor", "PlanAdjuster",
     "Tool", "ToolRegistry", "ToolResult", "set_project_context",
@@ -297,7 +308,7 @@ __all__ = [
 EventBus, Event, FileEventStore, RecoveryEngine = _lazy_import_event_sourcing()
 Chunk, Hit, Indexer, Retriever, VectorStore, LocalVectorStore, BM25Index = _lazy_import_rag()
 CostModel, EvalHarness, PromptRegistry, TraceStore, TracedLLMClient, get_tracer, set_tracer, build_cost_summary = _lazy_import_llmops()
-AILikenessDetector, PostProcessor = _lazy_import_anti_ai()
+AILikenessDetector, PostProcessor, AIFlavorScanner, AIFlavorReport, DeslopRewriter, DeslopResult = _lazy_import_anti_ai()
 SupervisorEngine, SupervisionReport = _lazy_import_supervisor()
 AutoPlanner, Decider, Executor, PlanAdjuster = _lazy_import_orchestrator()
 Tool, ToolRegistry, ToolResult, set_project_context = _lazy_import_tools()

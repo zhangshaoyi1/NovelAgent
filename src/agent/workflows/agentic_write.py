@@ -89,6 +89,8 @@ class AgenticWriteWorkflow:
         style_file: str | None = None,
         # ---- G12 新增参数：爽点剧本/情绪目标注入（默认开）----
         payoff_enabled: bool = True,
+        # ---- P0 新增参数：去AI味（默认开；--no-deslop 关闭）----
+        deslop_enabled: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client or LLMClient()
@@ -102,6 +104,8 @@ class AgenticWriteWorkflow:
         self.style_file = style_file
         # G12：爽点/情绪开关（透传给 M5._load_context 使用）
         self.payoff_enabled = payoff_enabled
+        # P0：去AI味开关（质量门禁通过后、落盘前执行；--no-deslop 关闭）
+        self.deslop_enabled = deslop_enabled
         # G9：章内子阶段事件发射器（pipeline 注入；None 时零开销）
         self.event_emitter = event_emitter
 
@@ -116,6 +120,31 @@ class AgenticWriteWorkflow:
                 })
             except Exception:  # noqa: BLE001 - 子阶段事件异常不阻断写章（拍板 3）
                 pass
+
+    def _run_deslop(self, text: str, ctx: dict[str, Any]) -> str:
+        """P0 去AI味：质量门禁通过后、落盘前执行（轻度规则/中重 LLM）。
+
+        与 M5 ``_maybe_deslop`` 共用策略：轻度走规则后处理（零 LLM），中/重度走 LLM
+        改写（6 Gate + 三遍法）。任何失败降级返回原文，绝不阻断写章（G3 哲学）。
+        标题已由调用方在 deslop 前提取，故此处可安全改写正文。
+        """
+        if not self.deslop_enabled:
+            return text
+        try:
+            from agent.core.anti_ai.rewriter import DeslopRewriter
+
+            # 先做与落盘一致的清理，避免把标题行/元信息交给 LLM 改写
+            body = M5WriteChapterWorkflow._clean_chapter_body(text)
+            rewriter = DeslopRewriter(
+                self.llm, project_dir=self.project_dir, console=self.console
+            )
+            result = rewriter.rewrite(body, level="auto")
+            self._emit_substage(f"deslop:{result.level}", ctx["chapter_num"])
+            if result.changed and result.text.strip():
+                return result.text
+            return text
+        except Exception:  # noqa: BLE001 - 去AI味失败降级原文，不阻断写章
+            return text
 
     # ------------------------------------------------------------------
     # 门禁（与 M5 一致）
@@ -355,6 +384,10 @@ class AgenticWriteWorkflow:
 
         # 落盘（复用 M5 方法，保证产物兼容）
         title = m5._extract_title(text, ctx)
+
+        # ---- P0 去AI味：质量门禁通过后、落盘前（轻度规则/中重 LLM；失败降级原文）----
+        text = self._run_deslop(text, ctx)
+
         word_count = len(re.sub(r"\s", "", text))
         evidence_chain = m5._build_evidence_chain(ctx)
         chapter_file = m5._save_chapter(

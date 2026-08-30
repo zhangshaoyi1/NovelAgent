@@ -166,3 +166,54 @@ def foreshadow_read() -> Any:
         return {"exists": False, "content": ""}
     return {"exists": True, "content": f.read_text(encoding="utf-8")}
 
+
+@tool(
+    name="deslop_check",
+    description=(
+        "检测并去除章节文本中的AI味：返回 AI 味等级（light/medium/heavy）、"
+        "6 项客观指标、禁用词命中清单，以及改写后的文本与修改记录。"
+        "中度/重度走 LLM 改写（6 Gate + 三遍法），轻度走规则后处理。"
+        "仅改表达不改剧情，保留原文的伏笔/人设/情节。"
+    ),
+    parameters_schema={
+        "type": "object",
+        "properties": {
+            "chapter_text": {"type": "string", "description": "待去AI味的章节正文"},
+            "level": {
+                "type": "string",
+                "enum": ["auto", "light", "medium", "heavy"],
+                "description": "AI味等级（默认 auto 自动扫描判定）",
+                "default": "auto",
+            },
+            "dry_run": {
+                "type": "boolean",
+                "description": "True 仅扫描报告，不改写文本",
+                "default": False,
+            },
+        },
+        "required": ["chapter_text"],
+    },
+)
+def deslop_check(chapter_text: str, level: str = "auto", dry_run: bool = False) -> Any:
+    from agent.core.anti_ai.rewriter import DeslopRewriter
+
+    rewriter = DeslopRewriter(project_dir=get_project_dir())
+    if dry_run:
+        report = rewriter.classify(chapter_text)
+        return {
+            "level": report.level,
+            "score": report.score,
+            "metrics": report.metrics,
+            "banned_hits": report.banned_hits,
+            "flagged_items": report.flagged_items,
+        }
+    result = rewriter.rewrite(chapter_text, level=level)
+    return {
+        "level": result.level,
+        "changed": result.changed,
+        "via_llm": result.via_llm,
+        "text": result.text,
+        "changes": result.changes[:30],
+        "metrics": result.metrics,
+    }
+
