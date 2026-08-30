@@ -25,6 +25,7 @@ from pydantic import BaseModel, Field, ValidationError
 from rich.console import Console
 
 from agent.client import LLMClient
+from agent.core.infra.prompt_manager import pm
 from agent.core.story.method_style import load_method_text  # G11：写作方法模板
 from agent.core.story.setting_manager import SettingManager
 from agent.core.base.structured_output import StructuredOutputError
@@ -230,7 +231,7 @@ class PlannerAgent:
         user_msg += self._method_suffix()  # G11：写作方法模板注入（存在即追加）
         decide = self._make_decide()
         messages = [
-            {"role": "system", "content": _PLANNER_SYSTEM},
+            {"role": "system", "content": pm.get("agents.planner").system},
             {"role": "user", "content": user_msg},
         ]
         try:
@@ -269,7 +270,7 @@ class PlannerAgent:
         user_msg += self._method_suffix()  # G11：写作方法模板注入（存在即追加）
         decide_async = await self._make_decide_async()
         messages = [
-            {"role": "system", "content": _PLANNER_SYSTEM},
+            {"role": "system", "content": pm.get("agents.planner").system},
             {"role": "user", "content": user_msg},
         ]
         try:

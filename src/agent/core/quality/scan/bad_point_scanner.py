@@ -29,6 +29,7 @@ import frontmatter
 from rich.console import Console
 
 from agent.base.utils import parse_llm_json
+from agent.core.infra.prompt_manager import pm
 
 
 # ============================================================
@@ -244,8 +245,9 @@ class BadPointScanner:
             parts.append(f"### 第{num}章\n{texts[num][:1600]}")
         chapters_text = "\n\n".join(parts)[:12000]
 
-        system = _LLM_SCAN_SYSTEM_PROMPT
-        user = _LLM_SCAN_USER_TEMPLATE.format(
+        _p = pm.get("quality.bad_point_scan")
+        system = _p.system
+        user = _p.render_user(
             world=world[:2000] or "（无 world.md）",
             characters=chars[:2000] or "（无角色档案）",
             golden=golden[:1000] or "（无金手指登记）",

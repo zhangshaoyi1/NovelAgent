@@ -35,6 +35,7 @@ from agent.core.engine.tool_contracts import (
     registry as default_registry,
 )
 from agent.client import LLMClient
+from agent.core.infra.prompt_manager import pm
 from agent.core.base.structured_output import StructuredOutputError
 
 # 写作人设（与 M5 创作系统提示同源，保证风格一致）
@@ -174,7 +175,7 @@ class WriterAgent:
                         "[yellow]Writer 结构化输出解析失败，追加纯 JSON 指令重试…[/yellow]"
                     )
                     retry_messages = list(messages) + [
-                        {"role": "user", "content": _RETRY_JSON_PROMPT}
+                        {"role": "user", "content": pm.get("agents.writer_retry").system}
                     ]
 
         return decide
@@ -212,7 +213,7 @@ class WriterAgent:
                         "[yellow]Writer 结构化输出解析失败，追加纯 JSON 指令重试…[/yellow]"
                     )
                     retry_messages = list(messages) + [
-                        {"role": "user", "content": _RETRY_JSON_PROMPT}
+                        {"role": "user", "content": pm.get("agents.writer_retry").system}
                     ]
 
         return decide_async

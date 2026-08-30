@@ -15,6 +15,7 @@
 """
 
 from __future__ import annotations
+from agent.core.infra.prompt_manager import pm
 
 import json
 from pathlib import Path
@@ -147,13 +148,12 @@ class BudgetPlanner:
         """调用统一 LLMClient.chat_structured 产出主编预算。"""
         if self._llm is None:
             from agent.client import LLMClient
-
             self._llm = LLMClient()
 
         user_msg = self._build_user_prompt(sublines, horizon, plan)
         data = self._llm.chat_structured(
             [
-                {"role": "system", "content": _SYSTEM_PROMPT},
+                {"role": "system", "content": pm.get("budget.branch").system},
                 {"role": "user", "content": user_msg},
             ],
             _BudgetSchema,

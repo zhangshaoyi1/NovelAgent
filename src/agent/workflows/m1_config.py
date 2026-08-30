@@ -29,11 +29,11 @@ from rich.prompt import Confirm, Prompt
 
 from agent import __version__
 from agent.client import LLMClient
+from agent.core.infra.prompt_manager import pm
 from agent.core.registry.genre_pack import GenrePackRegistry
 from agent.core.registry.genre_merger import GenreMerger, save_conflicts
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
-from agent.prompts import M1_SYSTEM_PROMPT, M1_USER_PROMPT_TEMPLATE
 from agent.utils import parse_llm_json
 from agent.core.infra.hook_dispatcher import dispatch_genre_hooks
 from agent.core.story.volume import (
@@ -365,7 +365,8 @@ class M1ConfigWorkflow:
             chapter_length=user_input.chapter_length
             or style.get("chapter_length"),
         )
-        user_prompt = M1_USER_PROMPT_TEMPLATE.format(
+        _p = pm.get("m1.world", genre=user_input.genres[0] if user_input.genres else None)
+        user_prompt = _p.render_user(
             title=user_input.title,
             scope=scope_desc,
             tone=style.get("tone", ""),
@@ -379,7 +380,7 @@ class M1ConfigWorkflow:
         if qa_text:
             user_prompt += qa_text
 
-        system_prompt = M1_SYSTEM_PROMPT
+        system_prompt = _p.system
         # 注意：dots3-note-prev 等模型在紧预算下会把长结构化输出截断/返回空，
         # 故采用「充足预算 + 递增重试 + 纯 JSON 强化」的重试策略。
         _budgets = (16384, 16384, 20480)
@@ -387,7 +388,7 @@ class M1ConfigWorkflow:
             if attempt > 0:
                 # 重试：强化「纯 JSON」约束，规避截断/多余文本导致的解析失败
                 system_prompt = (
-                    M1_SYSTEM_PROMPT
+                    _p.system
                     + "\n\n【重要】请只输出一个合法的 JSON 对象，"
                     "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
                 )

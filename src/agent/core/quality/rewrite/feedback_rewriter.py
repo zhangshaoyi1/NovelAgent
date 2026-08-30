@@ -32,6 +32,7 @@ from rich.console import Console
 from agent.core.quality.guardrails import GateMode, Guardrails, build_guardrails
 from agent.core.story.setting_manager import SettingManager
 from agent.base.validation import ValidationSpec
+from agent.core.infra.prompt_manager import pm
 
 # ============================================================
 # 提示词（自包含，避免侵入 prompts.py）
@@ -274,7 +275,8 @@ class FeedbackRewriter:
 
     # ---------------------------------------------------------- 内部：LLM 调用
     def _call_rewrite(self, old_text: str, feedback: str, ctx: dict[str, Any]) -> str:
-        user_prompt = REWRITE_USER_TEMPLATE.format(
+        _p = pm.get("quality.rewrite")
+        user_prompt = _p.render_user(
             chapter_text=old_text[:12000],
             feedback=feedback,
             genre=ctx["genre"],
@@ -289,7 +291,7 @@ class FeedbackRewriter:
         )
         resp = self.llm.chat_creative(
             messages=[
-                {"role": "system", "content": REWRITE_SYSTEM_PROMPT},
+                {"role": "system", "content": _p.system},
                 {"role": "user", "content": user_prompt},
             ],
             temperature=0.7,

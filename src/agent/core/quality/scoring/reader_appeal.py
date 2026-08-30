@@ -32,6 +32,7 @@ from agent.core.story.chapters import (  # G6：公共章节读取 helper（消�
     take_chapter_files,
 )
 from agent.utils import parse_llm_json
+from agent.core.infra.prompt_manager import pm
 
 
 # ============================================================
@@ -292,7 +293,7 @@ class ReaderAppealScorer:
             # 真实小说实测：评分/计数维均须 ≥8192 才稳定出完整 JSON。
             resp = self.llm.chat_utility(
                 messages=[
-                    {"role": "system", "content": _EVAL_SYSTEM_PROMPT},
+                    {"role": "system", "content": pm.get("quality.reader_appeal_eval").system},
                     {"role": "user", "content": prompt},
                 ],
                 temperature=0.2,
@@ -380,7 +381,7 @@ class ReaderAppealScorer:
         try:
             resp = self.llm.chat_utility(
                 messages=[
-                    {"role": "system", "content": _APPEAL_SYSTEM_PROMPT},
+                    {"role": "system", "content": pm.get("quality.reader_appeal").system},
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.3,
