@@ -39,8 +39,9 @@ dist/skills/
 # 备份输出（非项目代码）
 outputs/
 
-# 开发笔记/思考记录（非项目代码）
-.agents/
+# 开发笔记/思考记录（.agents/ 下仅 notes/ 决策记录入库，skills/ 等其余不入库）
+.agents/*
+!.agents/notes/
 
 # 一次性调试脚本
 _debug_safe_remove.py
