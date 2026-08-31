@@ -172,6 +172,19 @@ class DeslopRewriter:
                 via_llm=True,
             )
 
+        if self._is_editorial_contaminated(new_text):
+            # 模型把编辑思维链（门禁/禁用词/逐句分析等）当成【润色后全文】输出 →
+            # 拒绝提取并降级原文，避免把分析笔记落进章节正文（G3：绝不破坏章节）。
+            return DeslopResult(
+                text=text,
+                level=level,
+                changed=False,
+                changes=["改写输出含编辑思维链残留，拒绝提取，保留原文"],
+                metrics=report.metrics,
+                report=report,
+                via_llm=True,
+            )
+
         changed = new_text != text
         if self.console is not None and changed:
             self.console.print(
@@ -219,3 +232,25 @@ class DeslopRewriter:
         ):
             lines.pop(0)
         return "\n".join(lines), changes
+
+    @staticmethod
+    def _is_editorial_contaminated(text: str) -> bool:
+        """检测提取到的「润色后正文」是否混入了编辑思维链（分析笔记）。
+
+        V4 Flash 偶尔会把「门禁检查/禁用词表/逐句分析」这类编辑思维链当成
+        【润色后全文】输出（见 ch155/167/172/177/183 曾被污染）。此处用强特征
+        识别：命中任一即判定为污染。只匹配"编辑分析独有措辞"，避免误伤正常
+        剧情中合法的「门禁/禁制」等词（如"青云门禁制"）。
+        """
+        patterns = (
+            r"门禁[A-FＦ]",  # 门禁A/B/C/D/E/F
+            r"门禁\s*[：:]",  # 门禁：
+            r"禁用词",
+            r"分析原文",
+            r"逐句(检查|修改)",
+            r"逐段(检查|分析|修改)",
+            r"（这是禁用词",  # 正文内残留的改写注记
+            r"修改策略|修改记录：|改写方案|润色说明",
+            r"(^|\n)\s*第一遍|(^|\n)\s*第二遍|(^|\n)\s*第三遍",
+        )
+        return any(re.search(p, text) for p in patterns)
