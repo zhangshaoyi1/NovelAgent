@@ -21,6 +21,7 @@ from agent.core.base.structured_output import (
     extract_json,
     StructuredOutputError,
 )
+from agent.core.base.validation import validate_many, validate_model
 
 __all__ = [
     # exceptions
@@ -38,4 +39,7 @@ __all__ = [
     "pydantic_to_json_schema",
     "extract_json",
     "StructuredOutputError",
+    # boundary validation (G15 P0-5)
+    "validate_model",
+    "validate_many",
 ]

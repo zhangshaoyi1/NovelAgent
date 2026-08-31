@@ -430,6 +430,10 @@ class M5WriteChapterWorkflow:
             quality_passed, revision_attempts, evidence_chain,
         )
 
+        # ---- G15 章后归档 hook：本章 deltas 归档进连续性账本 + 伏笔 beats 标记落地。
+        # 缺账本/失败一律 try/except 降级不阻断（对齐 `_maybe_advance_mainline` hook 位置）。
+        self._archive_chapter(ctx, chapter_title)
+
         # A：增量索引（仅当 .state/rag/ 已建立；否则跳过，绝不阻断写章）
         rag_context_len = len(ctx.get("rag_context", []))
         rag_dir = self.project_dir / ".state" / "rag"
@@ -616,6 +620,30 @@ class M5WriteChapterWorkflow:
             learnings = []
             learnings_text = "（暂无已沉淀的写法记忆）"
 
+        # ---- G15：连续性账本投影（写前注入；缺账本 → 降级为空，不阻断写章）----
+        continuity_projection = ""
+        continuity_loops: list = []
+        try:
+            from agent.core.continuity import ContinuityLedgerStore, project, project_to_text
+
+            _ledger = ContinuityLedgerStore(self.project_dir)
+            _ledger.load()
+            if _ledger.has_any():
+                _proj = project(_ledger)
+                continuity_projection = project_to_text(_proj)
+                continuity_loops = [
+                    {
+                        "loop_id": lo.loop_id,
+                        "kind": lo.kind,
+                        "status": lo.status,
+                        "detail": lo.detail,
+                    }
+                    for lo in _proj.open_loops
+                ]
+        except Exception:  # noqa: BLE001 - 账本投影失败降级为空
+            continuity_projection = ""
+            continuity_loops = []
+
         # ---- G12：本章爽点剧本 + 情绪目标（缺失/损坏/关闭 → ""）----
         _payoff_task, _emotion_target = "", ""
         if getattr(self, "payoff_enabled", True):  # 默认开；--no-payoff 关闭
@@ -650,6 +678,9 @@ class M5WriteChapterWorkflow:
             "open_debts": open_debts,
             "learnings": learnings,
             "learnings_text": learnings_text,
+            # ---- G15：连续性账本投影（写前输入，有界；缺 → 空降级）----
+            "continuity_projection": continuity_projection,
+            "continuity_open_loops": continuity_loops,
             # ---- G8（补充边界 4）：结局/主线上下文注入 ----
             "ending": self._load_architecture_ending(),  # architecture.md frontmatter（空串=降级）
             "ending_mode": bool(progress.get("ending_mode", False)),  # 是否结局模式
@@ -1215,6 +1246,16 @@ class M5WriteChapterWorkflow:
                 + learnings_text
             )
 
+        # ---- G15：连续性账本投影注入（写前输入；缺账本 → 跳过，不阻断）----
+        continuity_projection = (ctx.get("continuity_projection") or "").strip()
+        if continuity_projection:
+            system_prompt = (
+                system_prompt
+                + "\n\n【连续性账本投影（已定事实/未闭环/上章交接，请遵守，"
+                "不要与之冲突）】\n"
+                + continuity_projection
+            )
+
         # ---- B1：写章防模板注入（本卷已用手段清单 + 灭门回忆计数；只约束字数/花式，不硬删）----
         reuse_guard_text = (ctx.get("reuse_guard_text") or "").strip()
         if reuse_guard_text:
@@ -1731,6 +1772,51 @@ class M5WriteChapterWorkflow:
         post = frontmatter.Post(body, **metadata)
         file.write_text(frontmatter.dumps(post), encoding="utf-8")
         return file
+
+    def _archive_chapter(self, ctx: dict[str, Any], chapter_title: str) -> None:
+        """G15 章后归档 hook：本章最小交接归档进连续性账本 + 伏笔 beats 标记落地。
+
+        - 向 `ContinuityLedgerStore.commit` 写入本章交接（source_commit_id=本章 ID），
+          `latest_handoff()` 即成为下一章投影的「上一章交接」来源。
+        - 把规划锚指向本章（``anchor_chapter == 本章``）的伏笔 beat 标记为 committed，
+          由纯函数 `derive_status` 自动推进线程状态。
+        - 缺账本 / 任何异常 → 静默降级，绝不阻断写章（与「降级不阻断」一致）。
+        """
+        try:
+            from agent.core.continuity import ContinuityHandoff, ContinuityLedgerStore
+            from agent.core.story.foresight import ForesightBeat, ForesightStore, mark_committed
+
+            chapter_num = ctx["chapter_num"]
+            commit_id = f"ch{chapter_num:03d}"
+
+            ledger = ContinuityLedgerStore(self.project_dir)
+            ledger.load()
+            ledger.commit(
+                chapter=chapter_num,
+                facts=[],
+                knowledge=[],
+                open_loops=[],
+                handoff=ContinuityHandoff(
+                    chapter=chapter_num,
+                    summary=f"第{chapter_num}章《{chapter_title}》",
+                    must_carry=[],
+                    next_chapter_constraints=[],
+                    source_commit_id=commit_id,
+                ),
+            )
+
+            store = ForesightStore(self.project_dir)
+            threads = store.load()
+            changed = False
+            for t in threads:
+                for b in t.beats:
+                    if b.anchor_chapter == chapter_num and b.exec_status != "committed":
+                        mark_committed(t, ForesightBeat.model_validate(b), commit_id)
+                        changed = True
+            if changed:
+                store.save(threads)
+        except Exception:  # noqa: BLE001 - 归档失败降级不阻断
+            logger.debug("[continuity] 章后归档失败，已降级（不影响本章产出）", exc_info=True)
 
     # ============================================================
     # E2 题材动态注入

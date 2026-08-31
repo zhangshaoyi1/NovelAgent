@@ -24,6 +24,7 @@ from agent.core.llmops.trace import (
     set_tracer,
 )
 from agent.core.llmops.traced_llm import TracedLLMClient
+from agent.core.llmops.usage_reporter import DEFAULT_USAGE_FILE, UsageReporter
 
 __all__ = [
     "TraceStore",
@@ -41,4 +42,6 @@ __all__ = [
     "EvalRun",
     "RegressionIssue",
     "TracedLLMClient",
+    "UsageReporter",
+    "DEFAULT_USAGE_FILE",
 ]
