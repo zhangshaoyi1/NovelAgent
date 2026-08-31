@@ -34,7 +34,8 @@ def decide_mainline_advance(
         mainline_window: 决策窗口（章，默认 5，pipeline 保证 ≥1）。
         cap: 可选的分支线预算硬上界（章）。由 MainlineOrchestrator 传入，
             来自 .state/mainline.json 的 subline_share（比例/预算兜底）。提供时
-            取 ``min(多源上界, cap)``，保证任何支线不超过其预算份额。
+            取 ``min(多源上界, cap)``，保证任何支线不超过其预算份额；
+            但两源均缺失（无曲线/episode 数据）时不设 cap，保留「每 window 章硬切」保底。
 
     Returns:
         目标 subline_id（应切换到的下一条支线）或 None（不切换）。
@@ -70,8 +71,10 @@ def decide_mainline_advance(
         upper = None  # 无区间数据 → 保底硬切
 
     # ---- 预算硬上界（比例/均衡分账兜底）：cap 提供时取更早的那一个 ----
-    if cap is not None:
-        upper = min(upper, cap) if upper is not None else cap
+    # 无区间数据（upper is None）→ 退化「每 mainline_window 章硬切」优先，
+    # cap 不覆盖该保底语义（否则无曲线的书会被大预算 cap 拖到不切换）。
+    if cap is not None and upper is not None:
+        upper = min(upper, cap)
 
     # ---- 切换条件：已越过区间上界；无区间数据时以决策窗口为保底 ----
     switch = (chapter > upper) if upper is not None else True

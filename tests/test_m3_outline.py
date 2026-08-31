@@ -390,5 +390,5 @@ def test_m3_handles_llm_json_parse_failure(tmp_path: Path) -> None:
         wf.run()
     # 不应写入占位大纲
     assert not (tmp_path / "outline.md").exists()
-    # 重试一次：共调用两次
-    assert bad_llm.chat_creative.call_count == 2
+    # 递增重试（充足预算 + 纯 JSON 强化）：共调用三次后仍失败才抛错
+    assert bad_llm.chat_creative.call_count == 3

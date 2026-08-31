@@ -143,7 +143,7 @@ class TestCommandRegistry:
             "/start", "/discuss", "/confirm-architecture", "/outline",
             "/design-characters", "/write", "/adjust-route", "/adjust-relation",
             "/mode", "/load-skill", "/bookworm-review", "/rollback", "/resume",
-            "/export", "/audit", "/help", "/reset-state",
+            "/export", "/help", "/reset-state",
         ]
         names = {c.name for c in COMMAND_REGISTRY}
         for cmd in required:

@@ -117,6 +117,8 @@ def test_substage_order_generate_quality_revise(tmp_path: Path) -> None:
     assert substages[:3] == ["generate", "quality_check", "revise"], (
         f"子阶段顺序应为 generate→quality_check→revise，实际 {substages}"
     )
+    # 修订后正文再走 P0 去AI味（默认开），因此存在 deslop:* 尾阶段
+    assert any(s.startswith("deslop:") for s in substages), f"应有 deslop 阶段，实际 {substages}"
     assert res.revision_attempts == 1, "QUALITY_FAIL 应触发一次修订"
     # 每事件都带 chapter 字段（经 emit_partial 补 seq/ts/elapsed_s）
     for e in bus.events:
@@ -137,7 +139,9 @@ def test_substage_no_revise_when_quality_pass(tmp_path: Path) -> None:
     )
     m5.run()
     substages = [e["substage"] for e in bus.events if e["type"] == "chapter_substage"]
-    assert substages == ["generate", "quality_check"], "质量通过不应出现 revise"
+    assert substages == ["generate", "quality_check", "deslop:light"], (
+        "质量通过不应出现 revise；去AI味默认开 → 尾阶段 deslop:light"
+    )
 
 
 def test_m5_no_emitter_zero_regression(tmp_path: Path) -> None:
