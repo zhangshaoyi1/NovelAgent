@@ -57,3 +57,12 @@ tools/harness/
 # 错误日志与本地个人驱动脚本（运行产物/本机自动化工具，非项目代码，不入库）
 err.log
 _drive_web_write.py
+
+# 污染章节一次性重建/回溯脚本与恢复数据（debug 工具，不入库）
+_rebuild_clean.py
+_reconstruct.py
+_rip155.py
+_rip167.py
+_scaffold.py
+_verify_guard.py
+_recovered/
