@@ -12,13 +12,14 @@ NovelAgent 是一个**共创式长篇小说写作 Agent**：给它一段思路�
 它的核心能力：
 
 - **网页工作台**：`novel-agent web` 启动零构建 Web UI——引导向导七步走通创作闭环、实时写作间看 SSE 进度与成本一键续写、改了上游自动提示下游复核（**第六章**）；
-- **全自主写作**：`autowrite` 一键输入思路，全自动完成（支持 `auto` 全自主 / `light` 关键节点介入 / `heavy` 每章控制）；
-- **长篇一致性**：角色关系网、主角成长路线、伏笔表、金手指登记，随剧情演化但不矛盾；
+- **全自主写作**：`autowrite` 一键输入思路，全自动完成（支持 `auto` 全自主 / `light` 关键节点介入 / `heavy` 每章控制）；`compose` 一键写完整本；
+- **长篇一致性**：角色关系网、主角成长路线、金手指登记，随剧情演化但不矛盾；**连续性账本**（事实 / 信息差 / 未闭环 / 章交接）随时可查，伏笔由**确定性状态机**管理（埋设→强化→回收，逾期自动标记）；
+- **主线分线预算**：各支线章数上限硬约束（越界自动切下一支线），LLM 主编按进度动态重规划占比；
 - **剧集树（支线 / 卷）**：按 `outline.md` + 每条支线的 `subline.md` 推进；
-- **质量门禁**：每章多重校验（爽点 / OOC / 连贯性 / 追读力 / AI 味 / 注水 / 黄金三章），不通过自动修订；
+- **质量门禁**：每章多重校验（爽点 / OOC / 连贯性 / 追读力 / AI 味 / 注水 / 黄金三章），不通过自动修订；存量章节可 `deslop` 批量去 AI 味（6 指标分级改写）；
 - **成书体检**：`evaluate` 跑「不崩」七维终审 + `appeal` 迷爱看 6 维评分，缺陷自动回溯修复；
-- **G14 成书质量护栏**：写时 BLOCK 英文残留 / 占位标题 / 跨章重复，`guardrail-scan` 全量体检；
-- **笔枢对标能力**：Agent 阵容叙事（`roster`）、冰山建书 60+ 字段（`iceberg`）、双模式连续滑块（`mode --autonomy`）、可拖拽世界关系图谱（`graph`）；
+- **G14 成书质量护栏**：写时 BLOCK 英文残留 / 占位标题 / 跨章重复 / 元指令泄漏，`guardrail-scan` 全量体检；
+- **笔枢对标能力**：Agent 阵容叙事（Web `/team` 页）、冰山建书 60+ 字段（`iceberg`）、双模式连续滑块（`mode --autonomy`）、可拖拽世界关系图谱（`graph`）；
 - **可逆操作**：快照、回滚、归档，写错了能后退。
 
 ### 两种入口：CLI 与 Web 工作台（能力同源、完全一致）
@@ -60,17 +61,19 @@ NovelAgent 提供**两种等价的使用入口**，可以混着用、随时切�
 
 ### 2.2 安装 agent 包
 
-NovelAgent 用 **src 布局**，从 NovelAgent 根目录安装（构建 wheel 会把 `src/agent` 包装进来）：
+NovelAgent 由**两个包**组成：应用包 `agent`（本仓库）+ 编排内核包 `llmagent`（旁边的 `../llmagent`，提供统一 LLM 网关 Gateway）。**两个包需在同一工作区根目录下，且要先装内核再装应用**：
 
 ```bash
 # 方式 A：正式安装（构建 wheel）
+pip install ./llmagent
 pip install ./agent
 
 # 方式 B：editable 安装（改源码即时生效，推荐开发 / 调试期）
+pip install -e ./llmagent
 pip install -e ./agent
 ```
 
-依赖见 `agent/pyproject.toml`（核心：typer、rich、pydantic、jinja2、openai、pyyaml、python-frontmatter、python-dotenv、**fastapi、uvicorn、python-multipart**——后三者用于 Web UI）。
+依赖见 `agent/pyproject.toml`（核心：typer、rich、pydantic、jinja2、openai、pyyaml、python-frontmatter、python-dotenv、**fastapi、uvicorn、python-multipart**——后三者用于 Web UI；另有本地依赖 `llmagent`）。
 
 > **Web UI 依赖**：启动网页界面（`novel-agent web`）需要 `fastapi` 与 `uvicorn`，二者已写入 `pyproject.toml` 的 `dependencies`。若你是早先按旧 README 安装、没装过这俩包，重跑一次安装命令即可（见下方 2.2）。
 
@@ -78,11 +81,14 @@ pip install -e ./agent
 
 ```bash
 novel-agent --help
-# 或（不安装包，从仓库根目录把 src 加入 PYTHONPATH，<NovelAgent> 即仓库根）：
-PYTHONPATH=./agent/src python -m agent.cli --help
+# 或（不安装包，从仓库根目录把两个 src 加入 PYTHONPATH，<NovelAgent> 即仓库根）：
+# Windows（PowerShell）：
+$env:PYTHONPATH="./agent/src;./llmagent/src"; python -m agent.cli --help
+# Linux / macOS：
+PYTHONPATH=./agent/src:./llmagent/src python -m agent.cli --help
 ```
 
-能打印出命令列表即安装成功。
+能打印出命令列表即安装成功。若报 `No module named 'llmagent'`，说明没装内核包（见 §八 故障排查）。
 
 ---
 
@@ -187,6 +193,15 @@ novel-agent autowrite -d novels/my-novel --brief "玄幻+废柴逆袭+爽文" --
 novel-agent evaluate -d novels/my-novel              # 「不崩」七维终审（默认真 LLM 实判）
 novel-agent appeal -d novels/my-novel --chapter 12    # 「迷爱看」6 维评分
 novel-agent guardrail-scan -d novels/my-novel         # 成书质量护栏全量扫描
+novel-agent review-book -d novels/my-novel            # 成书多视角对抗式评审（编辑审稿视角）
+```
+
+**去 AI 味（存量章节）：**
+
+```bash
+novel-agent deslop -d novels/my-novel                    # 6 指标分级扫描（默认只出报告）
+novel-agent deslop -d novels/my-novel --apply            # 实际改写并写回（写回前自动备份）
+novel-agent deslop-chapter -d novels/my-novel --chapter 5 --level heavy   # 单章深度改写
 ```
 
 **反馈改写：**
@@ -257,12 +272,13 @@ novel-agent write -d novels/my-novel                  # 写下一章
 novel-agent write -d novels/my-novel --no-strict-review   # 跳过 D 严格审查（更快，质量偏弱）
 ```
 
-每一章的执行链条：
+每一章的执行链条（Agentic 引擎）：
 
 1. **7 步上下文加载**（world → subline → route → relations → characters → foreshadows → 题材规则）；
-2. **LLM 生成**章节正文；
+2. **WriterAgent 自主起草**（ReAct 循环：自主调用工具检索设定/查伏笔/自检质量），Critic 外环审稿；
 3. **质量校验**（9 项通用规则），不通过自动修订（≤2 次）；
-4. 持久化 `chapters/ch<NNN>.md` 并更新进度指针。
+4. **主线推进仲裁**：分线预算硬上界（越界自动切下一支线），末段自动进入结局模式；
+5. 持久化 `chapters/ch<NNN>.md` 并更新进度指针、伏笔状态机与连续性账本。
 
 - 加 `--json` 会以 JSON 输出结果（供外部脚本 / 自动化驱动调用，stdout 是 JSON，rich UI 走 stderr）。
 - 可能触发 **前置冲突检测**（`pre_validation_blocked`）：当世界观出现高严重度冲突时，生成被暂停。此时按报告修改 `world.md` / `subline` / 角色档案，或用下面的 `adjust-*` 调整，再重跑 `write`。
@@ -367,6 +383,15 @@ novel-agent rollback -d novels/my-novel -c 20 -y  # 跳过二次确认
 | `context`     | 查看当前上下文拼装              |
 | `version`     | 打印版本                   |
 | `help`        | 查看帮助                   |
+
+### 5.7 长篇管理（主线预算 / 连续性）
+
+| 命令 | 作用 |
+| --- | --- |
+| `mainline-init` | 初始化/更新分线预算计划：`--subline S01=240 --subline S02=180` 精确指定各支线章数上限（硬约束，越界自动切下一支线）；不 init 则按体量均衡分账 |
+| `mainline-show` | 查看分线预算与当前推进状态（各支线预算由 LLM 主编按进度动态重规划） |
+| `continuity` | 连续性账本只读查看：结构化的事实 / 信息差（谁知道什么）/ 未闭环项 / 章交接 + 伏笔确定性状态机；`--action import-foreshadow` 可把旧扁平伏笔表一键导入 |
+| `foreshadow-check` / `foreshadow-report` | 伏笔一致性检查 / 回收率报表（基于确定性状态机） |
 
 > 💡 **Web 等价**：上述查看 / 诊断 / 安全网命令同样可在 Web 项目工作台的「高级命令」面板一键运行，无需切回终端。
 
@@ -566,6 +591,7 @@ novel-agent merge-genres -d novels/my-novel
 
 | 现象                                                             | 原因                             | 处理                                                                                                                                       |
 | -------------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
+| `No module named 'llmagent'`                                    | 没安装旁边的内核包（agent 依赖 `../llmagent`） | 先 `pip install -e ./llmagent` 再 `pip install -e ./agent`；或运行前把 `llmagent/src` 加入 PYTHONPATH（见 §2.3） |
 | `LLM_API_KEY 未配置` / 找不到 key                                    | `.env` 没放对或没加载                 | 确认 `agent/.env` 存在且含 `LLM_API_KEY`；或命令加 `--env`                                                                                          |
 | `429` / `速率限制` / `rate limit`                                  | LLM 服务商 RPM 限流                 | `write` 会自动退避重试；频繁则调大 `LLM_TIMEOUT`、换额度更高模型，或改用 `compose` 一键驱动（含退避重试）                                                                    |
 | `pre_validation_blocked`                                       | 世界观高严重度冲突                      | 按报告改 `world.md` / `subline` / 角色，或用 `adjust-*` 调整后再 `write`                                                                              |
@@ -606,20 +632,34 @@ novel-agent merge-genres -d novels/my-novel
 | `evaluate`        | 「不崩」七维终审（默认真 LLM 实判） |
 | `appeal`          | 「迷爱看」6 维评分           |
 | `guardrail-scan`  | 成书质量护栏全量扫描           |
+| `review-book`     | 成书多视角对抗式评审（编辑审稿视角）    |
 | `rewrite`         | 反馈→定向改写              |
+| `repair`          | 质量修复编排（配合 evaluate）   |
+| `deslop`          | 批量去 AI 味（6 指标分级，`--apply` 改写） |
+| `deslop-chapter`  | 单章去 AI 味（可选 light/medium/heavy） |
 | `bookworm-review` | 书虫视角评审               |
 | `track-pacing`    | 节奏追踪                 |
+
+### 长篇一致性
+
+| 命令 | 说明 |
+| --- | --- |
+| `mainline-init` | 分线预算计划（各支线章数上限，硬约束） |
+| `mainline-show` | 查看分线预算与推进状态 |
+| `continuity` | 连续性账本（事实/信息差/未闭环/章交接）+ 伏笔状态机 |
+| `foreshadow-check` | 伏笔一致性检查 |
+| `foreshadow-report` | 伏笔回收报表 |
 
 ### 世界构建 & 笔枢对标
 
 | 命令                  | 说明                     |
 | ------------------- | ---------------------- |
-| `roster`            | Agent 阵容叙事（25 位专家分组展示） |
 | `iceberg`           | 冰山建书 60+ 字段清单          |
-| `philosophy`        | 世界模拟哲学文案               |
 | `graph`             | 可拖拽世界关系图谱              |
 | `mode --autonomy N` | 连续自主度滑块（0–100）         |
 | `merge-genres`      | 多题材冲突裁决                |
+
+> Agent 阵容（25 位专家）与世界模拟哲学文案没有 CLI 命令——请在 Web 工作台查看：项目空间「Agent 阵容」页（`/p/{name}/team`）与首页。
 
 ### 查看 / 诊断（`*`）
 
@@ -659,16 +699,18 @@ novel-agent merge-genres -d novels/my-novel
 | `export-skill`*              | 导出 skill 为独立分发包 |
 | `audit-chapter`              | 审计单章质量          |
 | `audit-setting`              | 审计设定集           |
-| `foreshadow-check`           | 伏笔一致性检查         |
-| `foreshadow-report`          | 伏笔报表            |
 | `summarize-chapter`          | 章节摘要            |
 | `summarize-range`            | 区间摘要            |
-| `learn`                      | 学习 / 沉淀经验       |
+| `learn`                      | 学习 / 沉淀经验（技法提炼） |
 | `show`                       | 章节预览（默认末章）      |
 | `cost-plan`                  | 写前成本预估          |
 | `payoff-plan`                | 爽点剧本生成          |
 | `emotion-track`              | 情绪轨迹 ASCII 渲染   |
 | `reader-feedback`            | 读者反馈数据回流        |
+| `analyze`                    | 长篇拆文管线（6 阶段深度拆解） |
+| `short-scan`                 | 短篇市场扫榜采样        |
+| `short-analyze`              | 短篇拆文分析          |
+| `setup`                      | 部署写作脚手架（CLAUDE.md / rules / agents） |
 | `ecosystem`*                 | 生态看板（MCP/路由/工具） |
 | `draft-status`               | 草稿状态            |
 | `draft-discard`              | 丢弃草稿            |
