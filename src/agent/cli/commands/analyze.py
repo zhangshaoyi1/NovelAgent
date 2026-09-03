@@ -51,7 +51,7 @@ def analyze(
         False, "--json", help="以 JSON 形式输出结果到 stdout"
     ),
     env_file: str = typer.Option(
-        None, "--env", help="指定 .env 文件（透传下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（透传下游 GatewayAdapter）"
     ),
 ) -> None:
     """M20 长篇拆文 —— 6 阶段深度拆解（概要/黄金三章/逐章摘要/聚合/设定关系/报告）"""

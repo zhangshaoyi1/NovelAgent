@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m6_adjust import (
     M6AdjustRouteWorkflow,
@@ -204,7 +204,7 @@ def _build_mock_llm(
     graph_json: dict | None = None,
     impact_json: dict | None = None,
 ) -> MagicMock:
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     import json as _json
 
     # 默认路线

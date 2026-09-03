@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m3_outline import M3OutlineWorkflow, M3Result
@@ -64,7 +64,7 @@ OUTLINE_JSON = """{
 
 @pytest.fixture
 def mock_llm() -> MagicMock:
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     llm.chat_creative.return_value = LLMResponse(
         text=OUTLINE_JSON, usage={}, model="m"
     )
@@ -340,7 +340,7 @@ def test_m3_handles_empty_sublines(tmp_path: Path) -> None:
     sm_state.save()
 
     # mock: LLM 返回空 sublines
-    empty_llm = MagicMock(spec=LLMClient)
+    empty_llm = MagicMock(spec=GatewayAdapter)
     empty_llm.chat_creative.return_value = LLMResponse(
         text='{"synopsis": "简介", "sublines": []}', usage={}, model="m"
     )
@@ -376,7 +376,7 @@ def test_m3_handles_llm_json_parse_failure(tmp_path: Path) -> None:
     sm_state.state = State.ARCH_CONFIRMED
     sm_state.save()
 
-    bad_llm = MagicMock(spec=LLMClient)
+    bad_llm = MagicMock(spec=GatewayAdapter)
     bad_llm.chat_creative.return_value = LLMResponse(
         text="这是一段纯文本介绍，没有 JSON 格式...", usage={}, model="m"
     )

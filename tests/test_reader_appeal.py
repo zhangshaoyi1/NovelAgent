@@ -14,7 +14,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock
 
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.quality.scoring.reader_appeal import (
     _EVAL_DIM_LABELS,
     _EVAL_SYSTEM_PROMPT,
@@ -23,7 +23,7 @@ from agent.core.quality.scoring.reader_appeal import (
 
 
 def _fake_llm(json_text: str, *, raise_error: bool = False) -> MagicMock:
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     if raise_error:
         llm.chat_utility.side_effect = RuntimeError("network down")
     else:

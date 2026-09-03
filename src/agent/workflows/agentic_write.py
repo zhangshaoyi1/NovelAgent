@@ -29,7 +29,8 @@ from typing import Any, Callable
 
 from rich.console import Console
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_utility
+from llmagent.gateway import Gateway
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.tools.builtins import set_project_context
 from agent.agents.writer_agent import WriterAgent
@@ -81,7 +82,7 @@ class AgenticWriteWorkflow:
     def __init__(
         self,
         project_dir: Path,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         console: Console | None = None,
         tier: str = "auto",
         max_drafts: int | None = None,
@@ -98,7 +99,7 @@ class AgenticWriteWorkflow:
         deslop_enabled: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.console = console or Console()
         self.tier = tier
         self.max_drafts = max_drafts
@@ -331,7 +332,8 @@ class AgenticWriteWorkflow:
             chapter_text=cleaned,
         )
         try:
-            resp = self.llm.chat_utility(
+            resp = chat_utility(
+                self.llm,
                 messages=[
                     {"role": "system", "content": pm.get("m5.quality_check").system},
                     {"role": "user", "content": check_prompt},
@@ -339,7 +341,7 @@ class AgenticWriteWorkflow:
                 max_tokens=1500,
                 enable_thinking=False,
             )
-            report = parse_llm_json(resp.text)
+            report = parse_llm_json(resp)
             passed = bool(report.get("overall_pass", True))
         except Exception:  # noqa: BLE001 - 质检失败降级为通过，不阻断出章
             report = {"overall_pass": True, "rules": [], "suggestions": "门禁解析失败，默认通过"}

@@ -28,7 +28,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_creative, chat_utility
+from llmagent.gateway import Gateway
 from agent.core.engine.workflow_registry import workflow
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
@@ -82,13 +83,13 @@ class M14ArchitectureWorkflow:
     def __init__(
         self,
         project_dir: Path,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         setting_manager: SettingManager | None = None,
         state_machine: StateMachine | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.sm = setting_manager or SettingManager(self.project_dir)
         self.state_machine = state_machine or StateMachine(self.project_dir)
         self.console = console or Console()
@@ -417,7 +418,8 @@ class M14ArchitectureWorkflow:
                     + "\n\n【重要】请只输出一个合法的 JSON 对象，"
                     "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
                 )
-            resp = self.llm.chat_creative(
+            resp = chat_creative(
+                self.llm,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
@@ -427,12 +429,12 @@ class M14ArchitectureWorkflow:
                 enable_thinking=False,
             )
             try:
-                return parse_llm_json(resp.text)
+                return parse_llm_json(resp)
             except ValueError:
                 if attempt == len(_budgets) - 1:
                     raise RuntimeError(
                         "故事架构生成结果无法解析为 JSON（可能被截断或格式异常），"
-                        f"请重试。原始输出片段：{resp.text[:200]}"
+                        f"请重试。原始输出片段：{resp[:200]}"
                     )
 
     def _llm_iterate_architecture(
@@ -456,7 +458,8 @@ class M14ArchitectureWorkflow:
         last_text = ""
         _budgets = (16384, 16384, 20480)
         for attempt in range(len(_budgets)):
-            resp = self.llm.chat_creative(
+            resp = chat_creative(
+                self.llm,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
@@ -465,7 +468,7 @@ class M14ArchitectureWorkflow:
                 max_tokens=_budgets[attempt],
                 enable_thinking=False,
             )
-            last_text = resp.text or ""
+            last_text = resp or ""
             try:
                 new_arch = parse_llm_json(last_text)
                 if not isinstance(new_arch, dict):
@@ -498,7 +501,8 @@ class M14ArchitectureWorkflow:
         """
         try:
             text = json.dumps(revised, ensure_ascii=False, indent=2)
-            resp = self.llm.chat_utility(
+            resp = chat_utility(
+                self.llm,
                 messages=[
                     {"role": "system", "content": pm.get("m14.gap_check").system},
                     {
@@ -512,7 +516,7 @@ class M14ArchitectureWorkflow:
                 max_tokens=1000,
                 enable_thinking=False,
             )
-            data = parse_llm_json(resp.text)
+            data = parse_llm_json(resp)
             gaps = data.get("missing") or []
             if not isinstance(gaps, list):
                 return []

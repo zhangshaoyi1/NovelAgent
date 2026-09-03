@@ -1,4 +1,4 @@
-"""M20 长篇拆文管线（移植 oh-story-claudecod 的 story-long-analyze skill）
+﻿"""M20 长篇拆文管线（移植 oh-story-claudecod 的 story-long-analyze skill）
 
 6 阶段深度拆解管道：
 - Stage 0 概要提取（outline）  → 概要.md + 章节/章节索引.md + 原文备份
@@ -12,7 +12,7 @@
 断点恢复：读 _progress.md（阶段状态 / 已完成章节 / 失败记录表），
 支持 paused_after_stage1 停靠续跑（续跑跳过 Stage 0/1，从 Stage 2 开始）。
 
-所有 LLM 调用统一走 ``agent.client.LLMClient.chat``；提示词统一走
+所有 LLM 调用统一走 ``chat_utility`` / ``chat_creative``；提示词统一走
 ``agent.core.infra.prompt_manager.pm.get("m20.xxx")``。
 """
 
@@ -27,7 +27,8 @@ from typing import Any
 
 from rich.console import Console
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_creative, chat_utility
+from llmagent.gateway import Gateway
 from agent.core.infra.prompt_manager import pm
 from agent.utils import parse_llm_json
 
@@ -262,14 +263,14 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
 
     project_dir: Path
     book: str | None = None
-    llm: LLMClient | None = None
+    llm: Gateway | None = None
     console: Console | None = None
 
     def __post_init__(self) -> None:
         self.project_dir = Path(self.project_dir)
         self.book = self.book or self.project_dir.name
         self.output_dir = self.project_dir / "deconstruction" / self.book
-        self.llm = self.llm or LLMClient()
+        self.llm = self.llm or create_gateway()
         self.console = self.console or Console()
 
     # ============================================================
@@ -492,7 +493,8 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
         index_for_llm = self._truncate_index(index_rows, len(chapters))
         sample = (chapters[0]["text"][:2000]) if chapters else ""
         p = pm.get("m20.outline")
-        resp = self.llm.chat(
+        resp = chat_utility(
+            self.llm,
             messages=[
                 {"role": "system", "content": p.render_system()},
                 {
@@ -508,11 +510,9 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
                 },
             ],
             temperature=0.2,
-            use="utility",
-            validators=p.validation,
             max_tokens=4096,
         )
-        data = parse_llm_json(resp.text)
+        data = parse_llm_json(resp)
         self._write_outline(chapters, data, total_words)
         self._write("章节/章节索引.md", self._render_chapter_index(chapters))
 
@@ -588,7 +588,8 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
 
     def _golden_dive(self, ch: dict[str, Any]) -> str:
         p = pm.get("m20.golden")
-        resp = self.llm.chat(
+        resp = chat_creative(
+            self.llm,
             messages=[
                 {"role": "system", "content": p.render_system()},
                 {
@@ -602,17 +603,17 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
                 },
             ],
             temperature=0.3,
-            use="creative",
             max_tokens=8192,
         )
-        return resp.text.strip()
+        return resp.strip()
 
     def _generate_preview(
         self, chapters: list[dict[str, Any]], dives: list[str]
     ) -> str:
         outline = self._read("概要.md")
         p = pm.get("m20.preview")
-        resp = self.llm.chat(
+        resp = chat_creative(
+            self.llm,
             messages=[
                 {"role": "system", "content": p.render_system()},
                 {
@@ -625,10 +626,9 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
                 },
             ],
             temperature=0.3,
-            use="creative",
             max_tokens=8192,
         )
-        return resp.text.strip()
+        return resp.strip()
 
     # ============================================================
     # Stage 2 逐章摘要（串行，部分失败容忍）
@@ -661,7 +661,8 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
 
     def _chapter_summary(self, ch: dict[str, Any]) -> str:
         p = pm.get("m20.summary")
-        resp = self.llm.chat(
+        resp = chat_utility(
+            self.llm,
             messages=[
                 {"role": "system", "content": p.render_system()},
                 {
@@ -675,10 +676,9 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
                 },
             ],
             temperature=0.2,
-            use="utility",
             max_tokens=8192,
         )
-        return resp.text.strip()
+        return resp.strip()
 
     # ============================================================
     # Stage 3 聚合分析
@@ -688,7 +688,8 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
     ) -> None:
         summaries = self._read_summaries(chapters)
         p = pm.get("m20.aggregate")
-        resp = self.llm.chat(
+        resp = chat_utility(
+            self.llm,
             messages=[
                 {"role": "system", "content": p.render_system()},
                 {
@@ -701,11 +702,9 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
                 },
             ],
             temperature=0.2,
-            use="utility",
-            validators=p.validation,
             max_tokens=8192,
         )
-        data = parse_llm_json(resp.text)
+        data = parse_llm_json(resp)
         self._write_storylines(data)
         self._write_plots(data)
         progress.quality["覆盖率"] = f"{data.get('coverage', 0)}"
@@ -797,7 +796,8 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
         summaries = self._read_summaries(chapters)
         plots_text = self._read_plots_text()
         p = pm.get("m20.setting")
-        resp = self.llm.chat(
+        resp = chat_utility(
+            self.llm,
             messages=[
                 {"role": "system", "content": p.render_system()},
                 {
@@ -810,11 +810,9 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
                 },
             ],
             temperature=0.2,
-            use="utility",
-            validators=p.validation,
             max_tokens=8192,
         )
-        data = parse_llm_json(resp.text)
+        data = parse_llm_json(resp)
         self._write_worldview(data)
         self._write_golden_finger(data)
         self._write_characters(data)
@@ -936,7 +934,8 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
             or "无"
         )
         p = pm.get("m20.report")
-        resp = self.llm.chat(
+        resp = chat_creative(
+            self.llm,
             messages=[
                 {"role": "system", "content": p.render_system()},
                 {
@@ -956,10 +955,9 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
                 },
             ],
             temperature=0.3,
-            use="creative",
             max_tokens=8192,
         )
-        self._write("拆文报告.md", resp.text.strip())
+        self._write("拆文报告.md", resp.strip())
 
     # ============================================================
     # 读取 / 写入辅助
@@ -1022,3 +1020,4 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
 from agent.core.engine.workflow_registry import workflow  # noqa: E402
 
 workflow("m20_analyze")(M20AnalyzeWorkflow)
+

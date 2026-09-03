@@ -11,7 +11,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m14_architecture import (
@@ -71,7 +71,7 @@ ARCHITECTURE_JSON_ITERATED = """{
 @pytest.fixture
 def mock_llm() -> MagicMock:
     """mock LLM"""
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     llm.chat_creative.return_value = LLMResponse(
         text=ARCHITECTURE_JSON, usage={}, model="m"
     )
@@ -81,7 +81,7 @@ def mock_llm() -> MagicMock:
 @pytest.fixture
 def mock_llm_iterate() -> MagicMock:
     """mock LLM，第二次调用返回迭代结果"""
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     llm.chat_creative.side_effect = [
         LLMResponse(text=ARCHITECTURE_JSON, usage={}, model="m"),
         LLMResponse(text=ARCHITECTURE_JSON_ITERATED, usage={}, model="m"),

@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
 
@@ -82,8 +82,11 @@ def _build_mock_llm(
     quality_report: dict | None = None,
     revised_text: str | None = None,
 ) -> MagicMock:
-    """构建 mock LLM，支持多轮调用"""
-    llm = MagicMock(spec=LLMClient)
+    """构建 mock Gateway，支持多轮调用"""
+    from unittest.mock import MagicMock as _MagicMock
+    from types import SimpleNamespace
+
+    llm = _MagicMock(spec=GatewayAdapter)
     if quality_report is None:
         quality_report = QUALITY_PASS
 
@@ -94,30 +97,20 @@ def _build_mock_llm(
     creative_responses = iter([chapter_text] + ([revised_text] if revised_text else []))
     utility_responses = iter([_json.dumps(quality_report, ensure_ascii=False)])
 
-    def creative_side_effect(*args, **kwargs):
+    def chat_side_effect(req, **kwargs):
+        """mock Gateway.chat() → 返回含 .text 的对象"""
+        hint = getattr(req, 'hint', None)
+        is_creative = hint is None or getattr(hint, 'complexity', None) != 'simple'
         try:
-            text = next(creative_responses)
+            if is_creative:
+                text = next(creative_responses)
+            else:
+                text = next(utility_responses)
         except StopIteration:
-            text = chapter_text
-        return LLMResponse(
-            text=text,
-            raw={},
-            usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-        )
+            text = chapter_text if is_creative else _json.dumps(QUALITY_PASS, ensure_ascii=False)
+        return SimpleNamespace(text=text)
 
-    def utility_side_effect(*args, **kwargs):
-        try:
-            text = next(utility_responses)
-        except StopIteration:
-            text = _json.dumps(QUALITY_PASS, ensure_ascii=False)
-        return LLMResponse(
-            text=text,
-            raw={},
-            usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-        )
-
-    llm.chat_creative.side_effect = creative_side_effect
-    llm.chat_utility.side_effect = utility_side_effect
+    llm.chat.side_effect = chat_side_effect
     return llm
 
 

@@ -32,7 +32,8 @@ from rich.console import Console
 from agent.core.engine.workflow_registry import workflow
 from rich.panel import Panel
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_utility
+from llmagent.gateway import Gateway
 from agent.core.engine.tool_contracts import tool
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import StateMachine
@@ -341,7 +342,7 @@ class ImportWorkflow:
     读取用户提供的 txt/markdown 草稿，用 LLM 反向解析构建设定集。
 
     用法：
-        wf = ImportWorkflow(project_dir, llm=LLMClient())
+        wf = ImportWorkflow(project_dir, llm=create_gateway())
         result = wf.import_draft(Path("my_draft.txt"))
     """
 
@@ -365,11 +366,11 @@ class ImportWorkflow:
     def __init__(
         self,
         project_dir: Path,
-        llm: LLMClient | None = None,
+        llm: Gateway | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm or LLMClient()
+        self.llm = llm or create_gateway()
         self.console = console or Console()
         self.sm = SettingManager(self.project_dir)
 
@@ -401,7 +402,8 @@ class ImportWorkflow:
             text = text[:10000]
 
         # 调用 LLM 提取设定
-        resp = self.llm.chat_utility(
+        resp = chat_utility(
+            self.llm,
             messages=[
                 {"role": "system", "content": self.IMPORT_SYSTEM_PROMPT},
                 {"role": "user", "content": f"请从以下草稿提取设定：\n\n{text}"},
@@ -410,7 +412,7 @@ class ImportWorkflow:
         )
 
         try:
-            data = parse_llm_json(resp.text)
+            data = parse_llm_json(resp)
         except ValueError:
             return ImportResult(
                 success=False,
@@ -545,11 +547,11 @@ class CompletionExtrasWorkflow:
     def __init__(
         self,
         project_dir: Path,
-        llm: LLMClient | None = None,
+        llm: Gateway | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm or LLMClient()
+        self.llm = llm or create_gateway()
         self.console = console or Console()
         self.sm = SettingManager(self.project_dir)
 
@@ -614,15 +616,15 @@ class CompletionExtrasWorkflow:
         synopsis = world_data["content"][:500]
 
         try:
-            resp = self.llm.chat_utility(
+            resp = chat_utility(
+                self.llm,
                 messages=[
                     {"role": "system", "content": self.AFTERWORD_SYSTEM_PROMPT},
                     {"role": "user", "content": f"小说标题：{title}\n简介摘要：{synopsis}"},
                 ],
                 temperature=0.7,
-                validators=[ValidationSpec.not_empty()],
             )
-            return f"# 完本感言\n\n{resp.text.strip()}"
+            return f"# 完本感言\n\n{resp.strip()}"
         except Exception:
             return None
 

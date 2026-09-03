@@ -10,7 +10,7 @@
 实现说明：
 - 这是**结构化输出 Agent**（单次决策产出完整计划），而非 ReAct 循环——
   Planner 不需要在工具循环里反复试探，故直接复用 ``chat_structured(MasterPlan)``。
-- ``decide`` / ``decide_async`` 可注入（离线测试用）；生产环境包 ``LLMClient``。
+- ``decide`` / ``decide_async`` 可注入（离线测试用）；生产环境包 ``GatewayAdapter``。
 - 计划落 ``<project>/.state/plan.json``，并把角色/世界观/质量目标回写 Memory，
   供 Writer / Editor / Evaluator 取用。
 """
@@ -24,7 +24,7 @@ from typing import Any, Awaitable, Callable, Optional
 from pydantic import BaseModel, Field, ValidationError
 from rich.console import Console
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway_adapter
 from agent.core.infra.prompt_manager import pm
 from agent.core.story.method_style import load_method_text  # G11：写作方法模板
 from agent.core.story.setting_manager import SettingManager
@@ -115,7 +115,7 @@ class PlannerAgent:
     def __init__(
         self,
         project_dir: str | Path,
-        llm_client: LLMClient | None = None,
+        llm_client: GatewayAdapter | None = None,
         memory: Any = None,
         console: Console | None = None,
         decide: PlanDecideFn | None = None,
@@ -172,7 +172,7 @@ class PlannerAgent:
         if self._decide is not None:
             return self._decide
         if self.llm is None:
-            self.llm = LLMClient()
+            self.llm = create_gateway_adapter()
         llm = self.llm
 
         def decide(messages: list[dict[str, str]]) -> dict[str, Any]:
@@ -193,7 +193,7 @@ class PlannerAgent:
         if self._decide_async is not None:
             return self._decide_async
         if self.llm is None:
-            self.llm = LLMClient()
+            self.llm = create_gateway_adapter()
         llm = self.llm
 
         async def decide_async(messages: list[dict[str, str]]) -> dict[str, Any]:

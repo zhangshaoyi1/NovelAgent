@@ -7,7 +7,7 @@
 - ``reindex()``：全量重建（``reindex`` 命令调用）。
 
 设计要点：
-- embed 委托给注入的 ``embedder``（默认 ``LLMClient``，复用 .env）；embed 失败返回空
+- embed 委托给注入的 ``embedder``（默认 ``GatewayAdapter``，复用 .env）；embed 失败返回空
   向量，检索降级为 BM25-only + 统计 ``embedding_failed``，**绝不阻断写章**。
 - 索引持久化到 ``.state/rag/index.json``（由 ``LocalVectorStore`` 负责）。
 - 损坏/缺失一律降级，不抛异常。
@@ -46,8 +46,8 @@ class Indexer:
 
     @staticmethod
     def _default_embedder() -> Any:
-        from agent.client import LLMClient
-        return LLMClient()
+        from agent.client.gateway_adapter import create_gateway_adapter
+        return create_gateway_adapter()
 
     # ============================================================
     # 切片

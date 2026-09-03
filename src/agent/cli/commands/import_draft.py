@@ -27,7 +27,7 @@ def import_draft(
     """
     from pathlib import Path
 
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
     from agent.workflows.m11_export import ImportWorkflow
 
     project_path = Path(project_dir)
@@ -45,7 +45,7 @@ def import_draft(
     wire_llm_event_hook(project_path)
 
     try:
-        wf = ImportWorkflow(project_path, llm=LLMClient(), console=console)
+        wf = ImportWorkflow(project_path, llm=create_gateway_adapter(), console=console)
         result = wf.import_draft(src, with_characters=not no_characters)
     except Exception as e:
         console.print(f"[bold red]✗ 导入失败[/bold red] {e}")

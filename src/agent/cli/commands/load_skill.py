@@ -15,11 +15,11 @@ def load_skill(
     使用示例：
       novel-agent load-skill bookworm
     """
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
 
     registry = _get_registry()
     try:
-        skill = registry.load_builtin(name, llm=LLMClient(), console=console)
+        skill = registry.load_builtin(name, llm=create_gateway_adapter(), console=console)
     except ValueError as e:
         console.print(f"[bold red]✗[/bold red] {e}")
         raise typer.Exit(code=1) from e

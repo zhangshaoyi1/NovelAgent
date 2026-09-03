@@ -3,7 +3,7 @@
 基于 PRD F18.1-F18.4，实现四类错误恢复机制：
 
 F18.1 LLM 调用失败自动重试
-    - 已在 LLMClient 实现（指数退避 max_retries 次）
+    - 已在 Gateway 实现（指数退避 max_retries 次）
     - 本模块提供 handle_llm_failure 便利函数（重试耗尽后的兜底）
 
 F18.2 质量校验连续 M 次不通过

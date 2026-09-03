@@ -25,7 +25,7 @@ def evaluate(
         False, "--json", help="以 JSON 形式输出体检报告到 stdout"
     ),
     env_file: str = typer.Option(
-        None, "--env", help="指定 .env 文件（透传下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（透传下游 GatewayAdapter）"
     ),
     no_rollback: bool = typer.Option(
         False, "--no-rollback", help="仅出报告，不执行自动回溯"
@@ -82,7 +82,7 @@ def evaluate(
     from agent.agents.evaluator import EvaluatorAgent
 
     # ---- G7（补充边界 3，修复 R3-3）：接线 tracer —— 复用 agent_service.py 行 80-82 模式 ----
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
     from agent.core.llmops import TraceStore, TracedLLMClient, set_tracer
 
     set_tracer(TraceStore(project_path))
@@ -90,13 +90,13 @@ def evaluate(
     from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
 
     wire_llm_event_hook(project_path)
-    traced_llm = TracedLLMClient(LLMClient(), model="creative-strong")
+    traced_llm = TracedLLMClient(create_gateway_adapter(), model="creative-strong")
 
     score_fn = None
     if real_score:
         from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
 
-        score_fn = ReaderAppealScorer(llm_client=traced_llm).score   # 改：裸 LLMClient → traced_llm
+        score_fn = ReaderAppealScorer(llm_client=traced_llm).score   # 改：裸 GatewayAdapter → traced_llm
 
     # D-J：CLI 侧（高于 workflows）构造并注入回退能力，agents 不再直接 import workflows
     from agent.workflows.m10_rollback import M10RollbackWorkflow

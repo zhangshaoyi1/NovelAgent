@@ -67,7 +67,7 @@ def short_analyze(
         False, "--json", help="以 JSON 形式输出结果到 stdout"
     ),
     env_file: str = typer.Option(
-        None, "--env", help="指定 .env 文件（透传下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（透传下游 GatewayAdapter）"
     ),
 ) -> None:
     """M23 短篇拆文 —— 深度拆解爆款短篇（故事核/结构/情感线/反转/手法/共鸣）"""

@@ -1,4 +1,4 @@
-"""BudgetPlanner —— LLM 主编动态规划各支线章数预算。
+﻿"""BudgetPlanner —— LLM 主编动态规划各支线章数预算。
 
 写 .state/mainline.json 的 ``subline_share``，作为 MainlineOrchestrator 推进裁决的
 确定性 cap。阶段比值（前期/中期/后期）与分线预算不再静态写死 / 均衡分账，
@@ -6,7 +6,7 @@
 执行仍由 orchestrator 确定性完成」，二者解耦（G8 拍板 1 语义保持）。
 
 设计约束 / 权衡（对应 Agent Note: 2026-08-31-dynamic-subline-budget）：
-- LLM 调用必须走统一入口 ``LLMClient.chat_structured``（结构化 + 严格 schema 校验 + 自动重试）。
+- LLM 调用必须走统一入口 ``chat_structured``（结构化 + 严格 schema 校验 + 自动重试）。
 - 失败降级（用户拍板 2）：沿用上次 ``subline_share``（mainline.json 已有值不动）；
   无任何历史时按 ``horizon_chapters / 支线数`` 均衡分账落盘兜底，写章环节绝不被
   预算规划阻塞（G3 哲学）。
@@ -145,18 +145,19 @@ class BudgetPlanner:
     def _ask_llm(
         self, sublines: list[str], horizon: int, plan: dict[str, Any]
     ) -> _BudgetSchema:
-        """调用统一 LLMClient.chat_structured 产出主编预算。"""
+        """调用统一 chat_structured 产出主编预算。"""
         if self._llm is None:
-            from agent.client import LLMClient
-            self._llm = LLMClient()
+            from agent.client.gateway_adapter import create_gateway
+            self._llm = create_gateway()
 
         user_msg = self._build_user_prompt(sublines, horizon, plan)
-        data = self._llm.chat_structured(
-            [
+        data = chat_structured(
+            self._llm,
+            messages=[
                 {"role": "system", "content": pm.get("budget.branch").system},
                 {"role": "user", "content": user_msg},
             ],
-            _BudgetSchema,
+            schema=_BudgetSchema,
             use="creative",
             temperature=0.5,
             # 高 max_tokens：V4 Flash 常在 JSON 前先输出较长前言，2048 会被前言吃光、
@@ -164,10 +165,8 @@ class BudgetPlanner:
             # 2026-08-31-dynamic-subline-budget.md），导致 extract 失败并静默降级。
             max_tokens=8192,
             enable_thinking=False,
-            strict=True,
-            name="subline_budget",
         )
-        return _BudgetSchema(**data)
+        return data
 
     def _build_user_prompt(
         self, sublines: list[str], horizon: int, plan: dict[str, Any]

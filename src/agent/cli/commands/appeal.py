@@ -37,7 +37,7 @@ def appeal(
         False, "--json", help="以 JSON 形式输出评分到 stdout"
     ),
     env_file: str = typer.Option(
-        None, "--env", help="指定 .env 文件（透传下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（透传下游 GatewayAdapter）"
     ),
     # ---- G7 新增：展示开关（拍板 6：默认全开，可关）----
     no_human_summary: bool = typer.Option(
@@ -92,7 +92,7 @@ def appeal(
             if idx >= 0:
                 synopsis = wc[idx: idx + 300]
 
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
     from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
 
     # ---- G7（补充边界 3，修复 R3-3）：接线 tracer —— 复用 agent_service.py 行 80-82 模式 ----
@@ -103,10 +103,10 @@ def appeal(
     from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
 
     wire_llm_event_hook(project_path)
-    traced_llm = TracedLLMClient(LLMClient(), model="creative-strong")
+    traced_llm = TracedLLMClient(create_gateway_adapter(), model="creative-strong")
 
     workflow_console = make_quiet_console() if json_output else console
-    scorer = ReaderAppealScorer(llm_client=traced_llm, console=workflow_console)   # 改：裸 LLMClient → traced_llm
+    scorer = ReaderAppealScorer(llm_client=traced_llm, console=workflow_console)   # 改：裸 GatewayAdapter → traced_llm
     report = scorer.score_chapter(
         text, title=str(title), genre=str(genre), synopsis=str(synopsis)
     )

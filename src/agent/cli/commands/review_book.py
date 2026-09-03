@@ -43,7 +43,7 @@ def review_book(
         False, "--json", help="以 JSON 形式输出结果到 stdout"
     ),
     env_file: str = typer.Option(
-        None, "--env", help="指定 .env 文件（透传下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（透传下游 GatewayAdapter）"
     ),
 ) -> None:
     """M21 成书质量评审 —— 多视角对抗式评审 + 综合裁决（只读，不改产物）"""

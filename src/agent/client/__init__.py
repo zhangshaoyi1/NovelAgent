@@ -5,6 +5,7 @@
 分层说明（2026-08-29 下沉后）：
 - provider.py: 具体 Provider 实现（OpenAI/Ollama）
 - client.py: 统一 LLM 客户端（对外暴露的唯一入口）
+- gateway_adapter.py: llmagent Gateway 适配器（兼容 LLMClient 接口）
 - router.py: 动态模型路由（成功率熔断 + 回退）
 - embeddings.py / embedding_router.py: 文本嵌入能力（自 core/llm 下沉至本层）
 - LLM 协议类型（LLMConfig/LLMResponse/LLMError/LLMProvider/register_provider）
@@ -32,6 +33,7 @@ from agent.base.llm import (
     register_provider,
 )
 from agent.client.client import LLMClient, set_llm_event_hook
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_from_config
 from agent.client.embeddings import (
     EmbeddingProvider,
     OllamaEmbedding,
@@ -60,5 +62,7 @@ __all__ = [
     "OpenAICompatibleEmbedding",
     "OllamaEmbedding",
     "QwenLocalEmbedding",
+    "GatewayAdapter",
+    "create_gateway_from_config",
     "URLError",
 ]

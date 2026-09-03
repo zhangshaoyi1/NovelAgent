@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 import pytest
 from typer.testing import CliRunner
 
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.engine.workflow_registry import get_workflow
 from agent.workflows.m21_review import (
     GENERAL_RUBRIC,
@@ -61,7 +61,7 @@ FIXED_LLM_JSON = {
 
 def make_mock_llm() -> MagicMock:
     """构造返回固定 JSON 的 mock LLM（每个 chat_utility 调用返回同一结果）"""
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     llm.chat_utility.return_value = LLMResponse(
         text=json.dumps(FIXED_LLM_JSON, ensure_ascii=False)
     )
@@ -284,7 +284,7 @@ class TestRubric:
 class TestDegradation:
     def test_non_json_response_degrades(self, tmp_path: Path) -> None:
         d = make_project(tmp_path, n_chapters=2)
-        llm = MagicMock(spec=LLMClient)
+        llm = MagicMock(spec=GatewayAdapter)
         llm.chat_utility.return_value = LLMResponse(text="抱歉，我无法生成。")
         wf = M21ReviewWorkflow(project_dir=d, llm_client=llm)
         report = wf.review(scope="all", mode="solo")
@@ -299,8 +299,8 @@ class TestDegradation:
 class TestCLI:
     def _patch_llm(self, monkeypatch: pytest.MonkeyPatch, mock: MagicMock) -> None:
         zero_arg = lambda *a, **kw: mock  # noqa: E731
-        monkeypatch.setattr("agent.client.LLMClient", zero_arg)
-        monkeypatch.setattr("agent.workflows.m21_review.LLMClient", zero_arg)
+        monkeypatch.setattr("agent.client.gateway_adapter.create_gateway_adapter", zero_arg)
+        monkeypatch.setattr("agent.workflows.m21_review.create_gateway_adapter", zero_arg)
 
     def test_review_book_json_structure(self, tmp_path: Path, monkeypatch) -> None:
         from agent.cli import app

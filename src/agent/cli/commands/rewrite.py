@@ -38,7 +38,7 @@ def rewrite(
         False, "--json", help="以 JSON 形式输出结果到 stdout"
     ),
     env_file: str = typer.Option(
-        None, "--env", help="指定 .env 文件（透传下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（透传下游 GatewayAdapter）"
     ),
     no_backup: bool = typer.Option(
         False, "--no-backup", help="不备份原章（默认会备份到 .state/rewrite_backups/）"
@@ -81,12 +81,12 @@ def rewrite(
 
     from agent.core.quality.rewrite.feedback_rewriter import FeedbackRewriter
     from agent.core.quality.guardrails import build_guardrails
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
 
     workflow_console = make_quiet_console() if json_output else console
     rewriter = FeedbackRewriter(
         project_path,
-        llm_client=LLMClient(),
+        llm_client=create_gateway_adapter(),
         guardrails=build_guardrails(),
         console=workflow_console,
     )

@@ -29,7 +29,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_creative
+from llmagent.gateway import Gateway
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.quality.guardrails import is_architecture_confirmed
@@ -57,7 +58,7 @@ class M3OutlineWorkflow:
     def __init__(
         self,
         project_dir: Path,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         setting_manager: SettingManager | None = None,
         state_machine: StateMachine | None = None,
         console: Console | None = None,
@@ -65,7 +66,7 @@ class M3OutlineWorkflow:
         method_enabled: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.sm = setting_manager or SettingManager(self.project_dir)
         self.state_machine = state_machine or StateMachine(self.project_dir)
         self.console = console or Console()
@@ -289,7 +290,8 @@ class M3OutlineWorkflow:
         # 初版 A 方案 8192 实测百万字稳定，这里保留充足预算并递增，规避偶发空回。
         _budgets = (16384, 16384, 20480)
         for attempt in range(len(_budgets)):
-            resp = self.llm.chat_creative(
+            resp = chat_creative(
+                self.llm,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
@@ -298,9 +300,9 @@ class M3OutlineWorkflow:
                 max_tokens=_budgets[attempt],
                 enable_thinking=False,
             )
-            last_text = resp.text
+            last_text = resp
             try:
-                data = parse_llm_json(resp.text)
+                data = parse_llm_json(resp)
                 # 兜底：sublines 为空时放一条空结构
                 if not data.get("sublines"):
                     data["sublines"] = [self._empty_subline("未命名支线")]

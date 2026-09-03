@@ -27,7 +27,8 @@ from typing import Any
 import frontmatter
 from rich.console import Console
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_utility
+from llmagent.gateway import Gateway
 from agent.core.engine.workflow_registry import workflow
 from agent.core.infra.prompt_manager import pm
 from agent.utils import parse_llm_json
@@ -229,11 +230,11 @@ class M21ReviewWorkflow:
     def __init__(
         self,
         project_dir: Path | str,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.console = console or Console()
 
     # ============================================================
@@ -457,8 +458,8 @@ class M21ReviewWorkflow:
         ]
         self.console.print(f"[cyan]· {label}视角评审中...[/cyan]")
         try:
-            resp = self.llm.chat_utility(messages=messages, temperature=0.3, enable_thinking=False)
-            data = parse_llm_json(resp.text)
+            resp = chat_utility(self.llm, messages=messages, temperature=0.3, enable_thinking=False)
+            data = parse_llm_json(resp)
             return self._parse_dimension(key, label, data)
         except ValueError:
             self.console.print(
@@ -502,8 +503,8 @@ class M21ReviewWorkflow:
         ]
         self.console.print("[cyan]· 综合裁决中...[/cyan]")
         try:
-            resp = self.llm.chat_utility(messages=messages, temperature=0.3, enable_thinking=False)
-            data = parse_llm_json(resp.text)
+            resp = chat_utility(self.llm, messages=messages, temperature=0.3, enable_thinking=False)
+            data = parse_llm_json(resp)
             return self._parse_verdict(data)
         except ValueError:
             self.console.print(

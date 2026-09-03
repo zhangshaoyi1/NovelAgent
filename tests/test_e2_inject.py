@@ -15,7 +15,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from agent.core.story.injected_trope_store import InjectedTropeStore
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
 
 from tests.conftest import (
@@ -33,7 +33,7 @@ def _build_capturing_llm(
     """记录 chat_creative 收到的 messages，便于断言 system prompt 注入"""
     import json as _json
 
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     captured: list[list[dict]] = []
     qr = quality_report or QUALITY_PASS
 

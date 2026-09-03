@@ -18,7 +18,7 @@ from unittest.mock import MagicMock
 import pytest
 import typer
 
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.workflows.m23_short import (
     AnalyzeReport,
     M23ShortAnalyzeWorkflow,
@@ -146,7 +146,7 @@ ANALYZE_JSON = {
 
 def make_mock_llm(response_json: dict) -> MagicMock:
     """构造返回指定 JSON 的 mock LLM（chat_utility 走统一入口）。"""
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     llm.chat_utility.return_value = LLMResponse(
         text=json.dumps(response_json, ensure_ascii=False),
         raw={},

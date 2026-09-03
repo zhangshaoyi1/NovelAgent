@@ -34,7 +34,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_utility
+from llmagent.gateway import Gateway
 from agent.utils import parse_llm_json
 
 
@@ -266,7 +267,7 @@ class BookwormSkill:
         persona: str,
         rubrics: str,
         genre_expectations: dict[str, str],
-        llm: LLMClient | None = None,
+        llm: Gateway | None = None,
         console: Console | None = None,
     ) -> None:
         self.skill_dir = skill_dir
@@ -282,7 +283,7 @@ class BookwormSkill:
     def load(
         cls,
         skill_dir: Path | None = None,
-        llm: LLMClient | None = None,
+        llm: Gateway | None = None,
         console: Console | None = None,
     ) -> "BookwormSkill":
         """加载书虫 skill
@@ -325,9 +326,9 @@ class BookwormSkill:
 
     # ------ LLM ------
     @property
-    def llm(self) -> LLMClient:
+    def llm(self) -> Gateway:
         if self._llm is None:
-            self._llm = LLMClient()
+            self._llm = create_gateway()
         return self._llm
 
     @property
@@ -356,7 +357,8 @@ class BookwormSkill:
         system_prompt = self._build_system_prompt(inp.genre)
         user_prompt = self._build_user_prompt(inp)
 
-        resp = self.llm.chat_utility(
+        resp = chat_utility(
+            self.llm,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -364,7 +366,7 @@ class BookwormSkill:
             temperature=0.3,  # 评估任务低温度保证稳定
         )
 
-        data = parse_llm_json(resp.text)
+        data = parse_llm_json(resp)
         review = self._parse_review(data, inp, version)
 
         if save_dir is not None:
@@ -661,7 +663,7 @@ class SkillRegistry:
     def load_builtin(
         self,
         name: str,
-        llm: LLMClient | None = None,
+        llm: Gateway | None = None,
         console: Console | None = None,
     ) -> BookwormSkill:
         """加载内置 skill

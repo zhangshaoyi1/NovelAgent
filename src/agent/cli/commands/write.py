@@ -69,7 +69,7 @@ def write(
     ),
     env_file: str = typer.Option(
         None, "--env",
-        help="指定 .env 文件（仅本次命令生效，透传给下游 LLMClient）",
+        help="指定 .env 文件（仅本次命令生效，透传给下游 GatewayAdapter）",
     ),
     strict_review: bool = typer.Option(
         True, "--strict-review", "--no-strict-review",
@@ -100,7 +100,7 @@ def write(
     """
     from agent.core.base.exceptions import PreValidationBlocked
 
-    # D：--env 透传（命令级设置环境变量，下游所有 LLMClient() 自动读取）
+    # D：--env 透传（命令级设置环境变量，下游所有 create_gateway_adapter() 自动读取）
     if env_file:
         os.environ["NOVEL_AGENT_DOTENV"] = env_file
 

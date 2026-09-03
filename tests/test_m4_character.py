@@ -20,7 +20,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.workflows.m14_architecture import M14ArchitectureWorkflow
 from agent.workflows.m4_character import M4CharacterWorkflow
@@ -258,7 +258,7 @@ def _build_mock_llm(output: dict) -> MagicMock:
     """MagicMock + chat_creative.return_value = LLMResponse(json)"""
     import json as _json
 
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     llm.chat_creative.return_value = LLMResponse(
         text=_json.dumps(output, ensure_ascii=False),
         raw={"choices": [{"message": {"content": _json.dumps(output, ensure_ascii=False)}}]},
@@ -268,7 +268,7 @@ def _build_mock_llm(output: dict) -> MagicMock:
 
 
 def _build_mock_llm_custom(text: str) -> MagicMock:
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     llm.chat_creative.return_value = LLMResponse(
         text=text,
         raw={"choices": [{"message": {"content": text}}]},

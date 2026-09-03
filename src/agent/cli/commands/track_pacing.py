@@ -70,7 +70,7 @@ def track_pacing(
         False, "--json", help="以 JSON 形式输出追踪结果到 stdout"
     ),
     env_file: Optional[str] = typer.Option(
-        None, "--env", help="指定 .env 文件（仅本次命令生效，透传给下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（仅本次命令生效，透传给下游 GatewayAdapter）"
     ),
 ) -> None:
     """追读力抽取与追踪（增量 C）
@@ -123,7 +123,7 @@ def track_pacing(
 
     wire_llm_event_hook(project_path)
 
-    # D：--env 透传后构建 tracker（内部 LLMClient 自动读取 .env）
+    # D：--env 透传后构建 tracker（内部 GatewayAdapter 自动读取 .env）
     tracker = PacingTracker(project_path)
     store = PacingStore(project_path)
 

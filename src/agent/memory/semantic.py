@@ -54,9 +54,9 @@ def build_default_embed_fn(provider: str = "openai") -> Callable[[list[str]], li
             OllamaEmbedding,
             OpenAICompatibleEmbedding,
         )
-        from agent.client import LLMClient
+        from agent.client.gateway_adapter import create_gateway_adapter
 
-        cfg = LLMClient().config
+        cfg = create_gateway_adapter().config
         if provider == "ollama":
             ep = OllamaEmbedding(
                 model=cfg.embedding_model or cfg.model,

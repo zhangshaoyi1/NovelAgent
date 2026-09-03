@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.client import LLMClient, LLMConfig, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMConfig, LLMResponse
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m1_config import M1ConfigWorkflow, M1Input
@@ -19,7 +19,7 @@ from agent.workflows.m1_config import M1ConfigWorkflow, M1Input
 @pytest.fixture
 def mock_llm() -> MagicMock:
     """mock LLMClient，返回固定的世界观 JSON"""
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     llm.chat_creative.return_value = LLMResponse(
         text=(
             '{"synopsis": "废柴少年得传承，逆天修仙",'
@@ -157,7 +157,7 @@ def test_m1_llm_called_with_correct_prompt(
 
 def test_m1_handles_llm_json_parse_failure(tmp_path: Path) -> None:
     """LLM 返回非 JSON 时重试一次，仍失败应明确抛错而非静默写残缺产物。"""
-    bad_llm = MagicMock(spec=LLMClient)
+    bad_llm = MagicMock(spec=GatewayAdapter)
     bad_llm.chat_creative.return_value = LLMResponse(
         text="这不是 JSON，只是普通文本输出",
         usage={},

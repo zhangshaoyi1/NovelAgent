@@ -29,7 +29,7 @@ def completion_extras(
     """
     from pathlib import Path
 
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
     from agent.workflows.m11_export import CompletionExtrasWorkflow
 
     project_path = Path(project_dir)
@@ -47,7 +47,7 @@ def completion_extras(
 
     try:
         wf = CompletionExtrasWorkflow(
-            project_path, llm=LLMClient(), console=console
+            project_path, llm=create_gateway_adapter(), console=console
         )
         result = wf.generate(output_dir=out_dir, skip_afterword=skip_afterword)
     except Exception as e:

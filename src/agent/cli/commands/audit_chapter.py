@@ -28,7 +28,7 @@ def audit_chapter(
 
     import frontmatter
 
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
     from agent.core.story.setting_manager import SettingManager
     from agent.workflows.m12_audit import ContentAuditor
 
@@ -53,7 +53,7 @@ def audit_chapter(
     wire_llm_event_hook(project_path)
 
     auditor = ContentAuditor(
-        project_path, llm=LLMClient(), console=console, violence_policy=policy
+        project_path, llm=create_gateway_adapter(), console=console, violence_policy=policy
     )
     try:
         result = auditor.audit_chapter(post.content, genre=genre, violence_policy=policy)

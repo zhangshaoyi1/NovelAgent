@@ -3,7 +3,7 @@
 ``Retriever.retrieve(query, top_k)``：向量召回 + BM25 兜底融合，返回 ``list[Chunk]``。
 
 设计要点：
-- 查询向量由注入的 ``embedder``（默认 ``LLMClient``）生成；embed 失败则纯 BM25 召回。
+- 查询向量由注入的 ``embedder``（默认 ``GatewayAdapter``）生成；embed 失败则纯 BM25 召回。
 - 融合策略：Reciprocal Rank Fusion（RRF，k=60），对向量/BM25 两套不同量纲的分数稳健。
 - 索引缺失（``.state/rag/index.json`` 不存在）时返回空列表（调用方据此降级，不阻断写章）。
 """
@@ -41,8 +41,8 @@ class Retriever:
 
     @staticmethod
     def _default_embedder() -> Any:
-        from agent.client import LLMClient
-        return LLMClient()
+        from agent.client.gateway_adapter import create_gateway_adapter
+        return create_gateway_adapter()
 
     def _ensure_loaded(self) -> None:
         if self._loaded:

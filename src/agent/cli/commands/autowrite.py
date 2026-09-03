@@ -146,7 +146,7 @@ def autowrite(
         False, "--json", help="以 JSON 形式输出结果到 stdout"
     ),
     env_file: str = typer.Option(
-        None, "--env", help="指定 .env 文件（仅本次命令生效，透传下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（仅本次命令生效，透传下游 GatewayAdapter）"
     ),
     brief: str = typer.Option(
         "", "--brief", help="创作思路（题材/核心梗/风格/体量）；留空则跳过规划"

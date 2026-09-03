@@ -14,7 +14,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from agent.core.registry.genre_pack import GenrePackRegistry
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m1_config import M1ConfigWorkflow, M1Input
@@ -22,7 +22,7 @@ from agent.workflows.m1_config import M1ConfigWorkflow, M1Input
 
 @pytest.fixture
 def mock_llm() -> MagicMock:
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     llm.chat_creative.return_value = LLMResponse(
         text=(
             '{"synopsis": "少年初入江湖",'

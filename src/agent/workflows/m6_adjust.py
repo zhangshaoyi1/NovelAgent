@@ -42,7 +42,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_creative, chat_utility
+from llmagent.gateway import Gateway
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
 from agent.core.quality.guardrails import is_architecture_confirmed
@@ -77,17 +78,29 @@ def _chat_parse_with_retry(
     """
     last_text = ""
     for attempt in range(2):
-        chat = llm.chat_utility if utility else llm.chat_creative
-        raw = chat(
-            messages=[
-                {"role": "system", "content": system},
-                {"role": "user", "content": user},
-            ],
-            temperature=temperature,
-            max_tokens=max_tokens,
-            enable_thinking=False,
-        )
-        last_text = raw.text
+        if utility:
+            raw = chat_utility(
+                llm,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                enable_thinking=False,
+            )
+        else:
+            raw = chat_creative(
+                llm,
+                messages=[
+                    {"role": "system", "content": system},
+                    {"role": "user", "content": user},
+                ],
+                temperature=temperature,
+                max_tokens=max_tokens,
+                enable_thinking=False,
+            )
+        last_text = raw
         try:
             data = parse_llm_json(last_text)
             if not isinstance(data, dict):
@@ -171,13 +184,13 @@ class M6AdjustRouteWorkflow:
     def __init__(
         self,
         project_dir: Path,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         setting_manager: SettingManager | None = None,
         state_machine: StateMachine | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.sm = setting_manager or SettingManager(self.project_dir)
         self.state_machine = state_machine or StateMachine(self.project_dir)
         self.console = console or Console()
@@ -532,13 +545,13 @@ class M6AdjustRelationWorkflow:
     def __init__(
         self,
         project_dir: Path,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         setting_manager: SettingManager | None = None,
         state_machine: StateMachine | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.sm = setting_manager or SettingManager(self.project_dir)
         self.state_machine = state_machine or StateMachine(self.project_dir)
         self.console = console or Console()

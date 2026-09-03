@@ -28,7 +28,7 @@ def export(
     ),
     env_file: str = typer.Option(
         None, "--env",
-        help="指定 .env 文件（仅本次命令生效，透传给下游 LLMClient）",
+        help="指定 .env 文件（仅本次命令生效，透传给下游 GatewayAdapter）",
     ),
 ) -> None:
     """M11 导出 - 导出为 TXT/Markdown/EPUB

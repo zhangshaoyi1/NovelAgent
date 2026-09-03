@@ -18,6 +18,7 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.29.0",
     "python-multipart>=0.0.9",
+    "llmagent",
 ]
 
 [project.optional-dependencies]
@@ -41,7 +42,7 @@ include = ["agent*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "../llmagent/src"]
 
 [tool.ruff]
 line-length = 100

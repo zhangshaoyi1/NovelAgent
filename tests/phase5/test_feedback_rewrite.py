@@ -13,7 +13,7 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.quality.rewrite.feedback_rewriter import FeedbackRewriter, RewriteResult
 from agent.core.quality.guardrails import Guardrails
 from agent.service.agent_service import AgentService
@@ -23,7 +23,7 @@ from agent.service.agent_service import AgentService
 # 假 LLM
 # ============================================================
 def _fake_llm(rewritten_text: str, *, raise_error: bool = False) -> MagicMock:
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     if raise_error:
         llm.chat_creative.side_effect = RuntimeError("network down")
     else:

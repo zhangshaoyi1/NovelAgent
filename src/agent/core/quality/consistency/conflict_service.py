@@ -77,7 +77,7 @@ class ConflictArbiter:
     """设定冲突仲裁器（F12.1）
 
     用法：
-        arbiter = ConflictArbiter(project_dir, llm=LLMClient())
+        arbiter = ConflictArbiter(project_dir, llm=create_gateway_adapter())
         report = arbiter.check_new_setting("主角境界提升到金丹期")
         if report.needs_arbitration:
             # 提示用户仲裁
@@ -98,8 +98,8 @@ class ConflictArbiter:
 
     @staticmethod
     def _default_llm() -> Any:
-        from agent.client import LLMClient
-        return LLMClient()
+        from agent.client.gateway_adapter import create_gateway_adapter
+        return create_gateway_adapter()
 
     def check_new_setting(
         self,

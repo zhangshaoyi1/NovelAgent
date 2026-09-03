@@ -299,7 +299,7 @@ def test_evaluate_wiring_tracer_calls_grow(tmp_path: Path, monkeypatch, capsys) 
 
     d = make_project(tmp_path, n_chapters=3, state=State.WRITING)
     fake = _FakeEvalLLM()
-    monkeypatch.setattr("agent.client.LLMClient", lambda *a, **kw: fake)
+    monkeypatch.setattr("agent.client.gateway_adapter.create_gateway_adapter", lambda *a, **kw: fake)
     set_tracer(TraceStore(d))
     before = get_tracer().totals()["calls"]
 
@@ -324,7 +324,7 @@ def test_appeal_wiring_tracer_calls_grow(tmp_path: Path, monkeypatch, capsys) ->
 
     d = make_project(tmp_path, n_chapters=3, state=State.WRITING)
     fake = _FakeAppealLLM()
-    monkeypatch.setattr("agent.client.LLMClient", lambda *a, **kw: fake)
+    monkeypatch.setattr("agent.client.gateway_adapter.create_gateway_adapter", lambda *a, **kw: fake)
     set_tracer(TraceStore(d))
     before = get_tracer().totals()["calls"]
 
@@ -347,7 +347,7 @@ def test_evaluate_no_cost_json_null(tmp_path: Path, monkeypatch, capsys) -> None
     from agent.core.engine.state_machine import State
 
     d = make_project(tmp_path, n_chapters=1, state=State.WRITING)
-    monkeypatch.setattr("agent.client.LLMClient", lambda *a, **kw: _FakeEvalLLM())
+    monkeypatch.setattr("agent.client.gateway_adapter.create_gateway_adapter", lambda *a, **kw: _FakeEvalLLM())
     evaluate(project_dir=str(d), json_output=True, env_file=None, no_rollback=True,
              auto_repair=False, rollback_window=5, max_rollback=3, real_score=True,
              no_human_summary=False, no_cost=True)

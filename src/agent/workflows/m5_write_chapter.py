@@ -40,7 +40,8 @@ from agent.core.quality.scoring.quality_checker import (
     resolve_max_cjk_words,
 )
 from agent.core.story.injected_trope_store import InjectedTropeStore
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_creative, chat_utility
+from llmagent.gateway import Gateway
 from agent.core.story.method_style import load_style_guide  # G11：风格指引读取
 from agent.core.story.setting_manager import SettingManager
 from agent.core.story.volume import estimate_chapters  # B 方案：压力曲线回落用真实预计总章数
@@ -233,7 +234,7 @@ class M5WriteChapterWorkflow:
     def __init__(
         self,
         project_dir: Path,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         setting_manager: SettingManager | None = None,
         state_machine: StateMachine | None = None,
         console: Console | None = None,
@@ -254,7 +255,7 @@ class M5WriteChapterWorkflow:
         deslop_enabled: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.sm = setting_manager or SettingManager(self.project_dir)
         self.state_machine = state_machine or StateMachine(self.project_dir)
         self.console = console or Console()
@@ -1322,7 +1323,8 @@ class M5WriteChapterWorkflow:
                 character_constraints=character_constraints
             )
 
-        resp = self.llm.chat_creative(
+        resp = chat_creative(
+            self.llm,
             messages=[
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": user_prompt},
@@ -1330,10 +1332,9 @@ class M5WriteChapterWorkflow:
             temperature=0.85,
             max_tokens=4096,
             enable_thinking=False,
-            validators=[ValidationSpec.not_empty()],
         )
         # 后处理：规范化段落格式（安全网，即使 LLM 遗漏规则 15 也兜底）
-        raw = resp.text.strip()
+        raw = resp.strip()
         return self._format_chapter_body(raw)
 
     # ============================================================
@@ -1354,7 +1355,8 @@ class M5WriteChapterWorkflow:
                 + " 仅替换这些英文，保持情节/人物/对话/结构完全不变，直接输出完整正文。"
             )
             try:
-                rev_resp = self.llm.chat_creative(
+                rev_resp = chat_creative(
+                    self.llm,
                     messages=[
                         {"role": "system", "content": pm.get("m5.revise").system},
                         {
@@ -1367,9 +1369,8 @@ class M5WriteChapterWorkflow:
                     temperature=0.4,
                     max_tokens=4096,
                     enable_thinking=False,
-                    validators=[ValidationSpec.not_empty()],
                 )
-                text = rev_resp.text.strip()
+                text = rev_resp.strip()
             except Exception:  # noqa: BLE001 - 修订调用异常不阻断，交由兜底清理
                 logger.warning("[no_english] 追加英文修订调用异常，交由确定性清理")
                 break
@@ -1421,7 +1422,8 @@ class M5WriteChapterWorkflow:
                         )
                 if rules_parts:
                     check_prompt = check_prompt + "\n\n" + "\n\n".join(rules_parts)
-            resp = self.llm.chat_utility(
+            resp = chat_utility(
+                self.llm,
                 messages=[
                     {"role": "system", "content": pm.get("m5.quality_check").system},
                     {"role": "user", "content": check_prompt},
@@ -1430,7 +1432,7 @@ class M5WriteChapterWorkflow:
                 enable_thinking=False,
             )
             try:
-                report = parse_llm_json(resp.text)
+                report = parse_llm_json(resp)
             except ValueError:
                 report = {"overall_pass": True, "rules": [], "suggestions": "校验解析失败，默认通过"}
 
@@ -1448,7 +1450,7 @@ class M5WriteChapterWorkflow:
 
             # ---- G-EN：正文纯中文硬关卡（确定性扫描，叠加在 LLM 质检之上，不依赖 LLM 自觉）----
             english_tokens = scan_english_contamination(text)
-            quality_report_text = resp.text
+            quality_report_text = resp
             if english_tokens:
                 report["overall_pass"] = False
                 report.setdefault("rules", []).append(
@@ -1464,7 +1466,7 @@ class M5WriteChapterWorkflow:
                 )
                 # 把明确的中文替换指令直接塞进修订提示词，确保 LLM 知道改什么
                 quality_report_text = (
-                    resp.text
+                    resp
                     + "\n\n# 硬性修订指令（必须执行，否则本章不通过）\n"
                     + "本章检出英文污染 token："
                     + "、".join(english_tokens[:20])
@@ -1525,7 +1527,8 @@ class M5WriteChapterWorkflow:
                     quality_report=quality_report_text,
                     chapter_text=text,
                 )
-                rev_resp = self.llm.chat_creative(
+                rev_resp = chat_creative(
+                    self.llm,
                     messages=[
                         {"role": "system", "content": pm.get("m5.revise").system},
                         {"role": "user", "content": revise_prompt},
@@ -1533,9 +1536,8 @@ class M5WriteChapterWorkflow:
                     temperature=0.6,
                     max_tokens=4096,
                     enable_thinking=False,
-                    validators=[ValidationSpec.not_empty()],
                 )
-                text = rev_resp.text.strip()
+                text = rev_resp.strip()
                 attempts = attempt + 1
 
         # ---- G-EN：落盘前最终英文兜底（主循环修订后若仍有英文，追加专门修订 + 确定性清理）----

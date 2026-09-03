@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.core.story.learning_store import Learning, LearningStore
+from agent.client.gateway_adapter import chat_utility
 from agent.utils import parse_llm_json
 
 _SKILL_DIR = Path(__file__).resolve().parents[2] / "agent" / "skills" / "learning-imitation"
@@ -77,7 +78,8 @@ class LearningMiner:
         joined = "\n\n----\n\n".join(texts)
         user = pm.get("e.learn_extract").render_user(chapter_text=joined)
         try:
-            resp = self.llm.chat_utility(
+            resp = chat_utility(
+                self.llm,
                 [
                     {"role": "system", "content": pm.get("e.learn_extract").system},
                     {"role": "user", "content": user},
@@ -85,7 +87,7 @@ class LearningMiner:
                 max_tokens=1500,
                 enable_thinking=False,
             )
-            data = parse_llm_json(resp.text)
+            data = parse_llm_json(resp)
         except Exception:  # noqa: BLE001 - 提炼失败降级为空
             return []
 
@@ -155,7 +157,8 @@ class LearningImitationMiner:
             return {}
         try:
             system = sp.read_text(encoding="utf-8")
-            resp = self.llm.chat_utility(
+            resp = chat_utility(
+                self.llm,
                 [
                     {"role": "system", "content": system},
                     {"role": "user", "content": user},
@@ -163,7 +166,7 @@ class LearningImitationMiner:
                 max_tokens=max_tokens,
                 enable_thinking=False,
             )
-            data = parse_llm_json(resp.text)
+            data = parse_llm_json(resp)
             return data if isinstance(data, dict) else {}
         except Exception:  # noqa: BLE001 - 阶段失败降级为空
             return {}

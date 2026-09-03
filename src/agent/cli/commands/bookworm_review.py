@@ -79,9 +79,9 @@ def bookworm_review(
     skill = registry.get_skill("bookworm")
     if skill is None:
         # 自动加载
-        from agent.client import LLMClient
+        from agent.client.gateway_adapter import create_gateway_adapter
 
-        skill = registry.load_builtin("bookworm", llm=LLMClient(), console=console)
+        skill = registry.load_builtin("bookworm", llm=create_gateway_adapter(), console=console)
 
     inp = BookwormInput(
         title=title,

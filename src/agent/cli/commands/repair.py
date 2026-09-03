@@ -33,7 +33,7 @@ def repair(
         False, "--json", help="以 JSON 形式输出结果到 stdout"
     ),
     env_file: str = typer.Option(
-        None, "--env", help="指定 .env 文件（透传下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（透传下游 GatewayAdapter）"
     ),
     apply: bool = typer.Option(
         False, "--apply", help="已确认偏好后执行事实型自动重写（默认 dry-run 不改正文）"
@@ -74,14 +74,14 @@ def repair(
     workflow_console = make_quiet_console() if json_output else console
 
     # 接线 tracer + LLM 事件（全入口统一模式）
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
     from agent.core.llmops import TraceStore, TracedLLMClient, set_tracer
 
     set_tracer(TraceStore(project_path))
     from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
 
     wire_llm_event_hook(project_path)
-    traced_llm = TracedLLMClient(LLMClient(), model="creative-strong")
+    traced_llm = TracedLLMClient(create_gateway_adapter(), model="creative-strong")
 
     from agent.core.quality.repair.repair_orchestrator import RepairOrchestrator
 

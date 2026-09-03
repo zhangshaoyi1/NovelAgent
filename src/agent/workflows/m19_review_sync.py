@@ -28,7 +28,8 @@ from typing import Any
 
 from rich.console import Console
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_creative
+from llmagent.gateway import Gateway
 from agent.core.engine.workflow_registry import workflow
 from agent.utils import parse_llm_json
 
@@ -104,11 +105,11 @@ class M19ReviewSyncWorkflow:
     def __init__(
         self,
         project_dir: Path | str,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.console = console or Console()
 
     # ============================================================
@@ -236,7 +237,8 @@ class M19ReviewSyncWorkflow:
         last_text = ""
         system_prompt = pm.get("m19.review").system
         for attempt in range(2):
-            resp = self.llm.chat_creative(
+            resp = chat_creative(
+                self.llm,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
@@ -247,9 +249,9 @@ class M19ReviewSyncWorkflow:
                 max_tokens=4096,
                 enable_thinking=False,
             )
-            last_text = resp.text
+            last_text = resp
             try:
-                data = parse_llm_json(resp.text)
+                data = parse_llm_json(resp)
                 findings = [ReviewFinding.from_dict(f) for f in (data.get("findings") or [])]
                 summary = str(data.get("summary", ""))
                 return findings, summary

@@ -4,7 +4,7 @@
 而不是只能整章回退或整本重跑。这是把"枪手"变成"听话的枪手"的关键黏性闭环。
 
 设计要点（契合项目"降级不阻断"哲学）：
-- 复用 LLMClient（chat_creative 重写 + 可选 chat_utility 生成改动摘要）、
+- 复用 GatewayAdapter（chat_creative 重写 + 可选 chat_utility 生成改动摘要）、
   SettingManager（世界观上下文）、Guardrails（改写后合规校验）、
   LearningStore（把"用户偏好"沉淀进长期记忆，下次自动吸收）。
 - **离线/无 LLM 优雅降级**：LLM 调用失败时 `llm_used=False`，保留原章并返回错误说明，
@@ -117,7 +117,7 @@ class FeedbackRewriter:
 
     Args:
         project_dir: 小说项目目录。
-        llm_client: LLM 客户端（创作模型）；None 则内部惰性构造 LLMClient()。
+        llm_client: LLM 客户端（创作模型）；None 则内部惰性构造 create_gateway_adapter()。
         guardrails: 护栏实例；None 则用默认 Guardrails()（仅创作残留级校验）。
         console: rich 控制台。
         learning_store: 长期偏好记忆；None 则内部惰性构造。
@@ -144,8 +144,8 @@ class FeedbackRewriter:
     @property
     def llm(self) -> Any:
         if self._llm is None:
-            from agent.client import LLMClient
-            self._llm = LLMClient()
+            from agent.client.gateway_adapter import create_gateway_adapter
+            self._llm = create_gateway_adapter()
         return self._llm
 
     @property

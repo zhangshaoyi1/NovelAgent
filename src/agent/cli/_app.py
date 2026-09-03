@@ -8,9 +8,13 @@
 
 from __future__ import annotations
 
+import os
 import sys
 import typer
 from rich.console import Console
+
+# Phase 1+ 迁移：所有 LLMClient() 直接创建也使用 Gateway 后端
+os.environ.setdefault("LLM_USE_GATEWAY", "true")
 
 # Windows / 中文系统默认控制台编码为 GBK（cp936）。rich 输出大量使用 ✓/✗/⚠/→
 # 等符号，写入 GBK 流会抛 UnicodeEncodeError（直跑崩溃；Web 子进程经 runner.py

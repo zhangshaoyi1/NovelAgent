@@ -28,7 +28,8 @@ from rich.panel import Panel
 from rich.prompt import Confirm, Prompt
 
 from agent import __version__
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_creative, chat_utility
+from llmagent.gateway import Gateway
 from agent.core.infra.prompt_manager import pm
 from agent.core.registry.genre_pack import GenrePackRegistry
 from agent.core.registry.genre_merger import GenreMerger, save_conflicts
@@ -107,13 +108,13 @@ class M1ConfigWorkflow:
     def __init__(
         self,
         project_dir: Path,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         setting_manager: SettingManager | None = None,
         state_machine: StateMachine | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.sm = setting_manager or SettingManager(self.project_dir)
         self.state_machine = state_machine or StateMachine(self.project_dir)
         self.console = console or Console()
@@ -392,7 +393,8 @@ class M1ConfigWorkflow:
                     + "\n\n【重要】请只输出一个合法的 JSON 对象，"
                     "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
                 )
-            resp = self.llm.chat_creative(
+            resp = chat_creative(
+                self.llm,
                 messages=[
                     {"role": "system", "content": system_prompt},
                     {"role": "user", "content": user_prompt},
@@ -402,7 +404,7 @@ class M1ConfigWorkflow:
                 enable_thinking=False,  # 结构化输出不需要思考，加速生成
             )
             try:
-                return parse_llm_json(resp.text)
+                return parse_llm_json(resp)
             except ValueError:
                 if attempt == len(_budgets) - 1:
                     raise RuntimeError(

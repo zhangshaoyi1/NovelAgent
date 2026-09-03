@@ -129,7 +129,7 @@ class TestLearnCommand:
 
     def test_extract_json(self, tmp_path: Path, monkeypatch) -> None:
         d = make_project(tmp_path, n_chapters=2)
-        monkeypatch.setattr("agent.cli.commands.learn.LLMClient", _FakeLearnLLM)
+        monkeypatch.setattr("agent.cli.commands.learn.create_gateway_adapter", _FakeLearnLLM)
         runner = CliRunner()
         r = runner.invoke(
             app, ["learn", "--action", "extract", "--range", "1-2", "--json", "-d", str(d)]

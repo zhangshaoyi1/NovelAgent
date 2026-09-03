@@ -27,7 +27,7 @@ def context(
     """
     from pathlib import Path
 
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
     from agent.workflows.m12_audit import ContextLoader
 
     project_path = Path(project_dir)
@@ -36,7 +36,7 @@ def context(
     from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
 
     wire_llm_event_hook(project_path)
-    loader = ContextLoader(project_path, llm=LLMClient(), console=console)
+    loader = ContextLoader(project_path, llm=create_gateway_adapter(), console=console)
     subline_id = subline if subline else None
     try:
         ctx = loader.load_full_context(

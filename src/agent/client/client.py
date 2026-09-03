@@ -69,6 +69,9 @@ class LLMClient:
     """LLM 客户端（统一入口）
 
     支持多种 Provider，多模型分工，网络错误自动回退。
+
+    当环境变量 ``LLM_USE_GATEWAY=true`` 时，内部使用 llmagent Gateway
+    作为后端（Phase 1+ 迁移），对外 API 完全一致，调用方零改动。
     """
 
     def __init__(
@@ -78,7 +81,28 @@ class LLMClient:
         primary_provider: LLMProvider | None = None,
         fallback_provider: LLMProvider | None = None,
         env_file: str | None = None,
+        llm_use_gateway: bool | None = None,
     ) -> None:
+        """初始化 LLMClient
+
+        Args:
+            config: LLM 配置（None 从环境变量加载）
+            console: Rich Console
+            primary_provider: 主 Provider
+            fallback_provider: 备用 Provider
+            env_file: .env 文件路径
+            llm_use_gateway: 是否使用 Gateway 后端（None 时检查 LLM_USE_GATEWAY 环境变量）
+        """
+        # 检查是否使用 Gateway 后端
+        if llm_use_gateway is None:
+            _raw = os.environ.get("LLM_USE_GATEWAY", "").strip().lower()
+            llm_use_gateway = _raw in ("true", "1", "yes", "on")
+
+        if llm_use_gateway:
+            self._init_gateway(config, console, env_file)
+            return
+
+        # ---- 原有初始化逻辑（未启用 Gateway 时） ----
         if config is None:
             resolved_env = env_file or os.environ.get("NOVEL_AGENT_DOTENV")
             self.config = self._load_from_env(env_file=resolved_env)
@@ -88,6 +112,69 @@ class LLMClient:
         self._provider = primary_provider or LLMProvider.create(self.config)
         self._fallback_provider = fallback_provider
         self.fallback_log: list[str] = []
+        self._gateway: Any = None  # 标记未使用 Gateway
+
+    def _init_gateway(
+        self,
+        config: LLMConfig | None,
+        console: "Console | None",
+        env_file: str | None,
+    ) -> None:
+        """使用 Gateway 后端初始化"""
+        from agent.client.gateway_adapter import GatewayAdapter, _GatewayModelProvider, _load_config_from_env
+        from llmagent.gateway import Gateway
+        from llmagent.gateway.models import ModelCard, TaskHint
+        from llmagent.gateway.providers import ProviderRegistry
+        from llmagent.gateway.request_gate import RequestGate
+        from llmagent.gateway.router import ComplexityRouter
+        from llmagent.gateway.packer import Packer
+        from llmagent.gateway.response_gate import ResponseGate, MetricsSink
+        from llmagent.gateway.rate_limiter import RateLimiter, SemanticCache
+
+        if config is None:
+            config = _load_config_from_env(env_file)
+        # 创建 LLMProvider
+        primary = LLMProvider.create(config)
+        # 创建 ProviderRegistry
+        registry = ProviderRegistry()
+        registry.register(config.provider, _GatewayModelProvider(config.provider, primary))
+        # 注册 fallback providers
+        for fb_name in config.fallback_providers:
+            fb_name = fb_name.strip().lower()
+            if not fb_name or fb_name == config.provider:
+                continue
+            try:
+                fb_config = LLMConfig(
+                    provider=fb_name,
+                    api_key=config.api_key,
+                    base_url=config.base_url,
+                    model=config.fallback_model or config.model,
+                    timeout=config.timeout,
+                    max_retries=1,
+                )
+                fb_provider = LLMProvider.create(fb_config)
+                registry.register(fb_name, _GatewayModelProvider(fb_name, fb_provider))
+            except Exception:
+                if console:
+                    console.print(f"[yellow]⚠ 注册 fallback provider {fb_name} 失败[/yellow]")
+        # 创建 Gateway
+        gateway = Gateway(
+            request_gate=RequestGate(),
+            router=ComplexityRouter(),
+            packer=Packer(),
+            registry=registry,
+            response_gate=ResponseGate(),
+            metrics_sink=MetricsSink(),
+            rate_limiter=RateLimiter(),
+            semantic_cache=SemanticCache(),
+        )
+        self._gateway = GatewayAdapter(gateway, config, console=console)
+        # 保持兼容属性
+        self.config = self._gateway.config
+        self.console = console
+        self.fallback_log: list[str] = []
+        self._provider = None  # type: ignore[assignment]
+        self._fallback_provider = None
 
     @staticmethod
     def _load_from_env(env_file: str | None = None) -> LLMConfig:
@@ -152,13 +239,19 @@ class LLMClient:
 
     @property
     def provider_name(self) -> str:
+        if self._gateway is not None:
+            return self._gateway.provider_name
         return self.config.provider
 
     @property
     def is_local(self) -> bool:
+        if self._gateway is not None:
+            return self._gateway.is_local
         return self.config.provider == "ollama"
 
     def preflight(self) -> dict[str, Any]:
+        if self._gateway is not None:
+            return self._gateway.preflight()
         return {
             "provider": self.config.provider,
             "model": self.config.model,
@@ -252,6 +345,14 @@ class LLMClient:
                 P1 仅把问题写入 ``resp.warnings``。
             validation_attempt: 内部递归重试计数，防无限循环，调用方勿传。
         """
+        # Gateway 后端委托
+        if self._gateway is not None:
+            return self._gateway.chat(
+                messages, model=model, temperature=temperature,
+                max_tokens=max_tokens, use=use,
+                enable_thinking=enable_thinking, validators=validators,
+                validation_attempt=validation_attempt, **kwargs,
+            )
         target_model = self._select_model(model, use)
         if enable_thinking is None:
             enable_thinking = self.config.enable_thinking
@@ -508,8 +609,12 @@ class LLMClient:
     def embed(self, texts: list[str]) -> list[list[float]]:
         """生成文本嵌入向量
 
+        如果启用了 Gateway 后端，走 Gateway 的 embed 路由。
         失败返回空列表，调用方降级，绝不阻断写作。
         """
+        if self._gateway is not None:
+            return self._gateway.embed(texts)
+
         t0 = time.monotonic()
         try:
             r = self._provider.embed(texts)

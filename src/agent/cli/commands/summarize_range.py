@@ -24,7 +24,7 @@ def summarize_range(
     """
     from pathlib import Path
 
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
     from agent.workflows.m12_audit import ChapterSummarizer
 
     project_path = Path(project_dir)
@@ -33,7 +33,7 @@ def summarize_range(
     from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
 
     wire_llm_event_hook(project_path)
-    summarizer = ChapterSummarizer(project_path, llm=LLMClient(), console=console)
+    summarizer = ChapterSummarizer(project_path, llm=create_gateway_adapter(), console=console)
     try:
         results = summarizer.summarize_range(start, end, skip_existing=not force)
     except Exception as e:

@@ -34,7 +34,8 @@ from agent.core.engine.tool_contracts import (
     ToolResult,
     registry as default_registry,
 )
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_structured
+from llmagent.gateway import Gateway
 from agent.core.infra.prompt_manager import pm
 from agent.core.base.structured_output import StructuredOutputError
 from agent.core.quality.scoring.quality_checker import (
@@ -121,7 +122,7 @@ class WriterAgent:
     def __init__(
         self,
         project_dir: str | Path,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         tools: list[Tool] | ToolRegistry | None = None,
         tier: str = "auto",
         console: Console | None = None,
@@ -165,23 +166,23 @@ class WriterAgent:
         if self._decide is not None:
             return self._decide
         if self.llm is None:
-            self.llm = LLMClient()
+            self.llm = create_gateway()
         llm = self.llm
 
         def decide(messages: list[dict[str, str]]) -> AgentAction:
             retry_messages = messages
             for attempt in (0, 1):
                 try:
-                    data = llm.chat_structured(
+                    data = chat_structured(
+                        llm,
                         retry_messages,
                         AgentAction,
                         use="creative",
                         temperature=0.6,
                         max_tokens=8192,
                         enable_thinking=False,
-                        strict=True,  # G4 开启 strict=True 强校验
                     )
-                    return AgentAction(**data)
+                    return data
                 except (ValidationError, StructuredOutputError) as ve:  # noqa: BLE001 - G4 精确捕获
                     if attempt == 1:
                         # 两次均失败 → 明确报错，让外环重试（T3 验收：不破坏 G3 降级不阻断）
@@ -203,23 +204,25 @@ class WriterAgent:
         if self._decide_async is not None:
             return self._decide_async
         if self.llm is None:
-            self.llm = LLMClient()
+            self.llm = create_gateway()
         llm = self.llm
 
         async def decide_async(messages: list[dict[str, str]]) -> AgentAction:
+            from asyncio import to_thread
             retry_messages = messages
             for attempt in (0, 1):
                 try:
-                    data = await llm.chat_structured_async(
+                    data = await to_thread(
+                        chat_structured,
+                        llm,
                         retry_messages,
                         AgentAction,
                         use="creative",
                         temperature=0.6,
                         max_tokens=8192,
                         enable_thinking=False,
-                        strict=True,
                     )
-                    return AgentAction(**data)
+                    return data
                 except (ValidationError, StructuredOutputError) as ve:  # noqa: BLE001 - G4 精确捕获
                     if attempt == 1:
                         # 两次均失败 → 明确报错，让外环重试（T3 验收：不破坏 G3 降级不阻断）

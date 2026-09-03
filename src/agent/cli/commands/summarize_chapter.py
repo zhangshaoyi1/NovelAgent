@@ -22,7 +22,7 @@ def summarize_chapter(
     """
     from pathlib import Path
 
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
     from agent.workflows.m12_audit import ChapterSummarizer
 
     project_path = Path(project_dir)
@@ -31,7 +31,7 @@ def summarize_chapter(
     from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
 
     wire_llm_event_hook(project_path)
-    summarizer = ChapterSummarizer(project_path, llm=LLMClient(), console=console)
+    summarizer = ChapterSummarizer(project_path, llm=create_gateway_adapter(), console=console)
     try:
         summary = summarizer.summarize_chapter(chapter)
     except Exception as e:

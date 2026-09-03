@@ -1,4 +1,4 @@
-"""M12 内容审核与上下文管理
+﻿"""M12 内容审核与上下文管理
 
 基于 PRD F12.1-F12.3：
 
@@ -31,7 +31,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_utility
+from llmagent.gateway import Gateway
 from agent.core.story.setting_manager import SettingManager
 from agent.utils import parse_llm_json
 
@@ -99,7 +100,7 @@ class ContentAuditor:
     """内容审核器（F12.2）
 
     用法：
-        auditor = ContentAuditor(project_dir, llm=LLMClient())
+        auditor = ContentAuditor(project_dir, llm=create_gateway())
         result = auditor.audit_chapter("章节正文...")
         if result.needs_block:
             # 拦截章节，要求重写
@@ -109,12 +110,12 @@ class ContentAuditor:
     def __init__(
         self,
         project_dir: Path,
-        llm: LLMClient | None = None,
+        llm: Gateway | None = None,
         console: Console | None = None,
         violence_policy: str = "standard",
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm or LLMClient()
+        self.llm = llm or create_gateway()
         self.console = console or Console()
         self.violence_policy = violence_policy
 
@@ -147,14 +148,15 @@ class ContentAuditor:
         )
 
         try:
-            resp = self.llm.chat_utility(
+            resp = chat_utility(
+                self.llm,
                 messages=[
                     {"role": "system", "content": pm.get("m12.content_audit").system},
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=0.1,
             )
-            data = parse_llm_json(resp.text)
+            data = parse_llm_json(resp)
         except (ValueError, Exception):
             # 审核失败时保守起见返回通过（避免阻塞写作）
             return AuditResult(
@@ -278,7 +280,7 @@ class ChapterSummarizer:
     保存到 chapters/_summaries/ch<NNN>.json。
 
     用法：
-        summarizer = ChapterSummarizer(project_dir, llm=LLMClient())
+        summarizer = ChapterSummarizer(project_dir, llm=create_gateway())
         summary = summarizer.summarize_chapter(5)  # 生成第 5 章摘要
         summary = summarizer.load_summary(5)       # 读取已有摘要
     """
@@ -288,11 +290,11 @@ class ChapterSummarizer:
     def __init__(
         self,
         project_dir: Path,
-        llm: LLMClient | None = None,
+        llm: Gateway | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm or LLMClient()
+        self.llm = llm or create_gateway()
         self.console = console or Console()
         self.chapters_dir = self.project_dir / "chapters"
         self.summaries_dir = self.project_dir / "chapters" / "_summaries"
@@ -325,14 +327,15 @@ class ChapterSummarizer:
         )
 
         try:
-            resp = self.llm.chat_utility(
+            resp = chat_utility(
+                self.llm,
                 messages=[
                     {"role": "system", "content": pm.get("m12.summary").system},
                     {"role": "user", "content": user_msg},
                 ],
                 temperature=0.2,
             )
-            data = parse_llm_json(resp.text)
+            data = parse_llm_json(resp)
         except (ValueError, Exception):
             return None
 
@@ -451,7 +454,7 @@ class ContextLoader:
     集成 ChapterSummarizer 实现摘要机制。
 
     用法：
-        loader = ContextLoader(project_dir, llm=LLMClient())
+        loader = ContextLoader(project_dir, llm=create_gateway())
         ctx = loader.load_essential(chapter_num=10, subline_id="S01")
         on_demand = loader.load_on_demand(chapter_num=10, include_history=True)
     """
@@ -459,12 +462,12 @@ class ContextLoader:
     def __init__(
         self,
         project_dir: Path,
-        llm: LLMClient | None = None,
+        llm: Gateway | None = None,
         setting_manager: SettingManager | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm or LLMClient()
+        self.llm = llm or create_gateway()
         self.sm = setting_manager or SettingManager(self.project_dir)
         self.console = console or Console()
         self.summarizer = ChapterSummarizer(self.project_dir, llm=self.llm, console=self.console)

@@ -5,7 +5,7 @@
 - **中度**：LLM 改写，三遍法 Pass1（去泛化）+ Pass2（去书面化），门禁 A+B+C+D。
 - **重度**：LLM 改写，完整三遍 + 重点段落重写，6 门禁全过。
 
-分层：位于 core/anti_ai，只依赖 base（LLMClient 由调用方注入），
+分层：位于 core/anti_ai，只依赖 base（GatewayAdapter 由调用方注入），
 LLM 调用事件由 client 层统一埋点（``wire_llm_event_hook``），本模块不做转发。
 """
 
@@ -50,7 +50,7 @@ class DeslopResult:
 
 
 class DeslopRewriter:
-    """去AI味改写器——规则检测分级 + LLM 改写（走统一 LLMClient）。"""
+    """去AI味改写器——规则检测分级 + LLM 改写（走统一 GatewayAdapter）。"""
 
     def __init__(
         self,
@@ -58,11 +58,11 @@ class DeslopRewriter:
         project_dir: str | Path | None = None,
         console: Any | None = None,
     ) -> None:
-        # 延迟导入，避免模块级循环依赖（LLMClient 仅依赖 base）。
+        # 延迟导入，避免模块级循环依赖（GatewayAdapter 仅依赖 base）。
         if llm_client is None:
-            from agent.client import LLMClient
+            from agent.client.gateway_adapter import create_gateway_adapter
 
-            llm_client = LLMClient()
+            llm_client = create_gateway_adapter()
         self.llm = llm_client
         self.project_dir = project_dir
         self.console = console

@@ -10,7 +10,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
 from agent.workflows.m2_discuss import (
@@ -22,7 +22,7 @@ from agent.workflows.m2_discuss import (
 @pytest.fixture
 def mock_llm() -> MagicMock:
     """mock LLM，按调用次数返回不同响应"""
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     # chat_creative 返回提问，chat_utility 返回总结
     llm.chat_creative.return_value = LLMResponse(
         text="这是一个关键问题：主角的动机是什么？",

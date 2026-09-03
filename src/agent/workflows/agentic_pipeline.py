@@ -28,7 +28,8 @@ from typing import Any, Callable, Optional
 
 from rich.console import Console
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway
+from llmagent.gateway import Gateway
 from agent.core.engine.state_machine import Event, State, StateMachine, TRANSITIONS
 from agent.core.story.setting_manager import SettingManager
 from agent.core.quality.guardrails import is_architecture_confirmed
@@ -188,7 +189,7 @@ class AgenticPipelineWorkflow:
     def __init__(
         self,
         project_dir: str | Path,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         tier: str = "auto",
         brief: str = "",
         target_chapters: int | None = None,

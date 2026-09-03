@@ -1,4 +1,4 @@
-﻿"""Pacing 测试（增量 C / T04）
+"""Pacing 测试（增量 C / T04）
 
 覆盖：
 - PacingStore：add/get/dedup/load/save/clear + 损坏降级为空
@@ -14,7 +14,7 @@ from pathlib import Path
 from unittest.mock import MagicMock
 
 from agent.cli import app
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.story.pacing_store import Debt, PacingStore
 from agent.workflows.m16_pacing import PacingExtraction, PacingTracker
 from typer.testing import CliRunner
@@ -192,4 +192,4 @@ class TestTrackPacingCommand:
 
 
 # 静默未使用导入告警
-_ = (CHAPTER_TEXT, _build_minimal_project, MagicMock, LLMClient)
+_ = (CHAPTER_TEXT, _build_minimal_project, MagicMock, create_gateway_adapter)

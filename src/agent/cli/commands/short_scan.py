@@ -59,7 +59,7 @@ def short_scan(
         False, "--json", help="以 JSON 形式输出结果到 stdout"
     ),
     env_file: str = typer.Option(
-        None, "--env", help="指定 .env 文件（透传下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（透传下游 GatewayAdapter）"
     ),
 ) -> None:
     """M23 短篇扫榜 —— 短篇网文外部市场分析（情绪/题材/风口）"""

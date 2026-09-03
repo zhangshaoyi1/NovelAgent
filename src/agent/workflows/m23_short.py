@@ -11,7 +11,7 @@
 
 边界声明：本功能是**外部短篇市场/作品分析**，产物默认仅输出报告，可选保存到
 项目 ``.state/analyze/``；不写学习库（learnings.json，m17_learn 负责写后沉淀）。
-LLM 调用统一走 ``agent.client.LLMClient``；LLM 不可用 / 解析失败 → 降级不阻断。
+LLM 调用统一走 ``chat_utility`` / ``chat_creative``；LLM 不可用 / 解析失败 → 降级不阻断。
 
 用法：
     wf = M23ShortScanWorkflow()
@@ -29,7 +29,8 @@ from typing import Any
 
 from rich.console import Console
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_utility
+from llmagent.gateway import Gateway
 from agent.core.engine.workflow_registry import workflow
 from agent.core.infra.prompt_manager import pm
 from agent.utils import parse_llm_json
@@ -495,11 +496,11 @@ class M23ShortScanWorkflow:
 
     def __init__(
         self,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         console: Console | None = None,
         skill_dir: Path = SKILL_DIR,
     ) -> None:
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.console = console or Console()
         self.knowledge = ShortStoryKnowledge(skill_dir)
 
@@ -543,10 +544,11 @@ class M23ShortScanWorkflow:
             f"数据来源 {'榜单样本' if market_data != NO_MARKET_DATA else '内置知识'}"
         )
         try:
-            resp = self.llm.chat_utility(
+            resp = chat_utility(
+                self.llm,
                 messages=messages, temperature=0.4, enable_thinking=False
             )
-            data = parse_llm_json(resp.text)
+            data = parse_llm_json(resp)
             return self._parse(data, platform=platform, sample_date=sample_date)
         except (ValueError, Exception):  # noqa: BLE001 - 解析失败降级为空报告
             self.console.print(
@@ -581,11 +583,11 @@ class M23ShortAnalyzeWorkflow:
 
     def __init__(
         self,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         console: Console | None = None,
         skill_dir: Path = SKILL_DIR,
     ) -> None:
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.console = console or Console()
         self.knowledge = ShortStoryKnowledge(skill_dir)
 
@@ -635,10 +637,11 @@ class M23ShortAnalyzeWorkflow:
             f"平台 {platform or '未指定'}"
         )
         try:
-            resp = self.llm.chat_utility(
+            resp = chat_utility(
+                self.llm,
                 messages=messages, temperature=0.3, enable_thinking=False
             )
-            data = parse_llm_json(resp.text)
+            data = parse_llm_json(resp)
             report = self._parse(data, title=title, platform=platform)
         except (ValueError, Exception):  # noqa: BLE001 - 解析失败降级为空报告
             self.console.print(

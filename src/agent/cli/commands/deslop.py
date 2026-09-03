@@ -130,7 +130,7 @@ def deslop(
         False, "--json", help="以 JSON 形式输出结果到 stdout"
     ),
     env_file: str = typer.Option(
-        None, "--env", help="指定 .env 文件（透传下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（透传下游 GatewayAdapter）"
     ),
 ) -> None:
     """P0 去 AI 味 —— 批量扫描/改写已有章节（6 指标分级；默认 dry-run）"""
@@ -204,11 +204,11 @@ def deslop(
     # ---- 实际改写 ----
     from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
     from agent.core.anti_ai.rewriter import DeslopRewriter
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
 
     wire_llm_event_hook(project_path)
     rewriter = DeslopRewriter(
-        LLMClient(), project_dir=project_path, console=workflow_console
+        create_gateway_adapter(), project_dir=project_path, console=workflow_console
     )
 
     backup_dir = project_path / ".state" / "deslop_backups"
@@ -267,7 +267,7 @@ def deslop_chapter(
         False, "--json", help="以 JSON 形式输出结果到 stdout"
     ),
     env_file: str = typer.Option(
-        None, "--env", help="指定 .env 文件（透传下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（透传下游 GatewayAdapter）"
     ),
 ) -> None:
     """P0 去 AI 味 —— 单章扫描/改写（6 指标分级；默认 dry-run）"""
@@ -343,11 +343,11 @@ def deslop_chapter(
 
     from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
     from agent.core.anti_ai.rewriter import DeslopRewriter
-    from agent.client import LLMClient
+    from agent.client.gateway_adapter import create_gateway_adapter
 
     wire_llm_event_hook(project_path)
     rewriter = DeslopRewriter(
-        LLMClient(), project_dir=project_path, console=workflow_console
+        create_gateway_adapter(), project_dir=project_path, console=workflow_console
     )
     result = rewriter.rewrite(body, level=level)
 

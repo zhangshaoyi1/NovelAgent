@@ -93,8 +93,8 @@ class RepairOrchestrator:
     @property
     def llm(self) -> Any:
         if self._llm is None:
-            from agent.client import LLMClient
-            self._llm = LLMClient()
+            from agent.client.gateway_adapter import create_gateway_adapter
+            self._llm = create_gateway_adapter()
         return self._llm
 
     # ------------------------------------------------------ 主入口

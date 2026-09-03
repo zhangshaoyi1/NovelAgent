@@ -15,11 +15,13 @@ Web 框架、不实现前端（产品决策：Web UI 暂缓）。要接入 FastA
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Any
+from typing import Any, Optional
+
+import os
 
 from rich.console import Console
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway_adapter
 from agent.core.llmops import (
     CostModel,
     EvalHarness,
@@ -43,6 +45,8 @@ class AgentService:
         model: 记录用模型名（TracedLLMClient）。
         cost_model: 成本模型（可注入，默认占位单价）。
         console: rich 控制台。
+        use_gateway: 是否使用 llmagent Gateway 适配器（默认 False）。
+        use_session: 是否启用 Session 管理（默认 False）。
     """
 
     def __init__(
@@ -54,6 +58,10 @@ class AgentService:
         model_router: ModelRouter | None = None,
         mcp_bridge: MCPBridge | None = None,
         console: Console | None = None,
+        use_gateway: bool = True,
+        use_session: bool = True,
+        use_catalog: bool = True,
+        use_memory_bridge: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.tier = tier
@@ -83,7 +91,101 @@ class AgentService:
         from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
 
         wire_llm_event_hook(self.project_dir)
-        self.traced_llm = TracedLLMClient(LLMClient(), model=model)
+
+        # Session 管理（Phase 2）
+        self.session_manager: Optional[Any] = None
+        if use_session:
+            self.session_manager = self._create_session_manager()
+
+        # EventBus（Phase 2：use_gateway + use_session 同时启用时自动接线）
+        self.event_bus: Optional[Any] = None
+        if use_gateway and use_session:
+            self.event_bus = self._create_event_bus()
+
+        # Catalog 初始化（Phase 3）
+        self.catalog_setup: Optional[Any] = None
+        if use_catalog:
+            self.catalog_setup = self._create_catalog_setup()
+
+        # 环境变量标记：让所有 create_gateway_adapter() 直接创建也使用 Gateway 后端
+        if use_gateway:
+            os.environ.setdefault("LLM_USE_GATEWAY", "true")
+
+        # 记忆桥接（Phase 4）
+        self.memory_manager: Optional[Any] = None
+        if use_memory_bridge:
+            self.memory_manager = self._create_memory_bridge()
+
+        self.traced_llm = TracedLLMClient(
+            self._create_llm(use_gateway), model=model
+        )
+
+    def _create_llm(self, use_gateway: bool = False) -> Any:
+        """创建 LLM 实例（GatewayAdapter 或 GatewayAdapter）
+
+        ``use_gateway=True`` 时使用 llmagent Gateway 适配器，
+        否则使用原有的 GatewayAdapter（默认）。
+        """
+        if use_gateway:
+            from agent.client import GatewayAdapter, create_gateway_from_config
+
+            gateway, llm_config = create_gateway_from_config(console=self.console)
+            return GatewayAdapter(
+                gateway, llm_config,
+                console=self.console,
+            )
+        return create_gateway_adapter()
+
+    def _create_session_manager(self) -> Any:
+        """创建原生 llmagent SessionManager"""
+        from llmagent.kernel.session import SessionManager
+
+        session_db = self.project_dir / ".state" / "session.db"
+        session_db.parent.mkdir(parents=True, exist_ok=True)
+        return SessionManager(str(session_db))
+
+    def _create_event_bus(self) -> Any:
+        """创建原生 llmagent EventBus
+
+        当 use_gateway=True 且 use_session=True 时自动接线。
+        """
+        from llmagent.kernel.event_bus import EventBus
+
+        return EventBus(
+            db_path=str(self.project_dir / ".state" / "events.db")
+        )
+
+    def _create_catalog_setup(self) -> Any:
+        """创建 TaskRegistry：将 WorkflowRegistry 注册到 llmagent Catalog
+
+        当 use_catalog=True 时自动接线。
+        """
+        from llmagent.kernel.catalog import Catalog
+        from agent.core.engine import WorkflowOrchestrator
+        from agent.tasks import TaskRegistry
+
+        catalog = Catalog()
+        orchestrator = WorkflowOrchestrator(self.project_dir)
+        registry = TaskRegistry(orchestrator, catalog)
+
+        # 导入所有 workflow 触发装饰器注册
+        import agent.workflows  # noqa: F401
+
+        # 执行注册
+        count = registry.register_all()
+        self.console.log(f"[Catalog] 已注册 {count} 个工作流")
+        return registry
+
+    def _create_memory_bridge(self) -> Any:
+        """创建原生 llmagent MemoryManager
+
+        use_memory_bridge=True 时启用。
+        """
+        from agent.memory import create_memory_manager
+
+        mem_db = self.project_dir / ".state" / "memory.db"
+        mem_db.parent.mkdir(parents=True, exist_ok=True)
+        return create_memory_manager(str(mem_db))
 
     # ---------------------------------------------------------------- 自主写作
     def run_autowrite(

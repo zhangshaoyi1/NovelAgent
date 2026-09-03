@@ -14,9 +14,10 @@
 
 from agent.core.engine.state_machine import State, Event, StateMachine
 from agent.core.engine.agent_loop import AgentLoop, AgentAction, LoopResult, LoopStep
+from agent.core.engine.agent_loop_adapter import AgentLoopBridge
 from agent.core.engine.tool_contracts import Tool, ToolResult, ToolRegistry, registry, tool
 from agent.core.engine.command_router import CommandMeta, CommandRouter
-from agent.core.engine.workflow_orchestrator import Workflow, Step, WorkflowResult
+from agent.core.engine.workflow_orchestrator import Workflow, Step, WorkflowResult, WorkflowOrchestrator
 from agent.core.engine.workflow_registry import (
     WorkflowRegistry,
     workflow,
@@ -24,6 +25,7 @@ from agent.core.engine.workflow_registry import (
     list_workflows,
     WorkflowType,
 )
+from agent.core.engine.workflow_task_adapter import TaskRegistry, create_task_spec
 from agent.core.engine.events import ProgressEventBus
 from agent.core.engine.collab import AgentNode, SubtaskDAG, MessageBus, CollaborationError
 
@@ -35,6 +37,7 @@ __all__ = [
     "AgentAction",
     "LoopResult",
     "LoopStep",
+    "AgentLoopBridge",
     "Tool",
     "ToolResult",
     "ToolRegistry",
@@ -45,11 +48,14 @@ __all__ = [
     "Workflow",
     "Step",
     "WorkflowResult",
+    "WorkflowOrchestrator",
     "WorkflowRegistry",
     "WorkflowType",
     "workflow",
     "get_workflow",
     "list_workflows",
+    "TaskRegistry",
+    "create_task_spec",
     "ProgressEventBus",
     "AgentNode",
     "SubtaskDAG",

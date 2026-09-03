@@ -9,7 +9,7 @@ from typing import Optional
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import emit_result
 from agent.core.story.learning_store import Learning, LearningStore
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway_adapter
 from agent.workflows.m17_learn import LearningMiner
 
 
@@ -52,7 +52,7 @@ def learn(
         False, "--json", help="以 JSON 形式输出结果到 stdout"
     ),
     env_file: Optional[str] = typer.Option(
-        None, "--env", help="指定 .env 文件（仅本次命令生效，透传给下游 LLMClient）"
+        None, "--env", help="指定 .env 文件（仅本次命令生效，透传给下游 GatewayAdapter）"
     ),
 ) -> None:
     """项目学习闭环（增量 E）
@@ -155,12 +155,12 @@ def learn(
             else:
                 console.print(f"[bold red]✗[/bold red] {msg}")
             raise typer.Exit(code=1) from None
-        # D：--env 透传后构建 miner（内部 LLMClient 自动读取 .env）
+        # D：--env 透传后构建 miner（内部 GatewayAdapter 自动读取 .env）
         # 接线：LLM 调用事件 → <project>/.events/events.jsonl（复用公共接线，避免复制）
         from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
 
         wire_llm_event_hook(project_path)
-        miner = LearningMiner(project_path, llm=LLMClient())
+        miner = LearningMiner(project_path, llm=create_gateway_adapter())
         try:
             items = miner.extract_and_save(nums)
         except Exception as e:  # noqa: BLE001 - 提炼失败统一兜为错误信封

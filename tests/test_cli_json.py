@@ -22,7 +22,7 @@ from unittest.mock import MagicMock
 import agent.base.utils
 import pytest
 from agent.cli import app
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway, create_gateway_adapter, LLMResponse
 from agent.core.engine.state_machine import State
 from typer.testing import CliRunner
 
@@ -38,10 +38,10 @@ def _patch_llm(monkeypatch: pytest.MonkeyPatch, mock: MagicMock) -> None:
     """将各工作流模块与冲突仲裁器里的 LLMClient 替换为返回 mock 的无参可调用对象，
     确保 CLI 路径完全不触碰真实 LLM / 网络。"""
     zero_arg = lambda *a, **kw: mock  # noqa: E731
-    monkeypatch.setattr("agent.workflows.m5_write_chapter.LLMClient", zero_arg)
-    monkeypatch.setattr("agent.client.LLMClient", zero_arg)
-    monkeypatch.setattr("agent.workflows.m6_adjust.LLMClient", zero_arg)
-    monkeypatch.setattr("agent.workflows.m11_export.LLMClient", zero_arg)
+    monkeypatch.setattr("agent.workflows.m5_write_chapter.create_gateway", zero_arg)
+    monkeypatch.setattr("agent.client.gateway_adapter.create_gateway_adapter", zero_arg)
+    monkeypatch.setattr("agent.workflows.m6_adjust.create_gateway", zero_arg)
+    monkeypatch.setattr("agent.workflows.m11_export.create_gateway", zero_arg)
 
 
 # ============================================================
@@ -241,7 +241,7 @@ def _build_m6_mock() -> MagicMock:
             usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         )
 
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
     llm.chat_creative.side_effect = creative_side
     llm.chat_utility.side_effect = utility_side
     return llm

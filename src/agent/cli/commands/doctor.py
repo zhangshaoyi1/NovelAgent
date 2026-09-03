@@ -32,7 +32,7 @@ def doctor(
     ),
     env_file: str = typer.Option(
         None, "--env",
-        help="指定 .env 文件（仅本次命令生效，透传给下游 LLMClient）",
+        help="指定 .env 文件（仅本次命令生效，透传给下游 GatewayAdapter）",
     ),
 ) -> None:
     """项目健康体检（增量 F）
@@ -45,11 +45,11 @@ def doctor(
       - state：.state/state.json 合法性与 progress 字段
       - db：world/characters/sublines/relations/foreshadows 的存在性与 frontmatter 可解析性
       - rag：.state/rag/index.json 是否存在（长篇章节缺失则建议 reindex）
-      - deps：LLM 依赖配置完整性（复用 LLMClient.preflight，不联网；--ping 才探测端点）
+      - deps：LLM 依赖配置完整性（复用 GatewayAdapter.preflight，不联网；--ping 才探测端点）
 
     --json 输出字段：success(恒为 True，表示体检已执行) / healthy / checks[]
     """
-    # D：--env 透传（命令级设置环境变量，下游所有 LLMClient() 自动读取）
+    # D：--env 透传（命令级设置环境变量，下游所有 create_gateway_adapter() 自动读取）
     if env_file:
         os.environ["NOVEL_AGENT_DOTENV"] = env_file
 

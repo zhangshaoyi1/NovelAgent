@@ -23,7 +23,7 @@ def adjust_route(
     ),
     env_file: str = typer.Option(
         None, "--env",
-        help="指定 .env 文件（仅本次命令生效，透传给下游 LLMClient）",
+        help="指定 .env 文件（仅本次命令生效，透传给下游 GatewayAdapter）",
     ),
 ) -> None:
     """M6 调整主角成长路线（保留旧分支为 archived_alt）

@@ -14,7 +14,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_utility
+from llmagent.gateway import Gateway
 from agent.core.story.pacing_store import Debt, Ledger, PacingStore
 from agent.core.engine.workflow_registry import workflow
 from agent.utils import parse_llm_json
@@ -34,9 +35,9 @@ class PacingExtraction:
 class PacingTracker:
     """追读力抽取与对账器（C）"""
 
-    def __init__(self, project_dir: Path, llm: LLMClient | None = None) -> None:
+    def __init__(self, project_dir: Path, llm: Gateway | None = None) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm or LLMClient()
+        self.llm = llm or create_gateway()
         self.store = PacingStore(self.project_dir)
 
     # ============================================================
@@ -51,7 +52,8 @@ class PacingTracker:
             return PacingExtraction()
         user = pm.get("m16.pacing").render_user(chapter_text=chapter_text)
         try:
-            resp = self.llm.chat_utility(
+            resp = chat_utility(
+                self.llm,
                 [
                     {"role": "system", "content": pm.get("m16.pacing").system},
                     {"role": "user", "content": user},
@@ -59,7 +61,7 @@ class PacingTracker:
                 max_tokens=1500,
                 enable_thinking=False,
             )
-            data = parse_llm_json(resp.text)
+            data = parse_llm_json(resp)
         except Exception:  # noqa: BLE001 - 抽取失败降级为空
             return PacingExtraction()
         return self._parse(data)

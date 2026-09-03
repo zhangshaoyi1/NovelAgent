@@ -18,7 +18,7 @@ def reindex(
     ),
     env_file: str = typer.Option(
         None, "--env",
-        help="指定 .env 文件（仅本次命令生效，透传给下游 LLMClient）",
+        help="指定 .env 文件（仅本次命令生效，透传给下游 GatewayAdapter）",
     ),
 ) -> None:
     """重建 RAG 语义索引（增量 A）

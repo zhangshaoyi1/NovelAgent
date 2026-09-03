@@ -9,7 +9,7 @@
 - 文件级校验：``RelationManager`` / ``ForeshadowManager`` 当前是 stub，
   因此仅检查 ``relations/graph.md``、``foreshadows.md`` 等文件的**存在性与
   frontmatter 可解析性**，不做语义级校验（语义级记为 P2）。
-- 依赖检查：复用 ``LLMClient.preflight()``（不发起网络调用）；仅当用户加
+- 依赖检查：复用 ``GatewayAdapter.preflight()``（不发起网络调用）；仅当用户加
   ``--ping`` 时才探测 embedding / LLM 端点。
 """
 
@@ -425,9 +425,9 @@ class Doctor:
             True 表示可达（embed 返回非空向量）；False 表示不可达（返回空）。
         """
         try:
-            from agent.client import LLMClient
+            from agent.client.gateway_adapter import create_gateway_adapter
 
-            vectors = LLMClient().embed(["健康检查探针"])
+            vectors = create_gateway_adapter().embed(["健康检查探针"])
             return bool(vectors)
         except Exception:  # noqa: BLE001
             return False
@@ -437,9 +437,9 @@ class Doctor:
     # ============================================================
     def _check_deps(self, *, ping: bool = False) -> list[CheckItem]:
         try:
-            from agent.client import LLMClient
+            from agent.client.gateway_adapter import create_gateway_adapter
 
-            pre = LLMClient().preflight()
+            pre = create_gateway_adapter().preflight()
         except Exception as e:  # noqa: BLE001
             return [
                 CheckItem(
@@ -495,12 +495,12 @@ class Doctor:
     def _probe_endpoint() -> bool:
         """探测 LLM 端点是否可达（仅 --ping 时调用）
 
-        复用 ``LLMClient.chat`` 的一次极简调用；失败即视为不可达。
+        复用 ``GatewayAdapter.chat`` 的一次极简调用；失败即视为不可达。
         """
         try:
-            from agent.client import LLMClient
+            from agent.client.gateway_adapter import create_gateway_adapter
 
-            resp = LLMClient().chat(
+            resp = create_gateway_adapter().chat(
                 [{"role": "user", "content": "ping"}],
                 max_tokens=1,
                 temperature=0,

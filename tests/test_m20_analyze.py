@@ -19,7 +19,7 @@ from unittest.mock import MagicMock
 
 from typer.testing import CliRunner
 
-from agent.client import LLMClient, LLMResponse
+from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.engine.workflow_registry import get_workflow
 from agent.workflows.m20_analyze import (
     M20AnalyzeWorkflow,
@@ -200,7 +200,7 @@ REPORT_TEXT = """# 拆文报告
 def make_mock_llm() -> MagicMock:
     """构造按 system 提示词路由的 mock LLM：
     JSON 阶段（概要/聚合/设定）返回合法 JSON，Markdown 阶段返回对应文本。"""
-    llm = MagicMock(spec=LLMClient)
+    llm = MagicMock(spec=GatewayAdapter)
 
     def _side_effect(messages=None, **kwargs):
         system = ""
@@ -429,8 +429,8 @@ class TestStage2Tolerance:
 class TestCLI:
     def _patch_llm(self, monkeypatch, mock: MagicMock) -> None:
         zero_arg = lambda *a, **kw: mock  # noqa: E731
-        monkeypatch.setattr("agent.client.LLMClient", zero_arg)
-        monkeypatch.setattr("agent.workflows.m20_analyze.LLMClient", zero_arg)
+        monkeypatch.setattr("agent.client.gateway_adapter.create_gateway_adapter", zero_arg)
+        monkeypatch.setattr("agent.workflows.m20_analyze.create_gateway_adapter", zero_arg)
 
     def test_analyze_json_structure(self, tmp_path: Path, monkeypatch) -> None:
         from agent.cli import app

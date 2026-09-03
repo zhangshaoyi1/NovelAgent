@@ -26,7 +26,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.prompt import Prompt
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_creative, chat_utility
+from llmagent.gateway import Gateway
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.registry.genre_pack import first_genre, first_genre_label
@@ -73,13 +74,13 @@ class M2DiscussWorkflow:
     def __init__(
         self,
         project_dir: Path,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         setting_manager: SettingManager | None = None,
         state_machine: StateMachine | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.sm = setting_manager or SettingManager(self.project_dir)
         self.state_machine = state_machine or StateMachine(self.project_dir)
         self.console = console or Console()
@@ -221,14 +222,14 @@ class M2DiscussWorkflow:
         for turn in history[-10:]:  # 最多传最近 10 轮，控制上下文
             messages.append({"role": turn.role, "content": turn.content})
 
-        resp = self.llm.chat_creative(
+        resp = chat_creative(
+            self.llm,
             messages=messages,
             temperature=0.7,
             max_tokens=500,
             enable_thinking=False,
-            validators=[ValidationSpec.not_empty()],
         )
-        return resp.text.strip()
+        return resp.strip()
 
     @staticmethod
     def _format_history_for_prompt(history: list[ChatTurn]) -> str:
@@ -253,13 +254,13 @@ class M2DiscussWorkflow:
             f"请整理出 3-5 条关键结论，用 markdown 列表形式输出：\n\n"
             + self._format_history_for_prompt(history)
         )
-        resp = self.llm.chat_utility(
+        resp = chat_utility(
+            self.llm,
             messages=[{"role": "user", "content": summary_prompt}],
             max_tokens=500,
             enable_thinking=False,
-            validators=[ValidationSpec.not_empty()],
         )
-        return resp.text.strip()
+        return resp.strip()
 
     def _render_discussion_md(
         self,

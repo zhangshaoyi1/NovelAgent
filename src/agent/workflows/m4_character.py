@@ -33,7 +33,8 @@ from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.client import LLMClient
+from agent.client.gateway_adapter import create_gateway, chat_creative
+from llmagent.gateway import Gateway
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.quality.guardrails import is_architecture_confirmed
@@ -67,13 +68,13 @@ class M4CharacterWorkflow:
     def __init__(
         self,
         project_dir: Path,
-        llm_client: LLMClient | None = None,
+        llm_client: Gateway | None = None,
         setting_manager: SettingManager | None = None,
         state_machine: StateMachine | None = None,
         console: Console | None = None,
     ) -> None:
         self.project_dir = Path(project_dir)
-        self.llm = llm_client or LLMClient()
+        self.llm = llm_client or create_gateway()
         self.sm = setting_manager or SettingManager(self.project_dir)
         self.state_machine = state_machine or StateMachine(self.project_dir)
         self.console = console or Console()
@@ -303,7 +304,8 @@ class M4CharacterWorkflow:
                 )
             )
 
-        raw = self.llm.chat_creative(
+        raw = chat_creative(
+            self.llm,
             messages=[
                 {"role": "system", "content": pm.get("m4.character").render_system(genre=world_info.get("genre_label", ""))},
                 {"role": "user", "content": user_prompt},
@@ -316,7 +318,7 @@ class M4CharacterWorkflow:
         # 瞬时，重试时强化「纯 JSON」约束常可恢复），重试仍失败则明确抛错，
         # 绝不静默降级为占位角色（否则真实角色设计会被静默丢弃）。
         system_prompt = pm.get("m4.character").system
-        last_text = raw.text or ""
+        last_text = raw or ""
         for attempt in range(2):
             try:
                 data = parse_llm_json(last_text)
@@ -340,7 +342,8 @@ class M4CharacterWorkflow:
                         "protagonist_route（含 nodes）与 characters（至少 1 名角色），"
                         "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
                     )
-                    raw = self.llm.chat_creative(
+                    raw = chat_creative(
+                        self.llm,
                         messages=[
                             {"role": "system", "content": system_prompt},
                             {"role": "user", "content": user_prompt},
@@ -349,7 +352,7 @@ class M4CharacterWorkflow:
                         max_tokens=16384,
                         enable_thinking=False,
                     )
-                    last_text = raw.text or ""
+                    last_text = raw or ""
                     continue
                 raise RuntimeError(
                     "角色设计结果无法解析为 JSON（可能被截断或格式异常），"
