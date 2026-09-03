@@ -79,6 +79,41 @@ BANNED_WORDS_MAX_COUNT = 2
 # 场景描写最低占比
 MIN_SCENE_RATIO = 0.30
 
+# 章节字数门禁（动态区间，纯规则判定，不依赖 LLM）
+# 下限随每章目标字数 chapter_length 伸缩：max(ABSOLUTE_MIN, round(目标 * MIN_WORD_RATIO))，
+# 未知目标时取绝对下限。上限 = round(目标 * MAX_WORD_RATIO)（超限仅告警，不阻断）。
+# 目标值可通过 ctx["chapter_length"] / ctx["world_info"]["chapter_length"] 传入。
+ABSOLUTE_MIN_CJK_WORDS = 1500   # 恒硬下限（对应 MIN_CHAPTER_LENGTH）
+MIN_WORD_RATIO = 0.8            # 目标字数的 80% 视为达标下限（保留合理余量）
+MAX_WORD_RATIO = 1.2            # 目标字数的 120% 视为合理上限（超限仅提示，非硬阻断）
+
+
+def resolve_min_cjk_words(chapter_length: int | float | None = None) -> int:
+    """解析本章字数门禁下限：随目标字数动态伸缩，恒有绝对下限兜底"""
+    if chapter_length:
+        return max(ABSOLUTE_MIN_CJK_WORDS, int(chapter_length * MIN_WORD_RATIO))
+    return ABSOLUTE_MIN_CJK_WORDS
+
+
+def resolve_max_cjk_words(chapter_length: int | float | None = None) -> int:
+    """解析本章字数合理上限：随目标字数动态伸缩（超限仅告警，不阻断）"""
+    if chapter_length:
+        return max(0, int(chapter_length * MAX_WORD_RATIO))
+    return 0
+
+
+def _chapter_length_from_ctx(ctx: dict[str, Any] | None) -> int | None:
+    """从校验上下文中取每章目标字数（兼容多种键名，均为可选）"""
+    ctx = ctx or {}
+    for key in ("chapter_length", "word_count"):
+        v = ctx.get(key)
+        if v:
+            return v
+    wi = ctx.get("world_info")
+    if isinstance(wi, dict) and wi.get("chapter_length"):
+        return wi.get("chapter_length")
+    return None
+
 # ============================================================
 # 题材层规则注册表（T-3：模块级单一通道，供题材包 hook 注册）
 # ============================================================
@@ -296,6 +331,37 @@ def _check_banned_words(
     return issues
 
 
+def _count_cjk(text: str) -> int:
+    """统计中文字数（与 count_words 工具口径一致，纯规则判定）"""
+    return sum(1 for ch in text if "\u4e00" <= ch <= "\u9fff")
+
+
+def _check_word_count(
+    chapter_text: str, ctx: dict[str, Any], llm: Any
+) -> list[Issue]:
+    """字数区间门禁：低于动态下限报 BLOCK issue；超过动态上限报 WARN（不依赖 LLM）
+    """
+    target = _chapter_length_from_ctx(ctx)
+    limit = resolve_min_cjk_words(target)
+    cap = resolve_max_cjk_words(target)
+    cjk = _count_cjk(chapter_text)
+    issues: list[Issue] = []
+    if cjk < limit:
+        issues.append(Issue(
+            rule_id="word_count",
+            severity=Severity.BLOCK,
+            description=f"中文字数不足（{cjk} < {limit} 字），请扩写补齐",
+        ))
+    elif cap and cjk > cap:
+        # 超上限仅告警，不阻断（合理区间约为目标的 80%-120%）
+        issues.append(Issue(
+            rule_id="word_count",
+            severity=Severity.WARN,
+            description=f"中文字数偏多（{cjk} > 合理上限约 {cap} 字），可考虑精简冗余描写",
+        ))
+    return issues
+
+
 class QualityChecker:
     """质量校验器"""
 
@@ -315,6 +381,7 @@ class QualityChecker:
             ("chapter_end_hook", "章末悬念", "章末必须有悬念/反转/期待", _noop_quality_check),
             ("scene_ratio", "场景描写占比", f"场景+动作+环境 ≥ {MIN_SCENE_RATIO*100:.0f}%", _noop_quality_check),
             ("banned_words", "禁用词限量", f"{BANNED_WORDS} 全章 ≤ {BANNED_WORDS_MAX_COUNT} 次", _check_banned_words),
+            ("word_count", "字数下限", f"章节中文字数 ≥ 动态下限（目标×{MIN_WORD_RATIO}，绝对≥{ABSOLUTE_MIN_CJK_WORDS}）", _check_word_count),
             ("dialogue_style", "台词个性化", "角色台词符合其语言指纹", _noop_quality_check),
             ("foreshadow_state", "伏笔状态", "如埋/回收伏笔，foreshadows.md 已更新", _noop_quality_check),
             ("climax_expansion", "高潮扩写", "高潮章节自动扩篇幅+多视角+慢镜头", _noop_quality_check),

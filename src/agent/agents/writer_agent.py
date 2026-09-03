@@ -37,10 +37,25 @@ from agent.core.engine.tool_contracts import (
 from agent.client import LLMClient
 from agent.core.infra.prompt_manager import pm
 from agent.core.base.structured_output import StructuredOutputError
+from agent.core.quality.scoring.quality_checker import (
+    _count_cjk,
+    _chapter_length_from_ctx,
+    resolve_max_cjk_words,
+    resolve_min_cjk_words,
+)
 
 # 写作人设（与 M5 创作系统提示同源，保证风格一致）
 _WRITER_BASE = (
-    "你是顶级修仙小说写手，擅长用精炼的场景描写、个性台词和节奏控制写出生动的章节。\n\n"
+    "【输出协议 · 最高优先级，任何违反都会导致本章作废】\n"
+    "你的每一次输出都必须且只能是**单个裸 JSON 信封对象**，字段名逐字一致：\n"
+    '{"think": "简短思考", "action": "finish 或 tool_call", "tool": null, '
+    '"args": {}, "draft": "完整章节正文"}。\n'
+    "除裸 JSON 外，禁止输出任何散文、规划思路、思考过程、```json 代码围栏、"
+    "工具调用日志或解释文字。\n"
+    "若 action 为 tool_call，则只填 tool 与 args，draft 置 null；"
+    "若 action 为 finish，则 tool 置 null、args 置 {}，draft 填**完整章节正文**。\n\n"
+    "你是一名顶级修仙小说写手，专职产出上述 JSON 信封 ``draft`` 字段里的章节正文。"
+    "以下创作要求均作用于 draft 中的正文。\n\n"
     "写作要求：\n"
     "1. 严格遵守设定集（文风/视角/节奏/字数/禁用词/禁用元素）\n"
     "2. 本章必须属于当前压力曲线阶段，按阶段控制张力\n"
@@ -53,14 +68,18 @@ _WRITER_BASE = (
     "9. 不与世界观 / 支线 / 角色档案冲突\n"
     "10. 如需埋/回收伏笔，自然融入剧情\n"
     "11. 高潮章节自动扩篇幅 + 多视角 + 慢镜头\n"
-    "12. 直接输出正文，不要标题、不要前言、不要解释\n"
-    "13. 【纯中文约束】仅输出简体中文小说正文，禁止输出任何英文字母串、系统提示片段、"
+    "12. 【格式提醒】再次强调：每次输出都必须是顶部「输出协议」规定的单个裸 JSON 信封，"
+    "严禁把正文或规划写成纯文本。\n"
+    "13. 【纯中文约束】正文部分仅输出简体中文小说正文，禁止输出任何英文字母串、系统提示片段、"
     "错误/日志信息（如 \"Visualization failed\"、\"Cost\"、\"undefined\"、\"[system]\" 等）、"
-    "markdown 代码围栏以外的符号或占位标记；若误生成请立即删除重写。\n"
-    "14. 【标题约束】每章正文首行必须是「# 第N章 · <有信息量、非模板化的场景化标题>」；"
+    "符号或占位标记；若误生成请立即删除重写。\n"
+    "14. 【标题约束】draft 中章节正文首行必须是「# 第N章 · <有信息量、非模板化的场景化标题>」；"
     "禁止「第N章·第N章」这类占位标题，禁止留空，禁止与已发布章节标题重复。\n"
     "15. 【避免雷同】避免与前述章节使用完全相同的开场白/场景描写（如都从同一句环境白描起笔）；"
-    "若需描写相似场景，请换视角、换措辞或换切入点，确保本章开头具有独立性。\n\n"
+    "若需描写相似场景，请换视角、换措辞或换切入点，确保本章开头具有独立性。\n"
+    "16. 【字数区间要求】draft 中本章正文的中文字数应在「目标字数×0.8 到 目标字数×1.2」之间"
+    "（以目标字数为中值的合理区间）；写不足下限就会被打回扩写。请围绕目标字数铺足"
+    "场景/动作/对白/情节，写够再收尾，禁止用「伏笔或悬念一句带过」来压缩篇幅；也不宜过度注水超过上限。\n\n"
     "你拥有若干工具（见下方动作协议中的可用工具）。写之前可调用工具核对设定 / 召回前文 / "
     "自检字数 / 自评质量；准备好后，把 action 设为 'finish' 并在 draft 中提交**完整章节正文**。"
 )
@@ -80,7 +99,7 @@ _RETRY_JSON_PROMPT = (
 # 各 tier 的最大起草次数（含首稿；修订次数 = 起草次数 - 1）
 TIER_MAX_DRAFTS: dict[str, int] = {
     "light": 1,  # 仅首稿 + 单次自检，不修订
-    "auto": 3,   # 首稿 + 最多 2 次修订
+    "auto": 4,   # 首稿 + 最多 3 次修订（P0：model 偶发 stub 短稿，曾打满 3 次仍未达字数）
     "heavy": 4,  # 首稿 + 最多 3 次修订（更严）
 }
 
@@ -157,7 +176,7 @@ class WriterAgent:
                         retry_messages,
                         AgentAction,
                         use="creative",
-                        temperature=0.82,
+                        temperature=0.6,
                         max_tokens=8192,
                         enable_thinking=False,
                         strict=True,  # G4 开启 strict=True 强校验
@@ -195,7 +214,7 @@ class WriterAgent:
                         retry_messages,
                         AgentAction,
                         use="creative",
-                        temperature=0.82,
+                        temperature=0.6,
                         max_tokens=8192,
                         enable_thinking=False,
                         strict=True,
@@ -241,10 +260,9 @@ class WriterAgent:
     # ------------------------------------------------------------------
     # 单轮起草（携带或不携带审稿意见）
     # ------------------------------------------------------------------
-    def _draft(self, task: str, critique: str | None) -> str:
-        system_prompt = _WRITER_BASE
-        if critique:
-            system_prompt += "\n\n【审稿意见 · 请据此修订】\n" + critique
+    def _draft(self, task: str, critique: str | None, min_words: int | None = None,
+               max_words: int | None = None) -> str:
+        system_prompt = self._system_prompt(critique, min_words, max_words)
 
         loop = AgentLoop(
             tools=self.tools,
@@ -259,10 +277,10 @@ class WriterAgent:
             raise RuntimeError("Writer 未在迭代上限内提交章节（Agentic Loop 未正常结束）")
         return result.draft
 
-    async def _draft_async(self, task: str, critique: str | None) -> str:
-        system_prompt = _WRITER_BASE
-        if critique:
-            system_prompt += "\n\n【审稿意见 · 请据此修订】\n" + critique
+    async def _draft_async(self, task: str, critique: str | None, min_words: int | None = None,
+                           max_words: int | None = None) -> str:
+        system_prompt = self._system_prompt(critique, min_words, max_words)
+
         loop = AgentLoop(
             tools=self.tools,
             decide_async=self._make_decide_async(),
@@ -273,6 +291,22 @@ class WriterAgent:
         if not result.finished or not result.draft:
             raise RuntimeError("Writer 未在迭代上限内提交章节（Agentic Loop 未正常结束）")
         return result.draft
+
+    def _system_prompt(self, critique: str | None = None, min_words: int | None = None,
+                       max_words: int | None = None) -> str:
+        """组装 Writer 系统提示。在 _WRITER_BASE 基础上，把**具体字数数字**作为强约束
+        注入（否则模型只看到相对描述『目标字数×0.8~1.2』，不知具体下限而产出偏短）。
+        """
+        system_prompt = _WRITER_BASE
+        if min_words is not None and max_words is not None and max_words >= min_words:
+            system_prompt += (
+                f"\n17. 【字数硬性约束】本章正文的中文字数**必须**在 {min_words}-{max_words} 字"
+                f"（中值约 {(min_words + max_words) // 2} 字）。哪一片段偏短就加工哪一片段，"
+                f"务必写足下限再 commit，禁止用『伏笔/悬念一句带过』压缩篇幅。\n"
+            )
+        if critique:
+            system_prompt += "\n\n【审稿意见 · 请据此修订】\n" + critique
+        return system_prompt
 
     # ------------------------------------------------------------------
     # 流式回调（CLI 进度）
@@ -287,45 +321,149 @@ class WriterAgent:
     # ------------------------------------------------------------------
     # 公开入口：按 tier 撰写并返回（正文, 修订次数, 是否通过门禁）
     # ------------------------------------------------------------------
+    @staticmethod
+    def _min_len_from_ctx(ctx: Any) -> int:
+        """从校验上下文中解析本章字数门禁下限（未知目标时用绝对下限兜底）。"""
+        if isinstance(ctx, dict):
+            target = _chapter_length_from_ctx(ctx)
+        elif ctx is not None:
+            target = getattr(ctx, "chapter_length", None)
+        else:
+            target = None
+        return resolve_min_cjk_words(target)
+
+    @staticmethod
+    def _word_budget(ctx: Any) -> tuple[int | None, int | None]:
+        """从上下文解析本章字数的【下限/上限】具体数字，供注入强约束提示词。
+
+        与 _min_len_from_ctx 同口径；未知目标时返回 (None, None)，此时提示词不追加
+        硬性字数数字（保持原有相对描述，门禁兜底仍在）。
+        """
+        if isinstance(ctx, dict):
+            target = _chapter_length_from_ctx(ctx)
+        elif ctx is not None:
+            target = getattr(ctx, "chapter_length", None)
+        else:
+            target = None
+        if not target:
+            return None, None
+        return resolve_min_cjk_words(target), resolve_max_cjk_words(target)
+
+    @staticmethod
+    def _keep_best(
+        best_draft: str,
+        best_report: dict[str, Any],
+        cand_draft: str,
+        cand_report: dict[str, Any],
+        min_len: int,
+    ) -> tuple[str, dict[str, Any]]:
+        """好稿兜底：在候选与最佳间择优，优先保留「篇幅达标」且「质量更优」的草稿。
+
+        规则（优先级从高到低）：
+        1. 篇幅达标者优先于不达标者（stub 绝不让位）；
+        2. 同达标时字数更多者优先（更接近目标篇幅）；
+        3. 字数相同时问题数更少者优先。
+        """
+        cand_cjk = _count_cjk(cand_draft)
+        best_cjk = _count_cjk(best_draft)
+        cand_ok = cand_cjk >= min_len
+        best_ok = best_cjk >= min_len
+        if cand_ok and not best_ok:
+            return cand_draft, cand_report
+        if best_ok and not cand_ok:
+            return best_draft, best_report
+        if cand_cjk > best_cjk:
+            return cand_draft, cand_report
+        if cand_cjk == best_cjk:
+            cand_issues = len(cand_report.get("issues", [])) if isinstance(cand_report, dict) else 0
+            best_issues = len(best_report.get("issues", [])) if isinstance(best_report, dict) else 0
+            if cand_issues < best_issues:
+                return cand_draft, cand_report
+        return best_draft, best_report
+
     def run(self, task: str, ctx: Any = None) -> tuple[str, int, bool]:
         """自主撰写一章。
 
         Returns:
             (final_text, revision_attempts, quality_passed)
         """
-        draft = self._draft(task, critique=None)
+        min_words, max_words = self._word_budget(ctx)
+        draft = self._draft(task, critique=None, min_words=min_words, max_words=max_words)
         revision_attempts = 0
         passed, report = self._gate(draft, ctx)
 
         if self.tier == "light":
             return draft, 0, passed
 
+        # 好稿兜底：追踪篇幅达标的最佳草稿，避免主观审稿误杀好稿导致整章作废
+        min_len = self._min_len_from_ctx(ctx)
+        best_draft, best_report = draft, report
+
         max_drafts = TIER_MAX_DRAFTS.get(self.tier, 3)
         for r in range(1, max_drafts):
             if passed:
                 break
             critique = self._format_critique(report)
-            draft = self._draft(task, critique=critique)
+            draft = self._draft(task, critique=critique, min_words=min_words, max_words=max_words)
             revision_attempts = r
             passed, report = self._gate(draft, ctx)
+            best_draft, best_report = self._keep_best(
+                best_draft, best_report, draft, report, min_len
+            )
 
+        # 兜底落盘：全轮未通过时，用篇幅达标的最佳稿兜底（标记未通过）；全是 stub 才放弃
+        if not passed:
+            best_draft, best_report = self._keep_best(
+                best_draft, best_report, draft, report, min_len
+            )
+            if _count_cjk(best_draft) < min_len:
+                raise RuntimeError(
+                    "Writer 反复产出过短章节（未达字数下限），放弃落盘以避免写出残缺章节。"
+                )
+            self.console.print(
+                "[yellow]      …质量门禁未通过，回退到本轮篇幅达标的最佳稿兜底落盘（标记未通过）。[/yellow]"
+            )
+            draft, report = best_draft, best_report
         return draft, revision_attempts, passed
 
     async def run_async(self, task: str, ctx: Any = None) -> tuple[str, int, bool]:
-        draft = await self._draft_async(task, critique=None)
+        min_words, max_words = self._word_budget(ctx)
+        draft = await self._draft_async(task, critique=None, min_words=min_words, max_words=max_words)
         revision_attempts = 0
         passed, report = self._gate(draft, ctx)
 
         if self.tier == "light":
             return draft, 0, passed
 
+        # 好稿兜底：追踪篇幅达标的最佳草稿，避免主观审稿误杀好稿导致整章作废
+        min_len = self._min_len_from_ctx(ctx)
+        best_draft, best_report = draft, report
+
         max_drafts = TIER_MAX_DRAFTS.get(self.tier, 3)
         for r in range(1, max_drafts):
             if passed:
                 break
             critique = self._format_critique(report)
-            draft = await self._draft_async(task, critique=critique)
+            draft = await self._draft_async(
+                task, critique=critique, min_words=min_words, max_words=max_words
+            )
             revision_attempts = r
             passed, report = self._gate(draft, ctx)
+            best_draft, best_report = self._keep_best(
+                best_draft, best_report, draft, report, min_len
+            )
 
+        # 兜底落盘：全轮未通过时，用篇幅达标的最佳稿兜底（标记未通过）；全是 stub 才放弃
+        if not passed:
+            best_draft, best_report = self._keep_best(
+                best_draft, best_report, draft, report, min_len
+            )
+            if _count_cjk(best_draft) < min_len:
+                raise RuntimeError(
+                    "Writer 反复产出过短章节（未达字数下限），放弃落盘以避免写出残缺章节。"
+                )
+            self.console.print(
+                "[yellow]      …质量门禁未通过，回退到本轮篇幅达标的最佳稿兜底落盘（标记未通过）。[/yellow]"
+            )
+            draft, report = best_draft, best_report
         return draft, revision_attempts, passed

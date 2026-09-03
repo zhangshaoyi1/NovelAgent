@@ -144,9 +144,26 @@ def test_writer_auto_revises_until_pass():
 
 
 def test_writer_auto_caps_revisions():
-    # 门禁始终不通过 → 修订次数受 tier 上限约束（auto 上限 3 起草 → 最多 2 次修订）
+    # 门禁始终不通过且各稿篇幅均达标 → 修订次数受 tier 上限约束（auto 最多 3 次修订），好稿兜底返回首稿
     def gate(text, ctx):
         return False, {"issues": [{"rule_id": "x", "severity": "error", "description": "始终不过"}]}
+
+    agent = WriterAgent(
+        project_dir=".",
+        tier="auto",
+        decide=lambda m: _finish("好" * 1600),  # 篇幅达标，避免触发全 stub 守卫
+        quality_gate=gate,
+    )
+    text, rev, passed = agent.run("写第1章", ctx={})
+    assert passed is False
+    assert rev == 3  # auto: 首稿 + 最多 3 次修订
+    assert text == "好" * 1600  # 兜底返回全文（首稿即优）
+
+
+def test_writer_auto_all_stub_raises():
+    # 全程 stub 短稿（未达字数下限）→ 好稿兜底无达标稿可用，抛错放弃落盘（P0 守卫）
+    def gate(text, ctx):
+        return False, {"issues": [{"rule_id": "word_count", "severity": "block", "description": "中文字数不足"}]}
 
     agent = WriterAgent(
         project_dir=".",
@@ -154,9 +171,34 @@ def test_writer_auto_caps_revisions():
         decide=lambda m: _finish("稿"),
         quality_gate=gate,
     )
+    with pytest.raises(RuntimeError):
+        agent.run("写第1章", ctx={})
+
+
+def test_writer_auto_best_draft_fallback():
+    # 首稿为篇幅达标好稿但被（主观）门禁否决 → 后续修订退化为 stub → 好稿兜底落盘（标记未通过）
+    full = "好" * 1600  # 1600 中文字 ≥ 下限 1500
+    drafts = {"n": 0}
+
+    def decide(messages):
+        drafts["n"] += 1
+        if drafts["n"] == 1:
+            return _finish(full)
+        return _finish("坏")
+
+    def gate(text, ctx):
+        return False, {"issues": [{"rule_id": "xx", "severity": "warn", "description": "主观不过"}]}
+
+    agent = WriterAgent(
+        project_dir=".",
+        tier="auto",
+        decide=decide,
+        quality_gate=gate,
+    )
     text, rev, passed = agent.run("写第1章", ctx={})
-    assert passed is False
-    assert rev == 2  # auto: 首稿 + 最多 2 次修订
+    assert text == full     # 回退到篇幅达标的好稿
+    assert passed is False  # 明确标记未通过
+    assert drafts["n"] == 4  # 首稿 + 3 次修订
 
 
 # ---------------------------------------------------------------------------

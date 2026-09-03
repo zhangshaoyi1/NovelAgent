@@ -32,7 +32,9 @@ validation:
 # user
 【小说信息】
 标题：{{ title }}
-文风：{{ tone }} | 视角：{{ pov }} | 节奏：{{ rhythm }} | 目标字数：{{ chapter_length }}
+文风：{{ tone }} | 视角：{{ pov }} | 节奏：{{ rhythm }} | 目标字数：{{ chapter_length }} 字
+【字数硬性要求】本章正文的中文字数**应在 {{ (chapter_length * 0.8)|round|int }}-{{ (chapter_length * 1.2)|round|int }} 字之间**（以目标字数 {{ chapter_length }} 字为中值的合理区间）。
+低于下限即视为未完成，会被打回重写；请围绕目标字数铺足场景、动作、对白与情节推进，写够再收尾，禁止以「伏笔/悬念一句带过」压缩篇幅。
 信息密度：{{ info_density }}
 禁用元素：{{ banned_elements }}
 禁用词限量：突然/忽然/就在这时/微微一笑 全章 ≤ 2 次

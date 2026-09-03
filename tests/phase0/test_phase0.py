@@ -66,6 +66,43 @@ def test_extract_json_invalid_raises():
         extract_json("完全不是 json 的乱码文本")
 
 
+def test_extract_json_draft_with_literal_newlines():
+    """容错：draft 字符串内部含**真实换行**（创作模型常见未转义换行），必须能解析。
+
+    回归：ch237 的完整稿因 draft 内含字面换行被所有 json.loads 策略拒绝，导致
+    完整稿在解析层被反复丢弃后重做。修复后应在不破坏既有转义的前提下转义成功。
+    """
+    body = "木门被他轻轻推开，\n发出呻吟。石上旧痕\\n保持。"  # 真实换行 + 既有\\n转义
+    raw = '{"think":"x","action":"finish","tool":null,"args":{},"draft":"# 第237章\n' + body + '"}'
+    data = extract_json(raw)
+    draft = data["draft"]
+    # 真实换行最终应保留为换行（经转义修复 + json.loads 解码）
+    assert draft.count("\n") == 3, draft
+    # 不应残留字面 \\n 双重转义伪影，既有文字完整
+    assert "\\n" not in draft, draft
+    assert "保持" in draft
+
+
+def test_extract_json_prose_prefix_then_envelope():
+    """加固：创作模型先吐一段纯文本规划（内含杂散 ``{`` / ``"``），随后才是
+    合法 JSON 信封，且信封 draft 内还含**真实换行**。
+
+    回归：ch237/ch238 实证——散文前置使策略 3/4 首定位落错起点而整体失败。
+    加固（逐「{」扫描候选 + 候选级转义）后应定位到信封并成功解析。
+    """
+    # 散文里有 ASCII 引号和杂散 ``{``，会让旧策略的括号/字符串状态错位
+    prose = '先写规划：考虑"戏剧冲突"和后续 {\n需要保留悬念再吐信封：\n'
+    body = "# 第238章\n旧债如雪覆残局\n\n木屋的门被轻轻推开。石上旧痕\\n保持。"  # 真实换行 + 既有 \\n 转义
+    env = '{"think":"x","action":"finish","tool":null,"args":{},"draft":"' + body + '"}'
+    data = extract_json(prose + env)
+    assert data["action"] == "finish"
+    assert data["draft"].startswith("# 第238章")
+    assert "旧债如雪覆残局" in data["draft"]
+    assert "保持" in data["draft"]
+    # 真实换行保留、无双重转义伪影
+    assert "\\n" not in data["draft"]
+
+
 # ---------------------------------------------------------------------------
 # Tool 注册表
 # ---------------------------------------------------------------------------

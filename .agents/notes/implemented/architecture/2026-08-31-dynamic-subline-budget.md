@@ -50,10 +50,10 @@ Status: implemented
 
 * 每 replan\_window 章增加一次 LLM 调用；失败时零副作用（沿用现值/均分兜底），不阻断写章。
 
-* **cap 与无数据保底硬切的优先级（2026-08-31 定稿）：`decide_mainline_advance` 中
-  cap 仅在存在压力曲线 / episode 区间数据时生效（取 ``min(多源上界, cap)``）；
+* **cap 与无数据保底硬切的优先级（2026-08-31 定稿）：`decide_mainline_advance`** **中
+  cap 仅在存在压力曲线 / episode 区间数据时生效（取** **`min(多源上界, cap)`）；
   两源均缺失（无曲线的书）时 cap 不参与——保留「每 mainline\_window 章硬切」保底。
-  否则缺数据的书会被大预算 cap（如 `scope: long` 的均衡分账 ≈54 章）拖住从不切换，
+  否则缺数据的书会被大预算 cap（如** **`scope: long`** **的均衡分账 ≈54 章）拖住从不切换，
   与文档化退化语义相悖（G8 测试曾因该冲突整体失败，已修）。**
 
 * **已知坑（已修，2026-08-30）：`_ask_llm`** **最初** **`max_tokens=2048`。V4 Flash 常在 JSON 尾部前先输出

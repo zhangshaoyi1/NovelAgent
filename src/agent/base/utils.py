@@ -22,6 +22,49 @@ from pathlib import Path
 from typing import Any
 
 
+def _escape_control_in_strings(text: str) -> str:
+    """修复 JSON 字符串值里的字面换行/回车/Tab（严格 JSON 不允许）。
+
+    创作类模型（尤其是 high-temperature creative）常在 ``draft`` 字段里输出
+    **真实换行**（未被 ``\\n`` 转义的换行符），导致整个 JSON 对象无法被
+    ``json.loads`` 解析。本函数只在「双引号字符串内部」把这些控制字符转义为
+    ``\\n``/``\\r``/``\\t``；字符串外原有的换行/Tab 是合法 JSON 空白，原样保留；
+    已存在的 ``\\n`` 转义对（反斜杠+n）也不会被二次破坏。
+    """
+    out: list[str] = []
+    in_str = False
+    esc = False
+    for ch in text:
+        if in_str:
+            if esc:
+                out.append(ch)
+                esc = False
+                continue
+            if ch == "\\":
+                out.append(ch)
+                esc = True
+                continue
+            if ch == '"':
+                in_str = False
+                out.append(ch)
+                continue
+            if ch == "\n":
+                out.append("\\n")
+                continue
+            if ch == "\r":
+                out.append("\\r")
+                continue
+            if ch == "\t":
+                out.append("\\t")
+                continue
+            out.append(ch)
+            continue
+        if ch == '"':
+            in_str = True
+        out.append(ch)
+    return "".join(out)
+
+
 def parse_llm_json(text: str) -> dict[str, Any]:
     """容错解析 LLM 输出的 JSON
 
@@ -38,6 +81,9 @@ def parse_llm_json(text: str) -> dict[str, Any]:
         ValueError: 无法解析为 JSON
     """
     text = text.strip()
+    # 容错预 pass：转义字符串内部的字面换行/回车/Tab，避免整段 JSON 因 draft 字段
+    # 含真实换行而无法解析（见 _escape_control_in_strings）
+    text = _escape_control_in_strings(text)
 
     # 策略 1: 直接解析
     try:
@@ -96,6 +142,45 @@ def parse_llm_json(text: str) -> dict[str, Any]:
                 return json.loads(text[start : match_end + 1])
             except json.JSONDecodeError:
                 pass
+
+    # 策略 5: 逐「{」起点扫描完整、可解析的 JSON 对象。
+    # 创作模型（尤其 high-temperature creative）常「先写一段纯文本规划、再吐 JSON
+    # 信封」。若散文前置里混入杂散 ``{`` 或 ``"``，策略 3/4 的「首次定位」会落错起点
+    # 而整体失败（ch237/ch238 实证）。这里对每个可能起点做括号配对 + 独立转义 + 尝试
+    # 解析，取第一个成功者返回。候选级独立转义还能规避「散文前置的杂散引号使全局
+    # 预转义提前错位、漏掉信封内真实换行」的边界。
+    for _s in (m.start() for m in re.finditer(r"\{", text)):
+        _depth = 0
+        _in_str = False
+        _esc = False
+        _e = -1
+        for _i in range(_s, len(text)):
+            _ch = text[_i]
+            if _in_str:
+                if _esc:
+                    _esc = False
+                elif _ch == "\\":
+                    _esc = True
+                elif _ch == '"':
+                    _in_str = False
+                continue
+            if _ch == '"':
+                _in_str = True
+                continue
+            if _ch == "{":
+                _depth += 1
+            elif _ch == "}":
+                _depth -= 1
+                if _depth == 0:
+                    _e = _i
+                    break
+        if _e == -1:
+            continue
+        _cand = _escape_control_in_strings(text[_s : _e + 1])
+        try:
+            return json.loads(_cand)
+        except json.JSONDecodeError:
+            continue
 
     raise ValueError(f"无法解析为 JSON: {text[:200]}...")
 

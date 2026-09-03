@@ -39,6 +39,11 @@ from agent.workflows.m5_write_chapter import (
     M5WriteChapterWorkflow,
     PreValidationBlocked,
 )
+from agent.core.quality.scoring.quality_checker import (
+    _count_cjk,
+    resolve_min_cjk_words,
+    resolve_max_cjk_words,
+)
 from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.core.story.evidence_chain import EvidenceChain
 from agent.core.infra.prompt_helpers import format_open_debts, format_rag_context
@@ -275,12 +280,12 @@ class AgenticWriteWorkflow:
         # 抬高原始字数而漏判（ch081=244 字即因原始含回显文本而逃过门禁）。
         cleaned = M5WriteChapterWorkflow._clean_chapter_body(text)
         cleaned = M5WriteChapterWorkflow._dedup_repeated_chapter(cleaned)
-        # 正文只统计可显示字符（去空白），与落盘字数统计口径一致。
-        cur_len = len(re.sub(r"\s+", "", cleaned))
+        cleaned = M5WriteChapterWorkflow._dedup_tail_loop(cleaned)
+        # 与 m5 / quality_checker 统一的中文字数口径（动态下限随目标伸缩）
+        cur_len = _count_cjk(cleaned)
         target_len = int(wi.get("chapter_length") or 3000)
-        # 阈值：低于目标 50% 视为「远未写够」，直接判不通过并给出具体扩写要求。
-        # （目标3000字时下限为1500字；避免 LLM 审稿对 1100 字章放行。）
-        min_len = max(600, int(target_len * 0.5))
+        # 动态门禁下限 = max(绝对下限1500, 目标×0.8)；与 m5 硬关卡一致。
+        min_len = resolve_min_cjk_words(target_len)
         if cur_len < min_len:
             report = {
                 "overall_pass": False,
@@ -299,6 +304,25 @@ class AgenticWriteWorkflow:
                 "suggestions": "扩写本章，补充场景/动作/环境描写与章末悬念，确保字数接近目标。",
             }
             return False, report
+        # 超合理上限仅告警，不阻断（区间口径：目标×1.2 视为合理上限）
+        max_len = resolve_max_cjk_words(target_len)
+        if max_len and cur_len > max_len:
+            report = {
+                "overall_pass": True,
+                "rules": [],
+                "issues": [
+                    {
+                        "rule_id": "max_length",
+                        "severity": "warning",
+                        "description": (
+                            f"本章正文偏长：约 {cur_len} 字，超过目标字数 {target_len} 字的"
+                            f"合理上限 {max_len} 字（目标×1.2），可考虑精简冗余描写使其更紧凑。"
+                        ),
+                    }
+                ],
+                "suggestions": "无需强制改写；如篇幅过大可适当精简冗余场景/对白。",
+            }
+            return True, report
         check_prompt = pm.get("m5.quality_check").render_user(
             tone=wi["tone"],
             chapter_length=wi["chapter_length"],

@@ -457,7 +457,8 @@ class LLMClient:
             )
             return extract_json(resp.text)
         except (LLMError, StructuredOutputError, ValueError) as e:
-            # 回退：去掉 response_format 再请求，文本解析兜底
+            # 回退：改用 json_object 再次强约束（部分网关忽略 json_schema 时，模型会吐散文，
+            # 导致提取失败；json_object 能强制其输出合法 JSON，显著提升结构稳定）。
             try:
                 resp2 = self.chat(
                     messages,
@@ -466,6 +467,7 @@ class LLMClient:
                     max_tokens=max_tokens,
                     use=use,
                     enable_thinking=enable_thinking,
+                    response_format={"type": "json_object"},
                     **kwargs,
                 )
                 return extract_json(resp2.text)

@@ -32,6 +32,13 @@ from agent.core.base.exceptions import PreValidationBlocked
 from agent.core.registry.genre_pack import GenrePackRegistry, first_genre, first_genre_label
 from agent.core.engine.workflow_registry import workflow
 from agent.core.quality.scoring import QualityChecker, LLMBackedChecker, Severity
+from agent.core.quality.scoring.quality_checker import (
+    ABSOLUTE_MIN_CJK_WORDS,
+    _chapter_length_from_ctx,
+    _count_cjk,
+    resolve_min_cjk_words,
+    resolve_max_cjk_words,
+)
 from agent.core.story.injected_trope_store import InjectedTropeStore
 from agent.client import LLMClient
 from agent.core.story.method_style import load_style_guide  # G11：风格指引读取
@@ -1465,6 +1472,45 @@ class M5WriteChapterWorkflow:
                     + _ENGLISH_REPLACE_GUIDE
                 )
 
+            # ---- 字数硬关卡（确定性扫描，不依赖 LLM 自觉）----
+            # 中文字数低于动态下限（随目标字数伸缩，有绝对下限兜底）即判不通过，
+            # 触发修订扩写，杜绝截断短章落盘
+            min_words = resolve_min_cjk_words(_chapter_length_from_ctx(ctx))
+            cjk_count = _count_cjk(text)
+            if cjk_count < min_words:
+                report["overall_pass"] = False
+                report.setdefault("rules", []).append(
+                    {
+                        "rule": "word_count",
+                        "pass": False,
+                        "issue": (
+                            f"正文中文字数不足（{cjk_count} < {min_words} 字），"
+                            "必须扩写补齐到门禁字数以上，禁止截断残缺"
+                        ),
+                    }
+                )
+                report["suggestions"] = (
+                    report.get("suggestions", "")
+                    + f"\n本章正文字数不足（现 {cjk_count} 字），须扩充细节/对白/动作/推进到 ≥ {min_words} 字。"
+                )
+                # 把明确扩写指令塞进修订提示词，确保 LLM 知道要补
+                quality_report_text = (
+                    quality_report_text
+                    + "\n\n# 硬性扩写指令（必须执行，否则本章不通过）\n"
+                    + f"本章正文字数不足（现 {cjk_count} 字 < {min_words} 字），"
+                    f"请在不偏离大纲与人物设定的前提下扩写至 ≥ {min_words} 字，"
+                    "禁止用重复段/空行/废话充数。"
+                )
+            # 超合理上限仅告警，不阻断落盘（区间口径：目标×1.2 视为合理上限）
+            else:
+                max_words = resolve_max_cjk_words(_chapter_length_from_ctx(ctx))
+                if max_words and cjk_count > max_words:
+                    report["suggestions"] = (
+                        report.get("suggestions", "")
+                        + f"\n本章正文偏长（约 {cjk_count} 字，合理上限 {max_words} 字），"
+                        "可适当精简冗余描写，使其更紧凑。"
+                    )
+
             if report.get("overall_pass", False):
                 break
 
@@ -1660,6 +1706,69 @@ class M5WriteChapterWorkflow:
         head = text[: first.start()].rstrip()
         return head
 
+    # ---- 尾部循环段落去重（P-DEDUP-2）----------------------------
+    # ch238 实证：LLM 在章节结尾把**前面已写过的整段连续段落原样复读**一遍，但
+    # 中途**没有再次出现『# 第N章·…』标题**，故 _dedup_repeated_chapter 的标题锚点
+    # 不命中。本方法改为纯段落级相似度匹配：检测正文末尾是否存在一段「循环复述」，
+    # 即最长的**后缀块**与其前面的某段连续块高度相似，命中则以该后缀块起点为界
+    # 截断，删除复读尾部。
+    @staticmethod
+    def _dedup_tail_loop(text: str) -> str:
+        """去掉章节尾部把前面段落整段复读的循环重复（无标题锚点）。
+
+        仅在 _clean_chapter_body 去元信息 + _dedup_repeated_chapter 整章去重后调用。
+
+        判定（P-DEDUP-2，全部满足才截断，保证保守不误删）：
+          - 正文按空行切分为段落块 blocks；
+          - 寻找**最长**循环块长度 L（≥ min_run）：存在源起点 i 与复读起点 r=i+L、
+            使 blocks[i:i+L] 与 blocks[r:] 逐段对齐（段级 Jaccard ≥ sim）；
+          - 命中即以 r 为界返回 blocks[:r]。
+        优先取最长 L，能识别任意长度的尾部循环复读。
+        """
+        # 段级字符集合 Jaccard 阈值（与 evaluator._sent_sim 口径一致）
+        sim = 0.8
+        # 至少连续对齐多少段才判定为循环复读（≥2 避免单段巧合）
+        min_run = 2
+
+        blocks = [b.strip() for b in text.split("\n\n") if b.strip()]
+        n = len(blocks)
+        if n < 2 * min_run:          # 至少要够「源块 + 独立循环块」
+            return text
+
+        def _sim(a: str, b: str) -> float:
+            sa, sb = set(a), set(b)
+            if not sa or not sb:
+                return 0.0
+            return len(sa & sb) / len(sa | sb)
+
+        # 找最长的后缀循环块：r 为复读起点，L = n - r 为循环长度，源起点 i = r - L。
+        # 遍历可能的循环长度 L，校验 blocks[0:L] 与 blocks[r:]... 用源起点 = L（前缀）
+        # 与后缀 blocks[n-L:] 对齐是最典型的「开头复读」；也支持源在正文中部的
+        # （blocks[i:i+L] 与 blocks[n-L:] 对齐），这里统一扫描 i。
+        best_r = -1
+        best_L = 0
+        # 循环块长度上界：正文一半以内（复读块不可能超过正文总长的一半）
+        max_L = n // 2
+        for L in range(max_L, min_run - 1, -1):
+            r = n - L
+            # 源块起点 i 需满足 i + L <= r（源与复读不重叠）
+            for i in range(0, r - L + 1):
+                ok = True
+                for k in range(L):
+                    if _sim(blocks[i + k], blocks[r + k]) < sim:
+                        ok = False
+                        break
+                if ok:
+                    best_r = r
+                    best_L = L
+                    break
+            if best_r != -1:
+                break
+        if best_r == -1:
+            return text
+        head_text = "\n\n".join(blocks[:best_r]).rstrip()
+        return head_text
+
     # ============================================================
     # 5. 依据链
     # ============================================================
@@ -1754,6 +1863,9 @@ class M5WriteChapterWorkflow:
         # P-DEDUP：剔除 LLM 把整章正文重复输出两遍的情况（正文中途再次出现章节标题）。
         # 必须在字数统计之前，保证字数基于去重后的最终文本。
         text = self._dedup_repeated_chapter(text)
+        # P-DEDUP-2：剔除章节尾部把前面已写段落整段复读的循环重复（无标题锚点）。
+        # 与 P-DEDUP 并排，同为落盘前确定性去重，避免重复段虚增字数、影响门禁准判。
+        text = self._dedup_tail_loop(text)
         # P-FMT：统一写盘点强制段落格式化（M5 / agentic_write 共用本方法）。
         # 兜底 LLM 完全不输出段落分隔的情况（正文被压成单段），按句自动分段。
         # 注意：这段必须在 word_count 计算之前，保证字数统计基于最终落盘文本。
