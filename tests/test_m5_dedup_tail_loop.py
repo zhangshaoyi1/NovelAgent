@@ -1,6 +1,6 @@
 """P-DEDUP-2 尾部循环段落去重 单元测试（无网络 / 无真实项目依赖）。
 
-覆盖 agent.workflows.m5_write_chapter.M5WriteChapterWorkflow._dedup_tail_loop：
+覆盖 agent.workflows.writing.m5_write_chapter.M5WriteChapterWorkflow._dedup_tail_loop：
 - 章节结尾把前文连续段落整段复读（无标题锚点）→ 应截断复读尾部；
 - 无循环复读的正常正文 → 应原样返回；
 - ch238 实证结构：战斗段落在结尾被整段复述。

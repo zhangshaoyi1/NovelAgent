@@ -37,7 +37,7 @@ def mode(
     """
     from pathlib import Path
 
-    from agent.workflows.m8_mode import (
+    from agent.workflows.writing.m8_mode import (
         PRESET_AUTO_DRIVER,
         PRESET_COPILOT,
         ModeController,

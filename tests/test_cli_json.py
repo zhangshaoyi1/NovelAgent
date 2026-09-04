@@ -39,10 +39,10 @@ def _patch_llm(monkeypatch: pytest.MonkeyPatch, mock: MagicMock) -> None:
     """将各工作流模块与冲突仲裁器里的 LLMClient 替换为返回 mock 的无参可调用对象，
     确保 CLI 路径完全不触碰真实 LLM / 网络。"""
     zero_arg = lambda *a, **kw: mock  # noqa: E731
-    monkeypatch.setattr("agent.workflows.m5_write_chapter.create_gateway", zero_arg)
+    monkeypatch.setattr("agent.workflows.writing.m5_write_chapter.create_gateway", zero_arg)
     monkeypatch.setattr("agent.client.gateway_adapter.create_gateway", zero_arg)
-    monkeypatch.setattr("agent.workflows.m6_adjust.create_gateway", zero_arg)
-    monkeypatch.setattr("agent.workflows.m11_export.create_gateway", zero_arg)
+    monkeypatch.setattr("agent.workflows.writing.m6_adjust.create_gateway", zero_arg)
+    monkeypatch.setattr("agent.workflows.evaluation.m11_export.create_gateway", zero_arg)
 
 
 # ============================================================

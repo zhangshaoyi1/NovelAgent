@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.m8_mode import (
+from agent.workflows.writing.m8_mode import (
     InterventionPoint,
     M8ModeResult,
     Mode,

@@ -41,7 +41,7 @@ from fastapi.templating import Jinja2Templates
 from agent.web import runner, state
 from agent.agents.registry import get_groups, roster_summary, RosterCategory
 from agent.core.story.meta.philosophy import get_philosophy
-from agent.workflows.m8_mode import ModeController, autonomy_label
+from agent.workflows.writing.m8_mode import ModeController, autonomy_label
 from agent.core.story.relation_manager import (
     RelationManager,
     WorldNode,
@@ -194,7 +194,10 @@ def _guide_stages(name: str) -> list[dict[str, Any]]:
     return [
         {"key": "world", "num": "①", "label": "设定世界", "desc": "世界观设定集（题材 / 核心梗 / 世界规则）",
          "cmd": "/start", "file": "world.md", "content": world, "editable": bool(world),
-         "generate": "/start" in avail, "gen_label": "生成世界观", "gen_argv": []},
+         "generate": "/start" in avail, "gen_label": "生成世界观",
+         # 必须带 --title 走非交互模式：runner 子进程 stdin=DEVNULL，
+         # 缺参会导致 start 进入交互式收集并立即 EOF 失败（world.md 永远生成不出来）。
+         "gen_argv": ["--title", name]},
         {"key": "discussion", "num": "②", "label": "脉络讨论", "desc": "与 Agent 讨论故事脉络，产出讨论纪要",
          "cmd": "/discuss", "file": "discussion.md", "content": discussion, "editable": bool(discussion),
          "generate": "/discuss" in avail, "gen_label": "开始讨论",
