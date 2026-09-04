@@ -35,3 +35,16 @@ created_at: "{{ created_at }}"
 | 冲突 | {{ pressure_curve.conflict }} | 中 |
 | 高潮 | {{ pressure_curve.climax }} | 高 |
 | 舒缓 | {{ pressure_curve.relief }} | 低 |
+
+{% if chapter_hooks %}
+## 章节钩子设计
+
+{{ chapter_hooks }}
+
+{% endif %}
+{% if plot_points %}
+## 情节点序列
+
+{{ plot_points }}
+
+{% endif %}

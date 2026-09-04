@@ -338,6 +338,8 @@ class M3OutlineWorkflow:
             "pressure_curve": {
                 "setup": "", "conflict": "", "climax": "", "relief": ""
             },
+            "chapter_hooks": "",
+            "plot_points": "",
         }
 
     # ============================================================
@@ -389,6 +391,8 @@ class M3OutlineWorkflow:
                 constraints=s.get("constraints", ""),
                 mainline_relation=s.get("mainline_relation", ""),
                 pressure_curve=pressure_curve,
+                chapter_hooks=str(s.get("chapter_hooks", "") or "").strip(),
+                plot_points=str(s.get("plot_points", "") or "").strip(),
             )
             # 写入 sublines/S<NN>_<name>/subline.md
             path = subline_dir / subline_id / "subline.md"
