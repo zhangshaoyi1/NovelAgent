@@ -1,0 +1,37 @@
+---
+subline_id: "{{ subline_id }}"
+subline_name: "{{ subline_name }}"
+status: "planned"
+created_at: "{{ created_at }}"
+---
+
+# 支线设定 · {{ subline_name }}
+
+## 支线目标
+
+{{ goal }}
+
+## 出场角色
+
+{{ characters }}
+
+## 关键冲突
+
+{{ conflicts }}
+
+## 约束
+
+{{ constraints }}
+
+## 与主线的关系
+
+{{ mainline_relation }}
+
+## 剧集压力曲线
+
+| 阶段 | 章节 | 张力等级 |
+|---|---|---|
+| 铺垫 | {{ pressure_curve.setup }} | 低 |
+| 冲突 | {{ pressure_curve.conflict }} | 中 |
+| 高潮 | {{ pressure_curve.climax }} | 高 |
+| 舒缓 | {{ pressure_curve.relief }} | 低 |

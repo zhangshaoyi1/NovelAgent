@@ -1,0 +1,609 @@
+"""M14 故事架构生成与确认门禁工作流 ★门禁
+
+职责：把 M2 发散讨论的成果收敛为可执行的故事架构，并经用户显式确认后才解锁下游。
+
+流程：
+    1. generate()：读 world.md + discussion.md → LLM 生成八维度架构
+       → 渲染 architecture.md（confirmed: false, version: 1）
+    2. iterate(feedback)：基于用户修改意见迭代架构（version +1, confirmed 重置 false）
+    3. confirm()：写 confirmed: true + confirmed_at → 状态转换 ARCHITECTING → ARCH_CONFIRMED
+
+门禁：confirmed == true 是 M3/M5 执行的必要条件，由 check_confirmed() 提供。
+
+状态转换：ARCHITECTING → ARCH_CONFIRMED
+"""
+
+from __future__ import annotations
+
+from agent.core.infra.prompt_manager import pm
+import json
+from dataclasses import dataclass, field
+from datetime import datetime
+from pathlib import Path
+from typing import Any
+
+import frontmatter
+from jinja2 import Environment, FileSystemLoader, select_autoescape
+from rich.console import Console
+from rich.panel import Panel
+from rich.prompt import Confirm, Prompt
+
+from agent.client.gateway_adapter import create_gateway, chat_creative, chat_utility
+from llmagent.gateway import Gateway
+from agent.core.engine.workflow_registry import workflow
+from agent.core.story.setting_manager import SettingManager
+from agent.core.engine.state_machine import Event, State, StateMachine
+from agent.core.registry.genre_pack import first_genre, first_genre_label
+from agent.utils import parse_llm_json
+
+# 模板目录
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
+
+# 架构八维度（与 prompt JSON 字段对齐）
+ARCHITECTURE_DIMENSIONS = [
+    "story_core",          # 故事内核（一句话）
+    "protagonist_triple",  # 主角三要素（是谁/要什么/阻碍）
+    "main_plot",           # 主线脉络（起承转合）
+    "sublines_preview",    # 主要支线预判
+    "conflict_nodes",      # 关键冲突节点
+    "theme",               # 主题思想
+    "ending",              # 预期结局走向
+    "emotional_tone",      # 情感基调
+]
+
+
+@dataclass
+class M14GenerateResult:
+    """generate/iterate 的执行结果"""
+
+    architecture_file: Path
+    version: int
+    confirmed: bool
+    architecture: dict[str, Any]  # 解析后的八维度 dict
+
+
+@dataclass
+class M14ConfirmResult:
+    """confirm 的执行结果"""
+
+    architecture_file: Path
+    confirmed: bool
+    confirmed_at: str
+    version: int
+    unlocked_stages: list[str] = field(default_factory=list)
+
+
+@workflow("m14_architecture")
+class M14ArchitectureWorkflow:
+    """M14 故事架构生成与确认门禁工作流"""
+
+    # 确认后解锁的下游阶段（用于确认前预览，轻量防误）
+    UNLOCKED_STAGES = ["M3 大纲生成", "M4 角色设计", "M5 章节写作"]
+
+    def __init__(
+        self,
+        project_dir: Path,
+        llm_client: Gateway | None = None,
+        setting_manager: SettingManager | None = None,
+        state_machine: StateMachine | None = None,
+        console: Console | None = None,
+    ) -> None:
+        self.project_dir = Path(project_dir)
+        self.llm = llm_client or create_gateway()
+        self.sm = setting_manager or SettingManager(self.project_dir)
+        self.state_machine = state_machine or StateMachine(self.project_dir)
+        self.console = console or Console()
+        self.architecture_file = self.project_dir / "architecture.md"
+        self.jinja_env = Environment(
+            loader=FileSystemLoader(str(TEMPLATES_DIR)),
+            autoescape=select_autoescape(disabled_extensions=("j2",)),
+            keep_trailing_newline=True,
+        )
+
+    # ============================================================
+    # 生成初稿
+    # ============================================================
+    def generate(self) -> M14GenerateResult:
+        """生成故事架构初稿
+
+        读取 world.md + discussion.md，调用 LLM 生成八维度架构，
+        渲染 architecture.md（confirmed: false, version: 1）。
+
+        Raises:
+            RuntimeError: 状态不符 / world.md 不存在
+        """
+        self.state_machine.load()
+        if self.state_machine.state != State.ARCHITECTING:
+            raise RuntimeError(
+                f"当前状态 {self.state_machine.state.value} 不允许生成架构，"
+                f"需处于 ARCHITECTING 状态"
+            )
+
+        world_data = self.sm.load_world()
+        if not world_data["exists"]:
+            raise RuntimeError("world.md 不存在，请先运行 M1 配置")
+
+        discussion_text = self._load_discussion()
+        world_info = self._extract_world_info(world_data)
+
+        self.console.print("\n[cyan]正在生成故事架构...[/cyan]")
+        architecture = self._llm_generate_architecture(world_info, discussion_text)
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        self._save_architecture(
+            title=world_info["title"],
+            architecture=architecture,
+            confirmed=False,
+            confirmed_at="",
+            version=1,
+            created_at=now,
+            updated_at=now,
+        )
+
+        self._present_architecture(architecture, version=1, confirmed=False)
+
+        self.console.print(
+            f"\n[bold green]✓ 架构初稿已生成[/bold green]：{self.architecture_file}"
+        )
+        self.console.print(
+            "[dim]下一步：审阅后使用 /confirm-architecture 确认，"
+            "或再次 /architecture --feedback \"...\" 迭代修订。[/dim]"
+        )
+
+        return M14GenerateResult(
+            architecture_file=self.architecture_file,
+            version=1,
+            confirmed=False,
+            architecture=architecture,
+        )
+
+    # ============================================================
+    # 迭代修订
+    # ============================================================
+    def iterate(self, feedback: str) -> M14GenerateResult:
+        """基于用户反馈迭代架构
+
+        迭代修订对任意状态放行（不改状态机、不推进阶段），仅要求 architecture.md 已存在；
+        因此用户在后续阶段（大纲/角色/写作/完成）也能回头按意见修改架构。
+
+        Args:
+            feedback: 作者修改意见（自然语言）
+
+        Raises:
+            RuntimeError: architecture.md 不存在
+        """
+        if not self.architecture_file.exists():
+            raise RuntimeError(
+                "architecture.md 不存在，请先运行 /architecture 生成初稿"
+            )
+
+        post = frontmatter.load(self.architecture_file)
+        current_version = int(post.metadata.get("version", 1))
+        title = post.metadata.get("title", "")
+        # 从 frontmatter 读取完整架构 JSON（迭代的基础）
+        current_arch = post.metadata.get("architecture", {}) or {}
+        if not current_arch:
+            # 兼容旧文件：无 architecture 字段时降级为空结构
+            current_arch = self._empty_architecture()
+
+        # 题材标签：供 m14.iterate system prompt 的 {{ genre }} 注入（失败降级为空）
+        genre_label = ""
+        try:
+            world_data = self.sm.load_world()
+            if world_data.get("exists"):
+                genre_label = self._extract_world_info(world_data).get(
+                    "genre_label", ""
+                )
+        except Exception:  # noqa: BLE001 - world.md 读取失败降级，不阻断迭代
+            pass
+
+        self.console.print("\n[cyan]正在根据反馈修订架构...[/cyan]")
+        new_arch = self._llm_iterate_architecture(
+            title, current_arch, feedback, genre_label=genre_label
+        )
+
+        # 反馈落实核验：LLM 偶发会漏掉多要点反馈中的某几条。用轻量模型核对，
+        # 发现缺失则补一轮修订（附明确缺失清单），提高「按意见修改架构」可靠性。
+        missing = self._check_feedback_gaps(feedback, new_arch)
+        if missing:
+            self.console.print(
+                "[yellow]⚠ 以下反馈要点未在新架构中体现，正在补充修订…[/yellow]"
+            )
+            for m in missing:
+                self.console.print(f"    - {m}")
+            retry_feedback = (
+                feedback
+                + "\n\n【补充修订要求】上一轮修订遗漏了以下要点，本轮必须逐条落实到"
+                "对应字段（ending / main_plot / protagonist_triple 等）：\n"
+                + "\n".join(f"{i + 1}. {m}" for i, m in enumerate(missing))
+            )
+            new_arch = self._llm_iterate_architecture(
+                title, current_arch, retry_feedback, genre_label=genre_label
+            )
+            # 补充修订后再核对一次：仅告警、不阻断落盘（避免无限循环），
+            # 用户可在页面继续手动微调。
+            still_missing = self._check_feedback_gaps(feedback, new_arch)
+            if still_missing:
+                self.console.print(
+                    "[yellow]⚠ 补充修订后仍有要点未体现，已保留当前结果；"
+                    "可在页面继续按意见修改。[/yellow]"
+                )
+                for m in still_missing:
+                    self.console.print(f"    - {m}")
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        created_at = post.metadata.get("created_at", now)
+        # 迭代修订不推翻已确认状态：保留原 confirmed / confirmed_at（已确认则维持，
+        # 未确认则维持未确认），避免在后续阶段迭代导致下游阶段状态失真。
+        confirmed = post.metadata.get("confirmed") is True
+        confirmed_at = post.metadata.get("confirmed_at", "") if confirmed else ""
+        new_version = current_version + 1
+        self._save_architecture(
+            title=title,
+            architecture=new_arch,
+            confirmed=confirmed,
+            confirmed_at=confirmed_at,
+            version=new_version,
+            created_at=created_at,
+            updated_at=now,
+        )
+
+        self._present_architecture(new_arch, version=new_version, confirmed=confirmed)
+        self.console.print(
+            f"\n[bold green]✓ 架构已迭代到 v{new_version}[/bold green]："
+            f"{self.architecture_file}"
+        )
+        self.console.print(
+            "[dim]下一步：审阅后使用 /confirm-architecture 确认，"
+            "或继续 /architecture --feedback \"...\" 迭代。[/dim]"
+        )
+
+        return M14GenerateResult(
+            architecture_file=self.architecture_file,
+            version=new_version,
+            confirmed=False,
+            architecture=new_arch,
+        )
+
+    # ============================================================
+    # 确认门禁
+    # ============================================================
+    def confirm(self) -> M14ConfirmResult:
+        """确认故事架构
+
+        写入 confirmed: true + confirmed_at，状态转换 ARCHITECTING → ARCH_CONFIRMED。
+        确认前显示"将解锁下游 X 个阶段"预览作为轻量防误。
+
+        Raises:
+            RuntimeError: architecture.md 不存在 / 已确认 / 状态不符
+        """
+        self.state_machine.load()
+        if self.state_machine.state != State.ARCHITECTING:
+            raise RuntimeError(
+                f"当前状态 {self.state_machine.state.value} 不允许确认架构，"
+                f"需处于 ARCHITECTING 状态"
+            )
+
+        if not self.architecture_file.exists():
+            raise RuntimeError(
+                "architecture.md 不存在，请先运行 /architecture 生成初稿"
+            )
+
+        post = frontmatter.load(self.architecture_file)
+        if post.metadata.get("confirmed") is True:
+            raise RuntimeError("架构已确认，当前不支持在线修订已确认架构；如需调整，请先 /reset-state 回到大纲阶段重新生成（将丢失已确认架构）")
+
+        # 防误预览
+        self.console.print(
+            Panel(
+                "确认后将解锁以下下游阶段：\n"
+                + "\n".join(f"  • {s}" for s in self.UNLOCKED_STAGES),
+                title="[bold]确认架构[/bold]",
+                border_style="yellow",
+            )
+        )
+        # 交互式二次确认（confirm_yes=True 时跳过，用于测试/批处理）
+        if not self._confirm_yes:
+            yes = Confirm.ask("[bold]确认锁定当前架构？[/bold]", default=False)
+            if not yes:
+                self.console.print("[yellow]已取消确认，可继续迭代。[/yellow]")
+                return M14ConfirmResult(
+                    architecture_file=self.architecture_file,
+                    confirmed=False,
+                    confirmed_at="",
+                    version=int(post.metadata.get("version", 1)),
+                    unlocked_stages=[],
+                )
+
+        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        post.metadata["confirmed"] = True
+        post.metadata["confirmed_at"] = now
+        self.architecture_file.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+        # 状态转换
+        self.state_machine.transition(Event.CONFIRM_ARCHITECTURE)
+        self.state_machine.save()
+
+        version = int(post.metadata.get("version", 1))
+        self.console.print(
+            f"\n[bold green]✓ 架构已确认[/bold green]（v{version}，{now}）"
+        )
+        self.console.print(
+            f"[dim]已解锁：{', '.join(self.UNLOCKED_STAGES)}[/dim]"
+        )
+        self.console.print("[dim]下一步：使用 /outline 生成大纲。[/dim]")
+
+        return M14ConfirmResult(
+            architecture_file=self.architecture_file,
+            confirmed=True,
+            confirmed_at=now,
+            version=version,
+            unlocked_stages=list(self.UNLOCKED_STAGES),
+        )
+
+    # ============================================================
+    # 门禁检查（供 M3/M5 调用）
+    # ============================================================
+    @staticmethod
+    def check_confirmed(project_dir: Path | str) -> bool:
+        """门禁检查：architecture.md 的 confirmed 字段（向后兼容包装）
+
+        T-4 起实际逻辑已上提至 ``agent.core.quality.guardrails.is_architecture_confirmed``，
+        本静态方法保留以兼容既有调用方；新代码请直接使用 ``is_architecture_confirmed``。
+        """
+        from agent.core.quality.guardrails import is_architecture_confirmed
+
+        return is_architecture_confirmed(project_dir)
+
+    # ============================================================
+    # 内部工具
+    # ============================================================
+    def _load_discussion(self) -> str:
+        """加载 discussion.md 全文（不存在则返回空串）"""
+        discussion_file = self.project_dir / "discussion.md"
+        if not discussion_file.exists():
+            return ""
+        return discussion_file.read_text(encoding="utf-8")
+
+    @staticmethod
+    def _extract_world_info(world_data: dict[str, Any]) -> dict[str, str]:
+        """从 world.md 提取关键信息供 prompt 使用"""
+        metadata = world_data.get("metadata", {})
+        content = world_data.get("content", "")
+        synopsis = ""
+        if "## 故事简介" in content:
+            parts = content.split("## 故事简介", 1)
+            if len(parts) > 1:
+                synopsis = parts[1].split("##", 1)[0].strip()[:500]
+        style = metadata.get("style", {}) or {}
+        return {
+            "title": metadata.get("title", ""),
+            "scope": metadata.get("scope", ""),
+            "genre": first_genre(metadata),
+            "genre_label": first_genre_label(metadata),
+            "tone": style.get("tone", "") if isinstance(style, dict) else str(style),
+            "synopsis": synopsis,
+        }
+
+    def _llm_generate_architecture(
+        self, world_info: dict[str, str], discussion: str
+    ) -> dict[str, Any]:
+        """调用 LLM 生成八维度架构
+
+        解析失败时重试一次（要求只输出纯 JSON）；两次均失败则明确抛错，
+        绝不静默写入残缺架构（否则作者在问答面板里确定的偏好会静默丢失）。
+        """
+        user_prompt = pm.get("m14.architecture").render_user(
+            title=world_info["title"],
+            scope=world_info["scope"],
+            tone=world_info["tone"],
+            discussion=discussion or world_info["synopsis"] or "（无讨论纪要）",
+        )
+        # A 系列：问答面板确定的作者偏好注入初始生成 prompt
+        from agent.workflows.pipeline.qa_sync import format_qa_constraints
+
+        qa_text = format_qa_constraints(self.project_dir, "architecture")
+        if qa_text:
+            user_prompt += qa_text
+
+        system_prompt = pm.get("m14.architecture").render_system(genre=world_info.get("genre_label", ""))
+        # dots3-note-prev 等模型在紧预算下会把长结构化输出截断/返回空，
+        # 故采用「充足预算 + 递增重试 + 纯 JSON 强化」的重试策略。
+        _budgets = (16384, 16384, 20480)
+        for attempt in range(len(_budgets)):
+            if attempt > 0:
+                # 重试：强化「纯 JSON」约束，规避截断/多余文本导致的解析失败
+                system_prompt = (
+                    pm.get("m14.architecture").render_system(genre=world_info.get("genre_label", ""))
+                    + "\n\n【重要】请只输出一个合法的 JSON 对象，"
+                    "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                )
+            resp = chat_creative(
+                self.llm,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.7,
+                max_tokens=_budgets[attempt],
+                enable_thinking=False,
+            )
+            try:
+                return parse_llm_json(resp)
+            except ValueError:
+                if attempt == len(_budgets) - 1:
+                    raise RuntimeError(
+                        "故事架构生成结果无法解析为 JSON（可能被截断或格式异常），"
+                        f"请重试。原始输出片段：{resp[:200]}"
+                    )
+
+    def _llm_iterate_architecture(
+        self,
+        title: str,
+        current_arch: dict[str, Any],
+        feedback: str,
+        genre_label: str = "",
+    ) -> dict[str, Any]:
+        """调用 LLM 基于反馈迭代架构
+
+        解析失败自动重试一次（重试时强化「纯 JSON」约束），两次失败则明确抛错，
+        绝不静默返回旧架构（否则会写出版本号 +1 但内容未变的分支文件）。
+        """
+        user_prompt = pm.get("m14.iterate").render_user(
+            title=title,
+            current_architecture=json.dumps(current_arch, ensure_ascii=False, indent=2),
+            feedback=feedback,
+        )
+        system_prompt = pm.get("m14.iterate").render_system(genre=genre_label)
+        last_text = ""
+        _budgets = (16384, 16384, 20480)
+        for attempt in range(len(_budgets)):
+            resp = chat_creative(
+                self.llm,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.7,
+                max_tokens=_budgets[attempt],
+                enable_thinking=False,
+            )
+            last_text = resp or ""
+            try:
+                new_arch = parse_llm_json(last_text)
+                if not isinstance(new_arch, dict):
+                    raise ValueError("顶层不是 JSON 对象")
+                # 合并：迭代结果可能只返回修改字段，用旧值兜底
+                merged = dict(current_arch)
+                merged.update(new_arch)
+                return merged
+            except ValueError:
+                if attempt == len(_budgets) - 1:
+                    raise RuntimeError(
+                        "架构迭代结果无法解析为 JSON（可能被截断或格式异常），"
+                        f"请重试。原始输出片段：{last_text[:200]}"
+                    )
+                self.console.print(
+                    "[yellow]⚠ 架构迭代 JSON 解析失败，自动重试一次...[/yellow]"
+                )
+                system_prompt = (
+                    pm.get("m14.iterate").render_system(genre=genre_label)
+                    + "\n\n【重要】请只输出一个合法的 JSON 对象（结构与初版一致），"
+                    "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                )
+
+    def _check_feedback_gaps(
+        self, feedback: str, revised: dict[str, Any]
+    ) -> list[str]:
+        """用轻量模型核对反馈要点是否都已落实，返回未落实要点清单。
+
+        核验失败时降级为『无缺失』（不阻断修订落盘，保持降级不阻断）。
+        """
+        try:
+            text = json.dumps(revised, ensure_ascii=False, indent=2)
+            resp = chat_utility(
+                self.llm,
+                messages=[
+                    {"role": "system", "content": pm.get("m14.gap_check").system},
+                    {
+                        "role": "user",
+                        "content": pm.get("m14.gap_check").render_user(
+                            feedback=feedback, revised_architecture=text
+                        ),
+                    },
+                ],
+                temperature=0.1,
+                max_tokens=1000,
+                enable_thinking=False,
+            )
+            data = parse_llm_json(resp)
+            gaps = data.get("missing") or []
+            if not isinstance(gaps, list):
+                return []
+            return [str(g).strip() for g in gaps if str(g).strip()]
+        except Exception:  # noqa: BLE001 - 核验失败不阻断修订
+            return []
+
+    @staticmethod
+    def _empty_architecture() -> dict[str, Any]:
+        """空架构结构（兼容旧文件降级用）"""
+        return {
+            "story_core": "",
+            "protagonist_triple": {"who": "", "want": "", "obstacle": ""},
+            "main_plot": {"beginning": "", "development": "", "twist": "", "resolution": ""},
+            "sublines_preview": "",
+            "conflict_nodes": "",
+            "theme": "",
+            "ending": "",
+            "emotional_tone": "",
+            "synopsis": "",
+        }
+
+    def _save_architecture(
+        self,
+        title: str,
+        architecture: dict[str, Any],
+        confirmed: bool,
+        confirmed_at: str,
+        version: int,
+        created_at: str,
+        updated_at: str,
+    ) -> None:
+        """渲染正文 + 构造 frontmatter（含架构 JSON）+ 写入 architecture.md
+
+        架构 JSON 存入 frontmatter 的 architecture 字段，
+        供 iterate() 读取作为迭代基础，避免 LLM 从零重新生成。
+        """
+        template = self.jinja_env.get_template("architecture.md.j2")
+        content = template.render(
+            title=title,
+            story_core=architecture.get("story_core", ""),
+            protagonist_triple=architecture.get("protagonist_triple", {}) or {},
+            main_plot=architecture.get("main_plot", {}) or {},
+            sublines_preview=architecture.get("sublines_preview", ""),
+            conflict_nodes=architecture.get("conflict_nodes", ""),
+            theme=architecture.get("theme", ""),
+            ending=architecture.get("ending", ""),
+            emotional_tone=architecture.get("emotional_tone", ""),
+            synopsis=architecture.get("synopsis", ""),
+        )
+        post = frontmatter.Post(
+            content,
+            title=title,
+            confirmed=confirmed,
+            confirmed_at=confirmed_at,
+            version=version,
+            created_at=created_at,
+            updated_at=updated_at,
+            # 完整架构 JSON，供迭代读取
+            architecture=architecture,
+        )
+        self.architecture_file.write_text(frontmatter.dumps(post), encoding="utf-8")
+
+    def _present_architecture(
+        self, architecture: dict[str, Any], version: int, confirmed: bool
+    ) -> None:
+        """显示架构预览给用户"""
+        status = "[green]已确认[/green]" if confirmed else "[yellow]待确认[/yellow]"
+        self.console.print(
+            Panel(
+                f"[bold]故事架构 v{version}[/bold] · {status}\n\n"
+                f"[bold]故事内核[/bold]：{architecture.get('story_core', '')}\n\n"
+                f"[bold]主角三要素[/bold]：\n"
+                f"  是谁：{(architecture.get('protagonist_triple', {}) or {}).get('who', '')}\n"
+                f"  想要什么：{(architecture.get('protagonist_triple', {}) or {}).get('want', '')}\n"
+                f"  阻碍：{(architecture.get('protagonist_triple', {}) or {}).get('obstacle', '')}\n\n"
+                f"[bold]主题[/bold]：{architecture.get('theme', '')}\n"
+                f"[bold]结局[/bold]：{architecture.get('ending', '')}",
+                title="[bold]architecture.md 预览[/bold]",
+                border_style="cyan",
+            )
+        )
+
+    # 二次确认开关（测试/批处理场景可置 True 跳过交互）
+    _confirm_yes: bool = False
+
+    def with_confirm_yes(self, yes: bool = True) -> "M14ArchitectureWorkflow":
+        """链式设置：是否跳过交互式二次确认"""
+        self._confirm_yes = yes
+        return self

@@ -1,0 +1,265 @@
+"""Gateway 原生工厂与辅助函数
+
+提供 llmagent Gateway 的创建工厂和常用 LLM 调用辅助函数。
+业务代码推荐使用 ``create_gateway()`` + ``chat_creative()`` / ``chat_utility()``。
+"""
+
+from __future__ import annotations
+
+import json
+import time
+from typing import Any
+
+from pydantic import BaseModel
+
+from agent.base.llm import LLMConfig, LLMProvider
+from agent.base.structured_output import (
+    StructuredOutputError,
+    extract_json,
+    pydantic_to_json_schema,
+)
+
+
+# ===== 将 agent LLMProvider 包装为 Gateway ModelProvider =====
+
+
+class _GatewayModelProvider:
+    """将 agent 的 LLMProvider 包装为 Gateway 的 ModelProvider 协议"""
+
+    def __init__(self, name: str, provider: LLMProvider) -> None:
+        self.name = name
+        self._provider = provider
+
+    def complete(self, packed: Any) -> Any:
+        """Gateway ModelProvider.complete() 实现"""
+        from llmagent.gateway.models import RawResponse
+
+        messages = packed.messages
+        route = packed.route
+        t0 = time.monotonic()
+
+        try:
+            resp = self._provider.chat(
+                messages=messages,
+                model=route.model,
+                temperature=route.card.temperature if hasattr(route.card, 'temperature') else 0.8,
+                max_tokens=None,
+                enable_thinking=None,
+                timeout=120,
+            )
+            elapsed = (time.monotonic() - t0) * 1000.0
+            return RawResponse(
+                text=resp.text,
+                provider=self.name,
+                model=route.model,
+                usage_input=resp.usage.get("input_tokens", 0) or packed.estimated_input_tokens,
+                usage_output=resp.usage.get("output_tokens", 0),
+                elapsed_ms=elapsed,
+            )
+        except Exception as e:
+            elapsed = (time.monotonic() - t0) * 1000.0
+            raise RuntimeError(f"Provider {self.name} 调用失败: {e}") from e
+
+    def count_tokens(self, text: str) -> int:
+        return len(text) // 4  # 简单估算
+
+    def model_card(self) -> Any:
+        from llmagent.gateway.models import ModelCard
+
+        return ModelCard(
+            provider=self.name,
+            model=self._provider.config.model,
+            cost_per_1k_input_cents=0.0,
+            cost_per_1k_output_cents=0.0,
+            context_window=128000,
+        )
+
+
+# ===== 工厂函数 =====
+
+
+def _build_gateway_inner(env_file: str | None = None, console: Any = None) -> tuple[Any, LLMConfig]:
+    """创建 Gateway 实例 + LLMConfig（共享内部逻辑）
+
+    返回 (gateway, llm_config)，供 create_gateway 使用。
+    """
+    from llmagent.gateway import Gateway
+    from llmagent.gateway.models import ModelCard, TaskHint
+    from llmagent.gateway.providers import ProviderRegistry
+    from llmagent.gateway.request_gate import RequestGate
+    from llmagent.gateway.router import ComplexityRouter
+    from llmagent.gateway.packer import Packer
+    from llmagent.gateway.response_gate import ResponseGate, MetricsSink
+    from llmagent.gateway.rate_limiter import RateLimiter, SemanticCache
+
+    # 加载配置
+    from agent.base.config import ConfigLoader
+
+    config = ConfigLoader.get_llm_config(env_file)
+
+    # 创建 LLMProvider
+    primary = LLMProvider.create(config)
+
+    # 创建 ProviderRegistry 并注册
+    registry = ProviderRegistry()
+    registry.register(config.provider, _GatewayModelProvider(config.provider, primary))
+
+    # 注册 fallback providers
+    for fb_name in config.fallback_providers:
+        fb_name = fb_name.strip().lower()
+        if not fb_name or fb_name == config.provider:
+            continue
+        try:
+            fb_config = LLMConfig(
+                provider=fb_name,
+                api_key=config.api_key,
+                base_url=config.base_url,
+                model=config.fallback_model or config.model,
+                timeout=config.timeout,
+                max_retries=1,
+            )
+            fb_provider = LLMProvider.create(fb_config)
+            registry.register(fb_name, _GatewayModelProvider(fb_name, fb_provider))
+        except Exception:
+            if console:
+                console.print(f"[yellow]⚠ 注册 fallback provider {fb_name} 失败[/yellow]")
+
+    # 创建 Gateway
+    gateway = Gateway(
+        request_gate=RequestGate(),
+        router=ComplexityRouter(),
+        packer=Packer(),
+        registry=registry,
+        response_gate=ResponseGate(),
+        metrics_sink=MetricsSink(),
+        rate_limiter=RateLimiter(),
+        semantic_cache=SemanticCache(),
+    )
+
+    return gateway, config
+
+
+def create_gateway(
+    env_file: str | None = None,
+    console: Any = None,
+) -> Any:
+    """直接从环境变量创建原生 llmagent Gateway 实例
+
+    返回 Gateway 实例，可直接调用 gateway.chat(ChatRequest(...))。
+    """
+    return _build_gateway_inner(env_file=env_file, console=console)[0]
+
+
+def chat_creative(
+    gateway: Any,
+    messages: list[dict[str, str]],
+    *,
+    temperature: float = 0.8,
+    max_tokens: int | None = None,
+    model: str | None = None,
+    enable_thinking: bool | None = None,
+) -> str:
+    """使用原生 Gateway 执行创作型 LLM 调用
+
+    返回纯文本响应。
+    """
+    from llmagent.gateway.models import ChatRequest, HintComplexity, TaskHint
+
+    hint = TaskHint(
+        complexity=HintComplexity.complex,
+        quality_critical=True,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    extra: dict[str, Any] = {}
+    if model:
+        extra["model"] = model
+    if enable_thinking is not None:
+        extra["enable_thinking"] = enable_thinking
+    req = ChatRequest(messages=messages, hint=hint, extra=extra or None)
+    resp = gateway.chat(req)
+    return resp.text
+
+
+def chat_utility(
+    gateway: Any,
+    messages: list[dict[str, str]],
+    *,
+    temperature: float = 0.3,
+    max_tokens: int | None = None,
+    model: str | None = None,
+    enable_thinking: bool | None = None,
+) -> str:
+    """使用原生 Gateway 执行实用型 LLM 调用
+
+    返回纯文本响应。
+    """
+    from llmagent.gateway.models import ChatRequest, HintComplexity, TaskHint
+
+    hint = TaskHint(
+        complexity=HintComplexity.simple,
+        quality_critical=False,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    extra: dict[str, Any] = {}
+    if model:
+        extra["model"] = model
+    if enable_thinking is not None:
+        extra["enable_thinking"] = enable_thinking
+    req = ChatRequest(messages=messages, hint=hint, extra=extra or None)
+    resp = gateway.chat(req)
+    return resp.text
+
+
+def chat_structured(
+    gateway: Any,
+    messages: list[dict[str, str]],
+    schema: type[BaseModel],
+    *,
+    temperature: float = 0.8,
+    max_tokens: int | None = None,
+    model: str | None = None,
+    use: str = "creative",
+    enable_thinking: bool | None = None,
+) -> BaseModel:
+    """使用原生 Gateway 执行结构化输出 LLM 调用
+
+    返回解析后的 Pydantic 模型实例。
+    """
+    # 在 system prompt 中嵌入 schema 约束
+    schema_json = pydantic_to_json_schema(schema)
+    schema_text = json.dumps(schema_json, ensure_ascii=False, indent=2)
+    from llmagent.gateway.models import ChatRequest, HintComplexity, TaskHint
+
+    system_msg = f"请严格按照以下 JSON Schema 输出结构化数据：\n{schema_text}"
+    enhanced = [{"role": "system", "content": system_msg}] + messages
+
+    hint = TaskHint(
+        complexity=HintComplexity.complex if use == "creative" else HintComplexity.simple,
+        quality_critical=True,
+        max_tokens=max_tokens,
+        temperature=temperature,
+    )
+    extra: dict[str, Any] = {}
+    if model:
+        extra["model"] = model
+    if enable_thinking is not None:
+        extra["enable_thinking"] = enable_thinking
+    req = ChatRequest(messages=enhanced, hint=hint, extra=extra or None)
+    resp = gateway.chat(req)
+
+    # 解析 JSON 到 Pydantic
+    parsed = extract_json(resp.text)
+    return schema.model_validate(parsed)
+
+
+def _load_config_from_env(env_file: str | None = None) -> LLMConfig:
+    """从环境变量加载 LLMConfig（委托给 ConfigLoader）
+
+    .. deprecated::
+        请直接使用 ``ConfigLoader.get_llm_config(env_file)``。
+    """
+    from agent.base.config import ConfigLoader
+
+    return ConfigLoader.get_llm_config(env_file)

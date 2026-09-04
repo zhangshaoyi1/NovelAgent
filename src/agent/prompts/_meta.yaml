@@ -1,0 +1,8 @@
+# prompts/ 全局配置（单例 PromptManager 读取）
+template_engine: jinja2
+default_model: creative
+reload: mtime            # CLI 短进程/Web 长驻进程均按文件 mtime 热重载
+note: >
+  提示词单一真源。迁移期 agent/prompts.py 与代码内联常量保留为 legacy 回退
+  （见 core/infra/prompt_manager.LEGACY_MAP），md 缺失时自动回退原文本，零回归。
+  validation: 块直接编译为 base/validation.ValidationSpec，与《LLM调用静态分析.md》§6 同源。

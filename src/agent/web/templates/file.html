@@ -1,0 +1,11 @@
+{% extends "base.html" %}
+{% block title %}{{ path }} · {{ name }}{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>{{ path }}</h1>
+  <p class="muted"><a href="/p/{{ name }}/files">← 返回文件列表</a></p>
+</div>
+<section class="card">
+  <pre class="code file-content">{{ content }}</pre>
+</section>
+{% endblock %}

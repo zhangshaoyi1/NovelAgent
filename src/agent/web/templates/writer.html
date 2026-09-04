@@ -1,0 +1,103 @@
+{% extends "base.html" %}
+{% block title %}{{ name }} · 实时写作间{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>实时写作间：{{ name }}</h1>
+  <p class="muted">写章过程通过 SSE 实时回传进度与成本。支持单章写入和批量自动续写。</p>
+</div>
+
+<section class="card highlight">
+  <h2>⚡ 自动续写</h2>
+  <p class="muted small">指定目标章节数，Agent 自动连续写作多章，无需逐章点击。实时进度会显示在下方控制台。</p>
+  <div class="actions-row">
+    <label>目标章节数
+      <input type="number" id="aw-chapters" value="5" min="1" max="200" style="width:80px" />
+    </label>
+    <label>引擎模式
+      <select id="aw-mode">
+        <option value="auto">auto（自主 Agentic Loop）</option>
+        <option value="heavy">heavy（更严）</option>
+        <option value="light">light（更轻）</option>
+      </select>
+    </label>
+    <label class="chk"><input type="checkbox" id="aw-strict" checked /> 严格质量审查</label>
+    <button class="btn primary" onclick="autoWriteChapters()">一键续写</button>
+  </div>
+  <div id="aw-cost-box" class="cost-box"></div>
+</section>
+
+<section class="card">
+  <h2>写下一章（单章）</h2>
+  <div class="actions-row">
+    <label>引擎模式
+      <select id="w-mode">
+        <option value="auto">auto（自主 Agentic Loop）</option>
+        <option value="heavy">heavy（更严）</option>
+        <option value="light">light（更轻）</option>
+      </select>
+    </label>
+    <label class="chk"><input type="checkbox" id="w-strict" checked /> 严格质量审查</label>
+    <button class="btn" onclick="writeChapter()">写下一章</button>
+  </div>
+  <div id="cost-box" class="cost-box"></div>
+</section>
+
+<section class="card">
+  <h2>已生成章节</h2>
+  <div id="chapters"><p class="muted">加载中…</p></div>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  let existingChapters = 0; // 当前的已写章数，续写时把批次数换算为绝对目标
+  function renderChapters(list) {
+    existingChapters = list.length;
+    const box = document.getElementById('chapters');
+    if (!list.length) { box.innerHTML = '<p class="muted">还没有章节，点上方"写下一章"或"一键续写"。</p>'; return; }
+    box.innerHTML = '<ul class="chapter-list">' + list.map(c =>
+      `<li><a href="/p/{{ name }}/file?path=${encodeURIComponent(c.rel)}">第 ${c.num} 章 · ${c.name}</a>
+       <span class="muted small">${(c.size/1024).toFixed(1)} KB</span></li>`).join('') + '</ul>';
+  }
+  function loadChapters() {
+    fetch('/api/chapters/{{ name }}').then(r => r.json()).then(renderChapters);
+  }
+
+  /** 单章写入 */
+  function writeChapter() {
+    const mode = document.getElementById('w-mode').value;
+    const strict = document.getElementById('w-strict').checked;
+    const argv = ['--mode', mode];
+    if (!strict) argv.push('--no-strict-review');
+    const c = startRunConsole('写下一章（' + mode + '）');
+    runCommand('{{ name }}', 'write', argv, c, (d) => {
+      loadChapters();
+      if (d.summary && d.summary.cost_alert) {
+        const a = d.summary.cost_alert;
+        document.getElementById('cost-box').innerHTML =
+          `<span class="badge">成本预警：${a.level || a.message || '—'}</span>`;
+      }
+    });
+  }
+
+  /** 一键续写：autowrite 批量写入 N 章（批次数 N 叠加到已写章数，取绝对目标） */
+  function autoWriteChapters() {
+    const batch = parseInt(document.getElementById('aw-chapters').value, 10) || 5;
+    const mode = document.getElementById('aw-mode').value;
+    const strict = document.getElementById('aw-strict').checked;
+    const target = existingChapters + batch; // 绝对目标章数
+    const argv = ['--chapters', String(target), '--mode', mode];
+    if (!strict) argv.push('--no-strict-review');
+    const c = startRunConsole('自动续写 ' + batch + ' 章（' + mode + '）');
+    runCommand('{{ name }}', 'autowrite', argv, c, (d) => {
+      loadChapters();
+      if (d.summary && d.summary.cost_alert) {
+        const a = d.summary.cost_alert;
+        document.getElementById('aw-cost-box').innerHTML =
+          `<span class="badge">成本预警：${a.level || a.message || '—'}</span>`;
+      }
+    });
+  }
+
+  loadChapters();
+</script>
+{% endblock %}

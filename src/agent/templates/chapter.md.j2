@@ -1,0 +1,18 @@
+---
+chapter: {{ chapter_num }}
+subline: "{{ subline_id }}"
+route_node: "{{ route_node_id }}"
+pressure_stage: "{{ pressure_stage }}"
+title: "{{ chapter_title }}"
+created_at: "{{ created_at }}"
+word_count: {{ word_count }}
+quality_passed: {{ quality_passed }}
+revision_attempts: {{ revision_attempts }}
+evidence_chain:
+{% for item in evidence_chain %}  - "{{ item }}"
+{% endfor %}
+---
+
+# 第 {{ chapter_num }} 章 · {{ chapter_title }}
+
+{{ chapter_text }}
