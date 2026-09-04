@@ -8,7 +8,7 @@ description: 重生复仇（重生复仇题材包 - 重生/先知/弥补遗憾/�
 display_name: 重生复仇
 commands: []
 hooks:
-  - agent.workflows.m1_config.load_genre_template
+  - agent.workflows.planning.m1_config.load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false

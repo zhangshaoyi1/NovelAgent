@@ -8,7 +8,7 @@ description: 末世生存/基建（末世生存题材包 - 末世降临/囤货/�
 display_name: 末世生存/基建
 commands: []
 hooks:
-  - agent.workflows.m1_config.load_genre_template
+  - agent.workflows.planning.m1_config.load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false

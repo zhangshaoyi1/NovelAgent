@@ -8,7 +8,7 @@ description: 玄学鉴宝/神医风水（玄学鉴宝题材包 - 玄学/鉴宝/�
 display_name: 玄学鉴宝/神医风水
 commands: []
 hooks:
-  - agent.workflows.m1_config.load_genre_template
+  - agent.workflows.planning.m1_config.load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false

@@ -22,7 +22,8 @@ def dispatch_genre_hooks(project_dir: Path, genre: str, pack: Any) -> list[str]:
         pack: 已加载的 GenrePack（含 manifest.hooks）
 
     Returns:
-        成功执行的 hook 规格列表（如 ["m1_config.load_genre_template"]）。
+        成功执行的 hook 规格列表（如
+        ["agent.workflows.planning.m1_config.load_genre_template"]）。
     """
     dispatched: list[str] = []
     manifest = getattr(pack, "manifest", None)

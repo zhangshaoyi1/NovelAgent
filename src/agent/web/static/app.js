@@ -14,6 +14,7 @@ function startRunConsole(title) {
     overlay.innerHTML = `
       <div class="rc-box">
         <div class="rc-head"><span class="rc-title"></span>
+          <span class="rc-timer"></span>
           <button class="rc-close" onclick="closeRunConsole()">×</button></div>
         <div class="rc-log"></div>
         <div class="rc-timeline"></div>
@@ -26,8 +27,10 @@ function startRunConsole(title) {
   const logEl = overlay.querySelector('.rc-log');
   const tlEl = overlay.querySelector('.rc-timeline');
   const stEl = overlay.querySelector('.rc-status');
-  logEl.innerHTML = ''; tlEl.innerHTML = ''; stEl.innerHTML = '';
-  return { logEl, timelineEl: tlEl, statusEl: stEl, overlay };
+  const tmEl = overlay.querySelector('.rc-timer');
+  logEl.innerHTML = ''; tlEl.innerHTML = ''; stEl.innerHTML = ''; tmEl.innerHTML = '';
+  // logCursor：SSE 与轮询两条通道共享的日志消费游标，避免同一条日志被渲染两次
+  return { logEl, timelineEl: tlEl, statusEl: stEl, timerEl: tmEl, overlay, logCursor: 0 };
 }
 
 function closeRunConsole() {
@@ -84,6 +87,7 @@ function streamEvents(runId, consoleObj, onDone) {
     if (finished) return;
     finished = true;
     if (es) es.close();
+    stopTimer();
     const ok = d.exit_code === 0;
     const code = d.exit_code;
     let badge = ok
@@ -99,8 +103,32 @@ function streamEvents(runId, consoleObj, onDone) {
     if (typeof onDone === 'function') onDone(d);
   };
 
+  /* 耗时计时器：长时间运行的命令（如 M1 生成世界观 1-2 分钟）若无任何反馈，
+     界面容易被视为「卡死」。这里持续显示已耗时，让等待可预期。 */
+  const t0 = Date.now();
+  let timerId = null;
+  function stopTimer() {
+    if (timerId !== null) { clearInterval(timerId); timerId = null; }
+  }
+  if (consoleObj.timerEl) {
+    const fmt = (s) => {
+      const m = Math.floor(s / 60);
+      return m > 0 ? `${m} 分 ${s % 60} 秒` : `${s} 秒`;
+    };
+    const tickTimer = () => {
+      const s = Math.floor((Date.now() - t0) / 1000);
+      consoleObj.timerEl.textContent = `已耗时 ${fmt(s)}`;
+    };
+    tickTimer();
+    timerId = setInterval(tickTimer, 1000);
+  }
+
   es = new EventSource('/api/runs/' + runId + '/events');
-  es.addEventListener('log', (e) => appendLog(consoleObj.logEl, JSON.parse(e.data).text));
+  es.addEventListener('log', (e) => {
+    appendLog(consoleObj.logEl, JSON.parse(e.data).text);
+    // SSE 推来的日志同样会进后端 logs 数组，游标同步递增，轮询才不会重复渲染
+    consoleObj.logCursor = (consoleObj.logCursor || 0) + 1;
+  });
   es.addEventListener('progress', (e) => appendProgress(consoleObj.timelineEl, JSON.parse(e.data)));
   es.addEventListener('done', (e) => finish(JSON.parse(e.data)));
 
@@ -139,12 +167,15 @@ function pollRunStatus(runId, consoleObj, finish) {
     } catch (e) {
       j = null; // 网络抖动，稍后重试
     }
+    // 日志补齐：只渲染游标之后的新增行。SSE 正常时游标已同步，这里渲染 0 行；
+    // SSE 丢事件时则补上缺口，避免旧实现「整份 logs 重复刷一遍」。
+    if (j && Array.isArray(j.logs)) {
+      const cursor = consoleObj.logCursor || 0;
+      for (const txt of j.logs.slice(cursor)) appendLog(consoleObj.logEl, txt);
+      consoleObj.logCursor = j.logs.length;
+    }
     if (j && j.done) {
       _runPollers.delete(runId);
-      // 轮询兜底也把后台累计的日志渲染进日志区，避免「黑框空 + 失败」
-      if (Array.isArray(j.logs)) {
-        for (const txt of j.logs) appendLog(consoleObj.logEl, txt);
-      }
       finish({ exit_code: j.exit_code == null ? 0 : j.exit_code, state: j.state });
       return;
     }
@@ -167,6 +198,8 @@ async function createProject(params, onDone) {
     return;
   }
   const c = startRunConsole('创建项目（start）');
+  // 预期管理：M1 需调用 LLM 生成世界观，实测 1-2 分钟，先给出提示避免误判卡死
+  appendLog(c.logEl, '已提交。正在生成世界观（需调用 LLM，通常 1-2 分钟），请稍候…');
   streamEvents(runId, c, onDone);
 }
 

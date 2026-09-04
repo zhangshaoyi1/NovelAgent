@@ -8,7 +8,7 @@ description: 规则怪谈/无限流（无限流/规则怪谈题材包 - 规则�
 display_name: 规则怪谈/无限流
 commands: []
 hooks:
-  - agent.workflows.m1_config.load_genre_template
+  - agent.workflows.planning.m1_config.load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false

@@ -8,7 +8,7 @@ description: 女性悬疑/无CP（女性悬疑题材包 - 女主探案/心理惊
 display_name: 女性悬疑/无CP
 commands: []
 hooks:
-  - agent.workflows.m1_config.load_genre_template
+  - agent.workflows.planning.m1_config.load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false

@@ -8,7 +8,7 @@ description: 年代重生/种田（年代种田题材包 - 重生年代/种田�
 display_name: 年代重生/种田
 commands: []
 hooks:
-  - agent.workflows.m1_config.load_genre_template
+  - agent.workflows.planning.m1_config.load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false

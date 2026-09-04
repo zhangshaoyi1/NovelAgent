@@ -8,7 +8,7 @@ description: 硬核科幻（硬核科幻题材包 - 硬核设定/星际文明/�
 display_name: 硬核科幻
 commands: []
 hooks:
-  - agent.workflows.m1_config.load_genre_template
+  - agent.workflows.planning.m1_config.load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false

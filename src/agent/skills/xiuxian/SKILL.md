@@ -7,7 +7,7 @@ type: genre
 description: 修仙题材包 - 境界体系/爽点套路/术语表/战斗模板/题材层质量规则
 commands: []
 hooks:
-  - agent.workflows.m1_config.load_genre_template
+  - agent.workflows.planning.m1_config.load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false

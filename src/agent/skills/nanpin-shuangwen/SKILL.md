@@ -8,7 +8,7 @@ description: 男频爽文（通用爽点引擎题材包 - 扮猪吃虎/废柴逆
 display_name: 男频爽文（通用爽点引擎）
 commands: []
 hooks:
-  - agent.workflows.m1_config.load_genre_template
+  - agent.workflows.planning.m1_config.load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false

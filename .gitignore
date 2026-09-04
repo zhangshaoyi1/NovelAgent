@@ -6,6 +6,11 @@ __pycache__/
 # 密钥：绝不提交 .env（含 LLM API Key 等敏感信息）
 .env
 .env.accel
+# 编辑器/资源管理器产生的副本（如「 - 副本.env」「.env - 副本」）同样含真实密钥，
+# 且不匹配上面的精确 .env 规则——曾因此差点入库，故用通配兜底（仅覆盖 env 类文件）。
+*副本*.env
+*.env*副本*
+.env*副本*
 
 # 测试 / lint 缓存
 .pytest_cache/
@@ -46,23 +51,28 @@ outputs/
 # 一次性调试脚本
 _debug_safe_remove.py
 
-# 辅助/生成产物（运行日志、提交说明临时文件、脚本目录，不入库）
+# 辅助/生成产物（运行日志、提交说明临时文件、一次性脚本，不入库）
 .events/
 scripts/
 _final_commit_msg.txt
 
-# Windows 本地开发辅助脚本（PowerShell，非运行时依赖、无 CI 引用，不入库）
-tools/harness/
+# 一次性调试/恢复脚本统一放入 scripts/，不写在根目录
+# 示例：python scripts/my_one_off.py
 
-# 错误日志与本地个人驱动脚本（运行产物/本机自动化工具，非项目代码，不入库）
-err.log
+# 根目录下已清理的旧一次性脚本（已删除，保留规则以防重名）
 _drive_web_write.py
-
-# 污染章节一次性重建/回溯脚本与恢复数据（debug 工具，不入库）
 _rebuild_clean.py
 _reconstruct.py
 _rip155.py
 _rip167.py
 _scaffold.py
 _verify_guard.py
+
+# Windows 本地开发辅助脚本（PowerShell，非运行时依赖、无 CI 引用，不入库）
+tools/harness/
+
+# 错误日志（运行产物，不入库）
+err.log
+
+# 章节恢复数据（debug 产物，不入库）
 _recovered/

@@ -8,7 +8,7 @@ description: 都市脑洞/异能（都市异能题材包 - 异能觉醒/反套�
 display_name: 都市脑洞/异能
 commands: []
 hooks:
-  - agent.workflows.m1_config.load_genre_template
+  - agent.workflows.planning.m1_config.load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false

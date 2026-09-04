@@ -7,7 +7,7 @@ type: genre
 description: 武侠题材包 - 武功境界/江湖势力/爽点套路/术语表/战斗模板/题材层质量规则
 commands: []
 hooks:
-  - agent.workflows.m1_config.load_genre_template
+  - agent.workflows.planning.m1_config.load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false

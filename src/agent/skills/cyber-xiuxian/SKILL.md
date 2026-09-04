@@ -8,7 +8,7 @@ description: 赛博修仙（现代修仙）（赛博修仙题材包 - 现代/赛
 display_name: 赛博修仙（现代修仙）
 commands: []
 hooks:
-  - agent.workflows.m1_config.load_genre_template
+  - agent.workflows.planning.m1_config.load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
