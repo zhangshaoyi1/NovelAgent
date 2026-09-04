@@ -35,6 +35,7 @@ from agent.core.registry.genre_pack import GenrePackRegistry
 from agent.core.registry.genre_merger import GenreMerger, save_conflicts
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
+from agent.core.engine.events import ProgressEventBus
 from agent.utils import parse_llm_json
 from agent.core.infra.hook_dispatcher import dispatch_genre_hooks
 from agent.core.story.volume import (
@@ -45,10 +46,10 @@ from agent.core.story.volume import (
     describe_scope,
     validate_custom,
 )
-from agent.workflows.qa_sync import format_qa_constraints
+from agent.workflows.pipeline.qa_sync import format_qa_constraints
 
 # 模板路径（题材包模板改由 GenrePackRegistry 动态加载，见 T-2）
-TEMPLATES_DIR = Path(__file__).resolve().parent.parent / "templates"
+TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
 
 
 def load_genre_template(project_dir: Path, genre: str, pack: Any) -> Path:
@@ -124,6 +125,11 @@ class M1ConfigWorkflow:
             autoescape=select_autoescape(disabled_extensions=("j2",)),
             keep_trailing_newline=True,
         )
+        # 进度事件流（G9）：M1 各阶段落盘 progress.json，供 Web UI 时间线实时显示。
+        # 全程 try/except 不阻断（G3 哲学）：落盘失败仅丢失进度显示，不影响出书。
+        self._progress = ProgressEventBus(
+            progress_file=self.project_dir / ".state" / "progress.json"
+        )
 
     # ------ 入口 ------
     def run(self, user_input: M1Input | None = None) -> M1Result:
@@ -148,6 +154,9 @@ class M1ConfigWorkflow:
             f"\n[bold green]已收集信息[/bold green]：{user_input.title} "
             f"({SCOPE_LABELS.get(user_input.scope, user_input.scope)})"
         )
+        self._emit_progress(
+            "stage_start", f"已收集配置：{user_input.title}", stage="collect"
+        )
 
         # 2. 加载并合并题材包模板（支持多题材混搭 + 冲突裁决）
         self._genre_registry = GenrePackRegistry()
@@ -159,13 +168,28 @@ class M1ConfigWorkflow:
                 "已以主题材优先合并并记录，可用 /merge-genres 复核裁决。[/yellow]"
             )
 
+        self._emit_progress(
+            "stage_start",
+            f"题材模板已合并：{'/'.join(self._current_genres)}",
+            stage="genre_template",
+        )
+
         # 3. 调用 LLM 生成世界观
         self.console.print("\n[cyan]正在生成世界观...[/cyan]")
+        # 明确告知这是最耗时一步，避免 Web UI 长时间无反馈被误判为卡死
+        self._emit_progress(
+            "stage_start",
+            "正在调用 LLM 生成世界观（通常需 1-2 分钟）",
+            stage="generate_world",
+        )
         world_data = self._generate_world(user_input)
 
         # 4. 渲染并保存 world.md
         metadata, content = self._render_world(user_input, world_data, realm_system)
         world_file = self.sm.save_world(metadata, content)
+        self._emit_progress(
+            "stage_done", f"world.md 已生成：{world_file.name}", stage="save_world"
+        )
 
         # T-3：题材包 hooks 真实执行（注册 world 模板 / 题材层质量规则等）。
         # 在 save_world 之后分发：此时 world.md 已存在，load_genre_template hook
@@ -187,7 +211,25 @@ class M1ConfigWorkflow:
             self.state_machine.transition(Event.DISCUSS)
         self.state_machine.save()
 
+        self._emit_progress("done", f"M1 完成，新状态：{self.state_machine.state}")
+        try:
+            self._progress.flush(
+                {"text": f"M1 完成：{user_input.title}", "stage": "M1"}
+            )
+        except Exception:  # noqa: BLE001 - 摘要落盘失败不阻断
+            pass
+
         return M1Result(world_file=world_file, metadata=metadata, content=content)
+
+    def _emit_progress(self, type_: str, message: str, **fields: Any) -> None:
+        """发射 M1 进度事件（phase 字段供 Web UI 时间线分组显示）。
+
+        全 try/except：进度显示属增强能力，任何异常都不得影响出书主流程。
+        """
+        try:
+            self._progress.emit(type_, phase="M1", message=message, **fields)
+        except Exception:  # noqa: BLE001 - 进度事件失败不阻断（G3 哲学）
+            pass
 
     # ------ 交互式收集 ------
     def _collect_input_interactive(self) -> M1Input:
@@ -409,7 +451,7 @@ class M1ConfigWorkflow:
                 if attempt == len(_budgets) - 1:
                     raise RuntimeError(
                         "世界观生成结果无法解析为 JSON（可能被截断或格式异常），"
-                        f"请重试。原始输出片段：{resp.text[:200]}"
+                        f"请重试。原始输出片段：{resp[:200]}"
                     )
 
     # ------ 渲染 ------
