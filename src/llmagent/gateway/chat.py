@@ -135,7 +135,8 @@ class Gateway:
         )
 
         # ⑤ ResponseGate：结构化输出 repair
-        resp = self._response_gate.admit(resp, expected_format=req.extra.get("format", ""))
+        # extra 可能被调用方显式置 None（dataclass 不校验），防御性兜底
+        resp = self._response_gate.admit(resp, expected_format=(req.extra or {}).get("format", ""))
 
         # ⑥ MetricsSink：成本/延迟/路由归因
         cost_cents = route.card.cost_per_1k_input_cents * resp.usage_input / 1000.0 + route.card.cost_per_1k_output_cents * resp.usage_output / 1000.0

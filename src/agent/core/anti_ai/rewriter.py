@@ -160,7 +160,8 @@ class DeslopRewriter:
             temperature=0.6,
             max_tokens=8192,
         )
-        new_text, changes = self._extract_rewritten(resp.text)
+        # chat_creative 返回 str（非响应对象），直接传给提取器
+        new_text, changes = self._extract_rewritten(resp)
 
         if not new_text:
             # 标记缺失 → 降级原文（宁可不动，也不破坏章节）

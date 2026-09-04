@@ -201,6 +201,26 @@ class AgenticWriteWorkflow:
     # ------------------------------------------------------------------
     # 任务提示构建（复用 M5 创作模板，保证风格/信息一致）
     # ------------------------------------------------------------------
+    def _build_craft_guide(self, ctx: dict[str, Any]) -> str:
+        """按本章特性按需选载写作技法知识（prompts/methods/）。
+
+        - 章首/章尾钩子技法：每章都需要；
+        - 黄金三章开篇指导：前 3 章注入；
+        - 爽点/情绪结构技法：高潮章注入。
+        任何失败降级为空，绝不阻断写章（G3 哲学）。
+        """
+        try:
+            parts: list[str] = []
+            parts.append(pm.get("methods.hooks").render_system())
+            chapter_num = int(ctx.get("chapter_num", 0) or 0)
+            if chapter_num <= 3:
+                parts.append(pm.get("methods.opening").render_system())
+            if ctx.get("pressure_stage") == "高潮":
+                parts.append(pm.get("methods.payoff").render_system())
+            return "\n\n".join(p for p in parts if p and p.strip())
+        except Exception:  # noqa: BLE001 - 技法知识加载失败降级为空，不阻断写章
+            return ""
+
     def _build_task(self, ctx: dict[str, Any]) -> str:
         wi = ctx["world_info"]
         rag_context_text = format_rag_context(ctx.get("rag_context", []))
@@ -219,6 +239,8 @@ class AgenticWriteWorkflow:
             subline_goal=ctx["subline_goal"],
             pressure_stage=ctx["pressure_stage"],
             tension_level=ctx["tension_level"],
+            chapter_hooks=ctx.get("chapter_hooks", ""),
+            plot_points=ctx.get("plot_points", ""),
             world_synopsis=wi["synopsis"],
             realm_system=wi["realm_system"],
             golden_finger_info=wi["golden_finger_info"],
@@ -268,6 +290,11 @@ class AgenticWriteWorkflow:
                 lines.append(f"- {desc}{marker}")
             if lines:
                 task += pm.get("g12.reader_feedback").render_user(reader_signals="\n".join(lines))
+
+        # ---- 写作技法知识库注入（按需加载：钩子/黄金三章/爽点结构；失败降级为空）----
+        craft_guide = self._build_craft_guide(ctx)
+        if craft_guide:
+            task += pm.get("m5.craft_instruction").render_user(craft_guide=craft_guide)
         return task
 
     # ------------------------------------------------------------------
@@ -288,6 +315,8 @@ class AgenticWriteWorkflow:
         # 动态门禁下限 = max(绝对下限1500, 目标×0.8)；与 m5 硬关卡一致。
         min_len = resolve_min_cjk_words(target_len)
         if cur_len < min_len:
+            # 情节点补充式反馈（对齐 oh-story「回细纲补情节点再写」；避免盲目扩写注水浪费 token）：
+            # 指引 Writer 从本章已有的情节点素材中补充「可推进剧情/情绪的子事件」，再按情节点扩写。
             report = {
                 "overall_pass": False,
                 "rules": [],
@@ -298,11 +327,20 @@ class AgenticWriteWorkflow:
                         "description": (
                             f"本章正文过短：仅约 {cur_len} 字，远低于目标字数"
                             f"约 {target_len} 字（下限 {min_len} 字）。"
-                            "请完整展开本章冲突、铺垫与结尾钩子，扩写到接近目标字数后再提交。"
+                            "请**先补充情节点、再按情节点扩写**：优先从本章素材（细纲情节点序列、"
+                            "细纲钩子设计、爽点剧本、伏笔任务、未回收钩子债/伏笔债、角色冲突）"
+                            "中挖掘 3-6 个可推进剧情或情绪的子事件（谁做了什么，一句话一个），"
+                            "把这些子事件织入正文扩写到接近目标字数；"
+                            "禁止用重复描写、空泛抒情或大段心理独白注水凑字。"
                         ),
                     }
                 ],
-                "suggestions": "扩写本章，补充场景/动作/环境描写与章末悬念，确保字数接近目标。",
+                "suggestions": (
+                    "情节点补充式扩写：① 列出本章可补充的 3-6 个子事件（如：配角泄露关键信息、"
+                    "反派进一步施压、金手指新用法亮相、伏笔回收线索推进、旁线人物登场搅局）；"
+                    "② 将子事件按『动作→对话→情绪反应』织入现有段落或新增段落；"
+                    "③ 扩写后再次自检字数，达标再提交。"
+                ),
             }
             return False, report
         # 超合理上限仅告警，不阻断（区间口径：目标×1.2 视为合理上限）
@@ -329,6 +367,8 @@ class AgenticWriteWorkflow:
             chapter_length=wi["chapter_length"],
             characters_fingerprint=ctx.get("characters_fingerprint", ""),
             is_climax="是" if is_climax else "否",
+            # 提速·评审校准：开篇/铺垫章不以中后期节奏苛求，减少无效重写轮
+            stage_calibration=M5WriteChapterWorkflow._stage_calibration(ctx, 0),
             chapter_text=cleaned,
         )
         try:

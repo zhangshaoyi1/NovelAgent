@@ -129,12 +129,16 @@ class WriterAgent:
         decide: Callable[[list[dict[str, str]]], AgentAction] | None = None,
         decide_async: Callable[[list[dict[str, str]]], Awaitable[AgentAction]] | None = None,
         quality_gate: Callable[[str, Any], tuple[bool, dict[str, Any]]] | None = None,
+        # 提速·定向修订：修订轮用「原稿+审稿意见」单次改写，替代整章 Agentic 重写；
+        # 置 False 恢复旧的整章重写行为
+        targeted_revise: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client
         self.tier = tier if tier in TIER_MAX_DRAFTS else "auto"
         self.console = console or Console()
         self.quality_gate = quality_gate
+        self.targeted_revise = targeted_revise
 
         if isinstance(tools, ToolRegistry):
             self.tools: list[Tool] = tools.list()
@@ -261,6 +265,39 @@ class WriterAgent:
         return "上一版质量门禁未通过，请整体提升开篇钩子、情绪锚点、章末悬念与场景占比后重新提交。"
 
     # ------------------------------------------------------------------
+    # 提速·定向修订：原稿+审稿意见 → 单次改写（不整章重写）
+    # ------------------------------------------------------------------
+    def _revise(self, text: str, critique: str) -> str:
+        """按审稿意见定向修订原稿（复用 m5.revise 提示词，单次创作调用）。
+
+        与整章 Agentic 重写相比省去工具循环与全量上下文重建，修订轮耗时
+        通常降 30-50%；输出异常截短时抛错，由调用方回退整章重写。
+        """
+        from agent.client.gateway_adapter import chat_creative
+
+        prompt = pm.get("m5.revise")
+        resp = chat_creative(
+            self.llm,
+            messages=[
+                {"role": "system", "content": prompt.system},
+                {
+                    "role": "user",
+                    "content": prompt.render_user(
+                        quality_report=critique, chapter_text=text
+                    ),
+                },
+            ],
+            temperature=0.6,
+            max_tokens=4096,
+            enable_thinking=False,
+        )
+        revised = (resp or "").strip()
+        # 输出异常截短（不足原稿一半）→ 视为失败，回退整章重写
+        if not revised or len(revised) < max(200, len(text) // 2):
+            raise RuntimeError("定向修订输出异常截短")
+        return revised
+
+    # ------------------------------------------------------------------
     # 单轮起草（携带或不携带审稿意见）
     # ------------------------------------------------------------------
     def _draft(self, task: str, critique: str | None, min_words: int | None = None,
@@ -304,8 +341,12 @@ class WriterAgent:
         if min_words is not None and max_words is not None and max_words >= min_words:
             system_prompt += (
                 f"\n17. 【字数硬性约束】本章正文的中文字数**必须**在 {min_words}-{max_words} 字"
-                f"（中值约 {(min_words + max_words) // 2} 字）。哪一片段偏短就加工哪一片段，"
-                f"务必写足下限再 commit，禁止用『伏笔/悬念一句带过』压缩篇幅。\n"
+                f"（中值约 {(min_words + max_words) // 2} 字）。若自检发现字数不足，"
+                f"**禁止用重复描写、空泛抒情或大段心理独白注水凑字**；应先从本章可用的"
+                f"情节点素材（细纲情节点序列、细纲钩子设计、爽点剧本、伏笔任务、"
+                f"未回收钩子债/伏笔债、角色冲突）中补充 3-6 个可推进剧情或情绪的子事件"
+                f"（谁做了什么，一句话一个），再把这些情节点织入正文扩写，务必写足下限"
+                f"再 commit，禁止用『伏笔/悬念一句带过』压缩篇幅。\n"
             )
         if critique:
             system_prompt += "\n\n【审稿意见 · 请据此修订】\n" + critique
@@ -407,7 +448,21 @@ class WriterAgent:
             if passed:
                 break
             critique = self._format_critique(report)
-            draft = self._draft(task, critique=critique, min_words=min_words, max_words=max_words)
+            # 提速·定向修订：优先「原稿+意见」单次改写；失败回退整章重写
+            if self.targeted_revise:
+                try:
+                    draft = self._revise(draft, critique)
+                except Exception as e:  # noqa: BLE001 - 修订失败回退整章重写
+                    self.console.print(
+                        f"[dim]  · 定向修订失败（{e}），回退整章重写[/dim]"
+                    )
+                    draft = self._draft(
+                        task, critique=critique, min_words=min_words, max_words=max_words
+                    )
+            else:
+                draft = self._draft(
+                    task, critique=critique, min_words=min_words, max_words=max_words
+                )
             revision_attempts = r
             passed, report = self._gate(draft, ctx)
             best_draft, best_report = self._keep_best(
@@ -447,9 +502,21 @@ class WriterAgent:
             if passed:
                 break
             critique = self._format_critique(report)
-            draft = await self._draft_async(
-                task, critique=critique, min_words=min_words, max_words=max_words
-            )
+            # 提速·定向修订：优先「原稿+意见」单次改写；失败回退整章重写
+            if self.targeted_revise:
+                try:
+                    draft = self._revise(draft, critique)
+                except Exception as e:  # noqa: BLE001 - 修订失败回退整章重写
+                    self.console.print(
+                        f"[dim]  · 定向修订失败（{e}），回退整章重写[/dim]"
+                    )
+                    draft = await self._draft_async(
+                        task, critique=critique, min_words=min_words, max_words=max_words
+                    )
+            else:
+                draft = await self._draft_async(
+                    task, critique=critique, min_words=min_words, max_words=max_words
+                )
             revision_attempts = r
             passed, report = self._gate(draft, ctx)
             best_draft, best_report = self._keep_best(

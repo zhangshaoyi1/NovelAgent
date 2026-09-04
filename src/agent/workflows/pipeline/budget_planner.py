@@ -149,6 +149,8 @@ class BudgetPlanner:
         if self._llm is None:
             from agent.client.gateway_adapter import create_gateway
             self._llm = create_gateway()
+        # 修复：chat_structured 此前未导入，规划必然 NameError 降级（G3 兜底掩盖）
+        from agent.client.gateway_adapter import chat_structured
 
         user_msg = self._build_user_prompt(sublines, horizon, plan)
         data = chat_structured(

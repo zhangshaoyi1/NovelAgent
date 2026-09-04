@@ -48,12 +48,15 @@ class _GatewayModelProvider:
                 timeout=120,
             )
             elapsed = (time.monotonic() - t0) * 1000.0
+            # usage 可能缺省（部分 provider 不返回）→ None.get() 会崩并连带
+            # 上层去AI味等 LLM 步骤被静默跳过，这里统一兜底为空字典
+            usage = resp.usage or {}
             return RawResponse(
                 text=resp.text,
                 provider=self.name,
                 model=route.model,
-                usage_input=resp.usage.get("input_tokens", 0) or packed.estimated_input_tokens,
-                usage_output=resp.usage.get("output_tokens", 0),
+                usage_input=usage.get("input_tokens", 0) or packed.estimated_input_tokens,
+                usage_output=usage.get("output_tokens", 0),
                 elapsed_ms=elapsed,
             )
         except Exception as e:
@@ -176,7 +179,7 @@ def chat_creative(
         extra["model"] = model
     if enable_thinking is not None:
         extra["enable_thinking"] = enable_thinking
-    req = ChatRequest(messages=messages, hint=hint, extra=extra or None)
+    req = ChatRequest(messages=messages, hint=hint, extra=extra or {})
     resp = gateway.chat(req)
     return resp.text
 
@@ -207,7 +210,7 @@ def chat_utility(
         extra["model"] = model
     if enable_thinking is not None:
         extra["enable_thinking"] = enable_thinking
-    req = ChatRequest(messages=messages, hint=hint, extra=extra or None)
+    req = ChatRequest(messages=messages, hint=hint, extra=extra or {})
     resp = gateway.chat(req)
     return resp.text
 
@@ -246,7 +249,7 @@ def chat_structured(
         extra["model"] = model
     if enable_thinking is not None:
         extra["enable_thinking"] = enable_thinking
-    req = ChatRequest(messages=enhanced, hint=hint, extra=extra or None)
+    req = ChatRequest(messages=enhanced, hint=hint, extra=extra or {})
     resp = gateway.chat(req)
 
     # 解析 JSON 到 Pydantic

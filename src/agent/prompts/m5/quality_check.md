@@ -49,6 +49,12 @@ validation:
 【本章是否为高潮章节】
 {{ is_climax }}
 
+【阶段校准】
+{{ stage_calibration }}
+
+【复审重点】
+{{ recheck_focus }}
+
 【章节正文】
 {{ chapter_text }}
 

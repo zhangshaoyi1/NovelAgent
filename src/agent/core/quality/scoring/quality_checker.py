@@ -301,8 +301,12 @@ class LLMBackedChecker:
         return issues
 
     @staticmethod
-    def _with_timeout(fn: Any, default: Any, timeout: float = 30.0) -> Any:
-        """带超时的安全执行（异常/超时均返回 default，放行不阻断）"""
+    def _with_timeout(fn: Any, default: Any, timeout: float = 180.0) -> Any:
+        """带超时的安全执行（异常/超时均返回 default，放行不阻断）
+
+        超时默认 180s：多维审查与主质检已并行执行（M5 提速），放宽超时不再
+        占用墙钟时间，却可避免 1500-token 长响应被 30s 旧上限静默丢弃。
+        """
         from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeout
 
         try:

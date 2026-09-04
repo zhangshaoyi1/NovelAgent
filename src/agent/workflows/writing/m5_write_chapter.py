@@ -17,6 +17,7 @@ from __future__ import annotations
 from agent.core.infra.prompt_manager import pm
 import logging
 import re
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
@@ -283,6 +284,9 @@ class M5WriteChapterWorkflow:
         self.payoff_enabled = payoff_enabled
         # P0：去AI味开关（质量门禁通过后、落盘前执行；--no-deslop 关闭）
         self.deslop_enabled = deslop_enabled
+        # 提速：确定性关卡快速复审（上轮失败全部来自英文污染/字数等纯扫描关卡时，
+        # 下一轮跳过 LLM 复检，仅重跑确定性扫描；置 False 恢复每轮全量 LLM 复检）
+        self.fast_deterministic_recheck = True
 
     def _emit_substage(self, substage: str, chapter: int) -> None:
         """G9：章内子阶段事件（真实阶段边界，M5 精确）；未注入 emitter 时零开销。
@@ -328,7 +332,7 @@ class M5WriteChapterWorkflow:
     def mode_controller(self) -> "ModeController":
         """懒加载 ModeController（M8）"""
         if self._mode_controller is None:
-            from agent.workflows.m8_mode import ModeController
+            from agent.workflows.writing.m8_mode import ModeController
 
             self._mode_controller = ModeController(
                 project_dir=self.project_dir,
@@ -663,6 +667,16 @@ class M5WriteChapterWorkflow:
             except Exception:  # noqa: BLE001 - 剧本读取失败降级为空
                 pass
 
+        # ---- 细纲钩子设计（m3 chapter_hooks → subline.md「章节钩子设计」段；缺则空，不阻断）----
+        chapter_hooks = self._extract_chapter_hooks(
+            subline_data.get("content", ""), chapter_num
+        )
+
+        # ---- 细纲情节点序列（m3 plot_points → subline.md「情节点序列」段；缺则空，不阻断）----
+        plot_points = self._extract_plot_points(
+            subline_data.get("content", ""), pressure_stage
+        )
+
         return {
             "world_info": world_info,
             "subline_id": subline_id,
@@ -670,6 +684,8 @@ class M5WriteChapterWorkflow:
             "subline_goal": self._extract_section(subline_data["content"], "支线目标"),
             "pressure_stage": pressure_stage,
             "tension_level": tension_level,
+            "chapter_hooks": chapter_hooks,
+            "plot_points": plot_points,
             "chapter_num": chapter_num,
             "route_node_id": route_info["node_id"],
             "route_milestone": route_info["milestone"],
@@ -1391,65 +1407,75 @@ class M5WriteChapterWorkflow:
         text = chapter_text
         # D：多维 LLM 审查问题（仅 strict_review 时填充，随最后一次校验落入 report）
         last_d_issues: list[dict[str, Any]] = []
+        # 提速：下一轮是否需要 LLM 复检（上轮失败全部来自确定性关卡时可跳过）
+        llm_check_needed = True
+        # 提速：上轮未通过的规则 id（供复审聚焦）
+        last_failed_rules: list[str] = []
 
         for attempt in range(MAX_REVISIONS + 1):
-            # 校验
-            check_prompt = pm.get("m5.quality_check").render_user(
-                tone=wi["tone"],
-                chapter_length=wi["chapter_length"],
-                characters_fingerprint=ctx["characters_fingerprint"],
-                is_climax="是" if is_climax else "否",
-                chapter_text=text,
-            )
+            # 提速：确定性关卡（英文污染/字数）用纯扫描复核，无需 LLM 参与
+            english_tokens = scan_english_contamination(text)
+            cjk_count = _count_cjk(text)
 
-            # T-3：追加题材层质量规则（取自题材包 quality-rules.md），强化题材专属校验
-            # 多题材：逐个题材包加载并拼接（world.md 元数据为 genres 列表，兼容旧 genre 单值）
-            genre_list = wi.get("genres") or (
-                [wi["genre"]] if wi.get("genre") else []
-            )
-            if genre_list:
-                if self._genre_registry is None:
-                    self._genre_registry = GenrePackRegistry()
-                rules_parts: list[str] = []
-                for g in genre_list:
-                    try:
-                        genre_rules_text = self._genre_registry.load(g).quality_rules
-                    except ValueError:
-                        genre_rules_text = ""
-                    if genre_rules_text:
-                        rules_parts.append(
-                            f"【题材层质量规则（{g}）】\n{genre_rules_text}"
-                        )
-                if rules_parts:
-                    check_prompt = check_prompt + "\n\n" + "\n\n".join(rules_parts)
-            resp = chat_utility(
-                self.llm,
-                messages=[
-                    {"role": "system", "content": pm.get("m5.quality_check").system},
-                    {"role": "user", "content": check_prompt},
-                ],
-                max_tokens=1500,
-                enable_thinking=False,
-            )
-            try:
-                report = parse_llm_json(resp)
-            except ValueError:
-                report = {"overall_pass": True, "rules": [], "suggestions": "校验解析失败，默认通过"}
-
-            # D：多维 LLM 质量审查（仅当 strict_review 开启；并入同一 revise_loop 预算）
-            # 合并为单次 chat_utility 调用，维度 blocking 视为本章未通过、触发既有修订循环。
-            if self.strict_review:
-                last_d_issues = self._run_d_review(text, ctx)
-                report["d_issues"] = last_d_issues
-                d_blocking = any(
-                    i.get("severity") == Severity.BLOCK.value for i in last_d_issues
+            resp = ""
+            report = {}
+            if llm_check_needed:
+                # 校验
+                check_prompt = pm.get("m5.quality_check").render_user(
+                    tone=wi["tone"],
+                    chapter_length=wi["chapter_length"],
+                    characters_fingerprint=ctx["characters_fingerprint"],
+                    is_climax="是" if is_climax else "否",
+                    stage_calibration=self._stage_calibration(ctx, attempt),
+                    recheck_focus=self._recheck_focus(last_failed_rules, attempt),
+                    chapter_text=text,
                 )
-                report["d_blocking"] = d_blocking
-                if d_blocking:
-                    report["overall_pass"] = False
+
+                # T-3：追加题材层质量规则（取自题材包 quality-rules.md），强化题材专属校验
+                # 多题材：逐个题材包加载并拼接（world.md 元数据为 genres 列表，兼容旧 genre 单值）
+                genre_list = wi.get("genres") or (
+                    [wi["genre"]] if wi.get("genre") else []
+                )
+                if genre_list:
+                    if self._genre_registry is None:
+                        self._genre_registry = GenrePackRegistry()
+                    rules_parts: list[str] = []
+                    for g in genre_list:
+                        try:
+                            genre_rules_text = self._genre_registry.load(g).quality_rules
+                        except ValueError:
+                            genre_rules_text = ""
+                        if genre_rules_text:
+                            rules_parts.append(
+                                f"【题材层质量规则（{g}）】\n{genre_rules_text}"
+                            )
+                    if rules_parts:
+                        check_prompt = check_prompt + "\n\n" + "\n\n".join(rules_parts)
+
+                # 提速：主质检与 D 多维审查并行执行（原先串行，省一次完整往返）
+                resp, last_d_issues = self._check_parallel(text, ctx, check_prompt)
+                try:
+                    report = parse_llm_json(resp)
+                except ValueError:
+                    report = {"overall_pass": True, "rules": [], "suggestions": "校验解析失败，默认通过"}
+
+                # D：多维 LLM 质量审查（仅当 strict_review 开启；并入同一 revise_loop 预算）
+                # 维度 blocking 视为本章未通过、触发既有修订循环。
+                if self.strict_review:
+                    report["d_issues"] = last_d_issues
+                    d_blocking = any(
+                        i.get("severity") == Severity.BLOCK.value for i in last_d_issues
+                    )
+                    report["d_blocking"] = d_blocking
+                    if d_blocking:
+                        report["overall_pass"] = False
+            else:
+                # 提速：确定性快速复审——上轮失败全部来自英文污染/字数等纯扫描关卡，
+                # 本轮跳过 LLM 复检（省 1~2 次 LLM 往返），仅重跑下方确定性扫描。
+                report = {"overall_pass": True, "rules": []}
+                last_d_issues = []
 
             # ---- G-EN：正文纯中文硬关卡（确定性扫描，叠加在 LLM 质检之上，不依赖 LLM 自觉）----
-            english_tokens = scan_english_contamination(text)
             quality_report_text = resp
             if english_tokens:
                 report["overall_pass"] = False
@@ -1478,7 +1504,6 @@ class M5WriteChapterWorkflow:
             # 中文字数低于动态下限（随目标字数伸缩，有绝对下限兜底）即判不通过，
             # 触发修订扩写，杜绝截断短章落盘
             min_words = resolve_min_cjk_words(_chapter_length_from_ctx(ctx))
-            cjk_count = _count_cjk(text)
             if cjk_count < min_words:
                 report["overall_pass"] = False
                 report.setdefault("rules", []).append(
@@ -1516,6 +1541,19 @@ class M5WriteChapterWorkflow:
             if report.get("overall_pass", False):
                 break
 
+            # 提速：记录本轮未通过项，供下轮复审聚焦；判定下轮是否还需要 LLM 复检
+            # （仅当存在 LLM 评审类失败时才需要；纯确定性关卡失败由扫描兜底）
+            last_failed_rules = [
+                str(r.get("rule", "?"))
+                for r in (report.get("rules") or [])
+                if not r.get("pass", True)
+            ]
+            llm_check_needed = (
+                bool(last_failed_rules)
+                or bool(report.get("d_blocking"))
+                or not self.fast_deterministic_recheck
+            )
+
             # 未通过 → 修订
             if attempt < MAX_REVISIONS:
                 # ---- G9：章内子阶段事件（修订）----
@@ -1523,8 +1561,9 @@ class M5WriteChapterWorkflow:
                 self.console.print(
                     f"  [yellow]质量校验未通过（第 {attempt + 1} 次修订）...[/yellow]"
                 )
+                # 提速：修订要点压缩——只给失败项 + 硬性指令，不塞全量 9 项 JSON
                 revise_prompt = pm.get("m5.revise").render_user(
-                    quality_report=quality_report_text,
+                    quality_report=self._compact_revise_report(report, quality_report_text),
                     chapter_text=text,
                 )
                 rev_resp = chat_creative(
@@ -1585,7 +1624,113 @@ class M5WriteChapterWorkflow:
         return report, attempts, text
 
     # ============================================================
-    # 3.5 D：多维 LLM 质量审查（并入 revise_loop）
+    # 3.5 提速：并行质检 / 阶段校准 / 复审聚焦 / 修订要点压缩
+    # ============================================================
+    def _check_parallel(
+        self, text: str, ctx: dict[str, Any], check_prompt: str
+    ) -> tuple[str, list[dict[str, Any]]]:
+        """主质检（9 项规则）与 D 多维审查并行执行，取二者较大耗时为墙钟时间。
+
+        strict_review 关闭时 D 审查不启动；线程池异常时降级为串行主质检
+        （D 审查返回空，与既有降级行为一致，不阻断写章）。
+
+        Returns:
+            (质检原始 JSON 文本, D 多维审查 issue 列表)
+        """
+        messages = [
+            {"role": "system", "content": pm.get("m5.quality_check").system},
+            {"role": "user", "content": check_prompt},
+        ]
+        try:
+            with ThreadPoolExecutor(max_workers=2) as ex:
+                f_check = ex.submit(
+                    chat_utility, self.llm, messages=messages,
+                    max_tokens=1500, enable_thinking=False,
+                )
+                f_d = (
+                    ex.submit(self._run_d_review, text, ctx)
+                    if self.strict_review
+                    else None
+                )
+                resp = f_check.result()
+                d_issues = f_d.result() if f_d is not None else []
+            return resp, d_issues
+        except Exception as e:  # noqa: BLE001 - 并行异常降级串行，不影响正确性
+            logger.warning("[m5] 并行质检异常，降级串行执行: %s", e)
+            resp = chat_utility(
+                self.llm, messages=messages, max_tokens=1500, enable_thinking=False
+            )
+            return resp, []
+
+    @staticmethod
+    def _stage_calibration(ctx: dict[str, Any], attempt: int) -> str:
+        """提速·评审校准：开篇/铺垫章不以中后期节奏苛求，复审聚焦上轮失败项，
+        减少开篇章被反复打回的无效修订轮（不影响 no_english/字数等硬关卡）。"""
+        notes: list[str] = []
+        ch = ctx.get("chapter_num", 0)
+        stage = str(ctx.get("pressure_stage") or "")
+        if ch and ch <= 3:
+            notes.append(
+                f"本章为开篇章节（第{ch}章）：允许世界观/人物铺垫占比略高，"
+                "节奏类规则以「开篇钩子是否成立、关键信息是否清晰」为准，"
+                "不以中后期高强度节奏苛求。"
+            )
+        elif stage and "铺垫" in stage:
+            notes.append(
+                f"本章为铺垫章节（压力阶段：{stage}）：允许节奏放缓，"
+                "重点审查开篇钩子、角色一致性与章末悬念。"
+            )
+        if attempt > 0:
+            notes.append(
+                f"本次为第 {attempt} 次修订后的复审：确认上轮未通过项已解决即可，"
+                "不要为锦上添花引入新的否决项。"
+            )
+        return "\n".join("- " + n for n in notes) if notes else "（无特殊校准，按常规标准评审）"
+
+    def _recheck_focus(self, last_failed_rules: list[str], attempt: int) -> str:
+        """提速·复审聚焦：修订后的复检只重点复核上轮未通过规则，其余确认未回归即可。"""
+        if attempt > 0 and last_failed_rules:
+            return (
+                "上轮未通过规则：" + "、".join(last_failed_rules)
+                + "（其余规则上轮已通过，只需确认修订未引入新问题）"
+            )
+        return ""
+
+    def _compact_revise_report(self, report: dict[str, Any], full_text: str) -> str:
+        """提速·修订要点压缩：修订提示只注入失败项 + 硬性指令，不塞全量 9 项 JSON。
+
+        全量 JSON 中大量 pass=true 规则对修订毫无信息量，压缩后可显著降低
+        修订调用的输入 token 与注意力分散。任何解析缺口都回退到 full_text。
+        """
+        try:
+            lines: list[str] = []
+            for r in report.get("rules") or []:
+                if not r.get("pass", True):
+                    lines.append(
+                        f"- [{r.get('rule', '?')}] {r.get('issue', '')}".rstrip()
+                    )
+            for d in report.get("d_issues") or []:
+                lines.append(
+                    f"- [{d.get('rule_id', '?')}]（{d.get('severity', '')}）"
+                    f"{d.get('description', '')}".rstrip()
+                )
+            sugg = str(report.get("suggestions") or "").strip()
+            if sugg:
+                lines.append("修改建议：" + sugg[:600])
+            # 保留硬性指令段（英文污染替换指令 / 扩写指令），这些必须原样传达
+            if full_text:
+                for part in full_text.split("\n\n# ")[1:]:
+                    head = part.split("\n", 1)[0]
+                    if "硬性" in head:
+                        lines.append("# " + part)
+            if not lines:
+                return full_text or "审稿未给出具体问题，请自查常见规则后输出修订稿。"
+            return "\n".join(lines)
+        except Exception:  # noqa: BLE001 - 压缩失败回退原始全文，保证行为不回退
+            return full_text
+
+    # ============================================================
+    # 3.6 D：多维 LLM 质量审查（并入 revise_loop）
     # ============================================================
     def _run_d_review(self, text: str, ctx: dict[str, Any]) -> list[dict[str, Any]]:
         """D：用 LLMBackedChecker 合并评审 4 个网文维度（爽点/OOC/连贯性/追读力）
@@ -2112,6 +2257,47 @@ class M5WriteChapterWorkflow:
         pattern = rf"## {re.escape(section_name)}\s*\n(.*?)(?=\n## |\Z)"
         m = re.search(pattern, content, re.DOTALL)
         return m.group(1).strip() if m else ""
+
+    @staticmethod
+    def _extract_chapter_hooks(content: str, chapter_num: int) -> str:
+        """从 subline.md 提取「章节钩子设计」段；优先取与当前章号匹配的行，否则整段。
+
+        细纲钩子设计（m3 chapter_hooks）可能按压力阶段给基调（如「铺垫章：…」）
+        或按章给设计（如「第1章：…」）。有逐章行时只取当前章相关行，控制 token；
+        否则整段注入（通常仅 4-6 行）。
+        """
+        section = M5WriteChapterWorkflow._extract_section(content, "章节钩子设计")
+        if not section:
+            return ""
+        lines = [ln.strip() for ln in section.splitlines() if ln.strip()]
+        matched = [
+            ln
+            for ln in lines
+            if re.search(rf"第\s*{chapter_num}\s*章|^\s*{chapter_num}\s*[章:]", ln)
+        ]
+        if matched:
+            return "\n".join(matched)
+        return section
+
+    @staticmethod
+    def _extract_plot_points(content: str, pressure_stage: str) -> str:
+        """从 subline.md 提取「情节点序列」段；优先取与当前压力阶段匹配的行，否则整段。
+
+        细纲情节点序列（m3 plot_points）按压力阶段组织（如「铺垫阶段：主角查账发现异常…」），
+        写章时只取当前阶段的行（约 3-6 个动作化子事件），控制 token 且与本章直接相关；
+        无阶段匹配时整段注入作为可选用素材。
+        """
+        section = M5WriteChapterWorkflow._extract_section(content, "情节点序列")
+        if not section:
+            return ""
+        if pressure_stage:
+            lines = [ln.strip() for ln in section.splitlines() if ln.strip()]
+            matched = [
+                ln for ln in lines if f"{pressure_stage}阶段" in ln or pressure_stage in ln
+            ]
+            if matched:
+                return "\n".join(matched)
+        return section
 
     @staticmethod
     def _extract_field(content: str, field_name: str) -> str:
