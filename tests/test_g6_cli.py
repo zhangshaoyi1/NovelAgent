@@ -21,7 +21,7 @@ from typer.testing import CliRunner
 
 from agent.cli.commands.autowrite import autowrite
 from agent.core.quality.guardrails import _DEFAULT_AI_FLAVOR_WORDS
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
 
 
 def _capture_pipeline_run(monkeypatch, captured_kwargs: dict[str, Any], result: PipelineResult):
@@ -36,7 +36,7 @@ def _capture_pipeline_run(monkeypatch, captured_kwargs: dict[str, Any], result: 
             return result
 
     monkeypatch.setattr(
-        "agent.workflows.agentic_pipeline.AgenticPipelineWorkflow",
+        "agent.workflows.pipeline.agentic_pipeline.AgenticPipelineWorkflow",
         _CapturingPipeline,
     )
 

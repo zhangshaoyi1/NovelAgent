@@ -81,7 +81,7 @@ def test_bus_provider_exception_keeps_event() -> None:
 def test_pipeline_cost_fields_same_source(tmp_path: Path) -> None:
     from unittest.mock import patch
 
-    from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+    from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
 
     wf = AgenticPipelineWorkflow(
         tmp_path, console=None, cost_tier="balanced", budget_margin=1.0

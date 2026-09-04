@@ -106,7 +106,7 @@ def test_pipeline_hard_gate_blocks_publication(tmp_path):
     import tempfile
 
     from agent.core.quality.guardrails import Guardrails
-    from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+    from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
 
     class _StubChapter:
         chapter_num = 1
@@ -141,7 +141,7 @@ def test_pipeline_hard_gate_blocks_publication(tmp_path):
 def test_pipeline_advisory_mode_does_not_block(tmp_path):
     """advisory 默认模式：告警但不阻断出章。"""
     from agent.core.quality.guardrails import Guardrails
-    from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+    from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
 
     class _StubChapter:
         chapter_num = 1

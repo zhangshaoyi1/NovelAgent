@@ -17,7 +17,7 @@ from agent.core.quality import Conflict, ConflictReport
 from agent.core.base.exceptions import PreValidationBlocked
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import StateMachine
-from agent.workflows.m5_write_chapter import (
+from agent.workflows.writing.m5_write_chapter import (
     M5WriteChapterWorkflow,
 )
 

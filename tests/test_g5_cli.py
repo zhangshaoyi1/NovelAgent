@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.agents.evaluator import EvaluatorAgent, NovelHealthReport
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
 from tests.test_g5_gate import _make_g5_project
 
 

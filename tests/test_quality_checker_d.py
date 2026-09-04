@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agent.client import LLMResponse
 from agent.core.quality.scoring.quality_checker import (
     LLMBackedChecker,
     LLMQualityRule,
@@ -30,17 +29,20 @@ class _JsonLLM:
         self._payload = payload
         self.calls = 0
 
-    def chat_utility(self, messages, **kwargs) -> LLMResponse:
+    def chat(self, req):
+        """Gateway 兼容接口"""
+        from types import SimpleNamespace
         self.calls += 1
-        return LLMResponse(
+        return SimpleNamespace(
             text=json.dumps(self._payload, ensure_ascii=False),
-            raw={},
-            usage={},
+            usage_input=0,
+            usage_output=0,
         )
 
 
 class _RaisingLLM:
-    def chat_utility(self, messages, **kwargs) -> LLMResponse:
+    def chat(self, req):
+        """Gateway 兼容接口"""
         raise RuntimeError("boom")
 
 
@@ -154,6 +156,6 @@ class TestQualityCheckerD:
 
     def test_check_pass_when_clean(self) -> None:
         qc = QualityChecker(Path("/tmp/x"), llm=None)
-        report = qc.check("林寻 逃亡 推演 撕开缺口，追兵已至。", {})
+        report = qc.check("林寻逃亡推演撕开缺口追兵已至。林寻深吸一口气，握紧手中的剑，目光坚定。这场战斗他等了太久，今日必有一战。对手实力强劲，但他无所畏惧，因为背后是必须要守护的人。寒风凛冽，剑气纵横，一招一式皆有章法。" * 30, {})
         # 无禁用词超限 → 通用层通过；维度规则跳过 → 整体通过
         assert report.passed is True

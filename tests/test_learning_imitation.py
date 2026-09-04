@@ -14,11 +14,11 @@ import json
 from pathlib import Path
 
 from agent.core.story.technique_store import SLOT_NAMES, TechniqueAsset, TechniqueStore
-from agent.workflows.m17_learn import LearningImitationMiner
+from agent.workflows.evaluation.m17_learn import LearningImitationMiner
 from agent.client import LLMResponse
 from tests.conftest import make_project
 
-import agent.workflows.m17_learn as _m17
+import agent.workflows.evaluation.m17_learn as _m17
 
 
 _IMITATION_JSON = {
@@ -39,8 +39,10 @@ class _FakeImitationLLM:
     def __init__(self, *args, **kwargs) -> None:
         self.calls = 0
 
-    def chat_utility(self, messages, **kwargs) -> LLMResponse:
+    def chat(self, req, **kwargs):
+        from types import SimpleNamespace
         self.calls += 1
+        messages = req.messages if hasattr(req, 'messages') else req
         system = messages[0]["content"] if messages else ""
         # 按系统提示对应的阶段返回各自 schema
         if "拆素材专家" in system:
@@ -50,8 +52,7 @@ class _FakeImitationLLM:
         else:  # 文风学习专家
             payload = {"gimmick": "数据化绝境", "category": "hook",
                        "style_rules": _IMITATION_JSON["style_rules"]}
-        return LLMResponse(text=json.dumps(payload, ensure_ascii=False),
-                           raw={}, usage={})
+        return SimpleNamespace(text=json.dumps(payload, ensure_ascii=False))
 
 
 # ============================================================
@@ -136,7 +137,7 @@ class TestLearningImitationMiner:
 # 技能资源文件
 # ============================================================
 def test_skill_resources_exist() -> None:
-    skill_dir = Path(_m17.__file__).resolve().parents[2] / "agent" / "skills" / "learning-imitation"
+    skill_dir = Path(_m17.__file__).resolve().parents[2] / "skills" / "learning-imitation"
     required = {
         "SKILL.md", "material_split.txt", "plot_learning.txt",
         "style_learning.txt", "six_slots.tmpl.j2", "quality_rules.tmpl.j2",

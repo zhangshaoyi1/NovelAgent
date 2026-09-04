@@ -132,6 +132,19 @@ class _FakeResp:
 
 
 class _FakeLLM:
+    class _FakeChatResp:
+        def __init__(self, text):
+            self.text = text
+            self.usage_input = 12
+            self.usage_output = 8
+
+    def chat(self, req):
+        """Gateway 兼容接口：模拟 Gateway.chat() 返回 ChatResponse 风格对象"""
+        # utility 请求模拟失败
+        if req.hint.complexity.value == "simple":
+            raise RuntimeError("boom")
+        return self._FakeChatResp("结果")
+
     def chat_structured(self, messages, schema=None, **kw):
         return _FakeResp("结果", {"prompt_tokens": 12, "completion_tokens": 8})
 
@@ -142,7 +155,7 @@ class _FakeLLM:
 def test_traced_llm_records_span():
     ts = TraceStore(None)
     client = TracedLLMClient(_FakeLLM(), model="m", tracer=ts)
-    resp = client.chat_structured([], None)
+    resp = client.chat_structured([], None, use="creative")
     assert resp.text == "结果"
     tot = ts.totals()
     assert tot["calls"] == 1

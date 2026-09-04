@@ -11,10 +11,10 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
+from agent.client import LLMResponse
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.m3_outline import M3OutlineWorkflow, M3Result
+from agent.workflows.planning.m3_outline import M3OutlineWorkflow, M3Result
 
 
 # ------ mock LLM 输出 ------
@@ -64,9 +64,9 @@ OUTLINE_JSON = """{
 
 @pytest.fixture
 def mock_llm() -> MagicMock:
-    llm = MagicMock(spec=GatewayAdapter)
-    llm.chat_creative.return_value = LLMResponse(
-        text=OUTLINE_JSON, usage={}, model="m"
+    llm = MagicMock()
+    llm.chat.return_value = MagicMock(
+        text=OUTLINE_JSON,
     )
     return llm
 
@@ -118,7 +118,7 @@ def project_with_confirmed_arch(tmp_path: Path) -> Path:
             "synopsis": "架构简介：末法时代林寻携太虚镜逆天之路。",
         },
     }
-    from agent.workflows.m14_architecture import M14ArchitectureWorkflow  # noqa
+    from agent.workflows.evaluation.m14_architecture import M14ArchitectureWorkflow  # noqa
     import frontmatter as fm
     # 手动构造：直接写 frontmatter + 正文
     content = f"# 故事架构 · 太虚镜\n\n正文..."
@@ -210,9 +210,9 @@ def test_m3_llm_called_with_arch_info(
 ) -> None:
     """LLM prompt 应包含架构关键信息"""
     workflow.run()
-    mock_llm.chat_creative.assert_called_once()
-    kw = mock_llm.chat_creative.call_args.kwargs
-    user_msg = next(m["content"] for m in kw["messages"] if m["role"] == "user")
+    mock_llm.chat.assert_called_once()
+    chat_request = mock_llm.chat.call_args[0][0]
+    user_msg = next(m["content"] for m in chat_request.messages if m["role"] == "user")
     assert "太虚镜" in user_msg
     assert "林寻" in user_msg
     assert "推翻宗门垄断" in user_msg
@@ -340,9 +340,9 @@ def test_m3_handles_empty_sublines(tmp_path: Path) -> None:
     sm_state.save()
 
     # mock: LLM 返回空 sublines
-    empty_llm = MagicMock(spec=GatewayAdapter)
-    empty_llm.chat_creative.return_value = LLMResponse(
-        text='{"synopsis": "简介", "sublines": []}', usage={}, model="m"
+    empty_llm = MagicMock()
+    empty_llm.chat.return_value = MagicMock(
+        text='{"synopsis": "简介", "sublines": []}',
     )
     wf = M3OutlineWorkflow(
         project_dir=tmp_path,
@@ -376,9 +376,9 @@ def test_m3_handles_llm_json_parse_failure(tmp_path: Path) -> None:
     sm_state.state = State.ARCH_CONFIRMED
     sm_state.save()
 
-    bad_llm = MagicMock(spec=GatewayAdapter)
-    bad_llm.chat_creative.return_value = LLMResponse(
-        text="这是一段纯文本介绍，没有 JSON 格式...", usage={}, model="m"
+    bad_llm = MagicMock()
+    bad_llm.chat.return_value = MagicMock(
+        text="这是一段纯文本介绍，没有 JSON 格式...",
     )
     wf = M3OutlineWorkflow(
         project_dir=tmp_path,
@@ -391,4 +391,4 @@ def test_m3_handles_llm_json_parse_failure(tmp_path: Path) -> None:
     # 不应写入占位大纲
     assert not (tmp_path / "outline.md").exists()
     # 递增重试（充足预算 + 纯 JSON 强化）：共调用三次后仍失败才抛错
-    assert bad_llm.chat_creative.call_count == 3
+    assert bad_llm.chat.call_count == 3

@@ -101,7 +101,7 @@ def test_chapter_payoff() -> None:
 
 # ---------------------------------------------------------------- 注入
 def test_build_task_injects_payoff() -> None:
-    from agent.workflows.agentic_write import AgenticWriteWorkflow
+    from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
 
     wf = AgenticWriteWorkflow(Path("."), llm_client=None)
     task = wf._build_task(_min_ctx(payoff_task="本章爽点：打脸（强度 4/5）", emotion_target="情绪目标：爽（张力 4/5）"))
@@ -111,7 +111,7 @@ def test_build_task_injects_payoff() -> None:
 
 
 def test_build_task_no_payoff_byte_identical() -> None:
-    from agent.workflows.agentic_write import AgenticWriteWorkflow
+    from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
 
     wf = AgenticWriteWorkflow(Path("."), llm_client=None)
     task = wf._build_task(_min_ctx())
@@ -120,15 +120,16 @@ def test_build_task_no_payoff_byte_identical() -> None:
 
 
 def test_generate_chapter_injects_payoff() -> None:
-    from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 
     class _LLM:
         def __init__(self) -> None:
             self.messages: list[dict] = []
 
-        def chat_creative(self, messages, *args, **kwargs):
-            self.messages = messages
-            return type("R", (), {"text": "正文。"})()
+        def chat(self, req, *args, **kwargs):
+            self.messages = req.messages if hasattr(req, 'messages') else req
+            from types import SimpleNamespace
+            return SimpleNamespace(text="正文。")
 
     llm = _LLM()
     wf = M5WriteChapterWorkflow(Path("."), llm_client=llm, pre_validate=False)
@@ -144,7 +145,7 @@ def test_payoff_disabled_ctx(tmp_path: Path) -> None:
     """payoff_enabled=False（--no-payoff）→ 不读剧本 → ctx 无爽点任务。"""
     from tests.conftest import _build_minimal_project
 
-    from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 
     proj = _build_minimal_project(tmp_path)
     save_payoff_script(proj, build_payoff_script(12))

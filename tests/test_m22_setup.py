@@ -20,7 +20,7 @@ import pytest
 from typer.testing import CliRunner
 
 from agent.cli import app  # 触发全部命令注册（导入副作用）
-from agent.workflows.m22_setup import (
+from agent.workflows.market.m22_setup import (
     AGENTS_VERSION,
     SENTINEL_NAME,
     SETUP_SKILL_VERSION,

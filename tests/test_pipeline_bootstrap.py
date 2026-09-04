@@ -15,7 +15,7 @@ from agent.agents.planner import MasterPlan
 from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
 from tests._g3_fakes import _FakeLLM
 
 

@@ -20,9 +20,9 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
+from agent.client import LLMResponse
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.m6_adjust import (
+from agent.workflows.writing.m6_adjust import (
     M6AdjustRouteWorkflow,
     M6AdjustRelationWorkflow,
     M6ImpactReport,
@@ -204,7 +204,7 @@ def _build_mock_llm(
     graph_json: dict | None = None,
     impact_json: dict | None = None,
 ) -> MagicMock:
-    llm = MagicMock(spec=GatewayAdapter)
+    llm = MagicMock()
     import json as _json
 
     # 默认路线
@@ -298,45 +298,37 @@ def _build_mock_llm(
             ],
         }
 
-    creative_idx = 0
-    utility_idx = 0
+    from types import SimpleNamespace
 
-    def creative_side(*args, **kwargs):
-        nonlocal creative_idx
-        # 获取 messages（兼容 kwargs 和 positional）
-        msgs = kwargs.get("messages")
-        if msgs is None and args:
-            msgs = args[0]
-        if not msgs:
-            msgs = []
+    call_count = 0
+
+    def chat_side(req):
+        """Mock Gateway.chat()：接收 ChatRequest 对象，根据 messages 内容路由"""
+        nonlocal call_count
+        call_count += 1
+        messages = req.messages
         sys_msg = ""
-        for m in msgs:
+        for m in messages:
             if isinstance(m, dict) and m.get("role") == "system":
                 sys_msg = str(m.get("content", ""))
                 break
-        # 使用多个关键词组合判断，避免误判
-        # 路线调整：系统 prompt 包含 "主角成长路线" 或 "protagonist_route"
-        # 关系调整：包含 "关系网" 或 "graph.md" 或 "角色关系演化"
-        is_route = (
-            "主角成长路线" in sys_msg
-            or "protagonist_route" in sys_msg
-            or "小说架构师" in sys_msg
-        )
-        if is_route:
-            text = _json.dumps(route_json, ensure_ascii=False)
+        # 影响报告：系统 prompt 以"设定一致性审计师"开头
+        if "设定一致性审计师" in sys_msg:
+            text = _json.dumps(impact_json, ensure_ascii=False)
         else:
-            text = _json.dumps(graph_json, ensure_ascii=False)
-        creative_idx += 1
-        return LLMResponse(text=text, raw={}, usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+            # 路线调整 vs 关系调整
+            is_route = (
+                "主角成长路线" in sys_msg
+                or "protagonist_route" in sys_msg
+                or "小说架构师" in sys_msg
+            )
+            if is_route:
+                text = _json.dumps(route_json, ensure_ascii=False)
+            else:
+                text = _json.dumps(graph_json, ensure_ascii=False)
+        return SimpleNamespace(text=text)
 
-    def utility_side(*args, **kwargs):
-        nonlocal utility_idx
-        text = _json.dumps(impact_json, ensure_ascii=False)
-        utility_idx += 1
-        return LLMResponse(text=text, raw={}, usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
-
-    llm.chat_creative.side_effect = creative_side
-    llm.chat_utility.side_effect = utility_side
+    llm.chat.side_effect = chat_side
     return llm
 
 

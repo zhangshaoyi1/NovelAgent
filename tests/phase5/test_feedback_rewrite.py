@@ -8,12 +8,12 @@ LLM 失败优雅降级 / 缺章报错 / 偏好沉淀 / AgentService 接线。
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import frontmatter
 import pytest
 
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.quality.rewrite.feedback_rewriter import FeedbackRewriter, RewriteResult
 from agent.core.quality.guardrails import Guardrails
 from agent.service.agent_service import AgentService
@@ -23,15 +23,11 @@ from agent.service.agent_service import AgentService
 # 假 LLM
 # ============================================================
 def _fake_llm(rewritten_text: str, *, raise_error: bool = False) -> MagicMock:
-    llm = MagicMock(spec=GatewayAdapter)
+    llm = MagicMock()
     if raise_error:
-        llm.chat_creative.side_effect = RuntimeError("network down")
+        llm.chat.side_effect = RuntimeError("network down")
     else:
-        llm.chat_creative.return_value = LLMResponse(
-            text=rewritten_text,
-            raw={},
-            usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-        )
+        llm.chat.return_value = SimpleNamespace(text=rewritten_text)
     return llm
 
 
@@ -73,10 +69,10 @@ def test_rewrite_context_anchors_passed(tmp_path):
     rewriter = FeedbackRewriter(d, llm_client=llm)
     rewriter.rewrite(2, "主角太蠢，补动机")
 
-    # chat_creative 被调用，且 prompt 含上下文锚点（上一章尾 / 下一章头 / 题材）
-    assert llm.chat_creative.call_count == 1
-    kwargs = llm.chat_creative.call_args.kwargs
-    user = kwargs["messages"][1]["content"]
+    # chat 被调用，且 prompt 含上下文锚点（上一章尾 / 下一章头 / 题材）
+    assert llm.chat.call_count == 1
+    req = llm.chat.call_args[0][0]
+    user = req.messages[1]["content"]
     assert "上一章" in user or "衔接上文" in user
     assert "衔接下文" in user
     assert "题材" in user

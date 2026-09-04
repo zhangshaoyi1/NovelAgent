@@ -1,4 +1,4 @@
-﻿"""M11 导入导出单元测试
+"""M11 导入导出单元测试
 
 覆盖：
 - ExportWorkflow：txt/markdown/epub 三格式、空章节、书名读取、自定义输出目录
@@ -16,8 +16,8 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.client import LLMResponse
-from agent.workflows.m11_export import (
+from types import SimpleNamespace
+from agent.workflows.evaluation.m11_export import (
     CompletionExtrasWorkflow,
     ExportResult,
     ExportWorkflow,
@@ -177,9 +177,9 @@ class TestImportWorkflow:
     ) -> MagicMock:
         llm = MagicMock()
         if raise_exc:
-            llm.chat_utility.side_effect = raise_exc
+            llm.chat.side_effect = raise_exc
         else:
-            llm.chat_utility.return_value = LLMResponse(text=text, raw={}, usage={})
+            llm.chat.return_value = SimpleNamespace(text=text)
         return llm
 
     def test_import_success(self, tmp_path: Path) -> None:
@@ -302,8 +302,8 @@ class TestImportWorkflow:
 
         assert result.success
         # 验证 LLM 收到的是截断后的文本
-        called_args = llm.chat_utility.call_args
-        user_msg = called_args.kwargs["messages"][1]["content"]
+        req = llm.chat.call_args[0][0]
+        user_msg = req.messages[1]["content"]
         assert len(user_msg) < 20000
 
     def test_import_missing_optional_fields(self, tmp_path: Path) -> None:
@@ -375,8 +375,8 @@ class TestCompletionExtrasWorkflow:
 
     def test_generate_all(self, project: Path) -> None:
         llm = MagicMock()
-        llm.chat_utility.return_value = LLMResponse(
-            text="感谢读者陪伴，这段旅程...", raw={}, usage={}
+        llm.chat.return_value = SimpleNamespace(
+            text="感谢读者陪伴，这段旅程..."
         )
         wf = CompletionExtrasWorkflow(project, llm=llm)
         result = wf.generate()
@@ -407,7 +407,7 @@ class TestCompletionExtrasWorkflow:
 
         assert result.afterword_file is None
         # 不应调用 LLM
-        llm.chat_utility.assert_not_called()
+        llm.chat.assert_not_called()
         # 其他产出仍应有
         assert result.character_anthology_file is not None
 
@@ -415,7 +415,7 @@ class TestCompletionExtrasWorkflow:
         self, project: Path, tmp_path: Path
     ) -> None:
         llm = MagicMock()
-        llm.chat_utility.return_value = LLMResponse(text="感言", raw={}, usage={})
+        llm.chat.return_value = SimpleNamespace(text="感言")
         wf = CompletionExtrasWorkflow(project, llm=llm)
         out_dir = tmp_path / "extras"
         result = wf.generate(output_dir=out_dir)
@@ -442,7 +442,7 @@ class TestCompletionExtrasWorkflow:
         (d / "world.md").write_text(frontmatter.dumps(world), encoding="utf-8")
 
         llm = MagicMock()
-        llm.chat_utility.return_value = LLMResponse(text="感言", raw={}, usage={})
+        llm.chat.return_value = SimpleNamespace(text="感言")
         wf = CompletionExtrasWorkflow(d, llm=llm)
         result = wf.generate()
 
@@ -453,7 +453,7 @@ class TestCompletionExtrasWorkflow:
     def test_afterword_llm_failure_falls_back(self, project: Path) -> None:
         """LLM 调用失败时，感言为 None 但其他产出正常"""
         llm = MagicMock()
-        llm.chat_utility.side_effect = Exception("network error")
+        llm.chat.side_effect = Exception("network error")
         wf = CompletionExtrasWorkflow(project, llm=llm)
         result = wf.generate()
 

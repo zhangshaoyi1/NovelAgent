@@ -17,7 +17,7 @@ from agent.core.base.structured_output import StructuredOutputError, pydantic_to
 from agent.core.engine.tool_contracts import ToolResult
 from agent.core.tools import registry
 from agent.agents.writer_agent import WriterAgent, _RETRY_JSON_PROMPT
-from agent.workflows.agentic_write import AgenticWriteWorkflow
+from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
 
 
 # ---------------------------------------------------------------------------
@@ -205,7 +205,7 @@ def test_writer_auto_best_draft_fallback():
 # 2b. WriterAgent 结构化输出解析失败 → 追加纯 JSON 指令重试一次（G4+/M14 约定）
 # ---------------------------------------------------------------------------
 class _FakeLLM:
-    """模拟 LLMClient.chat_structured：可编程失败/成功，并记录每次调用轨迹。"""
+    """模拟 Gateway：可编程失败/成功，并记录每次调用轨迹。"""
 
     def __init__(self, script):  # script: list[callable(messages,**kw)->dict 或 raise]
         self.results = list(script)
@@ -217,6 +217,21 @@ class _FakeLLM:
         if isinstance(cb, Exception):
             raise cb
         return cb(messages, **kw)
+
+    def chat(self, req):
+        """模拟 Gateway.chat() — chat_structured 辅助函数通过此方法调用"""
+        from types import SimpleNamespace
+
+        messages = req.messages
+        self.calls.append(messages)
+        cb = self.results.pop(0)
+        if isinstance(cb, Exception):
+            raise cb
+        result = cb(messages)
+        # 将 dict 结果序列化为 JSON 文本
+        import json as _json
+        text = _json.dumps(result, ensure_ascii=False)
+        return SimpleNamespace(text=text)
 
 
 def test_writer_structured_parse_retries_once_with_json_prompt():

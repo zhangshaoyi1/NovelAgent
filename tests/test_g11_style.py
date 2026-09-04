@@ -54,14 +54,14 @@ def _min_ctx(style_guide: str = "") -> dict:
 
 
 class _CaptureLLM:
-    """捕获最后一次调用的 messages（FakeLLM：chat_creative 返回 .text）。"""
+    """捕获最后一次调用的 messages（FakeLLM：chat 返回 .text）。"""
 
     def __init__(self) -> None:
         self.messages: list[dict] = []
         self.calls = 0
 
-    def chat_creative(self, messages, *args, **kwargs):
-        self.messages = messages
+    def chat(self, req):
+        self.messages = req.messages
         self.calls += 1
         return type("R", (), {"text": "正文内容。"})()
 
@@ -98,7 +98,7 @@ def test_style_guide_style_file(tmp_path: Path) -> None:
 
 # ---------------------------------------------------------------- agentic_write._build_task
 def test_build_task_injects_style() -> None:
-    from agent.workflows.agentic_write import AgenticWriteWorkflow
+    from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
 
     wf = AgenticWriteWorkflow(Path("."), llm_client=_CaptureLLM())
     task = wf._build_task(_min_ctx(style_guide="冷峻白描"))
@@ -108,7 +108,7 @@ def test_build_task_injects_style() -> None:
 
 
 def test_build_task_no_style_byte_identical() -> None:
-    from agent.workflows.agentic_write import AgenticWriteWorkflow
+    from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
 
     wf = AgenticWriteWorkflow(Path("."), llm_client=_CaptureLLM())
     task_no = wf._build_task(_min_ctx(style_guide=""))
@@ -117,7 +117,7 @@ def test_build_task_no_style_byte_identical() -> None:
 
 # ---------------------------------------------------------------- m5._generate_chapter
 def test_generate_chapter_injects_style() -> None:
-    from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 
     llm = _CaptureLLM()
     wf = M5WriteChapterWorkflow(Path("."), llm_client=llm, pre_validate=False)
@@ -129,7 +129,7 @@ def test_generate_chapter_injects_style() -> None:
 
 
 def test_generate_chapter_no_style() -> None:
-    from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 
     llm = _CaptureLLM()
     wf = M5WriteChapterWorkflow(Path("."), llm_client=llm, pre_validate=False)
@@ -141,7 +141,7 @@ def test_generate_chapter_style_disabled(tmp_path: Path) -> None:
     """style_enabled=False（--no-style）→ 不读 style.md → 无注入。"""
     from tests.conftest import _build_minimal_project
 
-    from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 
     proj = _build_minimal_project(tmp_path)
     (proj / "style.md").write_text("应被忽略的风格", encoding="utf-8")

@@ -17,10 +17,10 @@ from agent.core.quality.guardrails import is_architecture_confirmed
 # 注意：agent 包实际位于 <repo_root>/src/agent（pytest pythonpath=["src"]），
 # 故相对路径需加 src/ 前缀，避免双写 agent 目录导致 FileNotFoundError。
 _DECOUPLED_WORKFLOWS = [
-    "src/agent/workflows/m3_outline.py",
-    "src/agent/workflows/m4_character.py",
-    "src/agent/workflows/m5_write_chapter.py",
-    "src/agent/workflows/m6_adjust.py",
+    "src/agent/workflows/planning/m3_outline.py",
+    "src/agent/workflows/planning/m4_character.py",
+    "src/agent/workflows/writing/m5_write_chapter.py",
+    "src/agent/workflows/writing/m6_adjust.py",
 ]
 
 
@@ -52,7 +52,7 @@ def test_no_direct_m14_import_in_decoupled_workflows() -> None:
     for rel in _DECOUPLED_WORKFLOWS:
         src = repo_root / rel
         text = src.read_text(encoding="utf-8")
-        assert "from agent.workflows.m14_architecture import" not in text, (
+        assert "from agent.workflows.evaluation.m14_architecture import" not in text, (
             f"{rel} 仍直接 import m14_architecture，未解耦到 core.confirmation"
         )
         # 应改为引用 core.quality.guardrails.is_architecture_confirmed

@@ -14,9 +14,9 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
+from agent.client import LLMResponse
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 
 # 假数据
 # ============================================================
@@ -86,7 +86,7 @@ def _build_mock_llm(
     from unittest.mock import MagicMock as _MagicMock
     from types import SimpleNamespace
 
-    llm = _MagicMock(spec=GatewayAdapter)
+    llm = _MagicMock()
     if quality_report is None:
         quality_report = QUALITY_PASS
 

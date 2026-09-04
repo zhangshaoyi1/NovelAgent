@@ -1,4 +1,4 @@
-"""CLI --json 输出验证（T12）
+﻿"""CLI --json 输出验证（T12）
 
 验证 5 个命令的 --json 输出合法且字段齐全：
 - write --json 成功路径：mock LLM + 模拟 safe-delete 垫片（os.remove 抛错），
@@ -17,12 +17,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import agent.base.utils
 import pytest
 from agent.cli import app
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway, create_gateway_adapter, LLMResponse
+from agent.client.gateway_adapter import create_gateway
 from agent.core.engine.state_machine import State
 from typer.testing import CliRunner
 
@@ -39,7 +40,7 @@ def _patch_llm(monkeypatch: pytest.MonkeyPatch, mock: MagicMock) -> None:
     确保 CLI 路径完全不触碰真实 LLM / 网络。"""
     zero_arg = lambda *a, **kw: mock  # noqa: E731
     monkeypatch.setattr("agent.workflows.m5_write_chapter.create_gateway", zero_arg)
-    monkeypatch.setattr("agent.client.gateway_adapter.create_gateway_adapter", zero_arg)
+    monkeypatch.setattr("agent.client.gateway_adapter.create_gateway", zero_arg)
     monkeypatch.setattr("agent.workflows.m6_adjust.create_gateway", zero_arg)
     monkeypatch.setattr("agent.workflows.m11_export.create_gateway", zero_arg)
 
@@ -167,12 +168,10 @@ class TestExportJson:
 # adjust-relation / adjust-route --json（mock LLM，验证含 conflicts）
 # ============================================================
 def _build_m6_mock() -> MagicMock:
-    """仿 test_m6_adjust 的 mock：根据系统 prompt 决定返回路线/关系/影响 JSON。
+    """仿 test_m6_adjust 的 mock：根据请求内容决定返回路线/关系/影响 JSON。
 
     仅用于验证 CLI --json 输出结构（含 conflicts 字段），不关心具体数据。
     """
-    import json as _json
-
     route_json = {
         "root_node": "寒门弃徒",
         "nodes": [
@@ -220,30 +219,26 @@ def _build_m6_mock() -> MagicMock:
         "recommendations": [{"option": "保留原设定改章节", "detail": "后续体现"}],
     }
 
-    def creative_side(*args: object, **kwargs: object) -> LLMResponse:
-        msgs = kwargs.get("messages") or (args[0] if args else [])
+    def chat_side_effect(req, **kwargs):
+        msgs = req.messages if hasattr(req, 'messages') else []
         sys_msg = ""
         for m in msgs:
             if isinstance(m, dict) and m.get("role") == "system":
                 sys_msg = str(m.get("content", ""))
                 break
         text = (
-            _json.dumps(route_json, ensure_ascii=False)
-            if ("主角成长路线" in sys_msg or "protagonist_route" in sys_msg)
-            else _json.dumps(graph_json, ensure_ascii=False)
+            json.dumps(impact_json, ensure_ascii=False)
+            if ("impact" in sys_msg.lower() or "conflict" in sys_msg.lower())
+            else (
+                json.dumps(route_json, ensure_ascii=False)
+                if ("主角成长路线" in sys_msg or "protagonist_route" in sys_msg)
+                else json.dumps(graph_json, ensure_ascii=False)
+            )
         )
-        return LLMResponse(text=text, raw={}, usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2})
+        return SimpleNamespace(text=text)
 
-    def utility_side(*args: object, **kwargs: object) -> LLMResponse:
-        return LLMResponse(
-            text=_json.dumps(impact_json, ensure_ascii=False),
-            raw={},
-            usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-        )
-
-    llm = MagicMock(spec=GatewayAdapter)
-    llm.chat_creative.side_effect = creative_side
-    llm.chat_utility.side_effect = utility_side
+    llm = MagicMock()
+    llm.chat.side_effect = chat_side_effect
     return llm
 
 

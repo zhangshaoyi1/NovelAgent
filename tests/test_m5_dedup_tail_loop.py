@@ -8,7 +8,7 @@
 
 from __future__ import annotations
 
-from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow as W
+from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow as W
 
 
 DEDUP = W._dedup_tail_loop

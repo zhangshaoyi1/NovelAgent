@@ -1,4 +1,4 @@
-"""Pacing 测试（增量 C / T04）
+﻿"""Pacing 测试（增量 C / T04）
 
 覆盖：
 - PacingStore：add/get/dedup/load/save/clear + 损坏降级为空
@@ -11,19 +11,19 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from agent.cli import app
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.story.pacing_store import Debt, PacingStore
-from agent.workflows.m16_pacing import PacingExtraction, PacingTracker
+from agent.workflows.evaluation.m16_pacing import PacingExtraction, PacingTracker
 from typer.testing import CliRunner
 
 from tests.conftest import CHAPTER_TEXT, _build_minimal_project, make_project
 
 
 # ============================================================
-# 假 LLMClient（抽取 Hook/CoolPoint/MicroPayoff/Debt）
+# 假 Gateway（抽取 Hook/CoolPoint/MicroPayoff/Debt）
 # ============================================================
 _EXTRACTION_JSON = {
     "hooks": ["开头悬念钩子"],
@@ -36,16 +36,23 @@ _EXTRACTION_JSON = {
 
 
 class _FakeExtractLLM:
-    """假 LLMClient：chat_utility 返回固定的追读力抽取 JSON"""
+    """假 Gateway：chat 返回固定的追读力抽取 JSON"""
 
     def __init__(self, *args, **kwargs) -> None:
         pass
 
-    def chat_utility(self, messages, **kwargs) -> LLMResponse:
-        return LLMResponse(
-            text=json.dumps(_EXTRACTION_JSON, ensure_ascii=False),
-            raw={},
-            usage={},
+    def chat(self, req) -> SimpleNamespace:
+        return SimpleNamespace(
+            text=json.dumps(_EXTRACTION_JSON, ensure_ascii=False)
+        )
+
+
+class _FakeEmptyLLM:
+    """假 Gateway：chat 返回空追读力数据"""
+
+    def chat(self, req) -> SimpleNamespace:
+        return SimpleNamespace(
+            text=json.dumps({"hooks": [], "cool_points": [], "micro_payoffs": [], "debts": []}, ensure_ascii=False)
         )
 
 
@@ -103,8 +110,8 @@ class TestPacingTracker:
 
     def test_extract_llm_none_degrades_empty(self, tmp_path: Path) -> None:
         d = make_project(tmp_path, n_chapters=1)
-        # 显式 llm=None → 降级为空抽取（不抛异常、不阻断）
-        tracker = PacingTracker(d, llm=None)
+        # 使用返回空数据的 fake LLM → 降级为空抽取（不抛异常、不阻断）
+        tracker = PacingTracker(d, llm=_FakeEmptyLLM())
         ext = tracker.extract("任意正文")
         assert ext.hooks == []
         assert ext.cool_points == []
@@ -143,7 +150,7 @@ class TestTrackPacingCommand:
     def test_track_pacing_range_json(self, tmp_path: Path, monkeypatch) -> None:
         d = make_project(tmp_path, n_chapters=2)
         monkeypatch.setattr(
-            "agent.workflows.m16_pacing.LLMClient", _FakeExtractLLM
+            "agent.workflows.evaluation.m16_pacing.create_gateway", _FakeExtractLLM
         )
 
         runner = CliRunner()
@@ -169,7 +176,7 @@ class TestTrackPacingCommand:
     def test_track_pacing_all_when_no_range(self, tmp_path: Path, monkeypatch) -> None:
         d = make_project(tmp_path, n_chapters=3)
         monkeypatch.setattr(
-            "agent.workflows.m16_pacing.LLMClient", _FakeExtractLLM
+            "agent.workflows.evaluation.m16_pacing.create_gateway", _FakeExtractLLM
         )
         runner = CliRunner()
         result = runner.invoke(app, ["track-pacing", "--json", "-d", str(d)])
@@ -181,7 +188,7 @@ class TestTrackPacingCommand:
         d = tmp_path / "empty"
         d.mkdir()
         monkeypatch.setattr(
-            "agent.workflows.m16_pacing.LLMClient", _FakeExtractLLM
+            "agent.workflows.evaluation.m16_pacing.create_gateway", _FakeExtractLLM
         )
         runner = CliRunner()
         result = runner.invoke(app, ["track-pacing", "--json", "-d", str(d)])
@@ -192,4 +199,4 @@ class TestTrackPacingCommand:
 
 
 # 静默未使用导入告警
-_ = (CHAPTER_TEXT, _build_minimal_project, MagicMock, create_gateway_adapter)
+_ = (CHAPTER_TEXT, _build_minimal_project, MagicMock)

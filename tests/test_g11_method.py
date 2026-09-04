@@ -119,8 +119,8 @@ class _M3LLM:
         self.user_prompt: str = ""
         self.calls = 0
 
-    def chat_creative(self, messages, *args, **kwargs):
-        self.user_prompt = messages[1]["content"]
+    def chat(self, req):
+        self.user_prompt = req.messages[1]["content"]
         self.calls += 1
         return type("R", (), {"text": '{"synopsis": "简介", "sublines": []}'})()
 
@@ -141,7 +141,7 @@ def _arch_data() -> dict:
 
 
 def test_m3_injects_method(tmp_path: Path) -> None:
-    from agent.workflows.m3_outline import M3OutlineWorkflow
+    from agent.workflows.planning.m3_outline import M3OutlineWorkflow
 
     (tmp_path / "method.md").write_text("# 起承转合\n\n按起承转合组织。", encoding="utf-8")
     llm = _M3LLM()
@@ -154,7 +154,7 @@ def test_m3_injects_method(tmp_path: Path) -> None:
 
 
 def test_m3_no_method(tmp_path: Path) -> None:
-    from agent.workflows.m3_outline import M3OutlineWorkflow
+    from agent.workflows.planning.m3_outline import M3OutlineWorkflow
 
     llm = _M3LLM()
     wf = M3OutlineWorkflow(tmp_path, llm_client=llm)
@@ -165,7 +165,7 @@ def test_m3_no_method(tmp_path: Path) -> None:
 
 
 def test_m3_method_disabled(tmp_path: Path) -> None:
-    from agent.workflows.m3_outline import M3OutlineWorkflow
+    from agent.workflows.planning.m3_outline import M3OutlineWorkflow
 
     (tmp_path / "method.md").write_text("# 模板\n\n内容", encoding="utf-8")
     llm = _M3LLM()

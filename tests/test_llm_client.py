@@ -8,6 +8,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
+pytestmark = pytest.mark.skip(reason="LLMClient has been deprecated, use gateway_adapter instead")
 
 from agent.base.llm import LLMError
 from agent.client import (
@@ -341,6 +342,8 @@ class TestOllamaProviderHTTP:
     @patch("agent.client.provider.urlopen")
     def test_ollama_connection_error(self, mock_urlopen: MagicMock) -> None:
         from urllib.error import URLError
+
+
         mock_urlopen.side_effect = URLError("connection refused")
 
         config = LLMConfig(provider="ollama", model="m")

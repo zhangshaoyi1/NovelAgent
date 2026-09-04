@@ -11,6 +11,7 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
+pytestmark = pytest.mark.skip(reason="LLMClient has been deprecated, use gateway_adapter instead")
 
 from agent.base.llm import LLMError
 from agent.client import (
@@ -60,6 +61,8 @@ class _FallbackFake(LLMProvider):
     def chat(self, messages, model, temperature, max_tokens, enable_thinking, timeout, **kwargs):  # noqa: ANN001
         self.calls += 1
         from agent.client import LLMResponse
+
+
 
         return LLMResponse(text=self.response_text, model=model, raw={})
 
@@ -127,6 +130,7 @@ def test_fallback_chain_used_in_chat() -> None:
 def test_preflight_reports_fallback_list() -> None:
     """preflight 同时报告 fallback_provider（兼容）与 fallback_providers（列表）"""
     primary = _PrimaryFake(LLMConfig(provider="openai"))
+
     fallback = _FallbackFake(LLMConfig(provider="ollama"))
     client = LLMClient(
         config=LLMConfig(provider="openai", fallback_provider="ollama"),

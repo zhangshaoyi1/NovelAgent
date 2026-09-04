@@ -18,8 +18,8 @@ from unittest.mock import MagicMock
 import pytest
 import typer
 
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
-from agent.workflows.m23_short import (
+from agent.client import LLMResponse
+from agent.workflows.market.m23_short import (
     AnalyzeReport,
     M23ShortAnalyzeWorkflow,
     M23ShortScanWorkflow,
@@ -145,12 +145,10 @@ ANALYZE_JSON = {
 
 
 def make_mock_llm(response_json: dict) -> MagicMock:
-    """构造返回指定 JSON 的 mock LLM（chat_utility 走统一入口）。"""
-    llm = MagicMock(spec=GatewayAdapter)
-    llm.chat_utility.return_value = LLMResponse(
+    """构造返回指定 JSON 的 mock LLM（chat 走统一入口）。"""
+    llm = MagicMock()
+    llm.chat.return_value = MagicMock(
         text=json.dumps(response_json, ensure_ascii=False),
-        raw={},
-        usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
     )
     return llm
 
@@ -264,15 +262,16 @@ class TestScanWorkflow:
         wf = M23ShortScanWorkflow(llm_client=llm)
         report = wf.run(market_data="")
         # 占位说明被注入 user 提示词（内置知识分支）
-        called_kwargs = llm.chat_utility.call_args
-        user_content = called_kwargs.kwargs["messages"][1]["content"]
+        called_args = llm.chat.call_args
+        chat_request = called_args[0][0]
+        user_content = chat_request.messages[1]["content"]
         assert NO_MARKET_DATA in user_content
         assert report.platform  # 默认 "综合"
 
     def test_scan_parse_failure_degrades(self) -> None:
         """JSON 解析失败 → 降级返回空报告，不抛错。"""
         llm = make_mock_llm({})
-        llm.chat_utility.return_value = LLMResponse(text="不是 JSON")
+        llm.chat.return_value = MagicMock(text="不是 JSON")
         wf = M23ShortScanWorkflow(llm_client=llm)
         report = wf.run(market_data="样本")
         assert report.platform == "综合"
@@ -308,7 +307,7 @@ class TestAnalyzeWorkflow:
 
     def test_analyze_parse_failure_degrades(self) -> None:
         llm = make_mock_llm({})
-        llm.chat_utility.return_value = LLMResponse(text="坏数据")
+        llm.chat.return_value = MagicMock(text="坏数据")
         wf = M23ShortAnalyzeWorkflow(llm_client=llm)
         report = wf.run(input_text="正文", title="T")
         assert report.title == "T"
@@ -358,7 +357,7 @@ class _FakeAnalyzeWorkflow:
 
 class TestCliScan:
     def test_short_scan_json_contract(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        import agent.workflows.m23_short as wf_mod
+        import agent.workflows.market.m23_short as wf_mod
 
         monkeypatch.setattr(wf_mod, "M23ShortScanWorkflow", _FakeScanWorkflow)
         from agent.cli.commands.short_scan import short_scan
@@ -399,7 +398,7 @@ class TestCliScan:
 
 class TestCliAnalyze:
     def test_short_analyze_json_contract(self, tmp_path: Path, monkeypatch, capsys) -> None:
-        import agent.workflows.m23_short as wf_mod
+        import agent.workflows.market.m23_short as wf_mod
 
         monkeypatch.setattr(wf_mod, "M23ShortAnalyzeWorkflow", _FakeAnalyzeWorkflow)
         from agent.cli.commands.short_analyze import short_analyze

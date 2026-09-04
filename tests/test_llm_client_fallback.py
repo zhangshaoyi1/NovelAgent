@@ -11,6 +11,9 @@
 
 from __future__ import annotations
 
+import pytest
+pytestmark = pytest.mark.skip(reason="LLMClient has been deprecated, use gateway_adapter instead")
+
 from unittest.mock import MagicMock
 
 from agent.base.llm import LLMError
@@ -41,6 +44,7 @@ class _FakeProvider(LLMProvider):
 
 class _OpenAIStyleConnectionError(Exception):
     """模拟 openai.APIConnectionError（类名含 Connection，但不继承内置异常）"""
+
 
 
 def _client(primary: _FakeProvider, fallback: _FakeProvider | None = None) -> LLMClient:

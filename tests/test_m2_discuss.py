@@ -1,4 +1,4 @@
-﻿"""M2 脉络讨论工作流单元测试
+"""M2 脉络讨论工作流单元测试
 
 mock LLM，验证多轮对话、讨论纪要生成、状态转换。
 """
@@ -10,10 +10,10 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
+from agent.client import LLMResponse
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.m2_discuss import (
+from agent.workflows.planning.m2_discuss import (
     M2DiscussWorkflow,
     M2Input,
 )
@@ -22,18 +22,15 @@ from agent.workflows.m2_discuss import (
 @pytest.fixture
 def mock_llm() -> MagicMock:
     """mock LLM，按调用次数返回不同响应"""
-    llm = MagicMock(spec=GatewayAdapter)
-    # chat_creative 返回提问，chat_utility 返回总结
-    llm.chat_creative.return_value = LLMResponse(
-        text="这是一个关键问题：主角的动机是什么？",
-        usage={},
-        model="m",
-    )
-    llm.chat_utility.return_value = LLMResponse(
-        text="- 主角动机：复仇\n- 金手指：太虚镜\n- 主线：逆天修仙",
-        usage={},
-        model="m",
-    )
+    from itertools import cycle
+    from types import SimpleNamespace
+
+    llm = MagicMock()
+    responses = cycle([
+        SimpleNamespace(text="这是一个关键问题：主角的动机是什么？"),
+        SimpleNamespace(text="- 主角动机：复仇\n- 金手指：太虚镜\n- 主线：逆天修仙"),
+    ])
+    llm.chat.side_effect = responses
     return llm
 
 
@@ -192,9 +189,10 @@ def test_m2_llm_called_with_world_info(
     user_input = M2Input(preset_answers=["/next"])
     workflow.run(user_input=user_input)
 
-    mock_llm.chat_creative.assert_called()
-    call_kwargs = mock_llm.chat_creative.call_args.kwargs
-    messages = call_kwargs["messages"]
+    mock_llm.chat.assert_called()
+    # 第一个 chat 调用是 chat_creative（讨论问题）
+    chat_request = mock_llm.chat.call_args_list[0][0][0]
+    messages = chat_request.messages
     # system prompt 应包含修仙小说创作顾问
     assert "修仙小说创作顾问" in messages[0]["content"]
     # user prompt 应包含标题

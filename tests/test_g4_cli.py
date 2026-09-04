@@ -18,7 +18,7 @@ import typer
 from typer.testing import CliRunner
 
 from agent.cli.commands.autowrite import autowrite
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
 
 
 # ============================================================
@@ -414,7 +414,7 @@ def test_cli_max_time_param(tmp_path: Path, monkeypatch) -> None:
             return _make_result()
 
     monkeypatch.setattr(
-        "agent.workflows.agentic_pipeline.AgenticPipelineWorkflow",
+        "agent.workflows.pipeline.agentic_pipeline.AgenticPipelineWorkflow",
         _CapturingPipeline,
     )
 
@@ -456,7 +456,7 @@ def test_cli_cost_tier_param(tmp_path: Path, monkeypatch) -> None:
             return _make_result()
 
     monkeypatch.setattr(
-        "agent.workflows.agentic_pipeline.AgenticPipelineWorkflow",
+        "agent.workflows.pipeline.agentic_pipeline.AgenticPipelineWorkflow",
         _CapturingPipeline,
     )
 
@@ -496,7 +496,7 @@ def test_cli_budget_margin_param(tmp_path: Path, monkeypatch) -> None:
             return _make_result()
 
     monkeypatch.setattr(
-        "agent.workflows.agentic_pipeline.AgenticPipelineWorkflow",
+        "agent.workflows.pipeline.agentic_pipeline.AgenticPipelineWorkflow",
         _CapturingPipeline,
     )
 
@@ -536,7 +536,7 @@ def test_cli_llm_timeout_param(tmp_path: Path, monkeypatch) -> None:
             return _make_result()
 
     monkeypatch.setattr(
-        "agent.workflows.agentic_pipeline.AgenticPipelineWorkflow",
+        "agent.workflows.pipeline.agentic_pipeline.AgenticPipelineWorkflow",
         _CapturingPipeline,
     )
 

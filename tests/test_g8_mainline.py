@@ -23,9 +23,9 @@ from rich.console import Console
 
 from agent.client import LLMResponse
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
-from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
-from agent.workflows.mainline import decide_mainline_advance
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
+from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
+from agent.workflows.pipeline.mainline import decide_mainline_advance
 from tests._g3_fakes import _StubEditor, _StubMemory, _StubPlanner, _make_plan
 from tests.conftest import _build_minimal_project
 
@@ -133,7 +133,7 @@ class _FakeWriter:
         m5.state_machine.load()  # 与 M5.run（行 138）一致：先 load 再 _load_context
         ctx = m5._load_context()
         self.ctx_list.append(ctx)
-        from agent.workflows.agentic_write import AgenticWriteWorkflow
+        from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
 
         aw = AgenticWriteWorkflow(
             project_dir=self.project_dir, llm_client=self.llm, console=Console(quiet=True)

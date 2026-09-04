@@ -18,7 +18,6 @@ dependencies = [
     "fastapi>=0.110.0",
     "uvicorn[standard]>=0.29.0",
     "python-multipart>=0.0.9",
-    "llmagent",
 ]
 
 [project.optional-dependencies]
@@ -35,14 +34,14 @@ novel-agent = "agent.cli:app"
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
-# src 布局：Python 包位于 src/agent/，pyproject.toml 在仓库根（agent/）。
+# src 布局：Python 包位于 src/agent/ + src/llmagent/，pyproject.toml 在仓库根（agent/）。
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["agent*"]
+include = ["agent*", "llmagent*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests"]
-pythonpath = ["src", "../llmagent/src"]
+testpaths = ["tests", "llmagent_tests"]
+pythonpath = ["src"]
 
 [tool.ruff]
 line-length = 100

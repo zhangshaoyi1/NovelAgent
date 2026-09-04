@@ -13,7 +13,7 @@ from pathlib import Path
 
 from agent.core.registry.genre_pack import GenreManifest, GenrePack, GenrePackRegistry
 from agent.core.infra.hook_dispatcher import dispatch_genre_hooks
-from agent.workflows import m1_config
+from agent.workflows.planning import m1_config
 
 
 def _snapshot_genre_rules():
@@ -56,10 +56,12 @@ def test_m5_check_prompt_includes_genre_rules(tmp_path: Path) -> None:
     """M5 质量校验 prompt 注入题材层质量规则文本（mock 捕获）"""
     from unittest.mock import MagicMock
 
-    from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
+
+    from types import SimpleNamespace
 
     llm = MagicMock()
-    llm.chat_utility.return_value = MagicMock(
+    llm.chat.return_value = SimpleNamespace(
         text='{"overall_pass": true, "rules": [], "suggestions": ""}'
     )
     wf = M5WriteChapterWorkflow(project_dir=tmp_path, llm_client=llm)
@@ -72,12 +74,14 @@ def test_m5_check_prompt_includes_genre_rules(tmp_path: Path) -> None:
         },
         "pressure_stage": "发展",
         "characters_fingerprint": "",
+        "chapter_num": 1,
     }
     chapter = "主角运转功法，丹田灵气翻涌，一举突破至炼气三层。"
     wf._quality_check_and_revise(ctx, chapter)
 
-    called = llm.chat_utility.call_args
-    check_prompt = called.kwargs["messages"][1]["content"]
+    called = llm.chat.call_args_list[0]
+    req = called[0][0]
+    check_prompt = req.messages[1]["content"]
     assert "xiuxian" in check_prompt
     # 题材层质量规则文本应被注入（如 G-01 境界推进频率）
     assert "境界推进" in check_prompt or "G-01" in check_prompt

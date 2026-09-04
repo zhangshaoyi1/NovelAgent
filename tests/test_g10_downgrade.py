@@ -13,7 +13,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow, _DOWNGRADE_ORDER
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow, _DOWNGRADE_ORDER
 
 
 class _FakeTracer:
@@ -89,7 +89,7 @@ def test_downgrade_within_token_budget_returns_false(tmp_path: Path) -> None:
 def test_checkpoint_trips_when_no_downgrade(tmp_path: Path) -> None:
     from types import SimpleNamespace
 
-    from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+    from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
 
     wf = AgenticPipelineWorkflow(
         tmp_path, console=None, cost_tier="economy", auto_downgrade=True

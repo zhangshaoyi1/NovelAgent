@@ -16,7 +16,7 @@ from agent.core.story.foresight import (
     ForesightStore,
     ForesightThread,
 )
-from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 from tests.conftest import make_project
 
 
@@ -129,7 +129,7 @@ def test_store_upsert_and_persist(tmp_path: Path) -> None:
 def test_import_from_m13_flat(tmp_path: Path) -> None:
     d = make_project(tmp_path, n_chapters=0)
     from agent.core.story import ForesightStore, ForesightThread
-    from agent.workflows.m13_foreshadow import M13ForeshadowWorkflow
+    from agent.workflows.evaluation.m13_foreshadow import M13ForeshadowWorkflow
 
     store = ForesightStore(d)
     wf = M13ForeshadowWorkflow(project_dir=d)

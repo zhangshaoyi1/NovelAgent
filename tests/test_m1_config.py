@@ -5,31 +5,34 @@ mock LLM，验证流程正确性，不真实调用 API。
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMConfig, LLMResponse
+from agent.client import LLMConfig
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.m1_config import M1ConfigWorkflow, M1Input
+from agent.workflows.planning.m1_config import M1ConfigWorkflow, M1Input
+
+
+MOCK_WORLD_JSON = {
+    "synopsis": "废柴少年得传承，逆天修仙",
+    "worldview": "九天大陆，灵气复苏的时代",
+    "power_system": "灵根+功法+法力体系",
+    "factions": "- 玄天宗\n- 魔道\n- 散修联盟",
+    "golden_finger": "太虚镜，可推演功法",
+}
 
 
 @pytest.fixture
 def mock_llm() -> MagicMock:
-    """mock LLMClient，返回固定的世界观 JSON"""
-    llm = MagicMock(spec=GatewayAdapter)
-    llm.chat_creative.return_value = LLMResponse(
-        text=(
-            '{"synopsis": "废柴少年得传承，逆天修仙",'
-            '"worldview": "九天大陆，灵气复苏的时代",'
-            '"power_system": "灵根+功法+法力体系",'
-            '"factions": "- 玄天宗\\n- 魔道\\n- 散修联盟",'
-            '"golden_finger": "太虚镜，可推演功法"}'
-        ),
-        usage={"total_tokens": 100},
-        model="test-model",
+    """mock Gateway，返回固定的世界观 JSON"""
+    llm = MagicMock()
+    llm.chat.return_value = SimpleNamespace(
+        text=json.dumps(MOCK_WORLD_JSON, ensure_ascii=False)
     )
     return llm
 
@@ -145,9 +148,9 @@ def test_m1_llm_called_with_correct_prompt(
     """LLM 应被调用，且 system prompt 正确"""
     workflow.run(user_input=sample_input)
 
-    mock_llm.chat_creative.assert_called_once()
-    call_args = mock_llm.chat_creative.call_args
-    messages = call_args.kwargs["messages"]
+    mock_llm.chat.assert_called_once()
+    req = mock_llm.chat.call_args[0][0]
+    messages = req.messages
     assert messages[0]["role"] == "system"
     assert "修仙小说世界观设计师" in messages[0]["content"]
     assert messages[1]["role"] == "user"
@@ -157,11 +160,9 @@ def test_m1_llm_called_with_correct_prompt(
 
 def test_m1_handles_llm_json_parse_failure(tmp_path: Path) -> None:
     """LLM 返回非 JSON 时重试一次，仍失败应明确抛错而非静默写残缺产物。"""
-    bad_llm = MagicMock(spec=GatewayAdapter)
-    bad_llm.chat_creative.return_value = LLMResponse(
-        text="这不是 JSON，只是普通文本输出",
-        usage={},
-        model="m",
+    bad_llm = MagicMock()
+    bad_llm.chat.return_value = SimpleNamespace(
+        text="这不是 JSON，只是普通文本输出"
     )
     workflow = M1ConfigWorkflow(
         project_dir=tmp_path,
@@ -176,7 +177,7 @@ def test_m1_handles_llm_json_parse_failure(tmp_path: Path) -> None:
     # 不应静默写入残缺 world.md
     assert not (tmp_path / "world.md").exists()
     # 递增重试（充足预算 + 纯 JSON 强化）：共调用三次后仍失败才抛错
-    assert bad_llm.chat_creative.call_count == 3
+    assert bad_llm.chat.call_count == 3
 
 
 def test_m1_creates_project_dir_if_not_exists(

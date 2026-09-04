@@ -19,7 +19,7 @@ from pathlib import Path
 
 from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.core.engine.state_machine import State
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
 from tests._g3_fakes import (
     _FakeLLM,
     _StubEditor,
@@ -112,7 +112,7 @@ def test_autoplan_idempotent_on_rerun(tmp_path: Path) -> None:
 # 关键前置失败（M1 抛异常）→ 安全退出、不进写章
 # ============================================================
 def test_m1_failure_blocks_pipeline(tmp_path: Path, monkeypatch) -> None:
-    from agent.workflows import m1_config
+    from agent.workflows.planning import m1_config
 
     def _boom(self, user_input=None):
         raise RuntimeError("M1 故意失败（测试）")
@@ -134,7 +134,7 @@ def test_m1_failure_blocks_pipeline(tmp_path: Path, monkeypatch) -> None:
 # 非关键失败（M4 抛异常）→ 不崩、降级占位、续跑不崩
 # ============================================================
 def test_m4_failure_degrades_and_continues(tmp_path: Path, monkeypatch) -> None:
-    from agent.workflows import m4_character
+    from agent.workflows.planning import m4_character
 
     def _boom(self):
         raise RuntimeError("M4 故意失败（测试）")

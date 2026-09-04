@@ -17,7 +17,7 @@ from pathlib import Path
 from rich.console import Console
 
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 from tests._g3_fakes import _StubEditor, _StubMemory, _StubPlanner, _make_plan
 from tests.conftest import _build_minimal_project
 from tests.test_g8_mainline import _CountingLLM, _FakeWriter, _make_g8_project, _make_pipeline, _read_progress, S01
@@ -174,7 +174,7 @@ def test_ending_empty_falls_back_to_wrapup(tmp_path: Path) -> None:
     ctx = m5._load_context()
     assert ctx["ending"] == ""
     assert ctx["ending_mode"] is True
-    from agent.workflows.agentic_write import AgenticWriteWorkflow
+    from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
 
     aw = AgenticWriteWorkflow(project_dir=d, llm_client=_CountingLLM(), console=Console(quiet=True))
     task = aw._build_task(ctx)

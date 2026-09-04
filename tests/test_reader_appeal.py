@@ -13,8 +13,8 @@ from __future__ import annotations
 
 from pathlib import Path
 from unittest.mock import MagicMock
+from types import SimpleNamespace
 
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.quality.scoring.reader_appeal import (
     _EVAL_DIM_LABELS,
     _EVAL_SYSTEM_PROMPT,
@@ -23,14 +23,12 @@ from agent.core.quality.scoring.reader_appeal import (
 
 
 def _fake_llm(json_text: str, *, raise_error: bool = False) -> MagicMock:
-    llm = MagicMock(spec=GatewayAdapter)
+    llm = MagicMock()
     if raise_error:
-        llm.chat_utility.side_effect = RuntimeError("network down")
+        llm.chat.side_effect = RuntimeError("network down")
     else:
-        llm.chat_utility.return_value = LLMResponse(
+        llm.chat.return_value = SimpleNamespace(
             text=json_text,
-            raw={},
-            usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
         )
     return llm
 

@@ -19,9 +19,9 @@ from unittest.mock import MagicMock
 import pytest
 from typer.testing import CliRunner
 
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
+from agent.client import LLMResponse
 from agent.core.engine.workflow_registry import get_workflow
-from agent.workflows.m21_review import (
+from agent.workflows.evaluation.m21_review import (
     GENERAL_RUBRIC,
     MODE_DIMENSIONS,
     M21ReviewWorkflow,
@@ -60,9 +60,9 @@ FIXED_LLM_JSON = {
 
 
 def make_mock_llm() -> MagicMock:
-    """构造返回固定 JSON 的 mock LLM（每个 chat_utility 调用返回同一结果）"""
-    llm = MagicMock(spec=GatewayAdapter)
-    llm.chat_utility.return_value = LLMResponse(
+    """构造返回固定 JSON 的 mock LLM（每个 chat 调用返回同一结果）"""
+    llm = MagicMock()
+    llm.chat.return_value = MagicMock(
         text=json.dumps(FIXED_LLM_JSON, ensure_ascii=False)
     )
     return llm
@@ -104,19 +104,19 @@ class TestModes:
     def test_full_calls_llm_five_times(self, tmp_path: Path) -> None:
         wf, llm, _ = _build_workflow(tmp_path, mode="full")
         report = wf.review(scope="all", mode="full")
-        assert llm.chat_utility.call_count == 5  # 4 视角 + 1 裁决
+        assert llm.chat.call_count == 5  # 4 视角 + 1 裁决
         assert len(report.dimensions) == 4
 
     def test_lean_calls_llm_three_times(self, tmp_path: Path) -> None:
         wf, llm, _ = _build_workflow(tmp_path, mode="lean")
         report = wf.review(scope="all", mode="lean")
-        assert llm.chat_utility.call_count == 3  # 2 视角 + 1 裁决
+        assert llm.chat.call_count == 3  # 2 视角 + 1 裁决
         assert len(report.dimensions) == 2
 
     def test_solo_calls_llm_once(self, tmp_path: Path) -> None:
         wf, llm, _ = _build_workflow(tmp_path, mode="solo")
         report = wf.review(scope="all", mode="solo")
-        assert llm.chat_utility.call_count == 1  # 单视角综合（verdict 提示词）
+        assert llm.chat.call_count == 1  # 单视角综合（verdict 提示词）
         # solo 把综合评审同时呈现为一个视角
         assert len(report.dimensions) == 1
         assert report.dimensions[0].key == "solo"
@@ -228,8 +228,9 @@ class TestScope:
 # ============================================================
 class TestRubric:
     def _user_content(self, llm: MagicMock, call_index: int = 0) -> str:
-        call = llm.chat_utility.call_args_list[call_index]
-        messages = call.kwargs["messages"]
+        call = llm.chat.call_args_list[call_index]
+        chat_request = call.args[0]
+        messages = chat_request.messages
         return messages[1]["content"]
 
     def test_general_rubric_injected(self, tmp_path: Path) -> None:
@@ -263,8 +264,9 @@ class TestRubric:
         """维度评审的 system prompt 应来自 m21.* 提示词"""
         wf, llm, _ = _build_workflow(tmp_path, mode="full")
         wf.review(scope="all", mode="full")
-        call = llm.chat_utility.call_args_list[0]
-        system_msg = call.kwargs["messages"][0]["content"]
+        call = llm.chat.call_args_list[0]
+        chat_request = call.args[0]
+        system_msg = chat_request.messages[0]["content"]
         assert "故事架构师" in system_msg  # architect.md system
 
     def test_invalid_platform_raises(self, tmp_path: Path) -> None:
@@ -284,8 +286,8 @@ class TestRubric:
 class TestDegradation:
     def test_non_json_response_degrades(self, tmp_path: Path) -> None:
         d = make_project(tmp_path, n_chapters=2)
-        llm = MagicMock(spec=GatewayAdapter)
-        llm.chat_utility.return_value = LLMResponse(text="抱歉，我无法生成。")
+        llm = MagicMock()
+        llm.chat.return_value = MagicMock(text="抱歉，我无法生成。")
         wf = M21ReviewWorkflow(project_dir=d, llm_client=llm)
         report = wf.review(scope="all", mode="solo")
         # 降级不阻断：仍返回报告，总评 CONCERNS
@@ -299,8 +301,8 @@ class TestDegradation:
 class TestCLI:
     def _patch_llm(self, monkeypatch: pytest.MonkeyPatch, mock: MagicMock) -> None:
         zero_arg = lambda *a, **kw: mock  # noqa: E731
-        monkeypatch.setattr("agent.client.gateway_adapter.create_gateway_adapter", zero_arg)
-        monkeypatch.setattr("agent.workflows.m21_review.create_gateway_adapter", zero_arg)
+        monkeypatch.setattr("agent.client.gateway_adapter.create_gateway", zero_arg)
+        monkeypatch.setattr("agent.workflows.evaluation.m21_review.create_gateway", zero_arg)
 
     def test_review_book_json_structure(self, tmp_path: Path, monkeypatch) -> None:
         from agent.cli import app

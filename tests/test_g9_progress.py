@@ -22,8 +22,8 @@ from rich.console import Console
 
 from agent.core.engine.events import ProgressEventBus, compute_eta_s
 from agent.core.engine.state_machine import State
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
-from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
+from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 from tests._g3_fakes import _StubEditor, _StubMemory, _StubPlanner, _make_plan
 from tests.conftest import _build_minimal_project
 

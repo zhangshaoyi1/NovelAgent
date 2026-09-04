@@ -61,19 +61,17 @@ NovelAgent 提供**两种等价的使用入口**，可以混着用、随时切�
 
 ### 2.2 安装 agent 包
 
-NovelAgent 由**两个包**组成：应用包 `agent`（本仓库）+ 编排内核包 `llmagent`（旁边的 `../llmagent`，提供统一 LLM 网关 Gateway）。**两个包需在同一工作区根目录下，且要先装内核再装应用**：
+NovelAgent 应用与编排内核（llmagent）**统一在一个包内**，一次安装即可：
 
 ```bash
 # 方式 A：正式安装（构建 wheel）
-pip install ./llmagent
 pip install ./agent
 
 # 方式 B：editable 安装（改源码即时生效，推荐开发 / 调试期）
-pip install -e ./llmagent
 pip install -e ./agent
 ```
 
-依赖见 `agent/pyproject.toml`（核心：typer、rich、pydantic、jinja2、openai、pyyaml、python-frontmatter、python-dotenv、**fastapi、uvicorn、python-multipart**——后三者用于 Web UI；另有本地依赖 `llmagent`）。
+依赖见 `agent/pyproject.toml`（核心：typer、rich、pydantic、jinja2、openai、pyyaml、python-frontmatter、python-dotenv、**fastapi、uvicorn、python-multipart**——后三者用于 Web UI；内核 llmagent 已内置于 `src/llmagent/`，随包自动安装）。
 
 > **Web UI 依赖**：启动网页界面（`novel-agent web`）需要 `fastapi` 与 `uvicorn`，二者已写入 `pyproject.toml` 的 `dependencies`。若你是早先按旧 README 安装、没装过这俩包，重跑一次安装命令即可（见下方 2.2）。
 
@@ -81,14 +79,14 @@ pip install -e ./agent
 
 ```bash
 novel-agent --help
-# 或（不安装包，从仓库根目录把两个 src 加入 PYTHONPATH，<NovelAgent> 即仓库根）：
+# 或（不安装包，从仓库根目录把 src 加入 PYTHONPATH）：
 # Windows（PowerShell）：
-$env:PYTHONPATH="./agent/src;./llmagent/src"; python -m agent.cli --help
+$env:PYTHONPATH="./agent/src"; python -m agent.cli --help
 # Linux / macOS：
-PYTHONPATH=./agent/src:./llmagent/src python -m agent.cli --help
+PYTHONPATH=./agent/src python -m agent.cli --help
 ```
 
-能打印出命令列表即安装成功。若报 `No module named 'llmagent'`，说明没装内核包（见 §八 故障排查）。
+能打印出命令列表即安装成功。
 
 ---
 
@@ -591,7 +589,7 @@ novel-agent merge-genres -d novels/my-novel
 
 | 现象                                                             | 原因                             | 处理                                                                                                                                       |
 | -------------------------------------------------------------- | ------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `No module named 'llmagent'`                                    | 没安装旁边的内核包（agent 依赖 `../llmagent`） | 先 `pip install -e ./llmagent` 再 `pip install -e ./agent`；或运行前把 `llmagent/src` 加入 PYTHONPATH（见 §2.3） |
+| `ModuleNotFoundError: No module named 'llmagent'`                      | llmagent 内核未正确安装（agent 依赖 `src/llmagent/`） | 确认 `pip install -e ./agent` 已正确完成；或运行前把 `llmagent/src` 加入 PYTHONPATH（见 §2.3） |
 | `LLM_API_KEY 未配置` / 找不到 key                                    | `.env` 没放对或没加载                 | 确认 `agent/.env` 存在且含 `LLM_API_KEY`；或命令加 `--env`                                                                                          |
 | `429` / `速率限制` / `rate limit`                                  | LLM 服务商 RPM 限流                 | `write` 会自动退避重试；频繁则调大 `LLM_TIMEOUT`、换额度更高模型，或改用 `compose` 一键驱动（含退避重试）                                                                    |
 | `pre_validation_blocked`                                       | 世界观高严重度冲突                      | 按报告改 `world.md` / `subline` / 角色，或用 `adjust-*` 调整后再 `write`                                                                              |
@@ -600,6 +598,10 @@ novel-agent merge-genres -d novels/my-novel
 | `Form data requires "python-multipart" to be installed`        | Web UI 表单接口需要 python-multipart | 重跑 `pip install -e ./agent`；或单独 `pip install "python-multipart>=0.0.9"`                                                                  |
 | 进度丢失 / 状态异常                                                    | 状态文件损坏                         | 先 `doctor` 诊断；必要时 `snapshot` 后 `rollback`，或 `reset-state`                                                                                |
 | 想换模型但不生效                                                       | `.env` 未重载                     | 重启终端 / 重新运行命令（`.env` 每次命令启动读取）                                                                                                           |
+| `'Gateway' object has no attribute 'chat_structured'` 或 `Planner 决策失败` | `planner.py` 错误地将 `chat_structured` 作为 Gateway 方法调用 | 已修复：改为使用 `gateway_adapter.chat_structured(gateway, ...)` 独立函数。见 `src/agent/agents/planner.py` |
+| `No active exception to reraise` 或 `'ChatRequest' object is not subscriptable` | `traced_llm.py` 中 `_record` 方法在 `try/except` 块外使用了 bare `raise`；`TracedLLMClient.chat()` 接口与 Gateway 不兼容 | 已修复：将 `raise` 移入 `except` 块内，在 `TracedLLMClient.chat()` 中增加 `ChatRequest` 对象检测。见 `src/agent/core/llmops/traced_llm.py` |
+| `'NoneType' object has no attribute 'chat'` | `AgenticPipelineWorkflow` 未创建 Gateway 实例，导致 `TracedLLMClient` 包装了 `None` | 已修复：在 `_traced_llm()` 中增加懒初始化，`self.llm` 为 `None` 时自动创建 Gateway。见 `src/agent/workflows/agentic_pipeline.py` |
+| `'Gateway' object has no attribute 'chat_creative'`（去AI味/质量校验阶段） | `DeslopRewriter` 和 `QualityChecker` 直接调用 `self.llm.chat_creative()`，但 `Gateway` 无此方法 | 已修复：改为调用 `gateway_adapter.chat_creative(gateway, ...)` 独立函数。见 `src/agent/core/anti_ai/rewriter.py` 和 `src/agent/core/quality/scoring/quality_checker.py` |
 
 ---
 

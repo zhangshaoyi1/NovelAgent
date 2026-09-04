@@ -36,14 +36,15 @@ def test_banned_words_exceed_limit_fails(tmp_path: Path) -> None:
 def test_banned_words_within_limit_passes(tmp_path: Path) -> None:
     """禁用词未超限 → passed=True"""
     qc = QualityChecker(project_dir=tmp_path)
-    report = qc.check("主角拔剑，剑光如雪。", ctx={})
+    report = qc.check("主角拔剑，剑光如雪。寒风凛冽，剑气纵横，一招一式皆有章法。林寻深吸一口气，握紧手中的剑，目光坚定。这场战斗他等了太久，今日必有一战。对手实力强劲，但他无所畏惧，因为背后是必须要守护的人。" * 30, ctx={})
     assert report.passed is True
 
 
 def test_revise_loop_converges(tmp_path: Path) -> None:
     """revise_loop 在修订后收敛为通过"""
     qc = QualityChecker(project_dir=tmp_path)
-    bad = "突然忽然就在这时微微一笑" * 3
+    base = "恍惚之间，突然，就在这时，微微一笑。林寻拔剑，剑光如雪。寒风凛冽，剑气纵横，一招一式皆有章法。林寻深吸一口气，握紧手中的剑，目光坚定。这场战斗他等了太久，今日必有一战。"
+    bad = base * 30
 
     def revise_fn(text: str, issues: list[Issue]) -> str:
         cleaned = text

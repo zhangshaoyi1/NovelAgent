@@ -18,12 +18,12 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
-from agent.client import LLMResponse
-from agent.workflows.m15_bookworm import (
+from agent.workflows.evaluation.m15_bookworm import (
     BookwormComparison,
     BookwormInput,
     BookwormIssue,
@@ -89,9 +89,11 @@ REVIEW_JSON_LOW = {
 
 
 def make_mock_llm(response_json: dict) -> MagicMock:
-    """构造返回指定 JSON 的 mock LLM"""
+    """构造返回指定 JSON 的 mock Gateway"""
     llm = MagicMock()
-    llm.chat_utility.return_value = LLMResponse(text=json.dumps(response_json))
+    llm.chat.return_value = SimpleNamespace(
+        text=json.dumps(response_json, ensure_ascii=False)
+    )
     return llm
 
 
@@ -254,17 +256,17 @@ class TestReview:
         llm = make_mock_llm(REVIEW_JSON_HIGH)
         skill = BookwormSkill.load(llm=llm)
         skill.review(BookwormInput(title="T", book_name="B", opening_text="X"))
-        llm.chat_utility.assert_called_once()
-        # 检查 temperature 为低值
-        kwargs = llm.chat_utility.call_args.kwargs
-        assert kwargs.get("temperature", 1.0) <= 0.5
+        llm.chat.assert_called_once()
+        # 检查 temperature 为低值（通过 ChatRequest.hint.temperature）
+        req = llm.chat.call_args[0][0]
+        assert req.hint.temperature <= 0.5
 
     def test_review_system_prompt_contains_persona_and_rubrics(self) -> None:
         """system prompt 应包含 persona 与 rubrics"""
         llm = make_mock_llm(REVIEW_JSON_HIGH)
         skill = BookwormSkill.load(llm=llm)
         skill.review(BookwormInput(title="T", book_name="B", opening_text="X"))
-        messages = llm.chat_utility.call_args.kwargs["messages"]
+        messages = llm.chat.call_args[0][0].messages
         system_msg = messages[0]["content"]
         assert "资深书虫" in system_msg  # persona
         assert "title_appeal" in system_msg  # rubrics
@@ -277,7 +279,7 @@ class TestReview:
                 title="血色试炼", book_name="凡人修仙", opening_text="开头正文ABC", genre="xiuxian"
             )
         )
-        messages = llm.chat_utility.call_args.kwargs["messages"]
+        messages = llm.chat.call_args[0][0].messages
         user_msg = messages[1]["content"]
         assert "凡人修仙" in user_msg
         assert "血色试炼" in user_msg
@@ -289,7 +291,7 @@ class TestReview:
         llm = make_mock_llm(REVIEW_JSON_HIGH)
         skill = BookwormSkill.load(llm=llm)
         skill.review(BookwormInput(title="T", book_name="B", opening_text="X", genre="xiuxian"))
-        system_msg = llm.chat_utility.call_args.kwargs["messages"][0]["content"]
+        system_msg = llm.chat.call_args[0][0].messages[0]["content"]
         assert "修仙题材读者期待" in system_msg
 
     def test_review_unknown_genre_degrades_gracefully(self) -> None:
@@ -297,7 +299,7 @@ class TestReview:
         llm = make_mock_llm(REVIEW_JSON_HIGH)
         skill = BookwormSkill.load(llm=llm)
         skill.review(BookwormInput(title="T", book_name="B", opening_text="X", genre="scifi"))
-        system_msg = llm.chat_utility.call_args.kwargs["messages"][0]["content"]
+        system_msg = llm.chat.call_args[0][0].messages[0]["content"]
         assert "未内置 scifi 题材期待" in system_msg
 
     def test_review_no_genre(self) -> None:
@@ -305,7 +307,7 @@ class TestReview:
         llm = make_mock_llm(REVIEW_JSON_HIGH)
         skill = BookwormSkill.load(llm=llm)
         skill.review(BookwormInput(title="T", book_name="B", opening_text="X"))
-        system_msg = llm.chat_utility.call_args.kwargs["messages"][0]["content"]
+        system_msg = llm.chat.call_args[0][0].messages[0]["content"]
         assert "题材读者期待" not in system_msg
 
 

@@ -367,7 +367,7 @@ def test_pipeline_full_run_with_stubs(tmp_path):
     planner = PlannerAgent(tmp_path, memory=ml, decide=_planner_decide)
     editor = EditorAgent(tmp_path, consistency_fn=lambda p, t, c: [], memory=ml)
 
-    from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+    from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
 
     pipeline = AgenticPipelineWorkflow(
         project_dir=proj,
@@ -398,7 +398,7 @@ def test_pipeline_skips_plan_when_no_brief(tmp_path):
     _seed_planning(proj)
     ml = MemoryLayer(tmp_path)
     editor = EditorAgent(tmp_path, consistency_fn=lambda p, t, c: [], memory=ml)
-    from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+    from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
 
     pipeline = AgenticPipelineWorkflow(
         project_dir=proj,

@@ -67,7 +67,7 @@ def test_add_feedback_invalid(tmp_path: Path) -> None:
 def test_load_context_separates_reader_signals(tmp_path: Path) -> None:
     from tests.conftest import _build_minimal_project
 
-    from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 
     proj = _build_minimal_project(tmp_path)
     # 先写 12 章进度（state），再注入反馈（弃书点 12）
@@ -86,7 +86,7 @@ def test_load_context_separates_reader_signals(tmp_path: Path) -> None:
 
 
 def test_build_task_injects_feedback() -> None:
-    from agent.workflows.agentic_write import AgenticWriteWorkflow
+    from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
 
     wf = AgenticWriteWorkflow(Path("."), llm_client=None)
     task = wf._build_task(
@@ -98,7 +98,7 @@ def test_build_task_injects_feedback() -> None:
 
 
 def test_build_task_no_feedback_byte_identical() -> None:
-    from agent.workflows.agentic_write import AgenticWriteWorkflow
+    from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
 
     wf = AgenticWriteWorkflow(Path("."), llm_client=None)
     task = wf._build_task(_min_ctx())

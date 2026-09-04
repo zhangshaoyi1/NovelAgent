@@ -1,4 +1,4 @@
-﻿"""M14 故事架构生成与确认门禁工作流单元测试
+"""M14 故事架构生成与确认门禁工作流单元测试
 
 mock LLM，验证生成、迭代、确认、门禁、状态转换。
 """
@@ -6,15 +6,14 @@ mock LLM，验证生成、迭代、确认、门禁、状态转换。
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import frontmatter
 import pytest
-
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.m14_architecture import (
+from agent.workflows.evaluation.m14_architecture import (
     M14ArchitectureWorkflow,
     M14ConfirmResult,
     M14GenerateResult,
@@ -71,20 +70,18 @@ ARCHITECTURE_JSON_ITERATED = """{
 @pytest.fixture
 def mock_llm() -> MagicMock:
     """mock LLM"""
-    llm = MagicMock(spec=GatewayAdapter)
-    llm.chat_creative.return_value = LLMResponse(
-        text=ARCHITECTURE_JSON, usage={}, model="m"
-    )
+    llm = MagicMock()
+    llm.chat.return_value = SimpleNamespace(text=ARCHITECTURE_JSON)
     return llm
 
 
 @pytest.fixture
 def mock_llm_iterate() -> MagicMock:
     """mock LLM，第二次调用返回迭代结果"""
-    llm = MagicMock(spec=GatewayAdapter)
-    llm.chat_creative.side_effect = [
-        LLMResponse(text=ARCHITECTURE_JSON, usage={}, model="m"),
-        LLMResponse(text=ARCHITECTURE_JSON_ITERATED, usage={}, model="m"),
+    llm = MagicMock()
+    llm.chat.side_effect = [
+        SimpleNamespace(text=ARCHITECTURE_JSON),
+        SimpleNamespace(text=ARCHITECTURE_JSON_ITERATED),
     ]
     return llm
 
@@ -186,9 +183,9 @@ def test_m14_generate_llm_called_with_world_info(
 ) -> None:
     """LLM 应被调用，且 prompt 含标题"""
     workflow.generate()
-    mock_llm.chat_creative.assert_called_once()
-    call_kwargs = mock_llm.chat_creative.call_args
-    messages = call_kwargs.kwargs["messages"]
+    mock_llm.chat.assert_called_once()
+    req = mock_llm.chat.call_args[0][0]
+    messages = req.messages
     user_msg = next(m["content"] for m in messages if m["role"] == "user")
     assert "太虚镜" in user_msg
 
@@ -258,10 +255,11 @@ def test_m14_iterate_uses_feedback_in_prompt(
     """迭代 prompt 应包含用户反馈"""
     workflow_iterate.generate()
     workflow_iterate.iterate("让结局更悲壮")
-    # 第二次 chat_creative 调用是迭代
-    second_call = mock_llm_iterate.chat_creative.call_args_list[1]
+    # 第二次 chat 调用是迭代
+    second_call = mock_llm_iterate.chat.call_args_list[1]
+    req = second_call[0][0]
     user_msg = next(
-        m["content"] for m in second_call.kwargs["messages"] if m["role"] == "user"
+        m["content"] for m in req.messages if m["role"] == "user"
     )
     assert "让结局更悲壮" in user_msg
 

@@ -15,13 +15,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 from typer.testing import CliRunner
 
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.engine.workflow_registry import get_workflow
-from agent.workflows.m20_analyze import (
+from agent.workflows.evaluation.m20_analyze import (
     M20AnalyzeWorkflow,
     _cn_to_int,
     _is_chapter_header,
@@ -200,12 +200,12 @@ REPORT_TEXT = """# 拆文报告
 def make_mock_llm() -> MagicMock:
     """构造按 system 提示词路由的 mock LLM：
     JSON 阶段（概要/聚合/设定）返回合法 JSON，Markdown 阶段返回对应文本。"""
-    llm = MagicMock(spec=GatewayAdapter)
+    llm = MagicMock()
 
-    def _side_effect(messages=None, **kwargs):
+    def _side_effect(req):
         system = ""
-        if messages:
-            first = messages[0]
+        if req.messages:
+            first = req.messages[0]
             system = first.get("content", "") if isinstance(first, dict) else ""
         if "提取全书概要" in system:
             text = json.dumps(OUTLINE_JSON, ensure_ascii=False)
@@ -223,7 +223,7 @@ def make_mock_llm() -> MagicMock:
             text = REPORT_TEXT
         else:
             text = "OK"
-        return LLMResponse(text=text)
+        return SimpleNamespace(text=text)
 
     llm.chat.side_effect = _side_effect
     return llm
@@ -400,7 +400,8 @@ class TestStage2Tolerance:
         llm = make_mock_llm()
         real_side = llm.chat.side_effect
 
-        def failing_side(messages=None, **kwargs):
+        def failing_side(req):
+            messages = req.messages
             system = (
                 messages[0].get("content", "") if messages and isinstance(messages[0], dict) else ""
             )
@@ -409,7 +410,7 @@ class TestStage2Tolerance:
             )
             if "原子提取" in system and "第2章" in user:
                 raise RuntimeError("mock 摘要失败")
-            return real_side(messages, **kwargs)
+            return real_side(req)
 
         llm.chat.side_effect = failing_side
         wf = M20AnalyzeWorkflow(project_dir=d, llm=llm)
@@ -429,8 +430,8 @@ class TestStage2Tolerance:
 class TestCLI:
     def _patch_llm(self, monkeypatch, mock: MagicMock) -> None:
         zero_arg = lambda *a, **kw: mock  # noqa: E731
-        monkeypatch.setattr("agent.client.gateway_adapter.create_gateway_adapter", zero_arg)
-        monkeypatch.setattr("agent.workflows.m20_analyze.create_gateway_adapter", zero_arg)
+        monkeypatch.setattr("agent.client.gateway_adapter.create_gateway", zero_arg)
+        monkeypatch.setattr("agent.workflows.evaluation.m20_analyze.create_gateway", zero_arg)
 
     def test_analyze_json_structure(self, tmp_path: Path, monkeypatch) -> None:
         from agent.cli import app

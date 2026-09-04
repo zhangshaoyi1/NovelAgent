@@ -22,7 +22,7 @@ from typer.testing import CliRunner
 
 from agent.cli import app
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.m18_recovery import (
+from agent.workflows.evaluation.m18_recovery import (
     Draft,
     DraftManager,
     DraftResumeDecision,
@@ -336,7 +336,7 @@ class TestStateRecovery:
         self._setup_state(tmp_path, State.WRITING)
         recovery = StateRecovery(tmp_path)
         # 手动写入超过 MAX_HISTORY 条历史
-        from agent.workflows.m18_recovery import StateRecovery as SR
+        from agent.workflows.evaluation.m18_recovery import StateRecovery as SR
 
         for i in range(SR.MAX_HISTORY + 5):
             recovery._save_history({"state": "WRITING", "i": i})

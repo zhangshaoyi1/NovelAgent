@@ -17,7 +17,7 @@ from typing import Any
 from unittest.mock import patch
 
 from agent.cli.commands.autowrite import autowrite
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
 
 
 def _capture_pipeline_run(monkeypatch, captured: dict[str, Any], result) -> None:
@@ -30,7 +30,7 @@ def _capture_pipeline_run(monkeypatch, captured: dict[str, Any], result) -> None
             return result
 
     monkeypatch.setattr(
-        "agent.workflows.agentic_pipeline.AgenticPipelineWorkflow",
+        "agent.workflows.pipeline.agentic_pipeline.AgenticPipelineWorkflow",
         _CapturingPipeline,
     )
 

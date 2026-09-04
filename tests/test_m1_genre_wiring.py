@@ -1,4 +1,4 @@
-﻿"""T-2 M1 题材模板去硬编码 + 选项动态化验收
+"""T-2 M1 题材模板去硬编码 + 选项动态化验收
 
 覆盖：
 - GenrePackRegistry.list_genres() 至少含 wuxia / xiuxian。
@@ -8,31 +8,33 @@
 """
 from __future__ import annotations
 
+import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
 
 from agent.core.registry.genre_pack import GenrePackRegistry
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.m1_config import M1ConfigWorkflow, M1Input
+from agent.workflows.planning.m1_config import M1ConfigWorkflow, M1Input
+
+
+MOCK_GENRE_JSON = {
+    "synopsis": "少年初入江湖",
+    "worldview": "中原武林，群雄并起",
+    "power_system": "内力+招式",
+    "factions": "- 少林\n- 武当",
+    "golden_finger": "无名剑谱",
+}
 
 
 @pytest.fixture
 def mock_llm() -> MagicMock:
-    llm = MagicMock(spec=GatewayAdapter)
-    llm.chat_creative.return_value = LLMResponse(
-        text=(
-            '{"synopsis": "少年初入江湖",'
-            '"worldview": "中原武林，群雄并起",'
-            '"power_system": "内力+招式",'
-            '"factions": "- 少林\\n- 武当",'
-            '"golden_finger": "无名剑谱"}'
-        ),
-        usage={"total_tokens": 100},
-        model="test-model",
+    llm = MagicMock()
+    llm.chat.return_value = SimpleNamespace(
+        text=json.dumps(MOCK_GENRE_JSON, ensure_ascii=False)
     )
     return llm
 

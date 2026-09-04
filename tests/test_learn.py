@@ -1,4 +1,4 @@
-﻿"""Learn 测试（增量 E / T05）
+"""Learn 测试（增量 E / T05）
 
 覆盖：
 - LearningStore：add/list/clear + 同 category+text 去重 + 损坏降级为空
@@ -14,8 +14,7 @@ from pathlib import Path
 
 from agent.cli import app
 from agent.core.story.learning_store import Learning, LearningStore
-from agent.client import LLMResponse
-from agent.workflows.m17_learn import LearningMiner
+from agent.workflows.evaluation.m17_learn import LearningMiner
 from typer.testing import CliRunner
 
 from tests.conftest import _build_minimal_project, make_project
@@ -36,11 +35,10 @@ class _FakeLearnLLM:
     def __init__(self, *args, **kwargs) -> None:
         pass
 
-    def chat_utility(self, messages, **kwargs) -> LLMResponse:
-        return LLMResponse(
+    def chat(self, req, **kwargs):
+        from types import SimpleNamespace
+        return SimpleNamespace(
             text=json.dumps(_LEARN_JSON, ensure_ascii=False),
-            raw={},
-            usage={},
         )
 
 
@@ -129,7 +127,7 @@ class TestLearnCommand:
 
     def test_extract_json(self, tmp_path: Path, monkeypatch) -> None:
         d = make_project(tmp_path, n_chapters=2)
-        monkeypatch.setattr("agent.cli.commands.learn.create_gateway_adapter", _FakeLearnLLM)
+        monkeypatch.setattr("agent.cli.commands.learn.create_gateway", _FakeLearnLLM)
         runner = CliRunner()
         r = runner.invoke(
             app, ["learn", "--action", "extract", "--range", "1-2", "--json", "-d", str(d)]
@@ -171,7 +169,7 @@ class TestLearnCommand:
 # ============================================================
 class TestM5LearningsInjection:
     def test_load_context_includes_learnings(self, tmp_path: Path) -> None:
-        from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+        from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 
         d = _build_minimal_project(tmp_path)
         LearningStore(d).add("hook", "用数据化绝境开场立住反差")
@@ -184,7 +182,7 @@ class TestM5LearningsInjection:
         assert "数据化绝境" in ctx["learnings_text"]
 
     def test_load_context_empty_when_no_learnings(self, tmp_path: Path) -> None:
-        from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+        from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 
         d = _build_minimal_project(tmp_path)
         wf = M5WriteChapterWorkflow(project_dir=d, llm_client=_FakeLearnLLM())

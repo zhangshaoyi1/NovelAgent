@@ -20,8 +20,8 @@ from rich.console import Console
 
 from agent.agents.evaluator import EvaluatorAgent
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
-from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
+from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 from tests.conftest import _build_minimal_project
 from tests.test_g8_mainline import _CountingLLM, _make_g8_project, S01
 
@@ -250,7 +250,7 @@ def _capture_pipeline_run(monkeypatch, captured: dict, result: PipelineResult) -
             return result
 
     monkeypatch.setattr(
-        "agent.workflows.agentic_pipeline.AgenticPipelineWorkflow",
+        "agent.workflows.pipeline.agentic_pipeline.AgenticPipelineWorkflow",
         _CapturingPipeline,
     )
 

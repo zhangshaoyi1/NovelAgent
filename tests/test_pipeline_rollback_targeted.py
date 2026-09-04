@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from agent.agents.evaluator import DimensionResult, NovelHealthReport, RepairPlan
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow, build_rewrite_hint
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow, build_rewrite_hint
 
 
 def _fail_report() -> NovelHealthReport:

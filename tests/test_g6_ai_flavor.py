@@ -26,7 +26,7 @@ from agent.core.quality.guardrails import (
     build_guardrails,
     load_guardrail_config,
 )
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
 
 
 # ============================================================

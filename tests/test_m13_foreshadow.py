@@ -18,7 +18,7 @@ from pathlib import Path
 import pytest
 
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.m13_foreshadow import (
+from agent.workflows.evaluation.m13_foreshadow import (
     Foreshadow,
     ForeshadowStats,
     M13ForeshadowWorkflow,

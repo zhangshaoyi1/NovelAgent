@@ -7,25 +7,24 @@
 
 from __future__ import annotations
 
-import frontmatter
 from pathlib import Path
+from typing import Any
 
+import frontmatter
 import pytest
 
-from agent.client import LLMResponse
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
-from agent.workflows.m4_character import M4CharacterWorkflow
+from agent.workflows.planning.m4_character import M4CharacterWorkflow
 
 
 class _NonJsonLLM:
     """返回纯文本（非 JSON）的 fake LLM：模拟 LLM 抽风返回不可解析内容。"""
 
-    def chat_creative(self, messages, **kwargs) -> LLMResponse:
-        return LLMResponse(
-            text="我觉得这个主角应该很热血，先写一段背景吧，没必要给 JSON。",
-            usage={"prompt_tokens": 1, "completion_tokens": 1},
-            model="fake",
+    def chat(self, req) -> Any:
+        from types import SimpleNamespace
+        return SimpleNamespace(
+            text="我觉得这个主角应该很热血，先写一段背景吧，没必要给 JSON。"
         )
 
 
@@ -74,11 +73,10 @@ def test_m4_non_dict_raises(tmp_path: Path) -> None:
     """返回 JSON 但顶层是 list（非 dict）：两次尝试后也应响亮抛错。"""
 
     class _ListLLM:
-        def chat_creative(self, messages, **kwargs) -> LLMResponse:
-            return LLMResponse(
+        def chat(self, req) -> Any:
+            from types import SimpleNamespace
+            return SimpleNamespace(
                 text='[{"name": "错误结构"}]',
-                usage={"prompt_tokens": 1, "completion_tokens": 1},
-                model="fake",
             )
 
     st = _seed_project(tmp_path)

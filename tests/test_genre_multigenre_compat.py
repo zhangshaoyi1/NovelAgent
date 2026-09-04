@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 from agent.core.registry.genre_pack import first_genre
-from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 from agent.cli.commands import inject_genre as inject_genre_cmd
 
 

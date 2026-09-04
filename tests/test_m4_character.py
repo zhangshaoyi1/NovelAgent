@@ -20,10 +20,10 @@ from unittest.mock import MagicMock
 import frontmatter
 import pytest
 
-from agent.client.gateway_adapter import GatewayAdapter, create_gateway_adapter, LLMResponse
+from agent.client import LLMResponse
 from agent.core.engine.state_machine import Event, State, StateMachine
-from agent.workflows.m14_architecture import M14ArchitectureWorkflow
-from agent.workflows.m4_character import M4CharacterWorkflow
+from agent.workflows.evaluation.m14_architecture import M14ArchitectureWorkflow
+from agent.workflows.planning.m4_character import M4CharacterWorkflow
 
 
 # ============================================================
@@ -255,25 +255,19 @@ M4_LLM_OUTPUT = {
 # 夹具
 # ============================================================
 def _build_mock_llm(output: dict) -> MagicMock:
-    """MagicMock + chat_creative.return_value = LLMResponse(json)"""
+    """MagicMock + chat.return_value = SimpleNamespace(text=json)"""
     import json as _json
 
-    llm = MagicMock(spec=GatewayAdapter)
-    llm.chat_creative.return_value = LLMResponse(
+    llm = MagicMock()
+    llm.chat.return_value = MagicMock(
         text=_json.dumps(output, ensure_ascii=False),
-        raw={"choices": [{"message": {"content": _json.dumps(output, ensure_ascii=False)}}]},
-        usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
     )
     return llm
 
 
 def _build_mock_llm_custom(text: str) -> MagicMock:
-    llm = MagicMock(spec=GatewayAdapter)
-    llm.chat_creative.return_value = LLMResponse(
-        text=text,
-        raw={"choices": [{"message": {"content": text}}]},
-        usage={"prompt_tokens": 1, "completion_tokens": 1, "total_tokens": 2},
-    )
+    llm = MagicMock()
+    llm.chat.return_value = MagicMock(text=text)
     return llm
 
 
@@ -484,9 +478,9 @@ class TestHappyPath:
         fake = _build_mock_llm(M4_LLM_OUTPUT)
         wf = M4CharacterWorkflow(project_dir=d, llm_client=fake)
         wf.run()
-        assert fake.chat_creative.call_count == 1
-        call_kwargs = fake.chat_creative.call_args.kwargs
-        messages = call_kwargs.get("messages") or fake.chat_creative.call_args.args[0]
+        assert fake.chat.call_count == 1
+        chat_request = fake.chat.call_args[0][0]
+        messages = chat_request.messages
         user_msg = next(m["content"] for m in messages if m["role"] == "user")
         # prompt 包含支线名
         assert "器灵人性觉醒" in user_msg

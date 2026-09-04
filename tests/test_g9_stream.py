@@ -20,7 +20,7 @@ from agent.cli._render import RenderStreamer
 from agent.cli.commands.autowrite import _make_on_event
 from agent.core.engine.events import ProgressEventBus
 from agent.core.engine.state_machine import State
-from agent.workflows.m5_write_chapter import M5WriteChapterWorkflow
+from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
 from tests.conftest import _build_minimal_project, _build_mock_llm, QUALITY_FAIL
 
 

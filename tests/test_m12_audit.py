@@ -1,4 +1,4 @@
-﻿"""M12 内容审核与上下文管理单元测试
+"""M12 内容审核与上下文管理单元测试
 
 覆盖：
 - ConflictArbiter (F12.1)：设定冲突检测、报告解析、严重度判定
@@ -12,13 +12,14 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import frontmatter
 import pytest
 
-from agent.client import LLMResponse
-from agent.workflows.m12_audit import (
+
+from agent.workflows.evaluation.m12_audit import (
     ChapterSummary,
     ChapterSummarizer,
     Conflict,
@@ -94,7 +95,7 @@ def project_with_chapters(project: Path) -> Path:
 
 def _make_llm(text: str = "") -> MagicMock:
     llm = MagicMock()
-    llm.chat_utility.return_value = LLMResponse(text=text, raw={}, usage={})
+    llm.chat.return_value = SimpleNamespace(text=text)
     return llm
 
 
@@ -192,7 +193,7 @@ class TestConflictArbiter:
 
     def test_llm_exception_returns_empty(self, project: Path) -> None:
         llm = MagicMock()
-        llm.chat_utility.side_effect = Exception("network")
+        llm.chat.side_effect = Exception("network")
         arbiter = ConflictArbiter(project, llm=llm)
         report = arbiter.check_new_setting("新设定")
 
@@ -206,7 +207,7 @@ class TestConflictArbiter:
         arbiter = ConflictArbiter(project, llm=llm)
         arbiter.check_new_setting("设定", subline_id="S01")
         # 验证 LLM 被调用
-        llm.chat_utility.assert_called_once()
+        llm.chat.assert_called_once()
 
     def test_no_world_file(self, tmp_path: Path) -> None:
         d = tmp_path / "p"
@@ -297,7 +298,7 @@ class TestContentAuditor:
     def test_llm_failure_defaults_pass(self, project: Path) -> None:
         """LLM 异常时默认放行（避免阻塞写作）"""
         llm = MagicMock()
-        llm.chat_utility.side_effect = Exception("network")
+        llm.chat.side_effect = Exception("network")
         auditor = ContentAuditor(project, llm=llm)
         result = auditor.audit_chapter("正文")
 
@@ -325,8 +326,8 @@ class TestContentAuditor:
         auditor = ContentAuditor(project, llm=llm, violence_policy="strict")
         result = auditor.audit_chapter("正文", violence_policy="lenient")
         # 验证传给 LLM 的内容包含 lenient 描述
-        call_args = llm.chat_utility.call_args
-        user_msg = call_args.kwargs["messages"][1]["content"]
+        call_args = llm.chat.call_args
+        user_msg = call_args[0][0].messages[1]["content"]
         assert "宽松" in user_msg
 
     def test_long_text_truncated(self, project: Path) -> None:
@@ -336,8 +337,8 @@ class TestContentAuditor:
         auditor = ContentAuditor(project, llm=llm)
         long_text = "x" * 10000
         auditor.audit_chapter(long_text)
-        call_args = llm.chat_utility.call_args
-        user_msg = call_args.kwargs["messages"][1]["content"]
+        call_args = llm.chat.call_args
+        user_msg = call_args[0][0].messages[1]["content"]
         assert len(user_msg) < 10000
 
 
@@ -424,7 +425,7 @@ class TestChapterSummarizer:
 
     def test_summarize_llm_failure(self, project_with_chapters: Path) -> None:
         llm = MagicMock()
-        llm.chat_utility.side_effect = Exception("err")
+        llm.chat.side_effect = Exception("err")
         summarizer = ChapterSummarizer(project_with_chapters, llm=llm)
         assert summarizer.summarize_chapter(1) is None
 

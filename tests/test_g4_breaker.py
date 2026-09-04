@@ -22,7 +22,7 @@ import pytest
 from rich.console import Console
 
 from agent.core.llmops.trace import TraceStore, get_tracer, set_tracer
-from agent.workflows.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
+from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow, PipelineResult
 from tests._g3_fakes import _StubEditor, _StubMemory, _StubPlanner, _StubWriter, _make_plan
 
 
