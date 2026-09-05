@@ -94,6 +94,19 @@ def acquire_project_lock(project_dir: Path | str, command: str = "autowrite") ->
             return lock_path
 
 
+def probe_project_lock(project_dir: Path | str, command: str = "autowrite") -> dict | None:
+    """只读探测：锁被活跃进程持有时返回持有者信息，否则返回 None。不创建/删除锁。"""
+    lock_path = Path(project_dir) / ".state" / f"{command}.lock"
+    if not lock_path.exists():
+        return None
+    existing = _read_lock(lock_path)
+    try:
+        pid = int(existing.get("pid") or 0)
+    except (TypeError, ValueError):
+        return None
+    return existing if _pid_alive(pid) else None
+
+
 def _read_lock(lock_path: Path) -> dict:
     try:
         return json.loads(lock_path.read_text(encoding="utf-8"))

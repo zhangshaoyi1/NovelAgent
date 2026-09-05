@@ -97,6 +97,28 @@ class RunManager:
         pdir = project_path(run["project"])
         progress_file = pdir / ".state" / "progress.json"
 
+        # 单写者锁预检：同一小说已有活跃写进程时不再启动，直接给前端明确反馈
+        if run["command"] in WRITER_COMMANDS:
+            from agent.core.project_lock import probe_project_lock
+
+            holder = probe_project_lock(pdir, run["command"])
+            if holder:
+                self._emit(
+                    run,
+                    {
+                        "type": "log",
+                        "data": {
+                            "text": (
+                                f"✗ 已有写任务在运行（pid={holder.get('pid')}，"
+                                f"启动于 {holder.get('started_at')}，命令 {holder.get('command')}），"
+                                "本次未启动。请等待其完成或先停止该进程。"
+                            )
+                        },
+                    },
+                )
+                await self._finish(run, exit_code=9)
+                return
+
         cmd: list[str] = [
             sys.executable,
             "-m",
@@ -258,6 +280,10 @@ NO_DIR_COMMANDS = {
     "load-skill",
     "version",
 }
+
+# 会向小说项目落盘的写命令：启动前做单写者锁预检（UX 层拦截，
+# CLI 侧 acquire_project_lock 仍是兜底）
+WRITER_COMMANDS = {"autowrite", "rewrite"}
 
 
 def sanitize_project_name(name: str) -> str:
