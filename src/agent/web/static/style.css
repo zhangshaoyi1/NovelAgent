@@ -479,13 +479,16 @@ input[type="range"] { flex: 1; min-height: 0; padding: 0; accent-color: var(--co
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   margin-bottom: 10px; font: 400 12px var(--font-mono); color: var(--color-muted-fg);
 }
+/* 浅色日志流，对齐设计图 03-write 的 .stream：纸色底、逐行分隔 */
 .rc-log {
-  font-family: var(--font-mono); font-size: 12px; line-height: 1.75;
-  background: var(--color-primary); color: #D6D3D1; border-radius: var(--radius-sm);
-  padding: 14px 16px; height: 320px; overflow: auto;
+  font-family: var(--font-mono); font-size: 12px; line-height: 1.8;
+  background: #FFFFFF; color: var(--color-foreground); border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  padding: 12px 16px; height: 320px; overflow: auto;
   white-space: pre-wrap; word-break: break-word;
 }
-.rc-log .log-line { padding: 1px 0; border-bottom: 1px solid rgba(255, 255, 255, .04); }
+.rc-log .log-line { padding: 2px 0; border-bottom: 1px solid #F5F5F4; }
+.rc-log .log-line:last-child { border-bottom: 0; }
 .rc-timeline { margin: 12px 0 0; max-height: 140px; overflow: auto; font-size: 12px; color: var(--color-muted-fg); }
 .rc-timeline:empty { margin: 0; }
 .rc-timeline .tl-item { padding: 3px 0; border-bottom: 1px dashed var(--color-border); }
@@ -493,7 +496,7 @@ input[type="range"] { flex: 1; min-height: 0; padding: 0; accent-color: var(--co
 
 /* ---------- 停靠式控制台（写作间右栏） ---------- */
 .dock-console { display: flex; flex-direction: column; min-height: 0; flex: 1; }
-.dock-console .rc-log { height: auto; flex: 1; min-height: 0; background: #29252E; }
+.dock-console .rc-log { height: auto; flex: 1; min-height: 0; }
 .dock-console .rc-timeline { flex: none; max-height: 110px; margin-top: 10px; }
 .dock-console .rc-status-row { margin: 10px 0 0; }
 
@@ -561,8 +564,9 @@ input[type="range"] { flex: 1; min-height: 0; padding: 0; accent-color: var(--co
 }
 .writer-chapters li:last-child { border-bottom: 0; }
 .writer-chapters .ch-num {
-  flex: none; width: 40px; text-align: center; font: 500 11px var(--font-mono);
-  color: var(--color-secondary); background: var(--color-muted); border-radius: 999px; padding: 2px 0;
+  flex: none; min-width: 40px; text-align: center; white-space: nowrap;
+  font: 500 11px var(--font-mono); line-height: 1; padding: 5px 8px;
+  color: var(--color-secondary); background: var(--color-muted); border-radius: 999px;
 }
 .writer-chapters a { color: var(--color-foreground); text-decoration: none; font-weight: 500; flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .writer-chapters a:hover { color: var(--color-accent); }
