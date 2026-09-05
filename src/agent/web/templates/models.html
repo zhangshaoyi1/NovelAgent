@@ -1,0 +1,222 @@
+{% extends "base.html" %}
+{% block title %}模型管理 · NovelAgent{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>模型管理</h1>
+  <p class="muted">在界面集中配置所有可用模型，不再依赖本地 .env。默认模型用于所有写作与生成任务；
+  写作间还可按次临时切换模型。API Key 仅保存在本地 <code>models.json</code>，不会上传。</p>
+</div>
+
+<section class="card">
+  <div class="actions-row" style="justify-content: space-between">
+    <h2 style="margin:0">模型档案</h2>
+    <div class="actions-row" style="margin:0">
+      <button class="btn small" onclick="importEnv()">📥 导入当前 .env 配置</button>
+      <button class="btn primary small" onclick="showForm()">＋ 新增模型</button>
+    </div>
+  </div>
+  <div id="models-grid" class="profile-grid">
+    <p class="muted">加载中…</p>
+  </div>
+</section>
+
+<!-- 新增 / 编辑表单 -->
+<section class="card" id="profile-form-card" style="display:none">
+  <h2 id="form-title">新增模型档案</h2>
+  <form id="profile-form" onsubmit="return saveProfile(event)">
+    <input type="hidden" id="f-id" />
+    <div class="form-grid">
+      <label>档案名称 *
+        <input id="f-name" placeholder="如：GLM 旗舰 / DeepSeek 官方" required />
+      </label>
+      <label>协议类型
+        <select id="f-provider">
+          <option value="openai">OpenAI 兼容协议（绝大多数服务商）</option>
+          <option value="ollama">Ollama 本地部署</option>
+        </select>
+      </label>
+      <label class="full">服务地址（Base URL，写到 /v1 为止）
+        <input id="f-base-url" placeholder="如：https://dashscope.aliyuncs.com/compatible-mode/v1" />
+      </label>
+      <label class="full">API Key（编辑时留空 = 保留原值）
+        <input id="f-api-key" type="password" placeholder="sk-…" autocomplete="off" />
+      </label>
+      <label>模型 ID *
+        <input id="f-model" placeholder="如：glm-4.7 / deepseek-v3 / qwen-max" required />
+      </label>
+      <label>超时（秒）
+        <input id="f-timeout" type="number" value="300" min="5" max="3600" />
+      </label>
+      <label>思考开关
+        <select id="f-thinking">
+          <option value="">不干预（由服务商默认）</option>
+          <option value="false">强制关闭（推荐：批量写作提速省 token）</option>
+          <option value="true">强制开启</option>
+        </select>
+      </label>
+      <label class="full">备注
+        <input id="f-notes" placeholder="选填：用途、价格、限流情况等" />
+      </label>
+      <label class="chk full"><input type="checkbox" id="f-enabled" checked /> 启用该档案（禁用后不出现在模型选择器）</label>
+    </div>
+    <div class="actions-row">
+      <button type="submit" class="btn primary">保存</button>
+      <button type="button" class="btn" onclick="hideForm()">取消</button>
+    </div>
+  </form>
+</section>
+
+<section class="card">
+  <h2>工作方式说明</h2>
+  <ul class="muted small info-list">
+    <li><b>默认模型</b>：所有写作、讨论、大纲等生成任务的默认调用模型（优先级高于 .env）。</li>
+    <li><b>按次切换</b>：实时写作间里可临时指定本次写章使用的模型，不影响默认设置。</li>
+    <li><b>兼容规则</b>：.env 中的嵌入模型（EMBEDDING_*）、搜索等工具配置仍然生效，不受影响。</li>
+    <li><b>连通性测试</b>：保存后建议先「测试」，确认端点、Key、模型 ID 三者可用。</li>
+  </ul>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+  let MODELS = [];
+  let ACTIVE = '';
+
+  async function loadModels() {
+    const j = await (await fetch('/api/models')).json();
+    MODELS = j.profiles || [];
+    ACTIVE = j.active || '';
+    renderCards();
+  }
+
+  function esc(s) {
+    return String(s || '').replace(/[&<>"']/g, c =>
+      ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+  }
+
+  function renderCards() {
+    const grid = document.getElementById('models-grid');
+    if (!MODELS.length) {
+      grid.innerHTML = '<p class="muted">还没有模型档案。点击右上角「新增模型」，或一键导入当前 .env 配置。</p>';
+      return;
+    }
+    grid.innerHTML = MODELS.map(p => {
+      const isActive = p.id === ACTIVE;
+      const thinking = p.enable_thinking === true ? '开' : p.enable_thinking === false ? '关' : '默认';
+      return `
+      <div class="profile-card ${isActive ? 'active' : ''} ${p.enabled ? '' : 'disabled'}">
+        <div class="pc-head">
+          <span class="pc-name">${esc(p.name)}</span>
+          ${isActive ? '<span class="badge ok">默认使用</span>' : ''}
+          ${p.enabled ? '' : '<span class="badge warn">已禁用</span>'}
+        </div>
+        <div class="pc-model"><code>${esc(p.model)}</code></div>
+        <div class="pc-meta muted small">
+          <div title="${esc(p.base_url)}">🔌 ${esc(p.base_url || 'Ollama 默认地址')}</div>
+          <div>🔑 ${esc(p.api_key || '未设置 Key')}</div>
+          <div>🧠 思考：${thinking} · ⏱ ${p.timeout}s</div>
+          ${p.notes ? `<div>📝 ${esc(p.notes)}</div>` : ''}
+        </div>
+        <div class="pc-test muted small" id="test-${esc(p.id)}"></div>
+        <div class="row-actions">
+          ${isActive ? '' : `<button class="btn small primary" onclick="activate('${esc(p.id)}')">设为默认</button>`}
+          <button class="btn small" onclick="testProfile('${esc(p.id)}')">测试</button>
+          <button class="btn small" onclick="edit('${esc(p.id)}')">编辑</button>
+          <button class="btn small danger" onclick="del('${esc(p.id)}')">删除</button>
+        </div>
+      </div>`;
+    }).join('');
+  }
+
+  function showForm() {
+    document.getElementById('form-title').textContent = '新增模型档案';
+    document.getElementById('profile-form').reset();
+    document.getElementById('f-id').value = '';
+    document.getElementById('f-enabled').checked = true;
+    document.getElementById('profile-form-card').style.display = '';
+    document.getElementById('profile-form-card').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  function hideForm() {
+    document.getElementById('profile-form-card').style.display = 'none';
+  }
+
+  function edit(id) {
+    const p = MODELS.find(m => m.id === id);
+    if (!p) return;
+    document.getElementById('form-title').textContent = '编辑模型档案：' + p.name;
+    document.getElementById('f-id').value = p.id;
+    document.getElementById('f-name').value = p.name;
+    document.getElementById('f-provider').value = p.provider;
+    document.getElementById('f-base-url').value = p.base_url;
+    document.getElementById('f-api-key').value = '';
+    document.getElementById('f-model').value = p.model;
+    document.getElementById('f-timeout').value = p.timeout;
+    document.getElementById('f-thinking').value =
+      p.enable_thinking === true ? 'true' : p.enable_thinking === false ? 'false' : '';
+    document.getElementById('f-notes').value = p.notes || '';
+    document.getElementById('f-enabled').checked = !!p.enabled;
+    document.getElementById('profile-form-card').style.display = '';
+    document.getElementById('profile-form-card').scrollIntoView({ behavior: 'smooth' });
+  }
+
+  async function saveProfile(ev) {
+    ev.preventDefault();
+    const th = document.getElementById('f-thinking').value;
+    const body = {
+      id: document.getElementById('f-id').value,
+      name: document.getElementById('f-name').value,
+      provider: document.getElementById('f-provider').value,
+      base_url: document.getElementById('f-base-url').value,
+      api_key: document.getElementById('f-api-key').value,
+      model: document.getElementById('f-model').value,
+      timeout: document.getElementById('f-timeout').value || 300,
+      enable_thinking: th === '' ? null : th === 'true',
+      notes: document.getElementById('f-notes').value,
+      enabled: document.getElementById('f-enabled').checked,
+    };
+    const resp = await fetch('/api/models/save', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    const j = await resp.json();
+    if (!j.ok) { alert(j.message || '保存失败'); return false; }
+    hideForm();
+    loadModels();
+    return false;
+  }
+
+  async function activate(id) {
+    const j = await (await fetch(`/api/models/${id}/activate`, { method: 'POST' })).json();
+    if (!j.ok) alert(j.message || '设置失败');
+    loadModels();
+  }
+
+  async function del(id) {
+    if (!confirm('确定删除该模型档案？')) return;
+    await fetch(`/api/models/${id}/delete`, { method: 'POST' });
+    loadModels();
+  }
+
+  async function testProfile(id) {
+    const box = document.getElementById('test-' + id);
+    box.innerHTML = '<span class="muted">⏳ 正在连接…</span>';
+    try {
+      const j = await (await fetch(`/api/models/${id}/test`, { method: 'POST' })).json();
+      box.innerHTML = j.ok
+        ? `<span class="ok">✓ ${esc(j.message)}（${(j.latency_ms / 1000).toFixed(1)}s）</span>`
+        : `<span class="err">✗ ${esc(j.message)}</span>`;
+    } catch (e) {
+      box.innerHTML = '<span class="err">✗ 请求失败：' + esc(String(e)) + '</span>';
+    }
+  }
+
+  async function importEnv() {
+    if (!confirm('把当前 .env 里的 LLM 配置导入为一个模型档案并设为默认？')) return;
+    const j = await (await fetch('/api/models/import-env', { method: 'POST' })).json();
+    alert(j.message);
+    loadModels();
+  }
+
+  loadModels();
+</script>
+{% endblock %}

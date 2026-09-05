@@ -72,6 +72,25 @@ class ComplexityRouter:
     ) -> RouteDecision:
         cards = available or self._default_cards
 
+        # 显式指定优先：调用方经 req.extra["provider"] / req.extra["model"]
+        # （chat_creative / chat_utility / chat_structured 的 model= 参数）指定
+        # 目标模型时直接命中，跳过复杂度分档与预算降档。
+        extra = req.extra or {}
+        explicit_provider = str(extra.get("provider") or "").strip()
+        explicit_model = str(extra.get("model") or "").strip()
+        if explicit_provider or explicit_model:
+            selected = self._match_explicit(
+                cards, explicit_provider, explicit_model
+            )
+            if selected is not None:
+                return RouteDecision(
+                    provider=selected.provider,
+                    model=explicit_model or selected.model,
+                    card=selected,
+                    strategy="explicit",
+                    budget=budget,
+                )
+
         # 按复杂度分档
         if req.hint.complexity == HintComplexity.simple:
             # 小模型：找最便宜的可用模型
@@ -96,3 +115,32 @@ class ComplexityRouter:
             strategy=strategy,
             budget=budget,
         )
+
+    @staticmethod
+    def _match_explicit(
+        cards: list[ModelCard],
+        explicit_provider: str,
+        explicit_model: str,
+    ) -> ModelCard | None:
+        """按显式 provider/model 匹配模型卡。
+
+        匹配顺序：provider+model 精确命中 > 仅 model 命中 > 仅 provider 命中。
+        仅指定 model 未命中时（OpenAI 兼容端点通常可服务任意 model 名）返回
+        第一张可用卡，由调用方以 explicit_model 覆盖其模型名。
+        指定了 provider 但无任何命中时返回 None（走原分档逻辑，不静默改道）。
+        """
+        if explicit_provider and explicit_model:
+            for c in cards:
+                if c.provider == explicit_provider and c.model == explicit_model:
+                    return c
+        if explicit_model:
+            for c in cards:
+                if c.model == explicit_model:
+                    return c
+            if not explicit_provider and cards:
+                return cards[0]
+        if explicit_provider:
+            for c in cards:
+                if c.provider == explicit_provider:
+                    return c
+        return None

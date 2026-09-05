@@ -600,6 +600,7 @@ async def create_project(
     genre: str = Form("xiuxian"),
     genres: str = Form(""),
     story_core: str = Form(""),
+    profile: str = Form(""),
 ) -> JSONResponse:
     safe = runner.sanitize_project_name(name)
     pdir = state.project_path(safe)
@@ -616,7 +617,13 @@ async def create_project(
         argv += ["--total-words", total_words.strip()]
     if chapter_length.strip():
         argv += ["--chapter-length", chapter_length.strip()]
-    run_id = runner.run_manager.new_run(safe, "start", argv)
+    env_extra = None
+    if profile.strip():
+        from agent.base import model_profiles
+
+        if model_profiles.get_profile(profile.strip()) is not None:
+            env_extra = {"NOVEL_MODEL_PROFILE": profile.strip()}
+    run_id = runner.run_manager.new_run(safe, "start", argv, env_extra=env_extra)
     asyncio.create_task(runner.run_manager.execute(run_id))
     return JSONResponse({"run_id": run_id, "project": safe})
 
@@ -649,6 +656,7 @@ async def api_run(
     command: str = Form(...),
     args: str = Form(""),
     argv_json: str = Form(""),
+    profile: str = Form(""),
 ) -> JSONResponse:
     # argv_json 优先（结构化参数列表，避免 shell 引号转义问题）；否则按字符串切分
     if argv_json.strip():
@@ -660,7 +668,15 @@ async def api_run(
             raise HTTPException(status_code=400, detail=f"argv_json 解析失败：{e}")
     else:
         argv = runner.split_args(args)
-    run_id = runner.run_manager.new_run(project, command, argv)
+    # 按次指定模型档案：子进程经 NOVEL_MODEL_PROFILE 环境变量解析（写作间模型选择用）
+    env_extra = None
+    if profile.strip():
+        from agent.base import model_profiles
+
+        if model_profiles.get_profile(profile.strip()) is None:
+            raise HTTPException(status_code=400, detail=f"模型档案不存在：{profile}")
+        env_extra = {"NOVEL_MODEL_PROFILE": profile.strip()}
+    run_id = runner.run_manager.new_run(project, command, argv, env_extra=env_extra)
     asyncio.create_task(runner.run_manager.execute(run_id))
     return JSONResponse({"run_id": run_id})
 
@@ -742,4 +758,167 @@ def api_prompts_reload(request: Request) -> HTMLResponse:
         request,
         "_prompts_table.html",
         {"request": request, "rows": _prompt_rows()},
+    )
+
+
+# ============================================================
+# 模型管理（多模型配置 / 激活 / 连通性测试）
+# ============================================================
+@app.get("/models", response_class=HTMLResponse)
+def models_page(request: Request) -> HTMLResponse:
+    """模型管理页：多模型档案配置，替代本地 .env 配置。"""
+    return templates.TemplateResponse(
+        request, "models.html", {"request": request, "active": "models"}
+    )
+
+
+@app.get("/api/models")
+def api_models() -> JSONResponse:
+    """模型档案列表（API Key 脱敏）。"""
+    from agent.base import model_profiles
+
+    store = model_profiles.load_store()
+    return JSONResponse(
+        {
+            "active": store.get("active", ""),
+            "profiles": [
+                model_profiles.masked_profile(p)
+                for p in model_profiles.list_profiles()
+            ],
+        }
+    )
+
+
+@app.post("/api/models/save")
+async def api_models_save(request: Request) -> JSONResponse:
+    """创建 / 更新模型档案（JSON body，字段缺失按默认值归一化）。"""
+    from agent.base import model_profiles
+
+    try:
+        data = await request.json()
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"ok": False, "message": f"请求体解析失败：{e}"}, status_code=400)
+    if not str(data.get("name") or "").strip():
+        return JSONResponse({"ok": False, "message": "档案名称不能为空"}, status_code=400)
+    if not str(data.get("model") or "").strip():
+        return JSONResponse({"ok": False, "message": "模型 ID 不能为空"}, status_code=400)
+    if not str(data.get("base_url") or "").strip() and data.get("provider") != "ollama":
+        return JSONResponse(
+            {"ok": False, "message": "服务地址不能为空（Ollama 可留空，默认 localhost:11434）"},
+            status_code=400,
+        )
+    # 编辑时不回传 api_key 表示保留旧值（前端只展示脱敏值）
+    pid = str(data.get("id") or "").strip()
+    if pid and not str(data.get("api_key") or "").strip():
+        old = model_profiles.get_profile(pid)
+        if old and old.get("api_key"):
+            data["api_key"] = old["api_key"]
+    p = model_profiles.upsert_profile(data)
+    return JSONResponse(
+        {"ok": True, "message": f"档案「{p['name']}」已保存", "profile": model_profiles.masked_profile(p)}
+    )
+
+
+@app.post("/api/models/{pid}/activate")
+def api_models_activate(pid: str) -> JSONResponse:
+    """设为默认模型（影响所有未按次指定模型的运行）。"""
+    from agent.base import model_profiles
+
+    if model_profiles.set_active(pid):
+        p = model_profiles.get_profile(pid)
+        return JSONResponse({"ok": True, "message": f"已将「{p['name']}」设为默认模型"})
+    return JSONResponse({"ok": False, "message": "档案不存在或未启用"}, status_code=400)
+
+
+@app.post("/api/models/{pid}/delete")
+def api_models_delete(pid: str) -> JSONResponse:
+    from agent.base import model_profiles
+
+    if model_profiles.delete_profile(pid):
+        return JSONResponse({"ok": True, "message": "档案已删除"})
+    return JSONResponse({"ok": False, "message": "档案不存在"}, status_code=404)
+
+
+@app.post("/api/models/{pid}/test")
+def api_models_test(pid: str) -> JSONResponse:
+    """连通性测试：用该档案真实调用一次轻量补全（最长 60s）。"""
+    import time as _time
+
+    from agent.base import model_profiles
+    from agent.base.llm import LLMConfig, LLMProvider
+
+    p = model_profiles.get_profile(pid)
+    if p is None:
+        return JSONResponse({"ok": False, "message": "档案不存在"}, status_code=404)
+    cfg = LLMConfig(
+        provider=p["provider"],
+        api_key=p["api_key"],
+        base_url=p["base_url"],
+        model=p["model"],
+        timeout=min(60, p["timeout"] or 60),
+        max_retries=0,
+    )
+    t0 = _time.monotonic()
+    try:
+        provider = LLMProvider.create(cfg)
+        resp = provider.chat(
+            messages=[{"role": "user", "content": "请只回复两个字：正常"}],
+            model=p["model"],
+            temperature=0.1,
+            max_tokens=512,
+            enable_thinking=False,  # 测试场景强制关思考，保证快速返回
+            timeout=min(60, p["timeout"] or 60),
+        )
+    except Exception as e:  # noqa: BLE001 - 测试失败要把原因带回来
+        return JSONResponse(
+            {"ok": False, "message": f"连接失败：{str(e)[:400]}", "latency_ms": 0}
+        )
+    elapsed = round((_time.monotonic() - t0) * 1000)
+    text = (resp.text or "").strip().replace("\n", " ")[:60]
+    return JSONResponse(
+        {
+            "ok": True,
+            "message": f"连接正常，模型已回复：{text or '(空回复)'}",
+            "latency_ms": elapsed,
+            "model": p["model"],
+        }
+    )
+
+
+@app.post("/api/models/import-env")
+def api_models_import_env() -> JSONResponse:
+    """把当前 .env / 环境变量里的 LLM 配置一键导入为模型档案（迁移用）。"""
+    import os as _os
+
+    from agent.base import model_profiles
+    from agent.base.config import ConfigLoader
+
+    ConfigLoader.load()
+    model = _os.getenv("LLM_MODEL_ID", "").strip()
+    base_url = _os.getenv("LLM_BASE_URL", "").strip()
+    api_key = _os.getenv("LLM_API_KEY", "").strip()
+    if not model:
+        return JSONResponse({"ok": False, "message": ".env 中未配置 LLM_MODEL_ID，无可导入"})
+    et = _os.getenv("LLM_ENABLE_THINKING", "").strip().lower()
+    enable_thinking = True if et in ("true", "1", "yes", "on") else (
+        False if et in ("false", "0", "no", "off") else None
+    )
+    p = model_profiles.upsert_profile(
+        {
+            "name": f".env 导入（{model}）",
+            "provider": _os.getenv("LLM_PROVIDER", "openai").strip().lower() or "openai",
+            "base_url": base_url,
+            "api_key": api_key,
+            "model": model,
+            "enable_thinking": enable_thinking,
+            "timeout": _os.getenv("LLM_TIMEOUT", "300").strip() or "300",
+            "notes": "由 .env 一键导入",
+        }
+    )
+    return JSONResponse(
+        {
+            "ok": True,
+            "message": f"已导入为档案「{p['name']}」并设为默认",
+            "profile": model_profiles.masked_profile(p),
+        }
     )

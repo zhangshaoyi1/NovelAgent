@@ -75,6 +75,10 @@ class PackedRequest:
     estimated_input_tokens: int = 0
     context_fingerprint: str = ""
     route: RouteDecision | None = None
+    # 来自 req.hint.temperature 的按次采样温度（None=由 Provider 用自身默认值）
+    temperature: float | None = None
+    # 来自 req.extra["enable_thinking"] 的按次思考开关（None=回退 Provider 配置）
+    enable_thinking: bool | None = None
 
 
 @dataclass

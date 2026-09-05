@@ -40,14 +40,28 @@ class _GatewayModelProvider:
         route = packed.route
         t0 = time.monotonic()
 
+        # 温度：优先用调用方 hint 指定的按次温度；缺省回退 0.8
+        temperature = getattr(packed, "temperature", None)
+        if temperature is None:
+            temperature = (
+                route.card.temperature if hasattr(route.card, "temperature") else 0.8
+            )
+        # 思考开关：调用方按次显式指定优先，否则取 Provider 配置
+        # （.env 或 Web 端模型档案）；此前硬编码 None/120s 会导致
+        # LLM_ENABLE_THINKING 与 LLM_TIMEOUT 失效
+        enable_thinking = getattr(packed, "enable_thinking", None)
+        if enable_thinking is None:
+            enable_thinking = getattr(self._provider.config, "enable_thinking", None)
+        timeout = int(getattr(self._provider.config, "timeout", 0) or 120)
+
         try:
             resp = self._provider.chat(
                 messages=messages,
                 model=route.model,
-                temperature=route.card.temperature if hasattr(route.card, 'temperature') else 0.8,
+                temperature=temperature,
                 max_tokens=None,
-                enable_thinking=None,
-                timeout=120,
+                enable_thinking=enable_thinking,
+                timeout=timeout,
             )
             elapsed = (time.monotonic() - t0) * 1000.0
             # usage 可能缺省（部分 provider 不返回）→ None.get() 会崩并连带

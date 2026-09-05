@@ -59,13 +59,15 @@ function appendProgress(el, ev) {
   el.scrollTop = el.scrollHeight;
 }
 
-/* 运行命令：argv 为数组（推荐）或字符串（兼容） */
-async function runCommand(project, command, argv, consoleObj, onDone) {
+/* 运行命令：argv 为数组（推荐）或字符串（兼容）。
+   profile：可选模型档案 id（写作间等场景按次指定模型，经 NOVEL_MODEL_PROFILE 注入子进程）。 */
+async function runCommand(project, command, argv, consoleObj, onDone, profile) {
   const fd = new FormData();
   fd.append('project', project);
   fd.append('command', command);
   if (Array.isArray(argv)) fd.append('argv_json', JSON.stringify(argv));
   else fd.append('args', argv || '');
+  if (profile) fd.append('profile', profile);
   let runId;
   try {
     const resp = await fetch('/api/run', { method: 'POST', body: fd });

@@ -96,8 +96,22 @@ class ConfigLoader:
 
 
 def _build_llm_config_from_env() -> "LLMConfig":
-    """从当前进程环境变量构建 LLMConfig"""
+    """构建 LLMConfig（模型档案优先，.env 兜底）
+
+    解析优先级：
+        1. NOVEL_MODEL_PROFILE 环境变量指定的模型档案（Web 端按次运行指定）
+        2. 档案库（models.json）中激活的档案（Web UI「设为默认」）
+        3. 纯环境变量 / .env（原有行为，向后兼容）
+    档案未填的字段逐项回退到环境变量值；无档案时行为与旧版完全一致。
+    """
     from agent.base.llm import LLMConfig
+    from agent.base import model_profiles
+
+    profile: dict | None = None
+    try:
+        profile = model_profiles.resolve_profile()
+    except Exception:  # noqa: BLE001 - 档案库异常降级走 env，不阻断
+        profile = None
 
     model = os.getenv("LLM_MODEL_ID", "glm-5.2")
     model_utility = os.getenv("LLM_MODEL_UTILITY", "") or model
@@ -114,18 +128,40 @@ def _build_llm_config_from_env() -> "LLMConfig":
     elif _et_raw in ("true", "1", "yes", "on"):
         enable_thinking = True
 
+    api_key = os.getenv("LLM_API_KEY", "")
+    base_url = os.getenv("LLM_BASE_URL", "")
+    timeout = int(os.getenv("LLM_TIMEOUT", "120"))
+    max_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
+
+    # 模型档案覆盖（仅覆盖档案中显式填写的字段，空字段保持 env 值）
+    if profile:
+        if profile.get("provider"):
+            provider = str(profile["provider"]).lower()
+        if profile.get("api_key"):
+            api_key = profile["api_key"]
+        if profile.get("base_url"):
+            base_url = profile["base_url"]
+        if profile.get("model"):
+            model = profile["model"]
+        if profile.get("enable_thinking") is not None:
+            enable_thinking = bool(profile["enable_thinking"])
+        if profile.get("timeout"):
+            timeout = int(profile["timeout"])
+        if profile.get("max_retries") is not None and str(profile.get("max_retries")).strip() != "":
+            max_retries = int(profile["max_retries"])
+
     return LLMConfig(
         provider=provider,
-        api_key=os.getenv("LLM_API_KEY", ""),
-        base_url=os.getenv("LLM_BASE_URL", ""),
+        api_key=api_key,
+        base_url=base_url,
         model=model,
         model_utility=model_utility,
         embedding_model=embedding_model,
         embedding_base_url=embedding_base_url,
         embedding_api_key=embedding_api_key,
         embedding_provider=embedding_provider,
-        timeout=int(os.getenv("LLM_TIMEOUT", "120")),
-        max_retries=int(os.getenv("LLM_MAX_RETRIES", "3")),
+        timeout=timeout,
+        max_retries=max_retries,
         retry_base_delay=float(os.getenv("LLM_RETRY_BASE_DELAY", "1.0")),
         fallback_providers=[
             p.strip()

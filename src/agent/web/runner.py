@@ -46,14 +46,25 @@ class RunManager:
     def __init__(self) -> None:
         self.runs: dict[str, dict[str, Any]] = {}
 
-    def new_run(self, name: str, command: str, argv: list[str]) -> str:
-        """登记一次新运行，返回 run_id。argv 为已切分好的参数列表。"""
+    def new_run(
+        self,
+        name: str,
+        command: str,
+        argv: list[str],
+        env_extra: dict[str, str] | None = None,
+    ) -> str:
+        """登记一次新运行，返回 run_id。argv 为已切分好的参数列表。
+
+        env_extra：注入子进程的额外环境变量（如 NOVEL_MODEL_PROFILE 指定
+        本次运行使用的模型档案），不改变既有 CLI 逻辑。
+        """
         run_id = uuid.uuid4().hex[:12]
         self.runs[run_id] = {
             "id": run_id,
             "project": name,
             "command": command,
             "argv": argv,
+            "env_extra": dict(env_extra or {}),
             "queue": asyncio.Queue(),
             "logs": [],
             "done": False,
@@ -81,6 +92,7 @@ class RunManager:
         cmd += run["argv"]
         env = dict(os.environ)
         env["PYTHONUNBUFFERED"] = "1"  # 保证 stdout 逐行实时流出
+        env.update(run.get("env_extra") or {})
 
         try:
             proc = await asyncio.create_subprocess_exec(

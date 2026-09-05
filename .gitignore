@@ -6,6 +6,8 @@ __pycache__/
 # 密钥：绝不提交 .env（含 LLM API Key 等敏感信息）
 .env
 .env.accel
+# 模型档案库（Web UI 多模型管理，同样含 API Key，不入库）
+models.json
 # 编辑器/资源管理器产生的副本（如「 - 副本.env」「.env - 副本」）同样含真实密钥，
 # 且不匹配上面的精确 .env 规则——曾因此差点入库，故用通配兜底（仅覆盖 env 类文件）。
 *副本*.env

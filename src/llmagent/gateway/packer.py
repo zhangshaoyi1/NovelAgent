@@ -40,6 +40,8 @@ class Packer:
             estimated_input_tokens=estimated_tokens,
             context_fingerprint=fingerprint,
             route=route,
+            temperature=req.hint.temperature,
+            enable_thinking=(req.extra or {}).get("enable_thinking"),
         )
 
     @staticmethod
