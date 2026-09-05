@@ -217,6 +217,21 @@ function genStage(project, command, argv, label) {
   runCommand(project, command.replace(/^\//, ''), argv, c, () => location.reload());
 }
 
+/* 事件委托：阶段生成按钮通过 data-* 属性传参（替代内联 onclick 拼 JSON，
+   修复 gen_argv 含双引号时 HTML 属性被截断、按钮点击无反应的 bug） */
+document.addEventListener('click', function (e) {
+  const btn = e.target.closest('button[data-gen-stage]');
+  if (!btn) return;
+  let argv = [];
+  try { argv = JSON.parse(btn.getAttribute('data-gen-argv') || '[]'); } catch (err) { argv = []; }
+  genStage(
+    btn.getAttribute('data-gen-project') || '',
+    btn.getAttribute('data-gen-cmd') || '',
+    argv,
+    btn.getAttribute('data-gen-label') || ''
+  );
+});
+
 /* 脉络讨论：读取讨论输入框的内容，作为预设讨论发给 /discuss --message，完成后刷新回显讨论纪要 */
 function sendDiscussion(project) {
   const el = document.getElementById('discuss-message');
@@ -870,6 +885,8 @@ async function qaSave(generate) {
     // 复用阶段卡上的「生成」按钮，与手动点击走同一链路
     const genBtn = document.querySelector('.stage-card button[data-gen-stage="' + s.stageKey + '"]');
     if (genBtn) { genBtn.click(); return; }
+    // 兜底提示：找不到生成按钮时必须显式告知，避免「保存了却没生成」的静默失败
+    alert('问答已保存，但未找到「' + (s.title || s.stageKey) + '」阶段的生成按钮（可能当前状态暂不可执行）。请到对应阶段页手动点击生成按钮。');
     location.reload();
   } else {
     o.querySelector('.qa-body').innerHTML = '<p class="rm-empty">✓ 问答已保存</p>';

@@ -112,7 +112,7 @@
   {% if st.generate or st.editable %}
   <div class="actions-row">
     {% if st.generate %}
-    <button class="btn primary" data-gen-stage="{{ st.key }}" onclick="genStage('{{ name }}','{{ st.cmd }}',{{ st.gen_argv|tojson }},'{{ st.gen_label }}')">{{ st.gen_label }}</button>
+    <button class="btn primary" data-gen-stage="{{ st.key }}" data-gen-project="{{ name }}" data-gen-cmd="{{ st.cmd }}" data-gen-argv='{{ st.gen_argv|tojson }}' data-gen-label="{{ st.gen_label }}">{{ st.gen_label }}</button>
     {% endif %}
     {% if st.key in ('world','discussion','architecture','outline','characters') %}
     <button class="btn" data-qa-btn="{{ st.key }}" onclick="openQaPanel('{{ name }}','{{ st.key }}')">🎯 问答引导</button>
