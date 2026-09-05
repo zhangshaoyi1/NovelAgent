@@ -106,7 +106,12 @@ class SkillRegistry(BaseRegistry[SkillProvider]):
                 continue
 
     def _parse_skill_info(self, skill_dir: Path) -> SkillInfo:
-        """从 SKILL.md 解析 skill 元信息"""
+        """从 SKILL.md 解析 skill 元信息
+
+        P2-9（Skill 标准互通）：对 AgentSkills/ClawHub/Cursor 风格的标准 frontmatter
+        宽容解析——专有字段（license/metadata/allowed-tools/openclaw 等）忽略不报错；
+        description 缺失时回退 whenToUse / when_to_use。
+        """
         import frontmatter
 
         skill_md = skill_dir / "SKILL.md"
@@ -117,11 +122,18 @@ class SkillRegistry(BaseRegistry[SkillProvider]):
         if not name:
             raise ValueError(f"SKILL.md 缺少 name 字段: {skill_md}")
 
+        description = str(
+            meta.get("description")
+            or meta.get("whenToUse")
+            or meta.get("when_to_use")
+            or ""
+        )
+
         return SkillInfo(
             name=name,
             version=str(meta.get("version", "0.0.0")),
             type=str(meta.get("type", "")),
-            description=str(meta.get("description", "")),
+            description=description,
             label=str(meta.get("label", "")),
             commands=list(meta.get("commands", []) or []),
             skill_dir=skill_dir,

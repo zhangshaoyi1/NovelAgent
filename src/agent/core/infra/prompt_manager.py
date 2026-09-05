@@ -199,7 +199,7 @@ _register(
     "_REWRITE_SYSTEM_PROMPT",
     "_REWRITE_USER_TEMPLATE",
 )
-_register("budget.branch", "agent.workflows.budget_planner", "_SYSTEM_PROMPT")
+_register("budget.branch", "agent.workflows.pipeline.budget_planner", "_SYSTEM_PROMPT")
 # 注：以上 8 个键（agents.planner / agents.writer_retry / quality.* / budget.branch）的兜底常量
 # 仍保留在各自原模块（下划线前缀命名，如 ``_PLANNER_SYSTEM``），md 缺失时回退。
 # 阶段 B 全量迁移的 29 个键（m1.world / m2..m_d / e / g* 等）现已 100% 由 prompts/*.md 承载，
