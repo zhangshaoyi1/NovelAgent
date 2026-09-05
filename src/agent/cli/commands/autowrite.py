@@ -296,6 +296,20 @@ def autowrite(
 
     enforce_gate(str(project_path), "autowrite", json_mode=json_output)
 
+    # 单写者锁：同一小说目录禁止并发写进程（并发写会互相覆盖章节导致内容损坏）
+    from agent.core.project_lock import acquire_project_lock
+
+    try:
+        acquire_project_lock(project_path, "autowrite")
+    except Exception as exc:  # ProjectLockBusy
+        if json_output:
+            import json as _json
+
+            sys.stdout.write(_json.dumps({"ok": False, "error": str(exc)}, ensure_ascii=False) + "\n")
+        else:
+            console.print(f"[bold red]✗ {exc}[/bold red]")
+        raise typer.Exit(code=9) from None
+
     # 接线：LLM 调用事件 → <project>/.events/events.jsonl（复用公共接线，避免复制）
     from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
 
