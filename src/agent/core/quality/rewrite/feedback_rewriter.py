@@ -167,6 +167,7 @@ class FeedbackRewriter:
         backup: bool = True,
         gate_mode: str = "advisory",
         record_learning: bool = True,
+        confirm_fn: Any = None,
     ) -> RewriteResult:
         """对指定章节做反馈驱动的定向重写。
 
@@ -176,6 +177,9 @@ class FeedbackRewriter:
             backup: 是否先备份原章。
             gate_mode: ``advisory``（默认，违规告警不阻断）/ ``block``（违规拒绝落盘）。
             record_learning: 改写成功后是否把反馈沉淀为长期偏好。
+            confirm_fn: P1-6 确认闸口——``Callable[[RewriteInstruction], bool]``；
+                非None 时反馈先结构化，确认通过才发起 LLM 改写（"原始评审文本不得
+                直接成为模型指令"）。低自主度场景由调用方注入确认逻辑。
 
         Returns:
             RewriteResult；LLM 不可用时 ``llm_used=False``、``new_text`` 回退原章正文。
@@ -192,9 +196,33 @@ class FeedbackRewriter:
         # 1. 上下文锚点
         ctx = self._build_context(chapter_num, post)
 
+        # 1.5 P1-6：反馈先结构化为"修改指令"，确认后才进 prompt
+        #（原始评审/反馈文本不直接成为模型指令）
+        from agent.core.quality.rewrite.instruction import (
+            render_instruction,
+            structure_feedback,
+        )
+
+        instruction = structure_feedback(feedback, chapter_num)
+        if confirm_fn is not None and not confirm_fn(instruction):
+            return RewriteResult(
+                chapter_file=chapter_file,
+                chapter_num=chapter_num,
+                old_word_count=old_wc,
+                new_word_count=old_wc,
+                new_text=old_text,
+                changed_summary="（用户未确认修改指令，未改写）",
+                guardrail_passed=True,
+                backup_file=None,
+                blocked=False,
+                llm_used=False,
+                error="confirm_rejected",
+            )
+
         # 2. 调 LLM 定向重写（失败优雅降级）
         try:
-            new_text = self._call_rewrite(old_text, feedback, ctx)
+            prompt_feedback = render_instruction(instruction) or feedback
+            new_text = self._call_rewrite(old_text, prompt_feedback, ctx)
             llm_used = True
             error = ""
         except Exception as e:  # noqa: BLE001 - LLM 不可达/异常：降级保留原章

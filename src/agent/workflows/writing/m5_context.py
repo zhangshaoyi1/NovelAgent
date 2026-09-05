@@ -309,13 +309,13 @@ class M5ContextMixin:
         for i in range(1, len(blocks), 2):
             node_id = blocks[i]
             block = blocks[i + 1] if i + 1 < len(blocks) else ""
-            # 提取章节范围
-            range_match = re.search(r"章节范围[：:]\s*(\d+)[-~](\d+)", block)
+            # 提取章节范围（兼容 **章节范围** 加粗格式）
+            range_match = re.search(r"章节范围\*{0,2}[：:]\s*(\d+)[-~](\d+)", block)
             if range_match:
                 lo = int(range_match.group(1))
                 hi = int(range_match.group(2))
                 if lo <= chapter_num <= hi:
-                    milestone = re.search(r"## N\d+ · (.+)", block)
+                    milestone = re.search(r"^\s*·\s*(.+)", block)
                     milestone_str = milestone.group(1).strip() if milestone else ""
                     # 主分支
                     main_title = ""
@@ -343,7 +343,7 @@ class M5ContextMixin:
             # 用节点范围的最大 hi 作为全书跨度（无范围则退化为本章号）
             his: list[int] = []
             for i in range(1, len(blocks), 2):
-                m = re.search(r"章节范围[：:]\s*(\d+)[-~](\d+)", blocks[i + 1] if i + 1 < len(blocks) else "")
+                m = re.search(r"章节范围\*{0,2}[：:]\s*(\d+)[-~](\d+)", blocks[i + 1] if i + 1 < len(blocks) else "")
                 if m:
                     his.append(int(m.group(2)))
             total = max(his) if his else chapter_num
@@ -354,7 +354,7 @@ class M5ContextMixin:
                 if blocks[i] == node_id:
                     block = blocks[i + 1] if i + 1 < len(blocks) else ""
                     break
-            milestone = re.search(r"## N\d+ · (.+)", block)
+            milestone = re.search(r"^\s*·\s*(.+)", block)
             logger.warning(
                 "[route] 第 %d 章未被任何路线节点范围覆盖（全书跨度 %d），"
                 "按位置分配到节点 %s",
@@ -536,6 +536,41 @@ class M5ContextMixin:
         # 每 10 章强制提示
         if chapter_num % 10 == 0:
             tasks.append("  ★ 本章为第 {}0 章，强制埋 ≥1 长线伏笔、回收 ≥1 旧伏笔".format(chapter_num // 10))
+
+        # ---- P1-8：即将到期伏笔提前预警（对齐 MuMuAINovel remind_before_chapters）----
+        # 已埋未回收、距预期回收点不足 REMIND_BEFORE_CHAPTERS 章（含逾期）→ 注入提醒行。
+        from agent.workflows.evaluation.m13_foreshadow import (
+            REMIND_BEFORE_CHAPTERS,
+            foreshadow_urgency,
+        )
+
+        reminders: list[str] = []
+        seen_fids: set[str] = set()
+        for line in text.splitlines():
+            if not line.startswith("| F-"):
+                continue
+            parts = [p.strip() for p in line.split("|")]
+            if len(parts) < 7:
+                continue
+            fid, content, _planted_at, expected, state = parts[1:6]
+            urgency = foreshadow_urgency(state, expected, chapter_num)
+            if urgency == "normal" or fid in seen_fids:
+                continue
+            seen_fids.add(fid)
+            if urgency == "overdue":
+                reminders.append(
+                    f"  ⚠ 伏笔 {fid} 已逾期未回收（预期回收：{expected}），"
+                    f"本章如有可能请优先安排回收：{content}"
+                )
+            else:  # due
+                reminders.append(
+                    f"  ⏳ 伏笔 {fid} 预期回收点在 {REMIND_BEFORE_CHAPTERS} 章内"
+                    f"（{expected}），请开始铺垫回收：{content}"
+                )
+            if len(reminders) >= 3:  # 防 prompt 膨胀
+                break
+        if reminders:
+            tasks.extend(reminders)
 
         if not tasks:
             return "本章无强制伏笔任务。自然写作即可，如有合适时机可埋设新伏笔。"

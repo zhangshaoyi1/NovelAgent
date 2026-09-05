@@ -47,3 +47,6 @@ from agent.cli.commands.list_genres import list_genres
 from agent.cli.commands.genre_info import genre_info
 from agent.cli.commands.load_genre import load_genre
 from agent.cli.commands.inject_genre import inject_genre
+
+# P1-7：段落级局部重写
+from agent.cli.commands.rewrite_paragraph import rewrite_paragraph

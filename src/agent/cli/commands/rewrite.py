@@ -51,6 +51,9 @@ def rewrite(
         False, "--interactive", "-i",
         help="交互式反馈循环：反复输入反馈直到输入空行/accept/done 退出"
     ),
+    skip_confirm: bool = typer.Option(
+        False, "--yes", help="跳过修改指令确认（自主度 <50 时默认会先展示结构化指令并等确认）"
+    ),
 ) -> None:
     """反馈→定向重写 - 把用户反馈变成局部定向重写（而非整章回退/重跑）
 
@@ -91,10 +94,33 @@ def rewrite(
         console=workflow_console,
     )
 
+    # P1-6：低自主度时，结构化修改指令需用户确认后才进入改写 prompt
+    #（"原始评审文本不得直接成为模型指令"）；--yes 或 JSON 模式跳过。
+    from agent.core.engine.state_machine import StateMachine as _SM
+
+    _sm = _SM(project_path)
+    _sm.load()
+    autonomy = int(_sm.autonomy_level)
+    confirm_fn = None
+    if autonomy < 50 and not skip_confirm and not json_output:
+        from agent.core.quality.rewrite.instruction import render_instruction
+
+        def confirm_fn(inst):  # noqa: ANN001, ANN202
+            workflow_console.print(
+                f"[yellow]修改指令已结构化（当前自主度 {autonomy} < 50，需确认）：[/yellow]"
+            )
+            workflow_console.print(render_instruction(inst))
+            try:
+                ans = input("确认按以上指令改写？[y/N]: ").strip().lower()
+            except EOFError:
+                return False
+            return ans in ("y", "yes")
+
     def run_once(ch_num: int, fb: str) -> dict:
         try:
             return rewriter.rewrite(
-                ch_num, fb, backup=not no_backup, gate_mode=gate
+                ch_num, fb, backup=not no_backup, gate_mode=gate,
+                confirm_fn=confirm_fn,
             ).to_dict()
         except FileNotFoundError as e:
             return {"success": False, "error": {"code": "chapter_not_found", "message": str(e)}}

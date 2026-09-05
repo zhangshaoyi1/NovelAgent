@@ -23,6 +23,7 @@ from agent.core.continuity.models import (
     ContinuityOpenLoop,
     ContinuityLedger,
 )
+from agent.core.continuity.delta import LedgerDelta
 
 _DEFAULT_LEDGER_FILE = Path(".state/continuity/ledger.json")
 
@@ -142,6 +143,39 @@ class ContinuityLedgerStore:
         )
         self.save()
         return commit_id
+
+    # ---------------- P1-5：结构化 delta 结算 ----------------
+    def apply_delta(self, delta: "LedgerDelta") -> str:
+        """应用一章的结构化结算增量并原子落盘（对标 inkos Reflector delta 结算）。
+
+        流程：pydantic 严格校验（``extra="forbid"``，拒绝未知字段）→ 内存应用
+        （幂等，预检失败则账本保持原样）→ 唯一性校验 → 原子落盘。
+
+        Raises:
+            LedgerDeltaError: delta 非法（未知字段/目标 loop 不存在/终态回退等），
+                此时账本**不被修改也不落盘**（失败显式，不静默半应用）。
+        """
+        from agent.core.continuity.delta import LedgerDeltaError, apply_ledger_delta
+
+        if not self._loaded:
+            self.load()
+        ok, msg, model = validate_model(LedgerDelta, delta.model_dump(mode="json"))
+        if not ok or model is None:
+            raise LedgerDeltaError(f"delta 校验失败: {msg}")
+        # 预快照：应用后不变式被破坏时回滚（显式失败，不静默半应用、不落盘）
+        snapshot = self.ledger.model_copy(deep=True)
+        try:
+            apply_ledger_delta(self.ledger, model)
+            self.ledger = ContinuityLedger.model_validate(
+                self.ledger.model_dump(mode="json")
+            )
+        except Exception as exc:  # noqa: BLE001
+            self.ledger = snapshot
+            if isinstance(exc, LedgerDeltaError):
+                raise
+            raise LedgerDeltaError(f"delta 应用后账本不变式校验失败: {exc}") from exc
+        self.save()
+        return str(delta.chapter)
 
     # ---------------- 查询 ----------------
     def initialised(self) -> bool:

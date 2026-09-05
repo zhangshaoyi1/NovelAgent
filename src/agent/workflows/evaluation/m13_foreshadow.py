@@ -41,6 +41,39 @@ from agent.core.engine.workflow_registry import workflow
 # ============================================================
 # 数据类
 # ============================================================
+
+# P1-8：伏笔提前预警窗口（预期回收点前 N 章内标记为「即将到期」，对齐 MuMuAINovel remind_before_chapters）
+REMIND_BEFORE_CHAPTERS = 3
+
+# 紧急度三级（foreshadow_urgency 的返回值）
+URGENCY_OVERDUE = "overdue"
+URGENCY_DUE = "due"
+URGENCY_NORMAL = "normal"
+
+
+def foreshadow_urgency(
+    state: str, expected_resolve: str, current_chapter: int,
+    remind_before: int = REMIND_BEFORE_CHAPTERS,
+) -> str:
+    """**纯函数**：按预期回收点与当前章节计算伏笔紧急度。
+
+    - ``overdue``：当前章已过预期回收点且未回收；
+    - ``due``：距预期回收点不足 ``remind_before`` 章（含当章恰到期）且未回收；
+    - ``normal``：其余情况（含未埋/已回收/已废弃/回收点无法解析章节号）。
+    """
+    if state in ("已回收", "已废弃") or current_chapter <= 0:
+        return URGENCY_NORMAL
+    m = re.search(r"ch(\d+)", expected_resolve or "")
+    if not m:
+        return URGENCY_NORMAL
+    expected = int(m.group(1))
+    if current_chapter > expected:
+        return URGENCY_OVERDUE
+    if current_chapter >= expected - remind_before:
+        return URGENCY_DUE
+    return URGENCY_NORMAL
+
+
 @dataclass
 class Foreshadow:
     """单条伏笔"""
@@ -82,6 +115,14 @@ class Foreshadow:
             return current_chapter > int(m.group(1))
         return False
 
+    def urgency(self, current_chapter: int) -> str:
+        """P1-8 紧急度三级：``overdue``（已逾期）/ ``due``（即将到期）/ ``normal``。
+
+        仅"已埋未回收"的伏笔参与分级；预期回收点无法解析章节号时一律 normal。
+        提前预警窗口 = ``REMIND_BEFORE_CHAPTERS``。
+        """
+        return foreshadow_urgency(self.state, self.expected_resolve, current_chapter)
+
 
 @dataclass
 class ForeshadowStats:
@@ -93,6 +134,7 @@ class ForeshadowStats:
     resolved: int = 0
     abandoned: int = 0
     overdue: int = 0
+    due: int = 0  # P1-8：即将到期（预警窗口内、未逾期）
 
     @property
     def resolve_rate(self) -> float:
@@ -109,6 +151,7 @@ class M13Report:
     stats: ForeshadowStats
     unresolved: list[Foreshadow] = field(default_factory=list)
     overdue: list[Foreshadow] = field(default_factory=list)
+    due: list[Foreshadow] = field(default_factory=list)  # P1-8：即将到期
     subline_unresolved: list[Foreshadow] = field(default_factory=list)
     report_file: Path | None = None
 
@@ -187,6 +230,8 @@ class M13ForeshadowWorkflow:
             # 逾期检查
             if current_chapter > 0 and f._overdue_impl(current_chapter):
                 stats.overdue += 1
+            elif current_chapter > 0 and f.urgency(current_chapter) == URGENCY_DUE:
+                stats.due += 1
         return stats
 
     # ============================================================
@@ -275,16 +320,22 @@ class M13ForeshadowWorkflow:
         overdue = [
             f for f in items if f._overdue_impl(current_chapter)
         ]
+        # P1-8：即将到期（预警窗口内、未逾期、未回收）
+        due = [
+            f for f in items
+            if f.state == "已埋" and f.urgency(current_chapter) == URGENCY_DUE
+        ]
 
         # 写入报告文件
         report_file = self.project_dir / "foreshadow_report.md"
-        content = self._render_report(stats, unresolved, overdue, current_chapter)
+        content = self._render_report(stats, unresolved, overdue, current_chapter, due=due)
         report_file.write_text(content, encoding="utf-8")
 
         return M13Report(
             stats=stats,
             unresolved=unresolved,
             overdue=overdue,
+            due=due,
             subline_unresolved=[],
             report_file=report_file,
         )
@@ -295,6 +346,7 @@ class M13ForeshadowWorkflow:
         unresolved: list[Foreshadow],
         overdue: list[Foreshadow],
         current_chapter: int,
+        due: list[Foreshadow] | None = None,
     ) -> str:
         """渲染报告 markdown"""
         lines: list[str] = []
@@ -315,6 +367,7 @@ class M13ForeshadowWorkflow:
         lines.append(f"| 已回收 | {stats.resolved} |")
         lines.append(f"| 已废弃 | {stats.abandoned} |")
         lines.append(f"| 逾期未回收 | {stats.overdue} |")
+        lines.append(f"| 即将到期（{REMIND_BEFORE_CHAPTERS} 章内） | {stats.due} |")
         rate = f"{stats.resolve_rate * 100:.1f}%" if stats.total > 0 else "N/A"
         lines.append(f"| 回收率 | {rate} |")
         lines.append("")
@@ -346,11 +399,27 @@ class M13ForeshadowWorkflow:
                 )
             lines.append("")
 
+        # P1-8：即将到期清单
+        if due:
+            lines.append("## ⏳ 即将到期伏笔")
+            lines.append("")
+            lines.append(f"> 预期回收点在后续 {REMIND_BEFORE_CHAPTERS} 章内，写作时优先安排自然回收。")
+            lines.append("")
+            lines.append("| ID | 内容 | 预期回收点 | 关联角色 |")
+            lines.append("|---|---|---|---|")
+            for f in due:
+                lines.append(
+                    f"| {f.fid} | {f.content} | {f.expected_resolve} | {f.related_characters} |"
+                )
+            lines.append("")
+
         # 建议
         lines.append("## 处理建议")
         lines.append("")
         if stats.overdue > 0:
             lines.append(f"- **紧急**：{stats.overdue} 条伏笔已逾期，建议在后续 3-5 章内回收")
+        if stats.due > 0:
+            lines.append(f"- **预警**：{stats.due} 条伏笔将在 {REMIND_BEFORE_CHAPTERS} 章内到期，优先安排回收")
         if stats.planted > 0:
             lines.append(f"- {stats.planted} 条已埋伏笔待回收，按预期回收点安排")
         if stats.not_planted > 0:
