@@ -102,7 +102,7 @@
         <label>写作模型
           <select id="aw-model" class="model-select"><option value="">加载中…</option></select>
         </label>
-        <label class="chk"><input type="checkbox" id="aw-strict" checked /> 严格质量审查</label>
+        <label class="chk" title="autowrite 始终执行主编并联审查 + 评测回溯，此开关仅为兼容保留">严格质量审查（始终开启）<input type="checkbox" id="aw-strict" checked disabled /></label>
       </div>
       <p class="muted small" style="margin-top:12px">Agent 自动连续写作多章，无需逐章点击；批次数会叠加到已写章数。实时进度显示在右栏日志。</p>
     </div>
@@ -246,11 +246,11 @@
   function confirmAutoWrite() {
     const batch = parseInt(document.getElementById('aw-chapters').value, 10) || 5;
     const mode = document.getElementById('aw-mode').value;
-    const strict = document.getElementById('aw-strict').checked;
     const profile = document.getElementById('aw-model').value;
     const target = existingChapters + batch; // 绝对目标章数
     const argv = ['--chapters', String(target), '--mode', mode];
-    if (!strict) argv.push('--no-strict-review');
+    // 注意：autowrite 没有 --strict-review 选项（那是单章 write 的参数），
+    // 误传会导致 CLI exit 2 秒退（2026-09-05 无灵项目事故），不要透传。
     closeWriterModal('autowrite-modal');
     launchRun('自动续写 ' + batch + ' 章（' + mode + '）', 'autowrite', argv, profile, (d) => {
       if (d.summary && d.summary.cost_alert) {
