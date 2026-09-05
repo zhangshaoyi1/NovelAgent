@@ -1134,10 +1134,41 @@ class AgenticPipelineWorkflow:
         try:
             self.state_machine.load()
             progress = dict(self.state_machine.progress or {})
-            if progress.get("ending_mode"):
-                return  # 不退出（拍板 4）
             book_total = self._book_total()
             chapter = int(progress.get("total_written", 0)) + 1
+            trigger_chapter = int(book_total * (1 - self.ending_ratio)) + 1
+            if progress.get("ending_mode"):
+                # 一致性自检：total_chapters 调大后触发点后移，早先进入的结局模式
+                # 不再自洽（否则全书会被强行带向大结局）。仅当触发点确实后移时
+                # 自动退出；book_total 未变时维持「一旦进入不退出」（拍板 4）。
+                ended_at = int(progress.get("ending_mode_at") or 0)
+                # 仅信任 plan.json 显式配置的 total_chapters（权威来源）；
+                # _book_total() 的兜底默认值 100 只是猜测，不得据此退出结局模式
+                #（否则无 plan.json 的旧项目/夹具会被误清除，破坏拍板 4 原语义）。
+                plan_file = self.project_dir / ".state" / "plan.json"
+                plan_configured = False
+                try:
+                    _plan = json.loads(plan_file.read_text(encoding="utf-8"))
+                    plan_configured = bool(_plan.get("total_chapters"))
+                except Exception:  # noqa: BLE001 - 读取失败视为未配置
+                    plan_configured = False
+                if plan_configured and ended_at and ended_at < trigger_chapter:
+                    progress["ending_mode"] = False
+                    progress.pop("ending_mode_at", None)
+                    self.state_machine.progress = progress
+                    self.state_machine.save()
+                    self.console.print(
+                        f"[yellow]全书总章数已调整为 {book_total}，结局模式触发点后移至"
+                        f"第 {trigger_chapter} 章（原 {ended_at}），自动退出结局模式[/yellow]"
+                    )
+                    self._emit_event(
+                        "ending_mode_exit",
+                        chapter=chapter,
+                        ended_at=ended_at,
+                        new_trigger=trigger_chapter,
+                        book_total=book_total,
+                    )
+                return  # 不退出（拍板 4）：book_total 未变时维持原语义
             if chapter > book_total * (1 - self.ending_ratio):
                 progress["ending_mode"] = True
                 progress["ending_mode_at"] = chapter
