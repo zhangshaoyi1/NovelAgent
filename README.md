@@ -3,7 +3,7 @@
 > 本指南以 **Web 工作台为主线**介绍 NovelAgent 怎么用：启动网页 → 新建项目 → 七步向导走通创作闭环 → 写作间出稿 → 在网页里完成模型 / 空间 / RAG / 提示词等全部配置。
 > 命令行（CLI）作为**能力同源的等价入口**放在后半部分，适合批处理与自动化场景。
 
-所有页面截图见 [`docs/screenshots/`](docs/screenshots/)。
+所有页面截图见 [`docs/screenshots/`](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/)。
 
 ---
 
@@ -22,7 +22,7 @@ NovelAgent 是一个**共创式长篇小说写作 Agent**：给它一段思路�
 - **写错了能后退**：快照、回滚、归档，随时可逆；
 - **配置全在网页上**：模型、项目空间、检索、提示词都有可视化配置页，日常使用不需要碰配置文件。
 
-![工作台首页](docs/screenshots/01-home.png)
+![工作台首页](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/01-home.png)
 
 ---
 
@@ -62,7 +62,7 @@ novel-agent web --host 0.0.0.0 --port 8080   # 指定监听地址 / 端口
 - **默认位置**：仓库根目录下的 `novels/`（与 `agent/` 代码目录平级，代码与数据分离）。页面上每个项目 = 该目录下的一个子文件夹。
 - **想换位置**：无需改环境变量——打开 **「项目空间」页（`/settings`）** 即可登记多个本地目录并随时切换，CLI 子进程会跟随当前空间：
 
-![项目空间设置](docs/screenshots/11-settings.png)
+![项目空间设置](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/11-settings.png)
 
 - 兼容做法：环境变量 `NOVEL_DATA_ROOT` 也可覆盖数据根目录。
 
@@ -94,7 +94,7 @@ novel-agent web             # ② 启动，浏览器打开 http://127.0.0.1:8000
 
 进入项目后的总控面板：当前阶段、已写章数、累计 Token、题材一目了然；「下一步」卡片按状态机给出唯一推荐动作；「创作旅程」时间线可视化八阶段进度；下方是创作 / 阅读 / 调校三组入口，其中「创作调校」是 **0–100 连续自主度滑块**（左 `Director` → 中 `Co-pilot` → 右 `Auto Driver`，快捷按钮一键跳 100 / 35；无论调到多高，`MAJOR_DECISION` 始终打断作为安全底线）。底部「高级命令」折叠区列出当前状态机允许的全部命令并可直接运行——命令行能跑的网页都能跑。
 
-![项目工作台](docs/screenshots/02-project.png)
+![项目工作台](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/02-project.png)
 
 ### 4.3 引导向导：七步走通创作闭环（`/p/{name}/guide`）
 
@@ -118,7 +118,7 @@ novel-agent web             # ② 启动，浏览器打开 http://127.0.0.1:8000
 - **阶段复核**：上游产物被改动后，下游阶段标为「受影响·待复核」，点「生成检查单」由 LLM 找出未覆盖或与新设定冲突的条目，逐条采纳 / 忽略，确认后记录新基线；
 - **一键全自动写书**：任意阶段都可展开「跳过多步确认：一键全自动写书（compose）」。
 
-![引导向导](docs/screenshots/03-guide.png)
+![引导向导](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/03-guide.png)
 
 ### 4.4 实时写作间（`/p/{name}/write`）
 
@@ -129,13 +129,13 @@ novel-agent web             # ② 启动，浏览器打开 http://127.0.0.1:8000
 
 运行时点任意动作弹出运行控制台，分「日志 / 时间线 / 状态」三栏：日志是 CLI 子进程实时输出，时间线是进度事件（第 N 章、当前阶段、耗时）；触发成本预警会在卡片上直接显示等级。
 
-![实时写作间](docs/screenshots/04-writer.png)
+![实时写作间](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/04-writer.png)
 
 ### 4.5 看板（`/p/{name}/dashboard`）
 
 LLMOps 观测快照：累计 Token / 评测次数 / 本地与远程工具数；快捷动作（一致性审计、伏笔回收报告、全书评测）；模型路由健康表（各路由的模型、用途、优先级、成本与可用状态）。
 
-![看板](docs/screenshots/05-dashboard.png)
+![看板](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/05-dashboard.png)
 
 ### 4.6 世界构建页面
 
@@ -146,13 +146,13 @@ LLMOps 观测快照：累计 Token / 评测次数 / 本地与远程工具数；�
 | 冲突裁决 | `/p/{name}/conflicts` | 多题材同名设定冲突逐条裁决（保留一方或手写合并文本），「应用裁决并写回」收敛为本小说自有设定 |
 | 文件浏览 | `/p/{name}/files` | 浏览项目全部 markdown 产物，点开即读 |
 
-![世界关系图谱](docs/screenshots/06-graph.png)
+![世界关系图谱](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/06-graph.png)
 
-![Agent 阵容](docs/screenshots/07-team.png)
+![Agent 阵容](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/07-team.png)
 
-![冲突裁决](docs/screenshots/08-conflicts.png)
+![冲突裁决](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/08-conflicts.png)
 
-![文件浏览](docs/screenshots/09-files.png)
+![文件浏览](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/09-files.png)
 
 ---
 
@@ -166,7 +166,7 @@ LLMOps 观测快照：累计 Token / 评测次数 / 本地与远程工具数；�
 
 工作方式：默认模型优先级高于 `.env`；`.env` 中的嵌入模型（`EMBEDDING_*`）等配置仍然生效，作为兼容后门保留。
 
-![模型管理](docs/screenshots/10-models.png)
+![模型管理](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/10-models.png)
 
 ### 5.2 项目空间（`/settings`）
 
@@ -176,13 +176,13 @@ LLMOps 观测快照：累计 Token / 评测次数 / 本地与远程工具数；�
 
 配置 Embedding 提供方（本地 HF 模型离线推理或 OpenAI 兼容端点）、模型、HF 缓存目录与镜像、推理设备；查看各项目的语义索引状态（切片数 / 向量数 / 维度 / 更新时间）并按需**重建索引**。写后即存 `.env`，即时生效无需重启。
 
-![RAG 检索配置](docs/screenshots/13-rag.png)
+![RAG 检索配置](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/13-rag.png)
 
 ### 5.4 提示词（`/prompts`）
 
 `prompts/` 目录下的 Markdown 提示词是**单一真源**：CLI 短进程按文件 mtime 改即生效，Web 长驻进程由后台线程每 5 秒轮询自动重载。此页面列出全部提示词（版本 / 模型 / temperature / 来源 / 最近更新），改动后可手动「重载缓存」。
 
-![提示词版本面板](docs/screenshots/12-prompts.png)
+![提示词版本面板](https://raw.githubusercontent.com/zhangshaoyi1/NovelAgent/master/docs/screenshots/12-prompts.png)
 
 ### 5.5 兼容：`.env` 直配（可选）
 
