@@ -1,0 +1,166 @@
+{% extends "base.html" %}
+{% block title %}RAG 检索配置 · NovelAgent Web{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>RAG 检索配置</h1>
+  <p class="muted">配置 Embedding 提供方与本地模型缓存，查看各项目的语义索引状态并按需重建。写入项保存在 <code>{{ cfg.env_file }}</code>，保存后即时生效，无需重启。</p>
+</div>
+
+<section class="card">
+  <h2>Embedding 提供方</h2>
+  <form id="rag-form" class="form-grid" onsubmit="return saveCfg(event)">
+    <label>提供方（EMBEDDING_PROVIDER）
+      <select id="f-provider" onchange="onProviderChange()">
+        <option value="qwen_local" {% if cfg.provider=='qwen_local' %}selected{% endif %}>本地 HF 模型（transformers 离线推理）</option>
+        <option value="ollama" {% if cfg.provider=='ollama' %}selected{% endif %}>本地 Ollama（/api/embeddings）</option>
+        <option value="openai" {% if cfg.provider=='openai' %}selected{% endif %}>OpenAI 兼容 /embeddings 端点</option>
+        <option value="" {% if not cfg.provider %}selected{% endif %}>跟随主模型（LLM_PROVIDER）</option>
+      </select>
+    </label>
+    <label>模型（EMBEDDING_MODEL_ID）
+      <input id="f-model" value="{{ cfg.model }}" placeholder="如 BAAI/bge-small-zh-v1.5（Ollama 则填 bge-m3）" />
+      <span class="muted small">写章召回与索引重建都用此模型；换模型后需重建全部项目索引。</span>
+    </label>
+    <label class="full">HuggingFace 缓存目录（HF_HUB_CACHE）
+      <input id="f-hf-cache" value="{{ cfg.hf_cache }}" placeholder="如 D:\env\ai_module\hf_cache" />
+      <span class="muted small">本地模型从此缓存加载，不再联网下载；目录需已包含模型文件。</span>
+    </label>
+    <label class="full">HF 镜像（HF_ENDPOINT）
+      <input id="f-hf-endpoint" value="{{ cfg.hf_endpoint }}" placeholder="如 https://hf-mirror.com（缓存齐全可留空）" />
+    </label>
+    <label>Embedding 专用端点（EMBEDDING_BASE_URL，OpenAI 兼容时用）
+      <input id="f-base-url" value="{{ cfg.base_url }}" placeholder="如 https://dashscope.aliyuncs.com/compatible-mode/v1" />
+    </label>
+    <label>Embedding API Key（EMBEDDING_API_KEY）
+      <input id="f-api-key" value="" placeholder="留空 = 不修改{{ '（当前：' + cfg.api_key_masked + '）' if cfg.api_key_masked else '' }}" autocomplete="off" />
+    </label>
+    <label>推理设备（EMBEDDING_DEVICE）
+      <select id="f-device">
+        <option value="">自动检测（CUDA 优先）</option>
+        <option value="cpu">cpu</option>
+        <option value="cuda">cuda</option>
+      </select>
+    </label>
+    <div class="full" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <button type="submit" class="btn primary">保存配置</button>
+      <button type="button" class="btn" onclick="runTest()">测试连通性</button>
+      <span id="cfg-tip" class="muted small"></span>
+    </div>
+  </form>
+  <div id="test-result" class="muted small" style="margin-top:8px; white-space:pre-wrap;" hidden></div>
+</section>
+
+<section class="card">
+  <h2>项目索引状态（当前空间 · {{ ws_name }}）</h2>
+  <div id="proj-list">
+    {% for p in projects %}
+    <div class="ws-card" id="proj-{{ p.name }}">
+      <div class="ws-card-main">
+        <div class="ws-card-title">{{ p.name }}
+          {% if p.indexed %}
+            {% if p.vectors == p.chunks and p.chunks > 0 %}
+            <span class="badge ok">已索引 · 向量 {{ p.chunks }}</span>
+            {% elif p.chunks > 0 %}
+            <span class="badge warn">降级 BM25-only（{{ p.vectors }}/{{ p.chunks }} 有向量）</span>
+            {% endif %}
+          {% else %}
+            <span class="badge warn">未建索引</span>
+          {% endif %}
+        </div>
+        <div class="muted small">
+          {% if p.indexed %}切片 {{ p.chunks }} · 向量 {{ p.vectors }} · 维度 {{ p.dim or '—' }} · 更新于 {{ p.updated_at }}{% else %}尚无 .state/rag 索引，写章召回将退化为纯 BM25{% endif %}
+        </div>
+      </div>
+      <div class="ws-card-actions">
+        <button class="btn small primary" onclick="reindex('{{ p.name }}')">重建索引</button>
+      </div>
+    </div>
+    {% else %}
+    <p class="muted small">当前空间没有小说项目。</p>
+    {% endfor %}
+  </div>
+  <p class="muted small">索引来源：world / architecture / outline / sublines / characters / relations / foreshadows / 已写章节。Embedding 失败时自动降级 BM25-only，不阻断写章。</p>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+
+function onProviderChange(){
+  const p = document.getElementById('f-provider').value;
+  const isOllama = p === 'ollama';
+  document.getElementById('f-hf-cache').disabled = isOllama || p === 'openai';
+  document.getElementById('f-hf-endpoint').disabled = isOllama || p === 'openai';
+  document.getElementById('f-base-url').disabled = p === 'qwen_local' || isOllama;
+  document.getElementById('f-api-key').disabled = p === 'qwen_local' || isOllama;
+}
+onProviderChange();
+
+async function postJSON(url, data){
+  const r = await fetch(url, {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(data||{})});
+  return await r.json();
+}
+
+async function saveCfg(e){
+  e.preventDefault();
+  const tip = document.getElementById('cfg-tip');
+  tip.textContent = '保存中…';
+  const body = {
+    EMBEDDING_PROVIDER: document.getElementById('f-provider').value,
+    EMBEDDING_MODEL_ID: document.getElementById('f-model').value,
+    HF_HUB_CACHE: document.getElementById('f-hf-cache').value,
+    HF_ENDPOINT: document.getElementById('f-hf-endpoint').value,
+    EMBEDDING_BASE_URL: document.getElementById('f-base-url').value,
+    EMBEDDING_DEVICE: document.getElementById('f-device').value,
+  };
+  const key = document.getElementById('f-api-key').value.trim();
+  if (key) body.EMBEDDING_API_KEY = key;
+  const res = await postJSON('/api/rag/config', body);
+  tip.textContent = res.message || (res.ok ? '已保存' : '保存失败');
+  tip.classList.toggle('warn-text', !res.ok);
+  return false;
+}
+
+function pollJob(jobId, onDone){
+  const timer = setInterval(async () => {
+    const r = await fetch('/api/rag/job/' + jobId);
+    const d = await r.json();
+    if (!d.ok){ clearInterval(timer); onDone({status:'error', message:d.message}); return; }
+    if (d.job.status !== 'running'){ clearInterval(timer); onDone(d.job); }
+  }, 1500);
+}
+
+async function runTest(){
+  const box = document.getElementById('test-result');
+  box.hidden = false;
+  box.textContent = '正在加载模型并试算 embedding（首次加载本地模型可能较慢）…';
+  const res = await postJSON('/api/rag/test', {});
+  if (!res.ok){ box.textContent = '发起测试失败：' + (res.message||''); return; }
+  pollJob(res.job_id, (job) => {
+    if (job.status === 'error'){ box.textContent = '✗ 测试失败：' + job.message; return; }
+    const r = job.result || {};
+    box.textContent = r.ok
+      ? `✓ 连通正常：${r.provider_type} · 模型 ${r.model} · 向量维度 ${r.dim} · 耗时 ${r.elapsed_s}s · 缓存 ${r.cache_dir || '（默认）'}`
+      : `✗ embedding 返回空向量（将降级 BM25-only）· 耗时 ${r.elapsed_s}s`;
+  });
+}
+
+async function reindex(name){
+  const card = document.getElementById('proj-' + CSS.escape(name));
+  const btn = card.querySelector('button');
+  btn.disabled = true; btn.textContent = '重建中…';
+  const res = await fetch('/api/rag/reindex/' + encodeURIComponent(name), {method:'POST'});
+  const d = await res.json();
+  if (!d.ok){ btn.textContent = '发起失败'; return; }
+  pollJob(d.job_id, async (job) => {
+    btn.disabled = false; btn.textContent = '重建索引';
+    const msg = job.status === 'error' ? ('✗ ' + job.message) : ((job.result||{}).message || '完成');
+    const sub = card.querySelector('.muted.small');
+    if (job.status === 'done' && job.result && job.result.status){
+      sub.textContent = `切片 ${job.result.status.chunks} · 向量 ${job.result.status.vectors} · 维度 ${job.result.status.dim || '—'} · 刚刚更新`;
+    } else { sub.textContent = msg; }
+    alert(msg);
+  });
+}
+</script>
+{% endblock %}

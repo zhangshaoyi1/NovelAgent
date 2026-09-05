@@ -107,6 +107,74 @@ templates.env.globals["workspace_badge"] = _workspace_ctx
 
 
 # ============================================================
+# RAG 配置页 /rag + /api/rag/*
+# ============================================================
+@app.get("/rag", response_class=HTMLResponse)
+def rag_page(request: Request) -> HTMLResponse:
+    from agent.web import rag_admin
+
+    return templates.TemplateResponse(
+        request,
+        "rag.html",
+        {
+            "request": request,
+            "active": "rag",
+            "cfg": rag_admin.config_summary(),
+            "projects": rag_admin.list_projects_status(),
+            **_workspace_ctx(),
+        },
+    )
+
+
+@app.get("/api/rag/status")
+def api_rag_status() -> JSONResponse:
+    from agent.web import rag_admin
+
+    return JSONResponse({"ok": True, "projects": rag_admin.list_projects_status()})
+
+
+@app.post("/api/rag/config")
+async def api_rag_config_save(request: Request) -> JSONResponse:
+    from agent.web import rag_admin
+
+    body = await request.json()
+    cfg = {k: str(body.get(k, "") or "") for k in rag_admin._ENV_KEYS}
+    errs = rag_admin.validate_config(cfg)
+    if errs:
+        return JSONResponse({"ok": False, "message": "；".join(errs)})
+    return JSONResponse(rag_admin.write_rag_config(cfg))
+
+
+@app.post("/api/rag/test")
+async def api_rag_test(request: Request) -> JSONResponse:
+    from agent.web import rag_admin
+
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001
+        body = {}
+    job_id = rag_admin.start_test(str(body.get("text") or ""))
+    return JSONResponse({"ok": True, "job_id": job_id})
+
+
+@app.post("/api/rag/reindex/{name}")
+def api_rag_reindex(name: str) -> JSONResponse:
+    from agent.web import rag_admin
+
+    return JSONResponse({"ok": True, "job_id": rag_admin.start_reindex(name)})
+
+
+@app.get("/api/rag/job/{job_id}")
+def api_rag_job(job_id: str) -> JSONResponse:
+    from agent.web import rag_admin
+
+    job = rag_admin.job_status(job_id)
+    if job is None:
+        return JSONResponse({"ok": False, "message": "任务不存在或已过期"})
+    return JSONResponse({"ok": True, "job": job})
+
+
+# ============================================================
 # 页面路由
 # ============================================================
 @app.get("/", response_class=HTMLResponse)
