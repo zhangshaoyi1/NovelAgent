@@ -16,7 +16,11 @@
     <div class="stat"><div class="stat-num">{{ ps.chapters_count }}</div><div class="stat-label">已写章节</div></div>
     <div class="stat"><div class="stat-num">
       {% if ps.tokens_total >= 10000 %}{{ '%.2f'|format(ps.tokens_total / 10000) }} 万{% else %}{{ ps.tokens_total }}{% endif %}
-    </div><div class="stat-label">累计消耗（tokens）</div></div>
+    </div><div class="stat-label">累计消耗（tokens）</div>
+      <div class="stat-sub">其中缓存命中
+        {% if ps.tokens_cached >= 10000 %}{{ '%.2f'|format(ps.tokens_cached / 10000) }} 万{% else %}{{ ps.tokens_cached or 0 }}{% endif %}
+        （{{ '%.0f'|format((ps.tokens_cached / ps.tokens_total * 100) if ps.tokens_total else 0) }}%）
+      </div></div>
     <div class="stat"><div class="stat-num" style="font-size:16px">{{ ps.genre }}</div><div class="stat-label">题材</div></div>
   </div>
   <p class="muted small" style="margin-top:10px">{{ ps.state_desc }}</p>

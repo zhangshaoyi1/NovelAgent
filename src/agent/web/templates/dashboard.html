@@ -14,6 +14,7 @@
     <div class="stat">
       <div class="stat-num">{{ summary.trace_totals.tokens_total if summary.trace_totals else '—' }}</div>
       <div class="stat-label">累计 Token</div>
+      <div class="stat-sub">缓存命中 {{ summary.trace_totals.tokens_cached if summary.trace_totals else 0 }}</div>
     </div>
     <div class="stat">
       <div class="stat-num">{{ summary.eval_runs or 0 }}</div>
@@ -47,9 +48,33 @@
 </section>
 
 {% if summary.model_routing %}
+{% set mr = summary.model_routing %}
 <section class="card">
   <h2>模型路由健康</h2>
-  <pre class="code">{{ summary.model_routing }}</pre>
+  {% if mr.candidates %}
+  <table class="tbl">
+    <thead><tr><th>路由</th><th>模型</th><th>Provider</th><th>用途</th><th>优先级</th><th>成本 /1k</th><th>状态</th></tr></thead>
+    <tbody>
+      {% for c in mr.candidates %}
+      <tr>
+        <td><b>{{ c.name }}</b></td>
+        <td class="mono">{{ c.model_id }}</td>
+        <td class="mono">{{ c.provider }}</td>
+        <td class="mono">{{ c.use }}</td>
+        <td class="mono">{{ c.priority }}</td>
+        <td class="mono">${{ '%.4f'|format(c.cost_per_1k) }}</td>
+        <td><span class="badge {% if c.active %}ok{% else %}err{% endif %}">{{ '可用' if c.active else '熔断' }}</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% else %}
+  <p class="muted small">暂无路由候选。</p>
+  {% endif %}
+  {% if mr.default_model %}
+  <p class="muted small" style="margin-top:10px">默认 provider / model：<span class="mono">{{ mr.default_provider }} / {{ mr.default_model }}</span>
+  {% if mr.min_samples %} · 熔断判定最少样本 {{ mr.min_samples }} 次{% endif %}</p>
+  {% endif %}
 </section>
 {% endif %}
 {% endif %}

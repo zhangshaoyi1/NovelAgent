@@ -4,31 +4,43 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>{% block title %}NovelAgent Web{% endblock %}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/style.css" />
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
 </head>
 <body>
-  <header class="topbar">
-    <div class="brand">📚 NovelAgent <span class="brand-sub">Web UI</span></div>
-    <nav class="nav">
-      <a href="/" {% if active=="home" %}class="active"{% endif %}>工作台</a>
-      <a href="/prompts" {% if active=="prompts" %}class="active"{% endif %}>提示词</a>
-      {% if name %}
-      <a href="/p/{{ name }}" {% if active=="project" %}class="active"{% endif %}>项目空间</a>
-      <a href="/p/{{ name }}/guide" {% if active=="guide" %}class="active"{% endif %}>引导向导</a>
-      <a href="/p/{{ name }}/write" {% if active=="write" %}class="active"{% endif %}>实时写作间</a>
-      <a href="/p/{{ name }}/conflicts" {% if active=="conflicts" %}class="active"{% endif %}>冲突裁决</a>
-      <a href="/p/{{ name }}/dashboard" {% if active=="dashboard" %}class="active"{% endif %}>看板</a>
-      <a href="/p/{{ name }}/team" {% if active=="team" %}class="active"{% endif %}>阵容</a>
-      <a href="/p/{{ name }}/graph" {% if active=="graph" %}class="active"{% endif %}>关系图谱</a>
-      <a href="/p/{{ name }}/files" {% if active=="files" %}class="active"{% endif %}>文件</a>
-      {% endif %}
-    </nav>
-  </header>
-  <main class="container">
-    {% block content %}{% endblock %}
-  </main>
-  <footer class="footer">NovelAgent · 设定集驱动的长篇一致性写作 Agent · Web UI v0.1</footer>
+  <div class="shell">
+    <aside class="sidebar">
+      <a class="brand" href="/">
+        <span class="brand-mark">NA</span>
+        <span class="brand-text">NovelAgent <small>共创式长篇小说写作 Agent</small></span>
+      </a>
+      <nav class="nav">
+        <a href="/" {% if active=="home" %}class="active"{% endif %}>项目空间</a>
+        <a href="/models" {% if active=="models" %}class="active"{% endif %}>模型管理</a>
+        <a href="/prompts" {% if active=="prompts" %}class="active"{% endif %}>提示词</a>
+        {% if name %}
+        <div class="nav-sep">当前项目 · {{ name }}</div>
+        <a href="/p/{{ name }}" {% if active=="project" %}class="active"{% endif %}>项目工作台</a>
+        <a href="/p/{{ name }}/guide" {% if active=="guide" %}class="active"{% endif %}>引导向导</a>
+        <a href="/p/{{ name }}/write" {% if active=="write" %}class="active"{% endif %}>实时写作间</a>
+        <a href="/p/{{ name }}/conflicts" {% if active=="conflicts" %}class="active"{% endif %}>冲突裁决</a>
+        <a href="/p/{{ name }}/dashboard" {% if active=="dashboard" %}class="active"{% endif %}>看板</a>
+        <a href="/p/{{ name }}/team" {% if active=="team" %}class="active"{% endif %}>Agent 阵容</a>
+        <a href="/p/{{ name }}/graph" {% if active=="graph" %}class="active"{% endif %}>关系图谱</a>
+        <a href="/p/{{ name }}/files" {% if active=="files" %}class="active"{% endif %}>文件</a>
+        {% endif %}
+      </nav>
+      <div class="sidebar-foot">Web UI v0.3 · 设计系统 v3</div>
+    </aside>
+    <div class="main">
+      <main class="container">
+        {% block content %}{% endblock %}
+      </main>
+      <footer class="footer">NovelAgent · 设定集驱动的长篇一致性写作 Agent</footer>
+    </div>
+  </div>
   <script src="/static/app.js" defer></script>
   {% block scripts %}{% endblock %}
 </body>
