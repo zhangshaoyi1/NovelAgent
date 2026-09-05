@@ -8,7 +8,6 @@
 from __future__ import annotations
 
 import json
-import os
 import re
 from pathlib import Path
 from typing import Any
@@ -16,11 +15,18 @@ from typing import Any
 # agent 仓库根（含 projects/ 与 src/），web 包位于 src/agent/web/
 # __file__: .../agent/src/agent/web/state.py → parent×4 = agent 仓库根
 AGENT_ROOT = Path(__file__).resolve().parent.parent.parent.parent
-# 小说数据根：默认 agent 仓库之外的 novels/（与 compose_runner 保持一致）；
-# 可用 NOVEL_DATA_ROOT 覆盖。agent 仓库只保留代码，小说数据统一落在 novels/。
-PROJECTS_ROOT = Path(
-    os.environ.get("NOVEL_DATA_ROOT", str(AGENT_ROOT.parent / "novels"))
-)
+
+
+def projects_root() -> Path:
+    """当前项目空间的小说数据根（由 workspace 模块动态提供，可切换）。
+
+    默认 agent 仓库之外的 novels/（与 compose_runner 保持一致）；
+    NOVEL_DATA_ROOT 环境变量覆盖默认值，Web 端可在「项目空间设置」
+    里登记多个本地目录并随时切换。
+    """
+    from agent.web.workspace import active_root
+
+    return active_root()
 
 # 状态机阶段顺序（用于前端进度条渲染）
 STATE_FLOW = [
@@ -173,15 +179,15 @@ def _genre_label(name: str) -> str:
 def project_path(name: str) -> Path:
     """项目绝对路径（已防目录穿越）。"""
     safe = "".join(c for c in name if c.isalnum() or c in "-_")
-    return (PROJECTS_ROOT / safe).resolve()
+    return (projects_root() / safe).resolve()
 
 
 def list_projects() -> list[dict[str, Any]]:
     """扫描 projects/ 下列出所有小说项目及其概要状态。"""
-    if not PROJECTS_ROOT.exists():
+    if not projects_root().exists():
         return []
     out: list[dict[str, Any]] = []
-    for d in sorted(PROJECTS_ROOT.iterdir()):
+    for d in sorted(projects_root().iterdir()):
         if not d.is_dir():
             continue
         info: dict[str, Any] = {
@@ -264,7 +270,7 @@ def read_project_file(name: str, rel: str) -> str | None:
     """读取项目内某个 markdown 文件内容（含路径穿越防护）。"""
     pdir = project_path(name)
     target = (pdir / rel).resolve()
-    if target != pdir and PROJECTS_ROOT not in target.parents:
+    if target != pdir and projects_root() not in target.parents:
         return None
     if not target.exists() or not target.is_file():
         return None
@@ -326,7 +332,7 @@ def write_project_file(name: str, rel: str, content: str, avail: list[str]) -> t
         return False, "当前流程尚未解锁该阶段，不能保存"
     pdir = project_path(name)
     target = (pdir / rel).resolve()
-    if target != pdir and PROJECTS_ROOT not in target.parents:
+    if target != pdir and projects_root() not in target.parents:
         return False, "路径不合法"
     if not str(target).startswith(str(pdir)):
         return False, "路径不合法"
@@ -348,7 +354,9 @@ def get_chapters(name: str) -> list[dict[str, Any]]:
     for p in sorted(chapters_dir.glob("*.md")):
         if not p.is_file():
             continue
-        m = re.match(r"(\d+)", p.stem)
+        # re.search 而非 re.match：实际文件名形如 ch001.md（数字不在开头），
+        # match 会永远匹配不到导致全部显示「第 0 章」
+        m = re.search(r"(\d+)", p.stem)
         num = int(m.group(1)) if m else 0
         out.append(
             {"num": num, "rel": f"chapters/{p.name}", "name": p.name, "size": p.stat().st_size}

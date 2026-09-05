@@ -2,8 +2,9 @@
   <thead>
     <tr>
       <th>名称</th>
-      <th>version</th>
-      <th>model</th>
+      <th>标识</th>
+      <th>版本</th>
+      <th>模型</th>
       <th>temperature</th>
       <th>来源</th>
       <th>最近变更</th>
@@ -13,7 +14,8 @@
   <tbody>
     {% for r in rows %}
     <tr>
-      <td><code>{{ r.name }}</code></td>
+      <td>{{ r.description or r.name }}</td>
+      <td><code class="muted small">{{ r.name }}</code></td>
       <td>v{{ r.version }}</td>
       <td>{{ r.model or "-" }}</td>
       <td>{{ r.temperature if r.temperature is not none else "-" }}</td>
@@ -23,7 +25,7 @@
     </tr>
     {% endfor %}
     {% if not rows %}
-    <tr><td colspan="7" class="muted">未找到任何提示词文件（prompts/ 为空？）</td></tr>
+    <tr><td colspan="8" class="muted">未找到任何提示词文件（prompts/ 为空？）</td></tr>
     {% endif %}
   </tbody>
 </table>

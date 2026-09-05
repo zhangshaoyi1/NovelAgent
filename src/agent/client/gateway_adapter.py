@@ -7,7 +7,9 @@
 from __future__ import annotations
 
 import json
+import os
 import time
+from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
@@ -65,10 +67,20 @@ class _GatewayModelProvider:
             )
             elapsed = (time.monotonic() - t0) * 1000.0
             # usage 可能缺省（部分 provider 不返回）→ None.get() 会崩并连带
-            # 上层去AI味等 LLM 步骤被静默跳过，这里统一兜底为空字典
+            # 上层去AI味等 LLM 步骤被静默跳过，这里统一兜底为空字典。
+            # 键名兼容两套口径：LLMProvider 返回 OpenAI 兼容的
+            # prompt_tokens/completion_tokens；llmagent 原生 RawResponse 用
+            # input_tokens/output_tokens。都不在时回退 packer 估算。
             usage = resp.usage or {}
-            tokens_in = int(usage.get("input_tokens", 0) or packed.estimated_input_tokens or 0)
-            tokens_out = int(usage.get("output_tokens", 0) or 0)
+            tokens_in = int(
+                usage.get("input_tokens")
+                or usage.get("prompt_tokens")
+                or packed.estimated_input_tokens
+                or 0
+            )
+            tokens_out = int(
+                usage.get("output_tokens") or usage.get("completion_tokens") or 0
+            )
             # 缓存命中 token（provider 返回 prompt_tokens_details.cached_tokens；
             # 键名兼容 input_tokens / prompt_tokens 两种口径，缺失为 0）
             tokens_cached = int(
@@ -107,6 +119,17 @@ class _GatewayModelProvider:
                 "latency_ms": round(elapsed, 2),
                 "error": str(e)[:300],
             })
+            # 延迟导入：agent.core.__init__ 会反向 import 本模块，
+            # 顶层导入会造成导入顺序相关的循环依赖
+            from agent.core.base.exceptions import (
+                FatalProviderError,
+                is_fatal_provider_error,
+            )
+
+            # 配额耗尽/欠费/鉴权失败 → 抛 FatalProviderError，让上层立即熔断
+            # 而非按瞬时故障退避重试（403 重试必然再次 403）
+            if is_fatal_provider_error(e):
+                raise FatalProviderError(f"Provider {self.name} 调用失败: {e}") from e
             raise RuntimeError(f"Provider {self.name} 调用失败: {e}") from e
 
     def count_tokens(self, text: str) -> int:
@@ -136,7 +159,7 @@ def _build_gateway_inner(env_file: str | None = None, console: Any = None) -> tu
     from llmagent.gateway.models import ModelCard, TaskHint
     from llmagent.gateway.providers import ProviderRegistry
     from llmagent.gateway.request_gate import RequestGate
-    from llmagent.gateway.router import ComplexityRouter
+    from llmagent.gateway.router import ComplexityRouter, HintCalibrator
     from llmagent.gateway.packer import Packer
     from llmagent.gateway.response_gate import ResponseGate, MetricsSink
     from llmagent.gateway.rate_limiter import RateLimiter, SemanticCache
@@ -173,10 +196,23 @@ def _build_gateway_inner(env_file: str | None = None, console: Any = None) -> tu
             if console:
                 console.print(f"[yellow]⚠ 注册 fallback provider {fb_name} 失败[/yellow]")
 
+    # O4：hint 校准器（历史真实用量落盘到 ~/.novel-agent/hint_calibration.json，
+    # 跨进程学习 Task 自评 simple 却大产出的标签）
+    try:
+        calib_path = Path(
+            os.environ.get(
+                "LLMAGENT_HINT_CALIBRATION",
+                str(Path.home() / ".novel-agent" / "hint_calibration.json"),
+            )
+        )
+        calibrator: Any = HintCalibrator(persist_path=calib_path)
+    except Exception:  # noqa: BLE001 - 校准器不可用时退化为不校准
+        calibrator = None
+
     # 创建 Gateway
     gateway = Gateway(
         request_gate=RequestGate(),
-        router=ComplexityRouter(),
+        router=ComplexityRouter(calibrator=calibrator),
         packer=Packer(),
         registry=registry,
         response_gate=ResponseGate(),

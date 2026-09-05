@@ -31,6 +31,7 @@ from typing import Any, Awaitable, Callable, Optional
 
 from pydantic import BaseModel, Field
 
+from agent.core.base.exceptions import is_fatal_provider_error
 from agent.core.engine.tool_contracts import Tool, ToolRegistry, ToolResult
 
 
@@ -71,6 +72,7 @@ class LoopResult:
     steps: list[LoopStep] = field(default_factory=list)
     iterations: int = 0
     last_error: Optional[str] = None  # 最后一次 decide 异常文本（诊断瞬时故障用）
+    fatal_error: Optional[str] = None  # 配额/鉴权类致命错误文本（非空 → 已提前中止）
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -230,6 +232,11 @@ class AgentLoop:
                 action = self.decide(messages)
             except Exception as e:  # decide 失败也降级，避免循环直接崩
                 result.last_error = str(e)[:300]
+                # 配额/鉴权类致命错误：重试必然复现，立即中止循环
+                # （否则 max_iterations 轮退避空转，单章烧掉数分钟墙钟）
+                if is_fatal_provider_error(e):
+                    result.fatal_error = str(e)[:300]
+                    return result
                 history.append(("user", f"决策失败（{e}），请严格按动作协议重新输出 JSON。"))
                 if self.fail_backoff_s > 0:
                     time.sleep(min(self.fail_backoff_s * (2 ** (i - 1)), 30.0))
@@ -299,6 +306,9 @@ class AgentLoop:
                 action = await self.decide_async(messages)
             except Exception as e:
                 result.last_error = str(e)[:300]
+                if is_fatal_provider_error(e):
+                    result.fatal_error = str(e)[:300]
+                    return result
                 history.append(("user", f"决策失败（{e}），请严格按动作协议重新输出 JSON。"))
                 if self.fail_backoff_s > 0:
                     await asyncio.sleep(min(self.fail_backoff_s * (2 ** (i - 1)), 30.0))

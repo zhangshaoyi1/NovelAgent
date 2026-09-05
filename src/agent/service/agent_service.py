@@ -176,6 +176,21 @@ class AgentService:
         return create_memory_manager(str(mem_db))
 
     # ---------------------------------------------------------------- 自主写作
+    def build_pipeline(self, **pipeline_kwargs: Any) -> Any:
+        """构造 AgenticPipelineWorkflow（服务层唯一构造入口）。
+
+        CLI（autowrite 命令）与本类 ``run_autowrite`` 均经此处构造，避免双入口
+        各自组装参数。默认注入 TracedLLMClient（端到端打点）与服务档位；
+        调用方可用同名参数覆盖。其余构造参数经 ``pipeline_kwargs`` 透传。
+        """
+        from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
+
+        pipeline_kwargs.setdefault("project_dir", self.project_dir)
+        pipeline_kwargs.setdefault("llm_client", self.traced_llm)
+        pipeline_kwargs.setdefault("tier", self.tier)
+        pipeline_kwargs.setdefault("console", self.console)
+        return AgenticPipelineWorkflow(**pipeline_kwargs)
+
     def run_autowrite(
         self,
         brief: str = "",
@@ -183,27 +198,23 @@ class AgentService:
         eval_enabled: bool = True,
         rollback_window: int = 5,
         max_rollback_attempts: int = 3,
+        **pipeline_kwargs: Any,
     ) -> dict[str, Any]:
-        """全流程自主写作。返回 {pipeline, llmops}。"""
-        from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
-
-        pipeline = AgenticPipelineWorkflow(
-            project_dir=self.project_dir,
-            llm_client=self.traced_llm,
-            tier=self.tier,
+        """全流程自主写作。返回 {pipeline, llmops, result}（result 为原始结果对象）。"""
+        pipeline = self.build_pipeline(
             brief=brief,
             target_chapters=target_chapters,
             eval_enabled=eval_enabled,
             rollback_window=rollback_window,
             max_rollback_attempts=max_rollback_attempts,
-            console=self.console,
+            **pipeline_kwargs,
         )
         result = pipeline.run()
         rd = result.to_dict()
         # 评测回归记录
         if rd.get("health_report"):
             self.eval_harness.record(rd["health_report"], tags={"mode": "autowrite"})
-        return {"pipeline": rd, "llmops": self._llmops_summary()}
+        return {"pipeline": rd, "llmops": self._llmops_summary(), "result": result}
 
     # ---------------------------------------------------------------- 体检
     def run_evaluate(

@@ -1,0 +1,53 @@
+name: Build & Release
+
+on:
+  push:
+    tags: ["v*"]        # 发版：git tag v0.1.0 && git push --tags
+  workflow_dispatch:    # 允许在 Actions 页面手动触发
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e ".[dev]"
+      - run: pytest
+
+  build:
+    needs: test
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest   # x64 exe
+          - os: macos-latest     # Apple Silicon (arm64)
+          - os: macos-13         # Intel (x86_64)
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: pip install -e . pyinstaller
+      - run: pyinstaller novel-agent.spec
+        working-directory: agent
+      - name: Zip artifact
+        shell: bash
+        run: |
+          cd agent/dist
+          zip -r novel-agent-${{ matrix.os }}.zip novel-agent
+      - uses: actions/upload-artifact@v4
+        with:
+          name: novel-agent-${{ matrix.os }}
+          path: agent/dist/*.zip
+      # tag 触发时自动发布到 GitHub Release
+      - if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: agent/dist/novel-agent-${{ matrix.os }}.zip
+
+# macOS 签名与公证（可选）：需要 Apple Developer 账号，
+# 将证书存入 secrets（MACOS_CERTIFICATE 等）后在此添加 codesign / notarytool 步骤。

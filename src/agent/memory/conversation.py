@@ -19,9 +19,9 @@ from typing import Any
 
 @dataclass
 class ConversationEvent:
-    """单条会话事件。"""
+    """单条会话事件"""
 
-    kind: str  # plan | chapter | edit | eval | decision | rollback | note
+    kind: str
     message: str
     data: dict[str, Any] = field(default_factory=dict)
     at: float = field(default_factory=lambda: time.time())
@@ -37,7 +37,7 @@ class ConversationEvent:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "ConversationEvent":
         return cls(
-            kind=str(d.get("kind", "note")),
+            kind=str(d.get("kind", "")),
             message=str(d.get("message", "")),
             data=dict(d.get("data", {}) or {}),
             at=float(d.get("at", 0.0)),
@@ -45,41 +45,42 @@ class ConversationEvent:
 
 
 class ConversationMemory:
-    """会话（短期）记忆。
+    """会话记忆（决策轨迹，JSONL 持久化）"""
 
-    Args:
-        project_dir: 小说项目目录；None 表示纯内存（测试用）。
-    """
-
-    def __init__(self, project_dir: str | Path | None = None) -> None:
+    def __init__(self, project_dir: Path | str | None = None) -> None:
         self.project_dir = Path(project_dir) if project_dir else None
         self._lock = threading.RLock()
         self._events: list[ConversationEvent] = []
-        self._file = None
-        if self.project_dir is not None:
-            self._file = self.project_dir / ".state" / "memory" / "conversation.jsonl"
-            self._load()
+        self._file = (
+            self.project_dir / ".state" / "memory" / "conversation.jsonl"
+            if self.project_dir
+            else None
+        )
+        self._load()
 
     def _load(self) -> None:
-        if self._file is None or not self._file.exists():
+        if not self._file or not self._file.exists():
             return
         try:
             for line in self._file.read_text(encoding="utf-8").splitlines():
-                line = line.strip()
-                if not line:
-                    continue
-                self._events.append(ConversationEvent.from_dict(json.loads(line)))
+                if line.strip():
+                    self._events.append(ConversationEvent.from_dict(json.loads(line)))
         except (json.JSONDecodeError, OSError):
-            self._events = []
+            pass
 
     def _persist(self) -> None:
-        if self._file is None:
+        if not self._file:
             return
-        self._file.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._file.with_suffix(".tmp")
-        lines = [json.dumps(e.to_dict(), ensure_ascii=False) for e in self._events]
-        tmp.write_text("\n".join(lines) + ("\n" if lines else ""), encoding="utf-8")
-        tmp.replace(self._file)
+        try:
+            self._file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._file.with_suffix(".jsonl.tmp")
+            tmp.write_text(
+                "\n".join(json.dumps(e.to_dict(), ensure_ascii=False) for e in self._events),
+                encoding="utf-8",
+            )
+            tmp.replace(self._file)
+        except OSError:
+            pass
 
     def append(
         self,
@@ -88,47 +89,51 @@ class ConversationMemory:
         data: dict[str, Any] | None = None,
     ) -> ConversationEvent:
         """记录一条会话事件。"""
-        ev = ConversationEvent(kind=kind, message=message, data=data or {})
+        event = ConversationEvent(kind=kind, message=message, data=dict(data or {}))
         with self._lock:
-            self._events.append(ev)
+            self._events.append(event)
             self._persist()
-        return ev
+        return event
 
-    # 便捷封装
     def log_plan(self, message: str, data: dict[str, Any] | None = None) -> None:
         self.append("plan", message, data)
 
-    def log_chapter(self, chapter_num: int, title: str, summary: str = "") -> None:
+    def log_chapter(
+        self, chapter_num: int, title: str, summary: str = ""
+    ) -> None:
         self.append(
             "chapter",
-            f"第 {chapter_num} 章《{title}》已产出",
+            f"第 {chapter_num} 章已写出：{title}",
             {"chapter_num": chapter_num, "title": title, "summary": summary},
         )
 
-    def log_edit(self, chapter_num: int, passed: bool, conflicts: int) -> None:
+    def log_edit(
+        self, chapter_num: int, passed: bool, conflicts: int = 0
+    ) -> None:
         self.append(
             "edit",
-            f"第 {chapter_num} 章编辑{'通过' if passed else '有冲突'}",
+            f"第 {chapter_num} 章编辑判定：{'通过' if passed else '冲突阻断'}",
             {"chapter_num": chapter_num, "passed": passed, "conflicts": conflicts},
         )
 
-    def log_eval(self, overall_pass: bool, score: float) -> None:
+    def log_eval(self, overall_pass: bool, score: float | None = None) -> None:
         self.append(
-            "eval", "全书体检完成", {"overall_pass": overall_pass, "score": score}
+            "eval",
+            f"全书体检：{'通过' if overall_pass else '未通过'}",
+            {"overall_pass": overall_pass, "score": score},
         )
 
-    def log_rollback(self, target_chapter: int, archived: int) -> None:
+    def log_rollback(self, target_chapter: int, archived: int = 0) -> None:
         self.append(
             "rollback",
-            f"回退至第 {target_chapter} 章（归档 {archived} 章）",
+            f"回滚至第 {target_chapter} 章（归档 {archived} 章）",
             {"target_chapter": target_chapter, "archived": archived},
         )
 
     def query(
         self,
-        *,
         recent: int | None = None,
-        kinds: list[str] | None = None,
+        kinds: list[str] | tuple[str, ...] | None = None,
         keyword: str | None = None,
     ) -> list[ConversationEvent]:
         """查询会话事件。
@@ -137,20 +142,20 @@ class ConversationMemory:
         - ``kinds``：仅限事件类型。
         - ``keyword``：message/data 中包含该子串。
         """
-        evs = list(self._events)
+        events = list(self._events)
         if kinds:
-            evs = [e for e in evs if e.kind in kinds]
+            events = [e for e in events if e.kind in kinds]
         if keyword:
             kw = keyword.lower()
-            evs = [
+            events = [
                 e
-                for e in evs
+                for e in events
                 if kw in e.message.lower()
                 or any(kw in str(v).lower() for v in e.data.values())
             ]
         if recent is not None:
-            evs = evs[-recent:]
-        return evs
+            events = events[-recent:]
+        return events
 
     def all(self) -> list[ConversationEvent]:
         with self._lock:
@@ -158,5 +163,5 @@ class ConversationMemory:
 
     def clear(self) -> None:
         with self._lock:
-            self._events = []
+            self._events.clear()
             self._persist()

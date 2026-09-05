@@ -42,6 +42,10 @@ agent/
 │   ├── workflows/                # 工作流编排（@workflow 装饰器动态注册）
 │   │   ├── planning/             # M1-M4：写作规划阶段（世界观/讨论/架构/大纲/角色）
 │   │   ├── writing/              # M5-M6：章节写作阶段（AgenticWrite/写章/调整）
+│   │   │   └── m5_write_chapter.py 已按职责拆为 Mixin 模块（2026-09-05）：
+│   │   │       m5_context.py（上下文装配）/ m5_quality_gate.py（质量闸）/
+│   │   │       m5_persist.py（落盘归档）/ m5_text_hygiene.py（文本净化）；
+│   │   │       主文件经多继承组合，类名与导入路径不变，勿再往主文件堆积新职责
 │   │   ├── evaluation/           # M10-M21：评测审计阶段
 │   │   ├── pipeline/             # 流水线编排（全流程自主/主线/预算）
 │   │   ├── market/               # M22-M23：市场分析

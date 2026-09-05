@@ -16,7 +16,6 @@ from typing import Any
 from agent.cli._app import app, command, console, typer
 from agent.cli._shared import *  # enforce_gate / emit_result / make_quiet_console
 from agent.core.engine.state_machine import State
-from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
 
 
 def _cli_value(v: Any, default: Any) -> Any:
@@ -303,7 +302,6 @@ def autowrite(
     wire_llm_event_hook(project_path)
 
     workflow_console = make_quiet_console() if json_output else console
-    from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
 
     # G4 进度回调（T4）：stderr 输出避免污染 JSON 信封
     def on_progress(phase: str, current: int, total: int) -> None:
@@ -417,7 +415,20 @@ def autowrite(
         project_dir=project_path,
     )
 
-    pipeline = AgenticPipelineWorkflow(
+    # 构造走 service 层唯一入口（build_pipeline），避免 CLI 直连 pipeline 形成双入口。
+    # use_session/use_catalog/use_memory_bridge 关闭：这些是 service 级编排特性，
+    # autowrite 命令只借服务层的 LLM 接线（Gateway + TracedLLMClient）构造 pipeline。
+    from agent.service import AgentService
+
+    _svc = AgentService(
+        project_dir=project_path,
+        tier=mode if mode in ("auto", "heavy", "light") else "auto",
+        console=workflow_console,
+        use_session=False,
+        use_catalog=False,
+        use_memory_bridge=False,
+    )
+    pipeline = _svc.build_pipeline(
         project_dir=project_path,
         tier=mode if mode in ("auto", "heavy", "light") else "auto",
         brief=brief,

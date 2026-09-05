@@ -360,18 +360,29 @@ class M3OutlineWorkflow:
     def _render_and_save_sublines(
         self, sublines: list[dict[str, Any]]
     ) -> list[Path]:
-        """渲染每条支线的 subline.md，返回文件路径列表"""
+        """渲染每条支线的 subline.md，返回文件路径列表
+
+        目录 ID 归一化查重：LLM 两次生成的支线名常有细微出入
+        （如「极道武夫推演」vs「极道武夫推演线」），直接按名字建目录
+        会为同一条支线留下重复目录，污染 subline_share 与主线推进门禁。
+        故先按归一化名（去空白 + 去末尾「线」）匹配已有目录，命中则
+        原地更新，不再新建。
+        """
         template = self.jinja_env.get_template("subline.md.j2")
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         subline_dir = self.project_dir / "sublines"
         subline_dir.mkdir(parents=True, exist_ok=True)
 
         paths: list[Path] = []
+        used_ids: set[str] = set()
         for idx, s in enumerate(sublines, 1):
             name = s.get("subline_name", f"支线{idx}")
             # subline_id: S01_镜灵觉醒（特殊字符替换为下划线）
             safe = re.sub(r"[^\w\u4e00-\u9fff]+", "_", name).strip("_")
-            subline_id = f"S{idx:02d}_{safe or f'subline{idx}'}"
+            subline_id = self._match_existing_subline_id(
+                subline_dir, safe or f"subline{idx}", used_ids
+            ) or f"S{idx:02d}_{safe or f'subline{idx}'}"
+            used_ids.add(subline_id)
 
             pc = s.get("pressure_curve", {}) or {}
             # pressure_curve 可能是 dict 或 str
@@ -400,6 +411,31 @@ class M3OutlineWorkflow:
             path.write_text(content, encoding="utf-8")
             paths.append(path)
         return paths
+
+    @staticmethod
+    def _normalize_subline_name(name: str) -> str:
+        """支线名归一化：去空白 + 去末尾「线」，用于跨次生成的查重匹配"""
+        return re.sub(r"\s+", "", name).removesuffix("线")
+
+    @classmethod
+    def _match_existing_subline_id(
+        cls, subline_dir: Path, safe_name: str, used_ids: set[str]
+    ) -> str | None:
+        """在已有支线目录中找归一化后同名的目录 ID；无命中返回 None
+
+        目录名形如 ``S01_极道武夫推演``；只比对编号后的名字部分，
+        且跳过本轮已分配的 ID。
+        """
+        target = cls._normalize_subline_name(safe_name)
+        if not target or not subline_dir.exists():
+            return None
+        for d in sorted(subline_dir.iterdir()):
+            if not d.is_dir() or d.name in used_ids:
+                continue
+            _, _, existing_name = d.name.partition("_")
+            if existing_name and cls._normalize_subline_name(existing_name) == target:
+                return d.name
+        return None
 
     # ============================================================
     # 呈现

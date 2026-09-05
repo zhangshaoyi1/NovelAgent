@@ -1,0 +1,127 @@
+{% extends "base.html" %}
+{% block title %}项目空间 · NovelAgent Web{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>项目空间</h1>
+  <p class="muted">小说项目的本地存放目录。可登记多个目录并随时切换，切换后工作台列表与新建项目的落点立即生效；只移除登记、不删除磁盘文件。</p>
+</div>
+
+<section class="card">
+  <h2>添加空间</h2>
+  <form id="ws-form" class="form-grid" onsubmit="return addWs(event)">
+    <label>空间名称<input id="ws-name" placeholder="如：D盘小说库（留空则用目录名）" /></label>
+    <label class="full">本地目录（绝对路径）
+      <div style="display:flex; gap:8px;">
+        <input id="ws-path" placeholder="点击「浏览」选择本地目录" required />
+        <button type="button" class="btn" onclick="openPicker()">浏览…</button>
+      </div>
+      <span class="muted small" id="ws-form-tip">目录不存在时会自动创建；路径必须为绝对路径。</span>
+    </label>
+    <div class="full">
+      <button type="submit" class="btn primary">添加空间</button>
+    </div>
+  </form>
+</section>
+
+<div class="modal-overlay" id="dir-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="dir-modal-title">
+    <div class="modal-head">
+      <span class="modal-title" id="dir-modal-title">选择本地目录</span>
+      <span class="modal-sub" id="dir-current"></span>
+      <button class="btn small" onclick="closePicker()">关闭</button>
+    </div>
+    <div class="modal-body">
+      <div style="display:flex; gap:8px; flex-wrap:wrap; margin-bottom:10px;" id="dir-drives"></div>
+      <div class="muted small" style="margin-bottom:6px;">点击目录名进入；确认后点「选择此目录」。</div>
+      <ul class="dir-list" id="dir-list"></ul>
+    </div>
+    <div class="modal-foot">
+      <button class="btn" onclick="upDir()">上一级</button>
+      <button class="btn primary" id="dir-select-btn" onclick="pickCurrent()">选择此目录</button>
+    </div>
+  </div>
+</div>
+
+<section class="card">
+  <h2>空间列表（{{ workspaces|length }}）</h2>
+  <div id="ws-list">
+    {% for ws in workspaces %}
+    <div class="ws-card {{ 'active' if ws.active }}">
+      <div class="ws-card-main">
+        <div class="ws-card-title">
+          {{ ws.name }}
+          {% if ws.active %}<span class="badge ok">当前空间</span>{% endif %}
+          {% if ws.builtin %}<span class="badge">默认</span>{% endif %}
+          {% if not ws.exists %}<span class="pill warn">目录不存在</span>{% endif %}
+        </div>
+        <div class="muted small">{{ ws.path }}</div>
+        <div class="muted small">项目数：{{ ws.project_count }}</div>
+      </div>
+      <div class="ws-card-actions">
+        {% if not ws.active %}
+        <button class="btn small primary" onclick="switchWs('{{ ws.id }}')">切换到此空间</button>
+        {% endif %}
+        {% if not ws.builtin %}
+        <button class="btn small danger" onclick="delWs('{{ ws.id }}')">移除登记</button>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="muted small">切换空间只影响 Web 界面读写哪个目录；CLI 子进程会经 NOVEL_DATA_ROOT 自动跟随当前空间。</p>
+</section>
+{% endblock %}
+{% block scripts %}
+<script>
+let pickerPath = '';
+let pickerParent = '';
+async function browseTo(path){
+  const r = await fetch('/api/fs/browse?path=' + encodeURIComponent(path));
+  const d = await r.json();
+  if(!d.ok){ alert(d.message || '无法读取目录'); return; }
+  pickerPath = d.current;
+  pickerParent = d.parent || d.current;
+  document.getElementById('dir-current').textContent = d.current;
+  document.getElementById('dir-drives').innerHTML = (d.drives||[]).map(dr =>
+    `<button class="btn small" onclick="browseTo('${dr.replace(/\/g,'\\')}')">${dr}</button>`).join('');
+  const ul = document.getElementById('dir-list');
+  ul.innerHTML = d.dirs.length ? d.dirs.map(it =>
+    `<li><button class="dir-item" data-path="${esc(it.path)}">${esc(it.name)}</button></li>`).join('')
+    : '<li class="muted small">此目录下没有子目录</li>';
+  ul.querySelectorAll('.dir-item').forEach(b => b.onclick = () => browseTo(b.dataset.path));
+}
+function openPicker(){ document.getElementById('dir-modal').hidden = false; browseTo(document.getElementById('ws-path').value || ''); }
+function closePicker(){ document.getElementById('dir-modal').hidden = true; }
+function upDir(){ browseTo(pickerParent); }
+function pickCurrent(){
+  document.getElementById('ws-path').value = pickerPath;
+  closePicker();
+}
+function esc(s){return String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
+async function post(url, data){
+  const r = await fetch(url, {method:'POST', body:new URLSearchParams(data)});
+  return await r.json();
+}
+async function addWs(e){
+  e.preventDefault();
+  const res = await post('/api/workspaces/add', {
+    name: document.getElementById('ws-name').value,
+    path: document.getElementById('ws-path').value,
+  });
+  const tip = document.getElementById('ws-form-tip');
+  tip.textContent = res.message || '';
+  tip.classList.toggle('warn-text', !res.ok);
+  if(res.ok){ location.reload(); }
+  return false;
+}
+async function switchWs(id){
+  const res = await post('/api/workspaces/switch', {ws_id: id});
+  if(res.ok){ location.href = '/'; } else { alert(res.message); }
+}
+async function delWs(id){
+  if(!confirm('确定移除该空间的登记？（不会删除磁盘上的小说文件）')) return;
+  const res = await post('/api/workspaces/delete', {ws_id: id});
+  if(res.ok){ location.reload(); } else { alert(res.message); }
+}
+</script>
+{% endblock %}

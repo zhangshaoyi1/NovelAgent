@@ -30,6 +30,7 @@ from rich.console import Console
 
 from agent.client.gateway_adapter import create_gateway
 from llmagent.gateway import Gateway
+from agent.core.base.exceptions import is_fatal_provider_error
 from agent.core.engine.state_machine import Event, State, StateMachine, TRANSITIONS
 from agent.core.story.setting_manager import SettingManager
 from agent.core.quality.guardrails import is_architecture_confirmed
@@ -1311,6 +1312,19 @@ class AgenticPipelineWorkflow:
                 self.console.print(f"[red]写章失败：{e}[/red]")
                 # ---- G9：failure 事件（写章失败，error）----
                 self._emit_failure("write_chapter", str(e), severity="error")
+                # 配额/鉴权类致命错误（403 配额耗尽、欠费、鉴权失败等）：
+                # 冷却重试必然复现，立即终止本批并提示人工处理
+                if is_fatal_provider_error(e):
+                    result.block_reason = (
+                        "Provider 配额/鉴权类致命错误，已停止写作："
+                        "请充值、切换模型或检查 API Key 后重跑"
+                    )
+                    result.tripped = True
+                    self.console.print(f"[red]✗ {result.block_reason}[/red]")
+                    self._emit_failure(
+                        "provider_fatal", result.block_reason, severity="error"
+                    )
+                    break
                 # 弹性重试（2026-09-05）：provider 间歇性 403/429 风暴（免费池过载）
                 # 会在数分钟内连续打死整批章节。冷却等待后重试 1 次，
                 # 风暴短窗可自然恢复；仍失败才终止本批（等价旧行为）。

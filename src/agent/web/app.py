@@ -94,6 +94,18 @@ def _md_filter(text: str | None) -> str:
 templates.env.filters["md"] = _md_filter
 
 
+def _workspace_ctx() -> dict[str, Any]:
+    """当前项目空间（侧栏徽标 / 页头提示用）。"""
+    from agent.web import workspace
+
+    ws = workspace.active_workspace()
+    return {"ws_name": ws.get("name", "默认空间"), "ws_path": ws.get("path", "")}
+
+
+# 模板全局：任意页面侧栏都能显示当前项目空间徽标
+templates.env.globals["workspace_badge"] = _workspace_ctx
+
+
 # ============================================================
 # 页面路由
 # ============================================================
@@ -103,7 +115,12 @@ def home(request: Request) -> HTMLResponse:
     return templates.TemplateResponse(
         request,
         "home.html",
-        {"request": request, "projects": projects, "philosophy": get_philosophy()},
+        {
+            "request": request,
+            "projects": projects,
+            "philosophy": get_philosophy(),
+            **_workspace_ctx(),
+        },
     )
 
 
@@ -715,6 +732,67 @@ def run_status(run_id: str) -> JSONResponse:
         except Exception:  # noqa: BLE001 - 状态读取失败不阻断返回
             data["state"] = None
     return JSONResponse(data)
+
+
+# ============================================================
+# 项目空间（小说数据根目录管理）
+# ============================================================
+@app.get("/settings", response_class=HTMLResponse)
+def settings_page(request: Request) -> HTMLResponse:
+    """项目空间设置页：登记 / 切换 / 移除本地小说目录。"""
+    from agent.web import workspace
+
+    return templates.TemplateResponse(
+        request,
+        "settings.html",
+        {
+            "request": request,
+            "active": "settings",
+            "workspaces": workspace.list_workspaces(),
+            **_workspace_ctx(),
+        },
+    )
+
+
+@app.get("/api/workspaces")
+def api_workspaces() -> JSONResponse:
+    from agent.web import workspace
+
+    return JSONResponse(
+        {"active": workspace.load_store()["active"], "workspaces": workspace.list_workspaces()}
+    )
+
+
+@app.post("/api/workspaces/add")
+async def api_workspace_add(name: str = Form(""), path: str = Form(...)) -> JSONResponse:
+    from agent.web import workspace
+
+    ok, msg, _ = workspace.add_workspace(name, path)
+    return JSONResponse({"ok": ok, "message": msg})
+
+
+@app.post("/api/workspaces/switch")
+async def api_workspace_switch(ws_id: str = Form(...)) -> JSONResponse:
+    from agent.web import workspace
+
+    ok, msg = workspace.switch_workspace(ws_id.strip())
+    return JSONResponse({"ok": ok, "message": msg})
+
+
+@app.post("/api/workspaces/delete")
+async def api_workspace_delete(ws_id: str = Form(...)) -> JSONResponse:
+    from agent.web import workspace
+
+    ok, msg = workspace.delete_workspace(ws_id.strip())
+    return JSONResponse({"ok": ok, "message": msg})
+
+
+@app.get("/api/fs/browse")
+def api_fs_browse(path: str = "") -> JSONResponse:
+    """本地目录浏览（供添加空间时的目录选择器，只读、仅列目录）。"""
+    from agent.web import workspace
+
+    return JSONResponse(workspace.fs_browse(path))
 
 
 # ============================================================

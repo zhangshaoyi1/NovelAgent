@@ -18,53 +18,50 @@ from pathlib import Path
 from typing import Any
 
 
+def _merge_unique(base: list[Any], extra: list[Any] | None) -> list[Any]:
+    """保留 base 顺序并追加 extra 中未出现的项。"""
+    out = list(base)
+    for item in extra or []:
+        if item not in out:
+            out.append(item)
+    return out
+
+
 class ConsolidatedMemory:
-    """整合（权威快照）记忆。
+    """整合记忆（Book Bible 快照，JSON 持久化）"""
 
-    Args:
-        project_dir: 小说项目目录；None 表示纯内存（测试用）。
-    """
-
-    def __init__(self, project_dir: str | Path | None = None) -> None:
+    def __init__(self, project_dir: Path | str | None = None) -> None:
         self.project_dir = Path(project_dir) if project_dir else None
-        self._data: dict[str, Any] = {
-            "facts": [],          # 最新确立的事实/设定摘要
-            "plot_threads": [],   # 活跃剧情线
-            "open_debts": [],     # 未结债务（伏笔/约定/悬念）
-            "characters": {},     # name -> 状态摘要
-            "quality_targets": {},  # 七维"不崩"合格线
-            "last_consolidated_chapter": 0,
-            "updated_at": 0.0,
-        }
-        self._file = None
-        if self.project_dir is not None:
-            self._file = self.project_dir / ".state" / "memory" / "consolidated.json"
-            self._load()
+        self._data: dict[str, Any] = {}
+        self._file = (
+            self.project_dir / ".state" / "memory" / "consolidated.json"
+            if self.project_dir
+            else None
+        )
+        self._load()
 
-    # ---------------------------------------------------------------- 持久化
     def _load(self) -> None:
-        if self._file is None or not self._file.exists():
+        if not self._file or not self._file.exists():
             return
         try:
-            data = json.loads(self._file.read_text(encoding="utf-8"))
-            for k, v in self._data.items():
-                if k in data:
-                    self._data[k] = data[k]
+            self._data = json.loads(self._file.read_text(encoding="utf-8")) or {}
         except (json.JSONDecodeError, OSError):
-            pass
+            self._data = {}
 
     def _persist(self) -> None:
-        if self._file is None:
+        if not self._file:
             return
-        self._file.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._file.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(self._data, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-        tmp.replace(self._file)
+        try:
+            self._file.parent.mkdir(parents=True, exist_ok=True)
+            tmp = self._file.with_suffix(".json.tmp")
+            tmp.write_text(
+                json.dumps(self._data, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            tmp.replace(self._file)
+        except OSError:
+            pass
 
-    # ---------------------------------------------------------------- 读写
     def get(self, section: str, default: Any = None) -> Any:
         return self._data.get(section, default)
 
@@ -78,76 +75,69 @@ class ConsolidatedMemory:
 
     def update(
         self,
-        *,
         facts: list[str] | None = None,
         plot_threads: list[str] | None = None,
         open_debts: list[str] | None = None,
-        characters: dict[str, str] | None = None,
+        characters: list[dict[str, Any]] | None = None,
         quality_targets: dict[str, Any] | None = None,
         last_consolidated_chapter: int | None = None,
     ) -> None:
         """增量更新整合记忆（合并去重）。"""
         if facts:
-            self._data["facts"] = _merge_unique(self._data["facts"], facts)
+            self._data["facts"] = _merge_unique(self._data.get("facts", []), facts)
         if plot_threads:
             self._data["plot_threads"] = _merge_unique(
-                self._data["plot_threads"], plot_threads
+                self._data.get("plot_threads", []), plot_threads
             )
         if open_debts:
-            # open_debts 用合并去重，但保留已存在的顺序
             self._data["open_debts"] = _merge_unique(
-                self._data["open_debts"], open_debts
+                self._data.get("open_debts", []), open_debts
             )
         if characters:
-            self._data["characters"].update(characters)
+            self._data["characters"] = _merge_unique(
+                self._data.get("characters", []), characters
+            )
         if quality_targets:
-            self._data["quality_targets"].update(quality_targets)
+            merged = dict(self._data.get("quality_targets", {}) or {})
+            merged.update(quality_targets)
+            self._data["quality_targets"] = merged
         if last_consolidated_chapter is not None:
             self._data["last_consolidated_chapter"] = max(
-                self._data["last_consolidated_chapter"],
-                last_consolidated_chapter,
+                int(self._data.get("last_consolidated_chapter", 0) or 0),
+                int(last_consolidated_chapter),
             )
         self.touch()
 
     def remove_open_debt(self, debt: str) -> None:
         """债务结清（如伏笔已回收）时移除。"""
-        before = len(self._data["open_debts"])
-        self._data["open_debts"] = [
-            d for d in self._data["open_debts"] if d != debt
-        ]
-        if len(self._data["open_debts"]) != before:
+        debts = self._data.get("open_debts", [])
+        if len(debts):
+            self._data["open_debts"] = [d for d in debts if d != debt]
             self.touch()
 
     @property
     def last_consolidated_chapter(self) -> int:
-        return int(self._data.get("last_consolidated_chapter", 0))
+        return int(self._data.get("last_consolidated_chapter", 0) or 0)
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self._data)
 
     def build_from(
         self,
-        semantic_facts: list[str],
-        plot_threads: list[str],
-        open_debts: list[str],
-        characters: dict[str, str],
-        quality_targets: dict[str, Any],
-        last_consolidated_chapter: int,
+        semantic_facts: list[str] | None = None,
+        plot_threads: list[str] | None = None,
+        open_debts: list[str] | None = None,
+        characters: list[dict[str, Any]] | None = None,
+        quality_targets: dict[str, Any] | None = None,
+        last_consolidated_chapter: int | None = None,
     ) -> None:
         """从各来源一次性整合（覆盖式重建快照）。"""
-        self._data["facts"] = list(semantic_facts)
-        self._data["plot_threads"] = list(plot_threads)
-        self._data["open_debts"] = list(open_debts)
-        self._data["characters"] = dict(characters)
-        self._data["quality_targets"] = dict(quality_targets)
-        self._data["last_consolidated_chapter"] = last_consolidated_chapter
+        self._data = {
+            "facts": list(semantic_facts or []),
+            "plot_threads": list(plot_threads or []),
+            "open_debts": list(open_debts or []),
+            "characters": list(characters or []),
+            "quality_targets": dict(quality_targets or {}),
+            "last_consolidated_chapter": int(last_consolidated_chapter or 0),
+        }
         self.touch()
-
-
-def _merge_unique(base: list[str], extra: list[str]) -> list[str]:
-    """保留 base 顺序并追加 extra 中未出现的项。"""
-    seen = list(base)
-    for x in extra:
-        if x not in seen:
-            seen.append(x)
-    return seen

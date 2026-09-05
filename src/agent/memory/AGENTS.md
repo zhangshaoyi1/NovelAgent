@@ -2,26 +2,21 @@
 
 ## 职责
 
-提供统一的记忆管理能力，包括语义记忆、对话记忆和合并记忆。
+写作流程内的分层记忆（语义/会话/整合）+ llmagent 内核记忆桥接。
 
-## 核心模块
+## 现有模块
 
 | 文件 | 导出 | 作用 |
 |------|------|------|
-| `base.py` | `MemoryEntry`, `RetrievalScorer`, `default_scorer`, `make_scorer` | 记忆基元与评分器 |
-| `semantic.py` | `SemanticMemory` | 语义记忆 |
-| `conversation.py` | `ConversationMemory`, `ConversationEvent` | 对话记忆 |
-| `consolidated.py` | `ConsolidatedMemory` | 合并记忆 |
-| `layer.py` | `MemoryLayer` | 记忆层门面 |
-| `memory_bridge.py` | `MemoryManager`, `create_memory_manager` | 原生 llmagent MemoryManager 桥接 |
-
-## 三层架构
-
-1. **SemanticMemory**: 语义级长时记忆
-2. **ConversationMemory**: 对话级短时记忆
-3. **ConsolidatedMemory**: 合并策略（整合前两者）
+| `base.py` | `MemoryEntry`, `RetrievalScorer`, `default_scorer`, `make_scorer` | 记忆基元与离线打分器 |
+| `semantic.py` | `SemanticMemory`, `build_default_embed_fn` | 长期事实记忆（可选向量后端，失败回退 bigram） |
+| `conversation.py` | `ConversationMemory`, `ConversationEvent` | 会话/决策轨迹（JSONL） |
+| `consolidated.py` | `ConsolidatedMemory` | 整合快照（Book Bible） |
+| `layer.py` | `MemoryLayer` | 三合一门面（Pipeline 默认注入） |
+| `memory_bridge.py` | `MemoryManager`, `create_memory_manager` | 原生 llmagent MemoryManager 工厂（跨会话 SQLite 记忆） |
 
 ## 依赖规则
 
-- 使用原生 llmagent MemoryManager 管理持久化记忆
-- 对外暴露 MemoryLayer 门面
+- 本包不 import provider SDK / 不直读 API key（红线 R1/R5）；向量函数经 `embed_fn` 注入
+- 破坏性变更须同步 `tests/phase2/test_phase2.py`、`tests/phase5/test_phase5.py` 与
+  `agentic_pipeline.py` 的默认记忆接线

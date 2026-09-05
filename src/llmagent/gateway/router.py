@@ -2,7 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+import json
+import statistics
+import threading
+from pathlib import Path
+from typing import TYPE_CHECKING, Protocol
 
 from .models import (
     BudgetSnapshot,
@@ -11,6 +15,140 @@ from .models import (
     ModelCard,
     RouteDecision,
 )
+
+if TYPE_CHECKING:  # pragma: no cover
+    from .models import ChatResponse
+
+
+class HintCalibrator:
+    """O4：按历史真实用量校准 Task 自评复杂度。
+
+    Task 手工声明的 ``hint.complexity`` 可能系统性低估（自评 simple 但实际
+    产出数千 token）。校准器记录每次调用 (task 标签, 声明档位, 实际输出 token)，
+    当某标签声明 simple 但历史中位输出超过 `SIMPLE_BUMP_TOKENS`（且样本数
+    ≥ MIN_SAMPLES）时，路由时把该标签的 effective 复杂度抬升为 complex。
+
+    持久化：`persist_path` 给定时按 JSON 落盘，跨进程累积；不给定则仅内存。
+    """
+
+    MIN_SAMPLES = 3
+    SIMPLE_BUMP_TOKENS = 2000
+
+    def __init__(self, persist_path: str | Path | None = None) -> None:
+        self._persist_path = Path(persist_path) if persist_path else None
+        self._lock = threading.Lock()
+        # task 标签 -> {"simple": [output_tokens, ...], "complex": [...]}
+        self._history: dict[str, dict[str, list[int]]] = {}
+        if self._persist_path and self._persist_path.exists():
+            try:
+                self._history = json.loads(
+                    self._persist_path.read_text(encoding="utf-8")
+                )
+            except Exception:  # noqa: BLE001 - 校准数据损坏时归零，不阻断路由
+                self._history = {}
+
+    def record(
+        self,
+        task_label: str,
+        declared: HintComplexity,
+        output_tokens: int,
+    ) -> None:
+        """记录一次真实用量（在 Gateway.chat 成功返回后调用）。"""
+        if not task_label or output_tokens <= 0:
+            return
+        key = declared.value if hasattr(declared, "value") else str(declared)
+        with self._lock:
+            bucket = self._history.setdefault(task_label, {}).setdefault(key, [])
+            bucket.append(int(output_tokens))
+            # 每标签每档位只保留最近 50 条，防无限膨胀
+            del bucket[:-50]
+            if self._persist_path:
+                try:
+                    self._persist_path.parent.mkdir(parents=True, exist_ok=True)
+                    self._persist_path.write_text(
+                        json.dumps(self._history, ensure_ascii=False),
+                        encoding="utf-8",
+                    )
+                except Exception:  # noqa: BLE001 - 落盘失败不影响本次调用
+                    pass
+
+    def suggest(
+        self,
+        task_label: str,
+        declared: HintComplexity,
+    ) -> HintComplexity:
+        """返回该标签的 effective 复杂度（simple 且历史中位超阈值 → complex）。"""
+        if declared is not HintComplexity.simple or not task_label:
+            return declared
+        with self._lock:
+            samples = list(self._history.get(task_label, {}).get("simple", []))
+        if len(samples) < self.MIN_SAMPLES:
+            return declared
+        if statistics.median(samples) > self.SIMPLE_BUMP_TOKENS:
+            return HintComplexity.complex
+        return declared
+
+
+class CascadeRoute:
+    """O5：Cascade 先小后大（含 Task 声明的 verify 回调）。
+
+    策略协议实现：普通决策直接复用 ``inner``（默认 ComplexityRouter）；
+    当请求声明 cascade（``req.extra["cascade"]`` 为真）且提供了校验回调
+    （``req.extra["verify"]``）时，先选便宜模型，由调用方（Gateway.chat）
+    在 verify 失败后经 :meth:`escalate` 升级到最强模型重试。
+    """
+
+    def __init__(self, inner: RoutePolicy | None = None) -> None:
+        self._inner = inner or ComplexityRouter()
+
+    def decide(
+        self,
+        req: ChatRequest,
+        available: list[ModelCard],
+        budget: BudgetSnapshot | None,
+    ) -> RouteDecision:
+        decision = self._inner.decide(req, available, budget)
+        extra = req.extra or {}
+        if not extra.get("cascade") or not callable(extra.get("verify")):
+            return decision
+        # cascade 首跳：选最便宜卡（显式指定 model 时不降级，尊重调用方意图）
+        if decision.strategy == "explicit" or not available:
+            return decision
+        cheap = min(available, key=lambda c: c.cost_per_1k_input_cents)
+        if cheap.model == decision.model:
+            return decision
+        return RouteDecision(
+            provider=cheap.provider,
+            model=cheap.model,
+            card=cheap,
+            strategy="cascade_first",
+            budget=budget,
+        )
+
+    @staticmethod
+    def escalate(
+        available: list[ModelCard],
+        current: ModelCard,
+        budget: BudgetSnapshot | None,
+    ) -> RouteDecision | None:
+        """verify 失败后的升级跳：选比当前最强（上下文窗口最大）的卡。"""
+        stronger = [
+            c for c in available
+            if (c.context_window, c.cost_per_1k_input_cents)
+            > (current.context_window, current.cost_per_1k_input_cents)
+        ]
+        if not stronger:
+            return None
+        best = max(
+            stronger, key=lambda c: (c.context_window, c.cost_per_1k_input_cents)
+        )
+        return RouteDecision(
+            provider=best.provider,
+            model=best.model,
+            card=best,
+            strategy="cascade_escalate",
+            budget=budget,
+        )
 
 
 class RoutePolicy(Protocol):
@@ -31,7 +169,9 @@ class ComplexityRouter:
     CostAware 兜底：budget.remaining_ratio < 0.2 → 强制降一档。
     """
 
-    def __init__(self) -> None:
+    def __init__(self, calibrator: "HintCalibrator | None" = None) -> None:
+        # O4：历史用量校准器（None = 不校准，完全按 Task 自评 hint）
+        self._calibrator = calibrator
         # 内置模型卡（M0 硬编码，后续从 ProviderRegistry 获取）
         self._default_cards: list[ModelCard] = [
             ModelCard(
@@ -91,15 +231,21 @@ class ComplexityRouter:
                     budget=budget,
                 )
 
-        # 按复杂度分档
-        if req.hint.complexity == HintComplexity.simple:
+        # 按复杂度分档（O4：先经历史用量校准）
+        effective = req.hint.complexity
+        strategy = "complexity"
+        if self._calibrator is not None:
+            label = str(extra.get("task") or "")
+            calibrated = self._calibrator.suggest(label, req.hint.complexity)
+            if calibrated is not req.hint.complexity:
+                effective = calibrated
+                strategy = "complexity(calibrated)"
+        if effective == HintComplexity.simple:
             # 小模型：找最便宜的可用模型
             selected = min(cards, key=lambda c: c.cost_per_1k_input_cents)
-            strategy = "complexity"
         else:
             # 大模型：找能力最强的（按上下文窗口 + 成本综合）
-            selected = max(cards, key=lambda c: (c.context_window, -c.cost_per_1k_input_cents))
-            strategy = "complexity"
+            selected = max(cards, key=lambda c: (c.context_window, c.cost_per_1k_input_cents))
 
         # CostAware 兜底：预算不足时降档
         if budget and budget.remaining_ratio < 0.2:
@@ -115,6 +261,17 @@ class ComplexityRouter:
             strategy=strategy,
             budget=budget,
         )
+
+    def record(self, req: "ChatRequest", resp: "ChatResponse") -> None:
+        """Gateway.chat 成功后回写真实用量，供 HintCalibrator 学习（O4）。"""
+        if self._calibrator is None:
+            return
+        extra = req.extra or {}
+        label = str(extra.get("task") or "")
+        try:
+            self._calibrator.record(label, req.hint.complexity, int(resp.usage_output))
+        except Exception:  # noqa: BLE001 - 校准记录失败不影响主链路
+            pass
 
     @staticmethod
     def _match_explicit(

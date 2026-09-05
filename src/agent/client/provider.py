@@ -39,10 +39,14 @@ class OpenAIProvider(LLMProvider):
                 from openai import OpenAI
             except ImportError as e:
                 raise LLMError("openai 包未安装，请运行 pip install openai") from e
+            # SDK 内部重试置 0：SDK 静默重试（默认 2 次）会让单次调用在
+            # 超时场景下膨胀到 timeout 的数倍（观测到 412s ≈ 300s 超时+重试），
+            # 且重试发生在我们统计之外。重试统一由网关层管控。
             self._client = OpenAI(
                 api_key=self.config.api_key,
                 base_url=self.config.base_url or None,
                 timeout=self.config.timeout,
+                max_retries=0,
             )
         return self._client
 

@@ -27,25 +27,23 @@ def _bigrams(text: str) -> dict[str, int]:
     对中文按字符切 bigram；对 ASCII 单词按空白/标点切词，兼顾中西文。
     """
     counts: dict[str, int] = {}
-    # 中文/日文等连续字符 → bigram
-    cjk = re.findall(r"[\u3000-\u9fff\uff00-\uffef]", text)
+    words = re.findall(r"[a-z0-9]+", text.lower())
+    cjk = re.findall(r"[\u4e00-\u9fff]", text)
+    for w in words:
+        counts[w] = counts.get(w, 0) + 1
     for i in range(len(cjk) - 1):
-        g = cjk[i] + cjk[i + 1]
-        counts[g] = counts.get(g, 0) + 1
-    # 拉丁词
-    for word in re.findall(r"[A-Za-z0-9_]+", text.lower()):
-        counts[word] = counts.get(word, 0) + 1
+        bg = cjk[i] + cjk[i + 1]
+        counts[bg] = counts.get(bg, 0) + 1
+    if not words and not cjk and text.strip():
+        counts[text.strip()] = 1
     return counts
 
 
-def _cosine(a: dict[str, int], b: dict[str, int]) -> float:
+def _cosine(a: dict[str, float], b: dict[str, float]) -> float:
     """两个词频字典的余弦相似度（无交集返回 0.0）。"""
     if not a or not b:
         return 0.0
-    inter = set(a) & set(b)
-    if not inter:
-        return 0.0
-    dot = sum(a[t] * b[t] for t in inter)
+    dot = sum(a.get(k, 0.0) * v for k, v in b.items())
     na = sum(v * v for v in a.values()) ** 0.5
     nb = sum(v * v for v in b.values()) ** 0.5
     if na == 0.0 or nb == 0.0:
@@ -54,7 +52,7 @@ def _cosine(a: dict[str, int], b: dict[str, int]) -> float:
 
 
 class RetrievalScorer(Protocol):
-    """检索打分器协议：给定查询与候选文本，返回 [0,1] 相似度。"""
+    """可插拔检索打分器协议：query/candidate → 相似度 [0,1]"""
 
     def __call__(self, query: str, candidate: str) -> float: ...
 
@@ -64,23 +62,18 @@ def default_scorer(query: str, candidate: str) -> float:
     return _cosine(_bigrams(query), _bigrams(candidate))
 
 
+def make_scorer() -> Callable[[str, str], float]:
+    """返回默认打分器（便于注入/替换）。"""
+    return default_scorer
+
+
 @dataclass
 class MemoryEntry:
-    """单条记忆。
+    """单条语义记忆"""
 
-    Attributes:
-        id: 唯一标识（自动生成或指定）。
-        type: 记忆类型，例如 fact / character / setting / event / plot_thread / decision。
-        text: 记忆正文（语义内容）。
-        tags: 标签（角色名、章节号、主题等），用于粗筛。
-        source: 来源（章节号、\"plan\"、\"consolidated\" 等）。
-        created_at: 写入时间戳（秒）。
-        meta: 任意附加结构（如置信度、引用）。
-    """
-
-    type: str
-    text: str
-    id: str = ""
+    type: str = "fact"
+    text: str = ""
+    id: str = field(default_factory=lambda: str(time.time_ns()))
     tags: list[str] = field(default_factory=list)
     source: str = ""
     created_at: float = field(default_factory=lambda: time.time())
@@ -91,7 +84,7 @@ class MemoryEntry:
             "id": self.id,
             "type": self.type,
             "text": self.text,
-            "tags": list(self.tags),
+            "tags": self.tags,
             "source": self.source,
             "created_at": self.created_at,
             "meta": self.meta,
@@ -100,16 +93,11 @@ class MemoryEntry:
     @classmethod
     def from_dict(cls, d: dict[str, Any]) -> "MemoryEntry":
         return cls(
+            id=str(d.get("id", "")),
             type=str(d.get("type", "fact")),
             text=str(d.get("text", "")),
-            id=str(d.get("id", "")),
             tags=list(d.get("tags", []) or []),
             source=str(d.get("source", "")),
             created_at=float(d.get("created_at", 0.0)),
             meta=dict(d.get("meta", {}) or {}),
         )
-
-
-def make_scorer() -> Callable[[str, str], float]:
-    """返回默认打分器（便于注入/替换）。"""
-    return default_scorer

@@ -8,7 +8,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock, patch
 
 import pytest
-pytestmark = pytest.mark.skip(reason="LLMClient has been deprecated, use gateway_adapter instead")
 
 from agent.base.llm import LLMError
 from agent.client import (
@@ -50,37 +49,14 @@ def test_model_utility_defaults_to_main_model() -> None:
     assert config.model == "glm-5.2"
 
 
-# ------ 模型选择 ------
-def test_select_model_explicit() -> None:
-    """显式指定的模型优先"""
-    client = LLMClient(config=LLMConfig(api_key="k", model="main", model_utility="util"))
-    assert client._select_model("explicit", "creative") == "explicit"
-
-
-def test_select_model_by_use_creative() -> None:
-    """creative 用途选主模型"""
-    client = LLMClient(config=LLMConfig(api_key="k", model="main", model_utility="util"))
-    assert client._select_model(None, "creative") == "main"
-
-
-def test_select_model_by_use_utility() -> None:
-    """utility 用途选轻量模型"""
-    client = LLMClient(config=LLMConfig(api_key="k", model="main", model_utility="util"))
-    assert client._select_model(None, "utility") == "util"
-
-
-def test_select_model_utility_fallback_to_main() -> None:
-    """model_utility 为空时 utility 用主模型"""
-    client = LLMClient(config=LLMConfig(api_key="k", model="main", model_utility=""))
-    assert client._select_model(None, "utility") == "main"
-
-
 # ------ 缺少配置 ------
 def test_missing_api_key_raises() -> None:
-    """未配置 API key 时应抛 LLMError"""
-    client = LLMClient(config=LLMConfig(provider="openai", api_key="", model="m"))
+    """未配置 API key 时，openai Provider 构建 HTTP 客户端应抛 LLMError"""
+    from agent.client.provider import OpenAIProvider
+
+    provider = OpenAIProvider(LLMConfig(provider="openai", api_key="", model="m"))
     with pytest.raises(LLMError, match="LLM_API_KEY"):
-        client._provider._get_client()
+        provider._get_client()
 
 
 # ------ 调用与重试 ------
@@ -96,99 +72,101 @@ def _make_mock_response(text: str = "hello", model: str = "m") -> MagicMock:
     return resp
 
 
-@patch("agent.client.provider.OpenAIProvider._get_client")
-def test_chat_success(mock_get_client: MagicMock) -> None:
-    """成功调用返回 LLMResponse"""
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_mock_response("你好", "m")
-    mock_get_client.return_value = mock_client
+# ---- 调用（Gateway 唯一后端；用假 Gateway 验证委托与参数映射）------
 
+
+class _FakeGateway:
+    """假 Gateway：记录 ChatRequest，按脚本返回/抛错"""
+
+    def __init__(self, responses=None, error=None):
+        self.requests = []
+        self._responses = list(responses or [])
+        self._error = error
+
+    class registry:
+        @staticmethod
+        def available():
+            from llmagent.gateway.models import ModelCard
+
+            return [ModelCard(provider="fake", model="m",
+                              cost_per_1k_input_cents=0.1,
+                              cost_per_1k_output_cents=0.1,
+                              context_window=8000)]
+
+    def chat(self, req):
+        from llmagent.gateway.models import ChatResponse
+
+        self.requests.append(req)
+        if self._error is not None:
+            raise self._error
+        return ChatResponse(
+            text=self._responses.pop(0) if self._responses else "ok",
+            provider="fake", model="m", usage_input=10, usage_output=5,
+        )
+
+
+def _client_with(gateway) -> LLMClient:
+    import warnings
+
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
     client = LLMClient(config=LLMConfig(api_key="k", model="m"))
-    resp = client.chat([{"role": "user", "content": "hi"}])
+    client._gateway = gateway
+    return client
 
+
+def test_chat_success_delegates_to_gateway() -> None:
+    """成功调用经 Gateway 委托并映射 usage"""
+    gw = _FakeGateway(responses=["你好"])
+    client = _client_with(gw)
+    resp = client.chat([{"role": "user", "content": "hi"}])
     assert resp.text == "你好"
     assert resp.model == "m"
-    assert resp.usage["total_tokens"] == 15
+    assert resp.usage["input_tokens"] == 10
+    assert resp.usage["output_tokens"] == 5
+    assert len(gw.requests) == 1
 
 
-@patch("agent.client.provider.OpenAIProvider._get_client")
-def test_chat_retries_on_failure(mock_get_client: MagicMock) -> None:
-    """失败应重试，最终成功"""
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.side_effect = [
-        Exception("network error"),  # 第一次失败
-        _make_mock_response("ok", "m"),  # 第二次成功
-    ]
-    mock_get_client.return_value = mock_client
-
-    client = LLMClient(
-        config=LLMConfig(api_key="k", model="m", max_retries=2, retry_base_delay=0.01)
-    )
-    resp = client.chat([{"role": "user", "content": "hi"}])
-
-    assert resp.text == "ok"
-    assert mock_client.chat.completions.create.call_count == 2
-
-
-@patch("agent.client.provider.OpenAIProvider._get_client")
-def test_chat_raises_after_max_retries(mock_get_client: MagicMock) -> None:
-    """重试耗尽应抛 LLMError"""
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.side_effect = Exception("always fails")
-    mock_get_client.return_value = mock_client
-
-    client = LLMClient(
-        config=LLMConfig(api_key="k", model="m", max_retries=1, retry_base_delay=0.01)
-    )
-    with pytest.raises(LLMError, match="LLM 调用失败"):
+def test_chat_wraps_gateway_error() -> None:
+    """Gateway 异常应包装为 LLMError"""
+    gw = _FakeGateway(error=RuntimeError("provider 不可达"))
+    client = _client_with(gw)
+    with pytest.raises(LLMError, match="Gateway 调用失败"):
         client.chat([{"role": "user", "content": "hi"}])
 
-    # max_retries=1 意味着调用 2 次（1 次原始 + 1 次重试）
-    assert mock_client.chat.completions.create.call_count == 2
 
-
-@patch("agent.client.provider.OpenAIProvider._get_client")
-def test_chat_creative_uses_main_model(mock_get_client: MagicMock) -> None:
-    """chat_creative 用主模型"""
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_mock_response("x", "main")
-    mock_get_client.return_value = mock_client
-
-    client = LLMClient(config=LLMConfig(api_key="k", model="main", model_utility="util"))
+def test_chat_creative_hint_is_complex() -> None:
+    """chat_creative → 复杂度 complex 档"""
+    gw = _FakeGateway()
+    client = _client_with(gw)
     client.chat_creative([{"role": "user", "content": "hi"}])
-
-    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-    assert call_kwargs["model"] == "main"
+    assert gw.requests[0].hint.complexity.value == "complex"
 
 
-@patch("agent.client.provider.OpenAIProvider._get_client")
-def test_chat_utility_uses_utility_model_and_low_temp(mock_get_client: MagicMock) -> None:
-    """chat_utility 用轻量模型且温度低"""
-    mock_client = MagicMock()
-    mock_client.chat.completions.create.return_value = _make_mock_response("x", "util")
-    mock_get_client.return_value = mock_client
-
-    client = LLMClient(config=LLMConfig(api_key="k", model="main", model_utility="util"))
+def test_chat_utility_uses_low_temp_and_simple_hint() -> None:
+    """chat_utility → 低温度 + simple 档"""
+    gw = _FakeGateway()
+    client = _client_with(gw)
     client.chat_utility([{"role": "user", "content": "hi"}])
+    assert gw.requests[0].hint.temperature == 0.2
+    assert gw.requests[0].hint.complexity.value == "simple"
 
-    call_kwargs = mock_client.chat.completions.create.call_args.kwargs
-    assert call_kwargs["model"] == "util"
-    assert call_kwargs["temperature"] == 0.2
+
+def test_explicit_model_passthrough() -> None:
+    """显式 model 经 extra 透传给 Gateway 路由"""
+    gw = _FakeGateway()
+    client = _client_with(gw)
+    client.chat([{"role": "user", "content": "hi"}], model="main")
+    assert gw.requests[0].extra.get("model") == "main"
 
 
 def test_complete_returns_text() -> None:
     """complete 便利方法返回纯文本，并组合 system + user 消息"""
-    fake = MagicMock(spec=LLMProvider)
-    fake.chat.return_value = LLMResponse(text="结果", raw={}, model="m")
-    client = LLMClient(
-        config=LLMConfig(provider="openai", api_key="k", model="m"),
-        primary_provider=fake,
-    )
+    gw = _FakeGateway(responses=["结果"])
+    client = _client_with(gw)
     text = client.complete("写一句话", system="你是作家")
     assert text == "结果"
 
-    call_kwargs = fake.chat.call_args.kwargs
-    messages = call_kwargs["messages"]
+    messages = gw.requests[0].messages
     assert len(messages) == 2
     assert messages[0]["role"] == "system"
     assert messages[0]["content"] == "你是作家"
@@ -221,34 +199,44 @@ class TestProviderCreation:
         assert isinstance(provider, OpenAIProvider)
 
 
+class _OllamaRegistry:
+    @staticmethod
+    def available():
+        from llmagent.gateway.models import ModelCard
+
+        return [ModelCard(provider="ollama", model="qwen2.5",
+                          cost_per_1k_input_cents=0.0,
+                          cost_per_1k_output_cents=0.0,
+                          context_window=32000)]
+
+
 class TestLLMClientProvider:
-    def test_provider_name_property(self) -> None:
+    def _client(self) -> LLMClient:
+        import warnings
+
+        warnings.filterwarnings("ignore", category=DeprecationWarning)
         client = LLMClient(config=LLMConfig(provider="ollama", model="m"))
-        assert client.provider_name == "ollama"
+        client._gateway = type("G", (), {"registry": _OllamaRegistry})()
+        return client
+
+    def test_provider_name_property(self) -> None:
+        assert self._client().provider_name == "ollama"
 
     def test_is_local_true_for_ollama(self) -> None:
-        client = LLMClient(config=LLMConfig(provider="ollama", model="m"))
-        assert client.is_local is True
+        assert self._client().is_local is True
 
     def test_is_local_false_for_openai(self) -> None:
         client = LLMClient(config=LLMConfig(provider="openai", api_key="k", model="m"))
         assert client.is_local is False
 
-    def test_load_provider_from_env(
-        self, monkeypatch: pytest.MonkeyPatch
-    ) -> None:
-        monkeypatch.setenv("LLM_PROVIDER", "ollama")
-        monkeypatch.setenv("LLM_MODEL_ID", "qwen2.5")
-        config = LLMClient._load_from_env()
-        assert config.provider == "ollama"
-        assert config.model == "qwen2.5"
-
     def test_load_ollama_without_api_key(self) -> None:
-        """Ollama 不需要 API key"""
+        """Ollama 不需要 API key，构造 LLMClient 不应报错"""
+        import warnings
+
+        warnings.filterwarnings("ignore", category=DeprecationWarning)
         config = LLMConfig(provider="ollama", model="qwen2.5")
         client = LLMClient(config=config)
-        # 不应在初始化时报错
-        assert client.config.provider == "ollama"
+        assert client._gateway is not None
 
 
 class TestOllamaProviderHTTP:

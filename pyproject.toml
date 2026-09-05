@@ -46,3 +46,19 @@ pythonpath = ["src"]
 [tool.ruff]
 line-length = 100
 target-version = "py311"
+
+[tool.ruff.lint]
+# E9（语法级错误）+ TID251 banned-api（lint 层红线，T2 三层之一）。
+# 注意：F/E4/E7 存量问题较多，纳入基线前先清理，勿直接加入 select。
+select = ["E9", "TID251"]
+
+[tool.ruff.lint.flake8-tidy-imports.banned-api]
+"openai".msg = "provider SDK 仅允许 agent/client/ 与 llmagent/gateway/ 引用（R1 红线）"
+"ollama".msg = "provider SDK 仅允许 agent/client/ 与 llmagent/gateway/ 引用（R1 红线）"
+
+[tool.ruff.lint.per-file-ignores]
+# R1 白名单：网关边界层与测试
+"src/llmagent/gateway/**" = ["TID251"]
+"src/agent/client/**" = ["TID251"]
+"tests/**" = ["TID251"]
+"llmagent_tests/**" = ["TID251"]

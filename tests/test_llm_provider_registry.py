@@ -11,7 +11,6 @@ from __future__ import annotations
 from unittest.mock import MagicMock
 
 import pytest
-pytestmark = pytest.mark.skip(reason="LLMClient has been deprecated, use gateway_adapter instead")
 
 from agent.base.llm import LLMError
 from agent.client import (
@@ -103,41 +102,33 @@ def test_fallback_provider_legacy_string_compat() -> None:
     assert cfg.fallback_providers == ["ollama"]
 
 
-def test_fallback_providers_chain_skips_unavailable() -> None:
-    """fallback_providers 列表中不可用项被跳过，返回首个可用项"""
-    client = LLMClient(
-        config=LLMConfig(provider="openai", fallback_providers=["unknown_p", "ollama"]),
-    )
-    fb = client._get_fallback_provider()
-    assert isinstance(fb, OllamaProvider)
+def test_preflight_reports_gateway_cards() -> None:
+    """preflight 报告 Gateway 注册表的 provider/model 与可用清单"""
+    import warnings
 
+    warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-def test_fallback_chain_used_in_chat() -> None:
-    """主 Provider 网络错误 + 配置回退链 → 自动回退成功"""
-    primary = _PrimaryFake(LLMConfig(provider="openai"), raise_exc=ConnectionError("refused"))
-    fallback = _FallbackFake(LLMConfig(provider="ollama"), response_text="from-fallback")
-    client = LLMClient(
-        config=LLMConfig(provider="openai", fallback_providers=["ollama"]),
-        primary_provider=primary,
-        fallback_provider=fallback,
-    )
-    resp = client.chat([{"role": "user", "content": "hi"}])
-    assert resp.text == "from-fallback"
-    assert primary.calls == 1
-    assert fallback.calls == 1
+    class _FakeRegistry:
+        @staticmethod
+        def available():
+            from llmagent.gateway.models import ModelCard
 
+            return [
+                ModelCard(provider="openai", model="gpt-4o",
+                          cost_per_1k_input_cents=0.5,
+                          cost_per_1k_output_cents=1.5,
+                          context_window=128000),
+                ModelCard(provider="ollama", model="qwen2.5",
+                          cost_per_1k_input_cents=0.0,
+                          cost_per_1k_output_cents=0.0,
+                          context_window=32000),
+            ]
 
-def test_preflight_reports_fallback_list() -> None:
-    """preflight 同时报告 fallback_provider（兼容）与 fallback_providers（列表）"""
-    primary = _PrimaryFake(LLMConfig(provider="openai"))
-
-    fallback = _FallbackFake(LLMConfig(provider="ollama"))
-    client = LLMClient(
-        config=LLMConfig(provider="openai", fallback_provider="ollama"),
-        primary_provider=primary,
-        fallback_provider=fallback,
-    )
+    client = LLMClient(config=LLMConfig(provider="openai", api_key="k", model="m"))
+    client._gateway = type("G", (), {"registry": _FakeRegistry})()
     info = client.preflight()
-    assert info["fallback_provider"] == "ollama"
-    assert info["fallback_providers"] == ["ollama"]
-    assert info["has_fallback"] is True
+    assert info["gateway"] is True
+    assert info["provider"] == "openai"
+    assert info["model"] == "gpt-4o"
+    assert "ollama" in info["available_providers"]
+    assert info["is_local"] is False

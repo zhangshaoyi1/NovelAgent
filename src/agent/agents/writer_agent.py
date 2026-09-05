@@ -38,6 +38,7 @@ from agent.client.gateway_adapter import create_gateway, chat_structured
 from llmagent.gateway import Gateway
 from agent.core.infra.prompt_manager import pm
 from agent.core.base.structured_output import StructuredOutputError
+from agent.core.base.exceptions import FatalProviderError
 from agent.core.quality.scoring.quality_checker import (
     _count_cjk,
     _chapter_length_from_ctx,
@@ -316,7 +317,7 @@ class WriterAgent:
         # 弹性重试：瞬时 LLM 故障会导致循环 10 轮不收敛并直接中止整个写章批次；
         # 立即重开一轮（最多 1 次）把瞬时故障降级为延迟，而非批次失败
         result = loop.run(task)
-        if not result.finished or not result.draft:
+        if (not result.finished or not result.draft) and not result.fatal_error:
             self.console.print(
                 "[yellow]      …Agentic Loop 未收敛，重试一轮（瞬时故障保护）[/yellow]"
             )
@@ -332,6 +333,10 @@ class WriterAgent:
             result = loop.run(task)
         if not result.finished or not result.draft:
             detail = f"；最后一次决策失败：{result.last_error}" if result.last_error else ""
+            if result.fatal_error:
+                raise FatalProviderError(
+                    f"Writer 因 Provider 致命错误中止（Agentic Loop 提前结束）{detail}"
+                )
             raise RuntimeError(
                 f"Writer 未在迭代上限内提交章节（Agentic Loop 未正常结束）{detail}"
             )
@@ -349,7 +354,7 @@ class WriterAgent:
             system_prompt=system_prompt,
         )
         result = await loop.run_async(task)
-        if not result.finished or not result.draft:
+        if (not result.finished or not result.draft) and not result.fatal_error:
             self.console.print(
                 "[yellow]      …Agentic Loop 未收敛，重试一轮（瞬时故障保护）[/yellow]"
             )
@@ -363,6 +368,10 @@ class WriterAgent:
             result = await loop.run_async(task)
         if not result.finished or not result.draft:
             detail = f"；最后一次决策失败：{result.last_error}" if result.last_error else ""
+            if result.fatal_error:
+                raise FatalProviderError(
+                    f"Writer 因 Provider 致命错误中止（Agentic Loop 提前结束）{detail}"
+                )
             raise RuntimeError(
                 f"Writer 未在迭代上限内提交章节（Agentic Loop 未正常结束）{detail}"
             )

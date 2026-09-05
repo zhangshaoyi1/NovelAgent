@@ -126,6 +126,8 @@ class PromptDef:
     validation: list[ValidationSpec] = field(default_factory=list)
     _user_j2: jinja2.Template = field(default="", repr=False)
     source: str = "md"  # "md" | "legacy"
+    # 中文描述（frontmatter description/purpose），供 Web 版本面板显示人类可读名称
+    description: str = ""
 
     def __post_init__(self) -> None:
         try:
@@ -260,6 +262,7 @@ class PromptManager:
             user_template=user,
             validation=_build_validation(meta.get("validation")),
             source="md",
+            description=str(meta.get("description") or meta.get("purpose") or ""),
         )
 
     def _legacy(self, name: str) -> PromptDef | None:
@@ -367,6 +370,7 @@ class PromptManager:
                     "model": pd.model,
                     "temperature": pd.temperature,
                     "source": "md",
+                    "description": pd.description,
                     "mtime": mtime,
                     "rel_path": str(rel).replace("\\", "/"),
                 }

@@ -10,7 +10,7 @@ from .providers.registry import ProviderRegistry
 from .rate_limiter import RateLimiter, SemanticCache
 from .request_gate import RequestGate
 from .response_gate import MetricsSink, ResponseGate
-from .router import ComplexityRouter, RoutePolicy
+from .router import CascadeRoute, ComplexityRouter, RouteDecision, RoutePolicy
 
 
 class Gateway:
@@ -88,8 +88,30 @@ class Gateway:
         if cached is not None:
             return cached
 
+        # ②~⑥：单次路由调用（含 Cascade 先小后大循环，O5）
+        resp, route = self._invoke_routed(req, decision.budget)
+        extra = req.extra or {}
+        verify = extra.get("verify")
+        if extra.get("cascade") and callable(verify):
+            resp, route = self._cascade_verify(req, resp, route, verify, decision.budget)
+
+        # O4：真实用量回写，供 HintCalibrator 学习
+        record = getattr(self._router, "record", None)
+        if callable(record):
+            try:
+                record(req, resp)
+            except Exception:  # noqa: BLE001 - 校准记录失败不影响主链路
+                pass
+
+        # ⑦ 返回
+        return resp
+
+    def _invoke_routed(
+        self, req: ChatRequest, budget: object | None
+    ) -> tuple[ChatResponse, "RouteDecision"]:
+        """②~⑥ 单次路由调用：路由 → 打包 → 调用 → 响应门禁 → 打点 → 缓存写入"""
         # ② Router：按 hint 选模型
-        route = self._router.decide(req, self._registry.available(), decision.budget)
+        route = self._router.decide(req, self._registry.available(), budget)
 
         # ③ Packer：真实计数 + 指纹
         try:
@@ -153,9 +175,43 @@ class Gateway:
 
         # 语义缓存写入
         self._semantic_cache.store(req, resp)
+        return resp, route
 
-        # ⑦ 返回
-        return resp
+    def _cascade_verify(
+        self,
+        req: ChatRequest,
+        resp: ChatResponse,
+        route: "RouteDecision",
+        verify: object,
+        budget: object | None,
+    ) -> tuple[ChatResponse, "RouteDecision"]:
+        """O5：Cascade verify 失败 → 升级到最强模型重试一次。
+
+        - 首跳已是 cascade_escalate / explicit 策略时不重复升级；
+        - 升级后无论 verify 是否通过都返回升级结果（更强的模型输出优先，
+          最终判定仍归 Task 的 validators，遵循 Capability/Policy 分离）。
+        """
+        if route.strategy in ("cascade_escalate", "explicit"):
+            return resp, route
+        cards = self._registry.available()
+        current = next(
+            (c for c in cards if c.provider == route.provider and c.model == route.model),
+            route.card,
+        )
+        try:
+            escalated = CascadeRoute.escalate(cards, current, budget)
+        except Exception:  # noqa: BLE001 - 升级决策异常时保留首跳结果
+            return resp, route
+        if escalated is None:
+            return resp, route
+        esc_req = req
+        try:
+            esc_resp, esc_route = self._invoke_routed(esc_req, budget)
+        except Exception:  # noqa: BLE001 - 升级调用失败时保留首跳结果
+            return resp, route
+        if callable(verify) and verify(esc_resp):
+            return esc_resp, esc_route
+        return esc_resp, esc_route
 
 
 class GatewayError(Exception):

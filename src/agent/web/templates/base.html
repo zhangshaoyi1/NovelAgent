@@ -16,6 +16,9 @@
         <span class="brand-mark">NA</span>
         <span class="brand-text">NovelAgent <small>共创式长篇小说写作 Agent</small></span>
       </a>
+      <a class="ws-badge" href="/settings" title="{{ workspace_badge().ws_path }}">
+        <span class="ws-dot"></span>项目空间 · {{ workspace_badge().ws_name }}
+      </a>
       <nav class="nav">
         <a href="/" {% if active=="home" %}class="active"{% endif %}>项目空间</a>
         <a href="/models" {% if active=="models" %}class="active"{% endif %}>模型管理</a>

@@ -1,8 +1,7 @@
-"""统一 LLM 客户端入口（已废弃，请使用 gateway_adapter）
+"""统一 LLM 客户端入口（兼容门面，唯一后端为 llmagent Gateway）
 
-⚠️  DEPRECATED：此类已废弃，所有新代码应使用 ``agent.client.gateway_adapter``
-    提供的 ``chat_creative()`` / ``chat_utility()`` / ``chat_structured()`` 辅助函数。
-    保留此模块仅用于测试兼容，后续版本将移除。
+2026-09-05 收敛债③：旧直连 Provider 路径（重试/回退链）已删除，本类是
+Gateway 的薄门面，对外 API 不变；新代码请直接使用 ``agent.client.gateway_adapter``。
 
 旧用法（已废弃）：
     from agent.client import LLMClient
@@ -21,13 +20,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
-import os
-import time
-from typing import Any, Optional
-from urllib.error import URLError
+from typing import Any
 
 from pydantic import BaseModel
+from rich.console import Console
 
 from agent.base.llm import LLMConfig, LLMError, LLMProvider, LLMResponse
 # D-M（2026-08-29）：结构化输出自 base 引用（原 core.base → client→core 反向依赖）
@@ -105,26 +101,10 @@ class LLMClient:
             DeprecationWarning, stacklevel=2,
         )
 
-        # 检查是否使用 Gateway 后端
-        if llm_use_gateway is None:
-            _raw = os.environ.get("LLM_USE_GATEWAY", "").strip().lower()
-            llm_use_gateway = _raw in ("true", "1", "yes", "on")
-
-        if llm_use_gateway:
-            self._init_gateway(config, console, env_file)
-            return
-
-        # ---- 原有初始化逻辑（未启用 Gateway 时） ----
-        if config is None:
-            resolved_env = env_file or os.environ.get("NOVEL_AGENT_DOTENV")
-            self.config = self._load_from_env(env_file=resolved_env)
-        else:
-            self.config = config
-        self.console = console
-        self._provider = primary_provider or LLMProvider.create(self.config)
-        self._fallback_provider = fallback_provider
-        self.fallback_log: list[str] = []
-        self._gateway: Any = None  # 标记未使用 Gateway
+        # 2026-09-05 收敛债③：Gateway 成为唯一后端，旧直连 Provider 路径已删除。
+        # primary_provider / fallback_provider / llm_use_gateway 参数仅为签名兼容保留（忽略）。
+        _ = primary_provider, fallback_provider, llm_use_gateway
+        self._init_gateway(config, console, env_file)
 
     def _init_gateway(
         self,
@@ -138,16 +118,7 @@ class LLMClient:
         self._gateway = create_gateway(env_file=env_file, console=console)
         self.config = _load_config_from_env(env_file)
         self.console = console
-        self.fallback_log: list[str] = []
-        self._provider = None  # type: ignore[assignment]
-        self._fallback_provider = None
 
-    @staticmethod
-    def _load_from_env(env_file: str | None = None) -> LLMConfig:
-        """从环境变量加载配置（委托给 ConfigLoader）"""
-        from agent.base.config import ConfigLoader
-
-        return ConfigLoader.get_llm_config(env_file)
 
     def _build_chat_request(
         self,
@@ -178,21 +149,13 @@ class LLMClient:
 
     @property
     def provider_name(self) -> str:
-        if self._gateway is not None:
-            cards = self._gateway.registry.available()
-            if cards:
-                return cards[0].provider
-            return "unknown"
-        return self.config.provider
+        cards = self._gateway.registry.available()
+        return cards[0].provider if cards else "unknown"
 
     @property
     def is_local(self) -> bool:
-        if self._gateway is not None:
-            cards = self._gateway.registry.available()
-            if cards:
-                return "ollama" in cards[0].provider.lower()
-            return False
-        return self.config.provider == "ollama"
+        cards = self._gateway.registry.available()
+        return "ollama" in cards[0].provider.lower() if cards else False
 
     def preflight(self) -> dict[str, Any]:
         if self._gateway is not None:
@@ -206,65 +169,6 @@ class LLMClient:
                 "available_models": [c.model for c in cards],
                 "gateway": True,
             }
-        return {
-            "provider": self.config.provider,
-            "model": self.config.model,
-            "model_utility": self.config.model_utility or self.config.model,
-            "is_local": self.is_local,
-            "fallback_provider": self.config.fallback_provider or None,
-            "fallback_providers": list(self.config.fallback_providers),
-            "fallback_model": self.config.fallback_model or None,
-            "has_fallback": self._get_fallback_provider() is not None,
-        }
-
-    @staticmethod
-    def _is_network_error(exc: Exception) -> bool:
-        """判断是否为网络不可达错误"""
-        if isinstance(exc, (URLError, ConnectionError, TimeoutError)):
-            return True
-        name = type(exc).__name__
-        return "Connection" in name or "Connect" in name or "Timeout" in name
-
-    def _get_fallback_provider(self) -> LLMProvider | None:
-        """按回退链构建备用 Provider"""
-        if self._fallback_provider is not None:
-            return self._fallback_provider
-        for fb_name in self.config.fallback_providers:
-            fb_name = fb_name.strip().lower()
-            if not fb_name or fb_name == self.config.provider:
-                continue
-            try:
-                self._fallback_provider = LLMProvider.create(
-                    LLMConfig(
-                        provider=fb_name,
-                        api_key=self.config.api_key,
-                        base_url=self.config.base_url,
-                        model=self.config.fallback_model or self.config.model,
-                        model_utility=(
-                            self.config.fallback_model
-                            or self.config.model_utility
-                            or self.config.model
-                        ),
-                        timeout=self.config.timeout,
-                        max_retries=1,
-                    )
-                )
-                return self._fallback_provider
-            except LLMError:
-                continue
-        return self._fallback_provider
-
-    def _warn_fallback(self, exc: Exception) -> None:
-        fb_name = self.config.fallback_providers[0] if self.config.fallback_providers else ""
-        if self._fallback_provider is not None and self._fallback_provider.config.provider:
-            fb_name = self._fallback_provider.config.provider
-        msg = (
-            f"主 Provider({self.config.provider}) 不可达：{exc}。"
-            f"已回退到备用 Provider({fb_name})"
-        )
-        self.fallback_log.append(msg)
-        if self.console is not None:
-            self.console.print(f"[yellow]⚠ {msg}[/yellow]")
 
     def _select_model(self, model: str | None, use: str) -> str:
         if model:
@@ -299,117 +203,29 @@ class LLMClient:
                 P1 仅把问题写入 ``resp.warnings``。
             validation_attempt: 内部递归重试计数，防无限循环，调用方勿传。
         """
-        # Gateway 后端委托
-        if self._gateway is not None:
-            req = self._build_chat_request(
-                messages, temperature=temperature, max_tokens=max_tokens,
-                use=use, model=model, enable_thinking=enable_thinking, **kwargs,
+        # Gateway 后端委托（唯一路径）
+        req = self._build_chat_request(
+            messages, temperature=temperature, max_tokens=max_tokens,
+            use=use, model=model, enable_thinking=enable_thinking, **kwargs,
+        )
+        try:
+            resp = self._gateway.chat(req)
+        except LLMError:
+            raise
+        except Exception as e:
+            raise LLMError(f"Gateway 调用失败: {e}") from e
+        llm_resp = LLMResponse(
+            text=resp.text,
+            usage={"input_tokens": resp.usage_input, "output_tokens": resp.usage_output},
+            model=resp.model,
+        )
+        # 结果校验（validators 非空时生效；空则原样返回）
+        if validators:
+            return self._validate_and_return(
+                llm_resp, messages, validators, validation_attempt,
+                model, temperature, max_tokens, use, enable_thinking, **kwargs,
             )
-            t0 = time.monotonic()
-            try:
-                resp = self._gateway.chat(req)
-            except Exception as e:
-                raise LLMError(f"Gateway 调用失败: {e}") from e
-            elapsed = time.monotonic() - t0
-            llm_resp = LLMResponse(
-                text=resp.text,
-                usage={"input_tokens": resp.usage_input, "output_tokens": resp.usage_output},
-                model=resp.model,
-            )
-            # 结果校验
-            if validators:
-                return self._validate_and_return(
-                    llm_resp, messages, validators, validation_attempt,
-                    model, temperature, max_tokens, use, enable_thinking, **kwargs,
-                )
-            return llm_resp
-
-        target_model = self._select_model(model, use)
-        if enable_thinking is None:
-            enable_thinking = self.config.enable_thinking
-
-        last_exc: Exception | None = None
-        req_t0 = time.monotonic()  # 单次 provider 调用计时起点（每次尝试/回退时重置）
-
-        for attempt in range(self.config.max_retries + 1):
-            req_t0 = time.monotonic()
-            try:
-                resp = self._provider.chat(
-                    messages=messages,
-                    model=target_model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    enable_thinking=enable_thinking,
-                    timeout=self.config.timeout,
-                    **kwargs,
-                )
-                _notify_llm_event({
-                    "type": "llm.chat",
-                    "ok": True,
-                    "provider": self.config.provider,
-                    "model": target_model,
-                    "use": use,
-                    "latency_ms": round((time.monotonic() - req_t0) * 1000.0, 2),
-                })
-                return self._validate_and_return(
-                    resp, messages, validators, validation_attempt,
-                    model, temperature, max_tokens, use, enable_thinking, **kwargs,
-                )
-            except Exception as e:
-                last_exc = e
-                if self._is_network_error(e):
-                    break
-                if attempt < self.config.max_retries:
-                    delay = self.config.retry_base_delay * (2 ** attempt)
-                    time.sleep(delay)
-                    continue
-                break
-
-        # 无网络回退：主 Provider 网络错误 → 切到备用 Provider
-        fb = self._get_fallback_provider()
-        if fb is not None and last_exc is not None and self._is_network_error(last_exc):
-            self._warn_fallback(last_exc)
-            fb_model = fb.config.model_utility or fb.config.model if use == "utility" else fb.config.model
-            if not fb_model:
-                fb_model = target_model
-            req_t0 = time.monotonic()
-            try:
-                fb_resp = fb.chat(
-                    messages=messages,
-                    model=fb_model,
-                    temperature=temperature,
-                    max_tokens=max_tokens,
-                    enable_thinking=enable_thinking,
-                    timeout=self.config.timeout,
-                    **kwargs,
-                )
-                _notify_llm_event({
-                    "type": "llm.chat",
-                    "ok": True,
-                    "provider": fb.config.provider,
-                    "model": fb_model,
-                    "use": use,
-                    "latency_ms": round((time.monotonic() - req_t0) * 1000.0, 2),
-                })
-                return self._validate_and_return(
-                    fb_resp, messages, validators, validation_attempt,
-                    model, temperature, max_tokens, use, enable_thinking, **kwargs,
-                )
-            except Exception as e2:
-                last_exc = e2
-
-        _notify_llm_event({
-            "type": "llm.error",
-            "ok": False,
-            "provider": self.config.provider,
-            "model": target_model,
-            "use": use,
-            "error": str(last_exc),
-            "latency_ms": round((time.monotonic() - req_t0) * 1000.0, 2),
-        })
-        raise LLMError(
-            f"LLM 调用失败（重试 {self.config.max_retries} 次后仍报错）: {last_exc}"
-        ) from last_exc
+        return llm_resp
 
     def _validate_and_return(
         self,
@@ -595,29 +411,6 @@ class LLMClient:
                 pass
             return []
 
-        t0 = time.monotonic()
-        try:
-            r = self._provider.embed(texts)
-            _notify_llm_event({
-                "type": "api.call",
-                "ok": True,
-                "provider": self.config.provider,
-                "latency_ms": round((time.monotonic() - t0) * 1000.0, 2),
-            })
-            return r
-        except Exception as e:
-            _notify_llm_event({
-                "type": "api.call",
-                "ok": False,
-                "provider": self.config.provider,
-                "error": str(e),
-                "latency_ms": round((time.monotonic() - t0) * 1000.0, 2),
-            })
-            if self.console is not None:
-                self.console.print(
-                    f"[yellow]⚠ embed 失败，降级为无向量召回：{e}[/yellow]"
-                )
-            return []
 
 
 def _load_config_from_env(env_file: str | None = None) -> LLMConfig:

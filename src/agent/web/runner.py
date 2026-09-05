@@ -92,6 +92,9 @@ class RunManager:
         cmd += run["argv"]
         env = dict(os.environ)
         env["PYTHONUNBUFFERED"] = "1"  # 保证 stdout 逐行实时流出
+        # 把当前项目空间透传给 CLI 子进程：CLI 侧 compose_runner 等依赖
+        # NOVEL_DATA_ROOT 定位数据根，保证 Web 切换空间后 CLI 读写同一目录。
+        env["NOVEL_DATA_ROOT"] = str(project_path(run["project"]).parent)
         env.update(run.get("env_extra") or {})
 
         try:
