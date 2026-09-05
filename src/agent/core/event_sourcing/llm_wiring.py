@@ -81,6 +81,7 @@ def _usage_hook_factory():
                     use="chat",
                     tokens_in=int(payload.get("tokens_in", 0) or 0),
                     tokens_out=int(payload.get("tokens_out", 0) or 0),
+                    tokens_cached=int(payload.get("tokens_cached", 0) or 0),
                     latency_ms=float(payload.get("latency_ms", 0) or 0),
                     ok=bool(payload.get("ok", True)),
                     error=str(payload.get("error", "")),

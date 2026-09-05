@@ -55,6 +55,13 @@ class _GatewayModelProvider:
             usage = resp.usage or {}
             tokens_in = int(usage.get("input_tokens", 0) or packed.estimated_input_tokens or 0)
             tokens_out = int(usage.get("output_tokens", 0) or 0)
+            # 缓存命中 token（provider 返回 prompt_tokens_details.cached_tokens；
+            # 键名兼容 input_tokens / prompt_tokens 两种口径，缺失为 0）
+            tokens_cached = int(
+                usage.get("cached_tokens", 0)
+                or usage.get("input_tokens_cached", 0)
+                or 0
+            )
             # LLMOps 用量埋点：所有 create_gateway() 调用的唯一收口（失败不阻断）
             notify_llm_usage({
                 "type": "llm.usage",
@@ -63,6 +70,7 @@ class _GatewayModelProvider:
                 "model": route.model,
                 "tokens_in": tokens_in,
                 "tokens_out": tokens_out,
+                "tokens_cached": tokens_cached,
                 "latency_ms": round(elapsed, 2),
             })
             return RawResponse(

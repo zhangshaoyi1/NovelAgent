@@ -29,6 +29,7 @@ class TraceSpan:
     use: str
     tokens_in: int = 0
     tokens_out: int = 0
+    tokens_cached: int = 0
     latency_ms: float = 0.0
     cost: float = 0.0
     ok: bool = True
@@ -44,6 +45,7 @@ class TraceSpan:
             "use": self.use,
             "tokens_in": self.tokens_in,
             "tokens_out": self.tokens_out,
+            "tokens_cached": self.tokens_cached,
             "latency_ms": self.latency_ms,
             "cost": self.cost,
             "ok": self.ok,
@@ -59,6 +61,7 @@ class TraceSpan:
             use=str(d.get("use", "")),
             tokens_in=int(d.get("tokens_in", 0)),
             tokens_out=int(d.get("tokens_out", 0)),
+            tokens_cached=int(d.get("tokens_cached", 0) or 0),
             latency_ms=float(d.get("latency_ms", 0.0)),
             cost=float(d.get("cost", 0.0)),
             ok=bool(d.get("ok", True)),
@@ -116,6 +119,7 @@ class TraceStore:
         with self._lock:
             tin = sum(s.tokens_in for s in self._spans)
             tout = sum(s.tokens_out for s in self._spans)
+            tcached = sum(s.tokens_cached for s in self._spans)
             cost = sum(s.cost for s in self._spans)
             fails = sum(1 for s in self._spans if not s.ok)
             lat = [s.latency_ms for s in self._spans if s.latency_ms > 0]
@@ -125,6 +129,7 @@ class TraceStore:
                 "tokens_in": tin,
                 "tokens_out": tout,
                 "tokens_total": tin + tout,
+                "tokens_cached": tcached,
                 "cost": round(cost, 4),
                 "failures": fails,
                 "avg_latency_ms": round(avg_lat, 2),

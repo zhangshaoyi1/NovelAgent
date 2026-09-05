@@ -36,11 +36,12 @@ def _group_spans(
         agent = str((s.meta or {}).get("subagent_id", "main-agent"))
         d = out.setdefault(run, {}).setdefault(
             agent,
-            {"calls": 0, "tokens_in": 0, "tokens_out": 0, "tokens_total": 0, "cost": 0.0},
+            {"calls": 0, "tokens_in": 0, "tokens_out": 0, "tokens_cached": 0, "tokens_total": 0, "cost": 0.0},
         )
         d["calls"] += 1
         d["tokens_in"] += s.tokens_in
         d["tokens_out"] += s.tokens_out
+        d["tokens_cached"] += getattr(s, "tokens_cached", 0)
         d["tokens_total"] += s.tokens_in + s.tokens_out
         d["cost"] += s.cost
     return out
@@ -69,7 +70,7 @@ class UsageReporter:
         for run, agents in agg.items():
             merged: dict[str, Any] = {
                 "calls": 0, "tokens_in": 0, "tokens_out": 0,
-                "tokens_total": 0, "cost": 0.0,
+                "tokens_cached": 0, "tokens_total": 0, "cost": 0.0,
             }
             for u in agents.values():
                 for k in merged:
@@ -84,6 +85,7 @@ class UsageReporter:
             "calls": raw["calls"],
             "tokens_in": raw["tokens_in"],
             "tokens_out": raw["tokens_out"],
+            "tokens_cached": raw.get("tokens_cached", 0),
             "tokens_total": raw["tokens_total"],
             "cost": raw["cost"],
         }

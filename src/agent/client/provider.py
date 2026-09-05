@@ -94,6 +94,13 @@ class OpenAIProvider(LLMProvider):
                 "completion_tokens": getattr(resp.usage, "completion_tokens", 0),
                 "total_tokens": getattr(resp.usage, "total_tokens", 0),
             }
+            # 缓存命中 token（OpenAI 兼容协议：prompt_tokens_details.cached_tokens，
+            # 智谱 GLM 等同源字段；缺失时为 0，不阻断）
+            details = getattr(resp.usage, "prompt_tokens_details", None)
+            cached = getattr(details, "cached_tokens", None) if details is not None else None
+            if cached is None and isinstance(details, dict):
+                cached = details.get("cached_tokens")
+            usage["cached_tokens"] = int(cached or 0)
         return LLMResponse(text=text, usage=usage, model=model, raw=resp)
 
     def embed(self, texts: list[str]) -> list[list[float]]:

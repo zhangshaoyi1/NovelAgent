@@ -144,6 +144,14 @@ def _tokens_total(name: str) -> int:
         return 0
 
 
+def _tokens_cached(name: str) -> int:
+    """累计缓存命中 tokens（prompt cache，缺失降级为 0）。"""
+    try:
+        return int(get_summary(name).get("trace_totals", {}).get("tokens_cached") or 0)
+    except Exception:  # noqa: BLE001 - 降级不阻断
+        return 0
+
+
 def _genre_label(name: str) -> str:
     """题材标签（尽力而为：state.json 的 genres 字段 → 题材合并来源 → '—'）。"""
     pdir = project_path(name)
@@ -221,6 +229,7 @@ def get_project_state(name: str) -> dict[str, Any]:
         "available_commands": sm.allowed_commands(),
         "chapters_count": len(get_chapters(name)),
         "tokens_total": _tokens_total(name),
+        "tokens_cached": _tokens_cached(name),
         "genre": _genre_label(name),
         "has_world": (pdir / "world.md").exists(),
     }
