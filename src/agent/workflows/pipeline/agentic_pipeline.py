@@ -282,6 +282,9 @@ class AgenticPipelineWorkflow:
         self.ending_ratio = max(0.0, min(0.5, float(ending_ratio)))
         self.mainline_gate = bool(mainline_gate)
         self.ending_gate = bool(ending_gate)
+        # 写章失败的冷却重试等待（秒；0=关闭）。>0 时单章失败先冷却等待再重试 1 次，
+        # 用于抵御 provider 间歇性 403/429 风暴（免费池过载），避免整批报废。
+        self._chapter_retry_wait_s = 90.0
         # G11：风格模仿 + 写作方法模板（透传给 writer/planner/outline；默认开）
         self.style_enabled = bool(style_enabled)
         self.style_file = style_file
@@ -485,7 +488,10 @@ class AgenticPipelineWorkflow:
                     return int(data["total_chapters"])
         except Exception:  # noqa: BLE001 - 读取失败走兜底
             pass
-        return self._resolve_target()
+        # 修复（2026-09-05）：plan.json 缺失时绝不能把本轮批次目标（--chapters）
+        # 当全书总章数——否则 10 章批次会让结局模式在第 8 章触发、路线跨度失真。
+        # 与 _resolve_target 的兜底一致，回归设计默认值 100。
+        return 100
 
     # ---------------------------------------------------------------- 设定集自检/引导（G3）
     def _ensure_setting_set(self) -> None:
@@ -1296,12 +1302,36 @@ class AgenticPipelineWorkflow:
                 pressure_stage=self._prev_pressure_stage(),
             )
             try:
+                # LLMOps：章级用量窗口起点（覆盖本章生成+质检+可能的重写全程）
+                from agent.core.llmops.trace import usage_snapshot as _usage_snapshot
+
+                _u0 = _usage_snapshot()
                 wf_result = writer.run()
             except Exception as e:  # noqa: BLE001 - 单章失败不阻断，记录并跳出
                 self.console.print(f"[red]写章失败：{e}[/red]")
                 # ---- G9：failure 事件（写章失败，error）----
                 self._emit_failure("write_chapter", str(e), severity="error")
-                break
+                # 弹性重试（2026-09-05）：provider 间歇性 403/429 风暴（免费池过载）
+                # 会在数分钟内连续打死整批章节。冷却等待后重试 1 次，
+                # 风暴短窗可自然恢复；仍失败才终止本批（等价旧行为）。
+                retry_ok = False
+                if self._chapter_retry_wait_s > 0:
+                    self.console.print(
+                        f"[yellow]冷却 {self._chapter_retry_wait_s}s 后重试本章一次"
+                        f"（provider 瞬时故障保护）...[/yellow]"
+                    )
+                    time.sleep(self._chapter_retry_wait_s)
+                    try:
+                        wf_result = writer.run()
+                        retry_ok = True
+                        self.console.print("[green]本章重试成功，继续批次[/green]")
+                    except Exception as e2:  # noqa: BLE001
+                        self.console.print(f"[red]本章重试仍失败：{e2}[/red]")
+                        self._emit_failure(
+                            "write_chapter_retry", str(e2), severity="warn"
+                        )
+                if not retry_ok:
+                    break
             ch_num = int(getattr(wf_result, "chapter_num", 0))
             ch_text = str(getattr(wf_result, "chapter_text", ""))
             ch_title = str(getattr(wf_result, "chapter_title", ""))
@@ -1442,7 +1472,26 @@ class AgenticPipelineWorkflow:
 
             wrote += 1
             self.console.print(f"[green]✓ 第 {ch_num} 章完成（{len(ch_text)} 字）[/green]")
-            # ---- G9：chapter_done（words/quality_passed/chapter_elapsed_s/eta_s）----
+            # ---- LLMOps：本章用量（窗口差值，含重写）+ 控制台回显 ----
+            try:
+                from agent.core.llmops.trace import usage_snapshot as _usage_snapshot
+
+                _u1 = _usage_snapshot()
+                _usage = {
+                    "llm_calls": max(0, _u1["calls"] - _u0["calls"]),
+                    "tokens_in": max(0, _u1["tokens_in"] - _u0["tokens_in"]),
+                    "tokens_out": max(0, _u1["tokens_out"] - _u0["tokens_out"]),
+                }
+                _usage["tokens_total"] = _usage["tokens_in"] + _usage["tokens_out"]
+                if _usage["llm_calls"] > 0:
+                    self.console.print(
+                        f"[cyan]📊 第 {ch_num} 章用量："
+                        f"in {_usage['tokens_in']:,} / out {_usage['tokens_out']:,} tokens"
+                        f"（{_usage['llm_calls']} 次调用）[/cyan]"
+                    )
+            except Exception:  # noqa: BLE001 - 用量统计失败不影响写作
+                _usage = None
+            # ---- G9：chapter_done（words/quality_passed/chapter_elapsed_s/eta_s/用量）----
             self._emit_event(
                 "chapter_done",
                 chapter=ch_num,
@@ -1450,6 +1499,7 @@ class AgenticPipelineWorkflow:
                 quality_passed=bool(getattr(wf_result, "quality_passed", True)),
                 chapter_elapsed_s=round(time.monotonic() - self._chapter_t0),
                 eta_s=self._compute_eta_s(target),
+                usage=_usage,
             )
             # 防御：避免无限循环（target 必须有限且 writer 必须推进进度）
             if self._current_total() <= start_total + wrote - 1 and wrote >= 1:

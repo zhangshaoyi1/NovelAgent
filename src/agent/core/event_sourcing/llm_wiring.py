@@ -30,6 +30,8 @@ def wire_llm_event_hook(project_dir: str) -> None:
     from agent.client import set_llm_event_hook
     # core.rag 不依赖 event_sourcing，故在此延迟导入 set_rag_event_hook。
     from agent.core.rag._events import set_rag_event_hook
+    # 用量埋点出口（client 层，无循环依赖）。
+    from agent.client.llm_usage import set_llm_usage_hook
 
     EventBus.get_instance().configure(project_dir)
 
@@ -48,3 +50,44 @@ def wire_llm_event_hook(project_dir: str) -> None:
 
     set_llm_event_hook(_hook_factory("LLMClient"))
     set_rag_event_hook(_hook_factory("RAG"))
+    # LLMOps 用量埋点：gateway_adapter 唯一收口 → EventBus + TraceStore
+    set_llm_usage_hook(_usage_hook_factory())
+
+
+def _usage_hook_factory():
+    """用量 hook：llm.usage 事件落 EventBus + TraceSpan 落全局 TraceStore。"""
+
+    def _hook(payload: dict) -> None:
+        # 1) EventBus（.events/events.jsonl）
+        try:
+            EventBus.get_instance().emit_event(
+                str(payload.get("type", "llm.usage")),
+                correlation_id="",
+                payload=dict(payload),
+                context={"origin": "Gateway"},
+            )
+        except Exception:  # noqa: BLE001 - 事件转发失败不阻断调用
+            pass
+        # 2) LLMOps TraceStore（未 set_tracer 时为 NullTracer，零开销跳过）
+        try:
+            from agent.core.llmops.trace import NullTracer, TraceSpan, get_tracer
+
+            tracer = get_tracer()
+            if isinstance(tracer, NullTracer):
+                return
+            tracer.record(
+                TraceSpan(
+                    model=str(payload.get("model", "")),
+                    use="chat",
+                    tokens_in=int(payload.get("tokens_in", 0) or 0),
+                    tokens_out=int(payload.get("tokens_out", 0) or 0),
+                    latency_ms=float(payload.get("latency_ms", 0) or 0),
+                    ok=bool(payload.get("ok", True)),
+                    error=str(payload.get("error", "")),
+                    meta={"provider": str(payload.get("provider", ""))},
+                )
+            )
+        except Exception:  # noqa: BLE001 - 追踪失败不阻断调用
+            pass
+
+    return _hook

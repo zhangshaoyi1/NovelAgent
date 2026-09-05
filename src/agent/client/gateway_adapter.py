@@ -18,6 +18,8 @@ from agent.base.structured_output import (
     extract_json,
     pydantic_to_json_schema,
 )
+# 用量埋点出口（同层模块，无循环依赖；失败不阻断调用）
+from agent.client.llm_usage import notify_llm_usage
 
 
 # ===== 将 agent LLMProvider 包装为 Gateway ModelProvider =====
@@ -51,16 +53,38 @@ class _GatewayModelProvider:
             # usage 可能缺省（部分 provider 不返回）→ None.get() 会崩并连带
             # 上层去AI味等 LLM 步骤被静默跳过，这里统一兜底为空字典
             usage = resp.usage or {}
+            tokens_in = int(usage.get("input_tokens", 0) or packed.estimated_input_tokens or 0)
+            tokens_out = int(usage.get("output_tokens", 0) or 0)
+            # LLMOps 用量埋点：所有 create_gateway() 调用的唯一收口（失败不阻断）
+            notify_llm_usage({
+                "type": "llm.usage",
+                "ok": True,
+                "provider": self.name,
+                "model": route.model,
+                "tokens_in": tokens_in,
+                "tokens_out": tokens_out,
+                "latency_ms": round(elapsed, 2),
+            })
             return RawResponse(
                 text=resp.text,
                 provider=self.name,
                 model=route.model,
-                usage_input=usage.get("input_tokens", 0) or packed.estimated_input_tokens,
-                usage_output=usage.get("output_tokens", 0),
+                usage_input=tokens_in,
+                usage_output=tokens_out,
                 elapsed_ms=elapsed,
             )
         except Exception as e:
             elapsed = (time.monotonic() - t0) * 1000.0
+            notify_llm_usage({
+                "type": "llm.usage",
+                "ok": False,
+                "provider": self.name,
+                "model": route.model,
+                "tokens_in": 0,
+                "tokens_out": 0,
+                "latency_ms": round(elapsed, 2),
+                "error": str(e)[:300],
+            })
             raise RuntimeError(f"Provider {self.name} 调用失败: {e}") from e
 
     def count_tokens(self, text: str) -> int:

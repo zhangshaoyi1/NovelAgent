@@ -50,6 +50,8 @@ from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.utils import parse_llm_json
 from agent.base.validation import ValidationSpec
+from agent.core.llmops.trace import usage_snapshot as _usage_snapshot  # LLMOps 章级用量
+import json as _json
 logger = logging.getLogger(__name__)
 
 MAX_REVISIONS = 2
@@ -217,6 +219,8 @@ class M5Result:
     evidence_chain: EvidenceChain = field(default_factory=EvidenceChain)
     rag_context_len: int = 0
     d_issues: list[dict[str, Any]] = field(default_factory=list)  # D 多维审查问题（仅 strict_review 时填充）
+    # LLMOps：本章 LLM 用量（tokens_in/tokens_out/llm_calls，窗口差值统计；None=未启用追踪）
+    usage: dict[str, Any] | None = None
 
 
 @dataclass
@@ -399,6 +403,8 @@ class M5WriteChapterWorkflow:
         )
         # ---- G9：章内子阶段事件（生成）----
         self._emit_substage("generate", ctx["chapter_num"])
+        # LLMOps：章级用量窗口起点（写章前快照，与收尾差值 = 本章真实用量）
+        _u0 = _usage_snapshot()
         chapter_text = self._generate_chapter(
             ctx, injected_tropes_text=injected_tropes_text
         )
@@ -492,6 +498,30 @@ class M5WriteChapterWorkflow:
         # 当前实现：accept/continue 正常返回；revise/rewrite 需用户手动重跑
         # （未来可扩展为循环修订）
 
+        # ------ 9.5 LLMOps：本章用量统计（窗口差值）+ 落盘 ------
+        _u1 = _usage_snapshot()
+        usage = {
+            "chapter": ctx["chapter_num"],
+            "llm_calls": max(0, _u1["calls"] - _u0["calls"]),
+            "tokens_in": max(0, _u1["tokens_in"] - _u0["tokens_in"]),
+            "tokens_out": max(0, _u1["tokens_out"] - _u0["tokens_out"]),
+        }
+        usage["tokens_total"] = usage["tokens_in"] + usage["tokens_out"]
+        if usage["llm_calls"] > 0:
+            self.console.print(
+                f"[cyan]📊 第 {ctx['chapter_num']} 章用量："
+                f"in {usage['tokens_in']:,} / out {usage['tokens_out']:,} tokens"
+                f"（{usage['llm_calls']} 次调用）[/cyan]"
+            )
+        try:
+            _llmops_dir = self.project_dir / ".state" / "llmops"
+            _llmops_dir.mkdir(parents=True, exist_ok=True)
+            (_llmops_dir / "usage_last_chapter.json").write_text(
+                _json.dumps(usage, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        except Exception:  # noqa: BLE001 - 统计落盘失败不影响章节产出
+            pass
+
         return M5Result(
             chapter_file=chapter_file,
             chapter_num=ctx["chapter_num"],
@@ -504,6 +534,7 @@ class M5WriteChapterWorkflow:
             evidence_chain=evidence_chain,
             rag_context_len=rag_context_len,
             d_issues=quality_report.get("d_issues", []),
+            usage=usage,
         )
 
     # ============================================================

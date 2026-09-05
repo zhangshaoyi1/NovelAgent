@@ -163,3 +163,23 @@ def get_tracer() -> Any:
 def set_tracer(tracer: Any) -> None:
     global _global_tracer
     _global_tracer = tracer
+
+
+def usage_snapshot() -> dict[str, int]:
+    """当前全局 tracer 的累计用量快照（NullTracer / 异常时全 0）。
+
+    供章级用量统计做「窗口差值」：写章前取一次、写章后取一次，
+    两者相减即得本章 tokens_in / tokens_out / 调用次数。
+    """
+    try:
+        tr = get_tracer()
+        if isinstance(tr, NullTracer):
+            return {"calls": 0, "tokens_in": 0, "tokens_out": 0}
+        t = tr.totals()
+        return {
+            "calls": int(t.get("calls", 0) or 0),
+            "tokens_in": int(t.get("tokens_in", 0) or 0),
+            "tokens_out": int(t.get("tokens_out", 0) or 0),
+        }
+    except Exception:  # noqa: BLE001 - 统计失败不影响写作
+        return {"calls": 0, "tokens_in": 0, "tokens_out": 0}
