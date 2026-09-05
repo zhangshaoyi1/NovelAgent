@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
@@ -69,6 +70,7 @@ class LoopResult:
     draft: Optional[str] = None
     steps: list[LoopStep] = field(default_factory=list)
     iterations: int = 0
+    last_error: Optional[str] = None  # 最后一次 decide 异常文本（诊断瞬时故障用）
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -118,6 +120,7 @@ class AgentLoop:
         on_tool_call: Callable[[str, dict[str, Any]], None] | None = None,
         on_observation: Callable[[Any], None] | None = None,
         on_finish: Callable[[Optional[str]], None] | None = None,
+        fail_backoff_s: float = 0.0,
     ) -> None:
         if isinstance(tools, ToolRegistry):
             self.tools = tools.list()
@@ -131,6 +134,10 @@ class AgentLoop:
         self.decide_async = decide_async
         self.max_iterations = max_iterations
         self.system_prompt = system_prompt or self._default_system_prompt()
+        # decide 连续失败时的指数退避基数（秒；0=关闭，保持旧行为）。
+        # 用途：provider 间歇性 403/429 风暴（如免费池过载）会在数秒内耗尽全部
+        # 迭代并静默失败；退避后可在迭代预算内「等过去」短时故障窗口。
+        self.fail_backoff_s = max(0.0, float(fail_backoff_s))
         self.cb = {
             "iteration": on_iteration,
             "tool_call": on_tool_call,
@@ -222,7 +229,10 @@ class AgentLoop:
             try:
                 action = self.decide(messages)
             except Exception as e:  # decide 失败也降级，避免循环直接崩
+                result.last_error = str(e)[:300]
                 history.append(("user", f"决策失败（{e}），请严格按动作协议重新输出 JSON。"))
+                if self.fail_backoff_s > 0:
+                    time.sleep(min(self.fail_backoff_s * (2 ** (i - 1)), 30.0))
                 continue
 
             step = LoopStep(
@@ -288,7 +298,10 @@ class AgentLoop:
             try:
                 action = await self.decide_async(messages)
             except Exception as e:
+                result.last_error = str(e)[:300]
                 history.append(("user", f"决策失败（{e}），请严格按动作协议重新输出 JSON。"))
+                if self.fail_backoff_s > 0:
+                    await asyncio.sleep(min(self.fail_backoff_s * (2 ** (i - 1)), 30.0))
                 continue
 
             step = LoopStep(

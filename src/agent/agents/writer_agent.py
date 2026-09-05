@@ -308,13 +308,33 @@ class WriterAgent:
             tools=self.tools,
             decide=self._make_decide(),
             max_iterations=10,
+            fail_backoff_s=3.0,
             system_prompt=system_prompt,
             on_tool_call=self._on_tool_call,
             on_finish=self._on_finish,
         )
+        # 弹性重试：瞬时 LLM 故障会导致循环 10 轮不收敛并直接中止整个写章批次；
+        # 立即重开一轮（最多 1 次）把瞬时故障降级为延迟，而非批次失败
         result = loop.run(task)
         if not result.finished or not result.draft:
-            raise RuntimeError("Writer 未在迭代上限内提交章节（Agentic Loop 未正常结束）")
+            self.console.print(
+                "[yellow]      …Agentic Loop 未收敛，重试一轮（瞬时故障保护）[/yellow]"
+            )
+            loop = AgentLoop(
+                tools=self.tools,
+                decide=self._make_decide(),
+                max_iterations=10,
+                fail_backoff_s=3.0,
+                system_prompt=system_prompt,
+                on_tool_call=self._on_tool_call,
+                on_finish=self._on_finish,
+            )
+            result = loop.run(task)
+        if not result.finished or not result.draft:
+            detail = f"；最后一次决策失败：{result.last_error}" if result.last_error else ""
+            raise RuntimeError(
+                f"Writer 未在迭代上限内提交章节（Agentic Loop 未正常结束）{detail}"
+            )
         return result.draft
 
     async def _draft_async(self, task: str, critique: str | None, min_words: int | None = None,
@@ -325,11 +345,27 @@ class WriterAgent:
             tools=self.tools,
             decide_async=self._make_decide_async(),
             max_iterations=10,
+            fail_backoff_s=3.0,
             system_prompt=system_prompt,
         )
         result = await loop.run_async(task)
         if not result.finished or not result.draft:
-            raise RuntimeError("Writer 未在迭代上限内提交章节（Agentic Loop 未正常结束）")
+            self.console.print(
+                "[yellow]      …Agentic Loop 未收敛，重试一轮（瞬时故障保护）[/yellow]"
+            )
+            loop = AgentLoop(
+                tools=self.tools,
+                decide_async=self._make_decide_async(),
+                max_iterations=10,
+                fail_backoff_s=3.0,
+                system_prompt=system_prompt,
+            )
+            result = await loop.run_async(task)
+        if not result.finished or not result.draft:
+            detail = f"；最后一次决策失败：{result.last_error}" if result.last_error else ""
+            raise RuntimeError(
+                f"Writer 未在迭代上限内提交章节（Agentic Loop 未正常结束）{detail}"
+            )
         return result.draft
 
     def _system_prompt(self, critique: str | None = None, min_words: int | None = None,
