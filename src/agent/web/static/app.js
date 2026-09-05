@@ -4,25 +4,61 @@ function sanitize(name) {
   return (name || '').replace(/[^a-zA-Z0-9_-]/g, '') || 'my-novel';
 }
 
-/* 打开一个运行控制台浮层，返回内部元素句柄 */
+/* ---------- 统一弹窗辅助：Esc / 点击遮罩关闭 ---------- */
+function closeAnyModal(el) {
+  if (!el) return;
+  el.hidden = true;          // 模板弹窗用 hidden 属性
+  el.style.display = '';     // 动态弹窗（运行控制台/问答/复核）用 display，两态都复位
+}
+function showAnyModal(el) {
+  if (!el) return;
+  el.hidden = false;
+  el.style.display = 'flex';
+}
+document.addEventListener('keydown', (e) => {
+  if (e.key !== 'Escape') return;
+  closeRunConsole();
+  closeQaPanel();
+  closeReviewChecklist();
+  document.querySelectorAll('.modal-overlay:not([hidden])').forEach(closeAnyModal);
+});
+document.addEventListener('mousedown', (e) => {
+  if (e.target.classList && e.target.classList.contains('modal-overlay')) closeAnyModal(e.target);
+});
+
+/* 打开一个运行控制台浮层，返回内部元素句柄。
+   写作间等页面可通过 window.WRITER_DOCK 提供停靠容器，日志直接流入页面右栏而非弹窗。 */
 function startRunConsole(title) {
+  const dock = window.WRITER_DOCK;
+  if (dock && dock.logEl && document.contains(dock.logEl)) {
+    dock.logEl.innerHTML = '';
+    dock.timelineEl.innerHTML = '';
+    dock.statusEl.innerHTML = '';
+    if (dock.timerEl) dock.timerEl.textContent = '';
+    return {
+      logEl: dock.logEl, timelineEl: dock.timelineEl, statusEl: dock.statusEl,
+      timerEl: dock.timerEl || null, overlay: null, logCursor: 0,
+    };
+  }
   let overlay = document.getElementById('run-console');
   if (!overlay) {
     overlay = document.createElement('div');
     overlay.id = 'run-console';
-    overlay.className = 'run-console';
+    overlay.className = 'modal-overlay';
     overlay.innerHTML = `
-      <div class="rc-box">
-        <div class="rc-head"><span class="rc-title"></span>
-          <span class="rc-timer"></span>
-          <button class="rc-close" onclick="closeRunConsole()">×</button></div>
-        <div class="rc-log"></div>
-        <div class="rc-timeline"></div>
-        <div class="rc-status"></div>
+      <div class="modal modal-wide" role="dialog" aria-modal="true">
+        <div class="modal-head"><span class="modal-title rc-title"></span>
+          <span class="modal-sub rc-timer"></span>
+          <button class="modal-close" onclick="closeRunConsole()" aria-label="关闭">×</button></div>
+        <div class="modal-body">
+          <div class="rc-status-row"><span class="rc-status"></span></div>
+          <div class="rc-log"></div>
+          <div class="rc-timeline"></div>
+        </div>
       </div>`;
     document.body.appendChild(overlay);
   }
-  overlay.style.display = 'flex';
+  showAnyModal(overlay);
   overlay.querySelector('.rc-title').textContent = title || '运行';
   const logEl = overlay.querySelector('.rc-log');
   const tlEl = overlay.querySelector('.rc-timeline');
@@ -35,7 +71,7 @@ function startRunConsole(title) {
 
 function closeRunConsole() {
   const o = document.getElementById('run-console');
-  if (o) o.style.display = 'none';
+  closeAnyModal(o);
 }
 
 function appendLog(el, text) {
@@ -417,15 +453,17 @@ function ensureReviewModal() {
   if (!overlay) {
     overlay = document.createElement('div');
     overlay.id = 'review-modal';
-    overlay.className = 'review-modal-overlay';
+    overlay.className = 'modal-overlay';
     overlay.innerHTML = `
-      <div class="review-modal">
-        <div class="rm-head">
-          <span class="rm-title">复核检查单</span>
-          <button class="rm-close" onclick="closeReviewChecklist()">×</button>
+      <div class="modal modal-wide" role="dialog" aria-modal="true">
+        <div class="modal-head">
+          <span class="modal-title">复核检查单</span>
+          <button class="modal-close" onclick="closeReviewChecklist()" aria-label="关闭">×</button>
         </div>
-        <div class="rm-sub"></div>
-        <div class="rm-body"></div>
+        <div class="modal-body">
+          <div class="rm-sub"></div>
+          <div class="rm-body"></div>
+        </div>
       </div>`;
     document.body.appendChild(overlay);
   }
@@ -433,13 +471,12 @@ function ensureReviewModal() {
 }
 
 function closeReviewChecklist() {
-  const o = document.getElementById('review-modal');
-  if (o) o.style.display = 'none';
+  closeAnyModal(document.getElementById('review-modal'));
 }
 
 async function openReviewChecklist(project, stageKey) {
   const overlay = ensureReviewModal();
-  overlay.style.display = 'flex';
+  showAnyModal(overlay);
   overlay.querySelector('.rm-sub').textContent = '';
   overlay.querySelector('.rm-body').innerHTML =
     '<div class="rm-loading">读取复核检查单…</div>';
@@ -699,14 +736,16 @@ function ensureQaModal() {
   if (!o) {
     o = document.createElement('div');
     o.id = 'qa-modal';
-    o.className = 'qa-modal-overlay';
+    o.className = 'modal-overlay';
     o.innerHTML = `
-      <div class="qa-modal">
-        <div class="qa-head"><span class="qa-title">问答引导</span>
-          <button class="qa-close" onclick="closeQaPanel()">×</button></div>
-        <div class="qa-progress"></div>
-        <div class="qa-body"></div>
-        <div class="qa-foot"></div>
+      <div class="modal" role="dialog" aria-modal="true">
+        <div class="modal-head"><span class="modal-title">问答引导</span>
+          <button class="modal-close" onclick="closeQaPanel()" aria-label="关闭">×</button></div>
+        <div class="modal-body">
+          <div class="qa-progress"></div>
+          <div class="qa-body"></div>
+          <div class="qa-foot"></div>
+        </div>
       </div>`;
     document.body.appendChild(o);
   }
@@ -714,14 +753,13 @@ function ensureQaModal() {
 }
 
 function closeQaPanel() {
-  const o = document.getElementById('qa-modal');
-  if (o) o.style.display = 'none';
+  closeAnyModal(document.getElementById('qa-modal'));
 }
 
 /* 打开问答面板：拉取模板 + 已保存结果，从第一问开始 */
 async function openQaPanel(project, stageKey) {
   const o = ensureQaModal();
-  o.style.display = 'flex';
+  showAnyModal(o);
   o.querySelector('.qa-progress').textContent = '';
   o.querySelector('.qa-body').innerHTML = '<div class="qa-loading">加载问答模板…</div>';
   o.querySelector('.qa-foot').innerHTML = '';

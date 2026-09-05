@@ -3,60 +3,163 @@
 {% block content %}
 <div class="page-head">
   <h1>实时写作间：{{ name }}</h1>
-  <p class="muted">写章过程通过 SSE 实时回传进度与成本。支持单章写入和批量自动续写。</p>
+  <p class="muted">三栏写作间：左侧本章上下文，中间章节流水，右栏实时日志。支持单章写入和批量自动续写。</p>
 </div>
 
-<section class="card highlight">
-  <h2>⚡ 自动续写</h2>
-  <p class="muted small">指定目标章节数，Agent 自动连续写作多章，无需逐章点击。实时进度会显示在下方控制台。</p>
-  <div class="actions-row">
-    <label>目标章节数
-      <input type="number" id="aw-chapters" value="5" min="1" max="200" style="width:80px" />
-    </label>
-    <label>引擎模式
-      <select id="aw-mode">
-        <option value="auto">auto（自主 Agentic Loop）</option>
-        <option value="heavy">heavy（更严）</option>
-        <option value="light">light（更轻）</option>
-      </select>
-    </label>
-    <label>写作模型
-      <select id="aw-model" class="model-select"><option value="">加载中…</option></select>
-    </label>
-    <label class="chk"><input type="checkbox" id="aw-strict" checked /> 严格质量审查</label>
-    <button class="btn primary" onclick="autoWriteChapters()">一键续写</button>
-  </div>
-  <div id="aw-cost-box" class="cost-box"></div>
-</section>
+<div class="writer-room">
+  <!-- 左：本章上下文 / 项目状态 -->
+  <section class="panel card">
+    <div class="card-h"><h3>本章上下文</h3><span class="badge" id="ctx-state">…</span></div>
+    <div class="card-b" id="ctx-panel">
+      <div class="ctx-item"><b>项目进度</b><span id="ctx-progress">加载中…</span></div>
+      <div class="ctx-item"><b>已生成章节</b><span id="ctx-chapters">加载中…</span></div>
+      <div class="ctx-item"><b>题材</b><span id="ctx-genre">—</span></div>
+      <div class="ctx-item"><b>累计 Token</b><span class="mono" id="ctx-tokens">—</span></div>
+      <div class="ctx-item"><b>质量门禁</b><span>爽点 · OOC · 连贯 · 追读 · AI味 · 注水 · 黄金三章</span></div>
+      <div class="ctx-item"><b>快捷入口</b><span><a href="/p/{{ name }}/guide">引导向导</a> · <a href="/p/{{ name }}/dashboard">看板</a> · <a href="/p/{{ name }}/conflicts">冲突裁决</a></span></div>
+    </div>
+  </section>
 
-<section class="card">
-  <h2>写下一章（单章）</h2>
-  <div class="actions-row">
-    <label>引擎模式
-      <select id="w-mode">
-        <option value="auto">auto（自主 Agentic Loop）</option>
-        <option value="heavy">heavy（更严）</option>
-        <option value="light">light（更轻）</option>
-      </select>
-    </label>
-    <label>写作模型
-      <select id="w-model" class="model-select"><option value="">加载中…</option></select>
-    </label>
-    <label class="chk"><input type="checkbox" id="w-strict" checked /> 严格质量审查</label>
-    <button class="btn" onclick="writeChapter()">写下一章</button>
-  </div>
-  <p class="muted small" id="w-model-hint">「默认」= 模型管理页当前设为默认的模型。</p>
-  <div id="cost-box" class="cost-box"></div>
-</section>
+  <!-- 中：章节流水 -->
+  <section class="panel card">
+    <div class="card-h">
+      <h3>已生成章节</h3>
+      <span class="tag" id="ch-count">0 章</span>
+    </div>
+    <div class="card-b" id="chapters"><p class="writer-empty">加载中…</p></div>
+  </section>
 
-<section class="card">
-  <h2>已生成章节</h2>
-  <div id="chapters"><p class="muted">加载中…</p></div>
-</section>
+  <!-- 右：实时日志（SSE 停靠式控制台） -->
+  <section class="panel card" style="background:#FAFAF9">
+    <div class="card-h"><h3>实时日志（SSE）</h3><span class="tag acc" id="dock-state">空闲</span></div>
+    <div class="card-b dock-console">
+      <div class="rc-status-row"><span class="rc-status"></span><span class="modal-sub rc-timer"></span></div>
+      <div class="rc-log"><span style="color:#78716C">等待写作任务…</span></div>
+      <div class="rc-timeline"></div>
+    </div>
+  </section>
+</div>
+
+<!-- 底部操作栏（对应效果图 footer-bar） -->
+<div class="writer-foot card">
+  <button class="btn" onclick="openWriteModal()">写下一章</button>
+  <button class="btn primary" onclick="openAutoWriteModal()">⚡ 自动续写</button>
+  <span class="tag" id="foot-chapters">已写 0 章</span>
+  <span class="foot-cost">累计 <b id="foot-tokens">—</b> tokens · <b id="foot-cached">—</b> 缓存</span>
+  <a class="btn" href="/p/{{ name }}/files" style="margin-left:8px">文件</a>
+</div>
+
+<!-- 弹窗：写下一章 -->
+<div class="modal-overlay" id="write-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="write-modal-title">
+    <div class="modal-head">
+      <span class="modal-title" id="write-modal-title">写下一章</span>
+      <button class="modal-close" onclick="closeWriterModal('write-modal')" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <label>引擎模式
+          <select id="w-mode">
+            <option value="auto">auto（自主 Agentic Loop）</option>
+            <option value="heavy">heavy（更严）</option>
+            <option value="light">light（更轻）</option>
+          </select>
+        </label>
+        <label>写作模型
+          <select id="w-model" class="model-select"><option value="">加载中…</option></select>
+        </label>
+        <label class="chk"><input type="checkbox" id="w-strict" checked /> 严格质量审查</label>
+      </div>
+      <p class="muted small" style="margin-top:12px">「默认」= 模型管理页当前设为默认的模型。写章过程会实时显示在右栏日志。</p>
+    </div>
+    <div class="modal-foot">
+      <span class="foot-note">单章写入通常需要 1-3 分钟</span>
+      <button class="btn" onclick="closeWriterModal('write-modal')">取消</button>
+      <button class="btn primary" onclick="confirmWriteChapter()">开始写作</button>
+    </div>
+  </div>
+</div>
+
+<!-- 弹窗：自动续写 -->
+<div class="modal-overlay" id="autowrite-modal" hidden>
+  <div class="modal" role="dialog" aria-modal="true" aria-labelledby="aw-modal-title">
+    <div class="modal-head">
+      <span class="modal-title" id="aw-modal-title">⚡ 自动续写</span>
+      <button class="modal-close" onclick="closeWriterModal('autowrite-modal')" aria-label="关闭">×</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-grid">
+        <label>目标章节数
+          <input type="number" id="aw-chapters" value="5" min="1" max="200" />
+        </label>
+        <label>引擎模式
+          <select id="aw-mode">
+            <option value="auto">auto（自主 Agentic Loop）</option>
+            <option value="heavy">heavy（更严）</option>
+            <option value="light">light（更轻）</option>
+          </select>
+        </label>
+        <label>写作模型
+          <select id="aw-model" class="model-select"><option value="">加载中…</option></select>
+        </label>
+        <label class="chk"><input type="checkbox" id="aw-strict" checked /> 严格质量审查</label>
+      </div>
+      <p class="muted small" style="margin-top:12px">Agent 自动连续写作多章，无需逐章点击；批次数会叠加到已写章数。实时进度显示在右栏日志。</p>
+    </div>
+    <div class="modal-foot">
+      <span class="foot-note" id="aw-note">将从第 1 章写到第 5 章</span>
+      <button class="btn" onclick="closeWriterModal('autowrite-modal')">取消</button>
+      <button class="btn primary" onclick="confirmAutoWrite()">开始续写</button>
+    </div>
+  </div>
+</div>
 {% endblock %}
 {% block scripts %}
 <script>
   let existingChapters = 0; // 当前的已写章数，续写时把批次数换算为绝对目标
+
+  /* 右栏停靠式控制台：写作命令的日志直接流入本页，不再弹窗 */
+  document.addEventListener('DOMContentLoaded', () => {
+    window.WRITER_DOCK = {
+      logEl: document.querySelector('.dock-console .rc-log'),
+      timelineEl: document.querySelector('.dock-console .rc-timeline'),
+      statusEl: document.querySelector('.dock-console .rc-status'),
+      timerEl: document.querySelector('.dock-console .rc-timer'),
+    };
+  });
+
+  /* ---------- 弹窗开关 ---------- */
+  function openWriterModal(id) { const m = document.getElementById(id); m.hidden = false; m.style.display = ''; }
+  function closeWriterModal(id) { document.getElementById(id).hidden = true; }
+  function openWriteModal() { openWriterModal('write-modal'); }
+  function openAutoWriteModal() { syncAutoWriteNote(); openWriterModal('autowrite-modal'); }
+  function syncAutoWriteNote() {
+    const batch = parseInt(document.getElementById('aw-chapters').value, 10) || 0;
+    const from = existingChapters + 1;
+    document.getElementById('aw-note').textContent =
+      batch > 0 ? `将从第 ${from} 章写到第 ${existingChapters + batch} 章` : '请填写目标章节数';
+  }
+  document.addEventListener('DOMContentLoaded', () => {
+    const el = document.getElementById('aw-chapters');
+    if (el) el.addEventListener('input', syncAutoWriteNote);
+  });
+
+  /* ---------- 项目状态 / 上下文面板 ---------- */
+  function loadProjectState() {
+    fetch('/api/state/{{ name }}').then(r => r.json()).then(s => {
+      if (!s || s.error) return;
+      const setText = (id, v) => { const el = document.getElementById(id); if (el) el.textContent = v; };
+      const prog = s.progress && typeof s.progress === 'object' ? (s.progress.percent ?? s.progress.pct ?? null) : s.progress;
+      setText('ctx-progress', `${s.state_label || s.state || '—'}${prog != null ? ' · 进度 ' + prog + '%' : ''}`);
+      setText('ctx-chapters', `${s.chapters_count ?? 0} 章`);
+      setText('ctx-genre', s.genre || '—');
+      setText('ctx-tokens', (s.tokens_total || 0).toLocaleString());
+      setText('foot-tokens', (s.tokens_total || 0).toLocaleString());
+      setText('foot-cached', (s.tokens_cached || 0).toLocaleString());
+      const st = document.getElementById('ctx-state');
+      if (st) st.textContent = s.state_label || s.state || '';
+    }).catch(() => {});
+  }
 
   /* 模型选择器：默认（激活档案 / .env）+ 已启用档案列表 */
   async function loadModelOptions() {
@@ -78,35 +181,56 @@
   function renderChapters(list) {
     existingChapters = list.length;
     const box = document.getElementById('chapters');
-    if (!list.length) { box.innerHTML = '<p class="muted">还没有章节，点上方"写下一章"或"一键续写"。</p>'; return; }
-    box.innerHTML = '<ul class="chapter-list">' + list.map(c =>
-      `<li><a href="/p/{{ name }}/file?path=${encodeURIComponent(c.rel)}">第 ${c.num} 章 · ${c.name}</a>
-       <span class="muted small">${(c.size/1024).toFixed(1)} KB</span></li>`).join('') + '</ul>';
+    document.getElementById('ch-count').textContent = list.length + ' 章';
+    document.getElementById('foot-chapters').textContent = '已写 ' + list.length + ' 章';
+    if (!list.length) {
+      box.innerHTML = '<p class="writer-empty">还没有章节，点下方「写下一章」或「自动续写」开始。</p>';
+      return;
+    }
+    box.innerHTML = '<ul class="writer-chapters">' + list.map(c =>
+      `<li><span class="ch-num">第 ${c.num} 章</span>
+       <a href="/p/{{ name }}/file?path=${encodeURIComponent(c.rel)}">${c.name.replace(/\.md$/, '').replace(/[<>&]/g, '')}</a>
+       <span class="ch-size">${(c.size/1024).toFixed(1)} KB</span></li>`).join('') + '</ul>';
   }
   function loadChapters() {
     fetch('/api/chapters/{{ name }}').then(r => r.json()).then(renderChapters);
   }
 
+  /* 停靠状态提示 */
+  function dockRunning(on) {
+    const t = document.getElementById('dock-state');
+    if (t) { t.textContent = on ? '运行中' : '空闲'; t.className = on ? 'tag acc' : 'tag'; }
+  }
+
+  /* ---------- 写作命令（日志流入右栏） ---------- */
+  function launchRun(title, command, argv, profile, onDone) {
+    const c = startRunConsole(title);
+    dockRunning(true);
+    runCommand('{{ name }}', command, argv, c, (d) => {
+      dockRunning(false);
+      loadChapters();
+      if (typeof onDone === 'function') onDone(d);
+    }, profile);
+  }
+
   /** 单章写入 */
-  function writeChapter() {
+  function confirmWriteChapter() {
     const mode = document.getElementById('w-mode').value;
     const strict = document.getElementById('w-strict').checked;
     const profile = document.getElementById('w-model').value;
     const argv = ['--mode', mode];
     if (!strict) argv.push('--no-strict-review');
-    const c = startRunConsole('写下一章（' + mode + '）');
-    runCommand('{{ name }}', 'write', argv, c, (d) => {
-      loadChapters();
+    closeWriterModal('write-modal');
+    launchRun('写下一章（' + mode + '）', 'write', argv, profile, (d) => {
       if (d.summary && d.summary.cost_alert) {
         const a = d.summary.cost_alert;
-        document.getElementById('cost-box').innerHTML =
-          `<span class="badge">成本预警：${a.level || a.message || '—'}</span>`;
+        appendLog(window.WRITER_DOCK.logEl, '成本预警：' + (a.level || a.message || '—'));
       }
-    }, profile);
+    });
   }
 
-  /** 一键续写：autowrite 批量写入 N 章（批次数 N 叠加到已写章数，取绝对目标） */
-  function autoWriteChapters() {
+  /** 自动续写：autowrite 批量写入 N 章（批次数 N 叠加到已写章数，取绝对目标） */
+  function confirmAutoWrite() {
     const batch = parseInt(document.getElementById('aw-chapters').value, 10) || 5;
     const mode = document.getElementById('aw-mode').value;
     const strict = document.getElementById('aw-strict').checked;
@@ -114,18 +238,17 @@
     const target = existingChapters + batch; // 绝对目标章数
     const argv = ['--chapters', String(target), '--mode', mode];
     if (!strict) argv.push('--no-strict-review');
-    const c = startRunConsole('自动续写 ' + batch + ' 章（' + mode + '）');
-    runCommand('{{ name }}', 'autowrite', argv, c, (d) => {
-      loadChapters();
+    closeWriterModal('autowrite-modal');
+    launchRun('自动续写 ' + batch + ' 章（' + mode + '）', 'autowrite', argv, profile, (d) => {
       if (d.summary && d.summary.cost_alert) {
         const a = d.summary.cost_alert;
-        document.getElementById('aw-cost-box').innerHTML =
-          `<span class="badge">成本预警：${a.level || a.message || '—'}</span>`;
+        appendLog(window.WRITER_DOCK.logEl, '成本预警：' + (a.level || a.message || '—'));
       }
-    }, profile);
+    });
   }
 
   loadModelOptions();
   loadChapters();
+  loadProjectState();
 </script>
 {% endblock %}
