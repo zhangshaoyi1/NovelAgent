@@ -20,7 +20,7 @@ from rich.prompt import Prompt
 from agent.cli._app import app, command, console, typer
 from agent.cli._shared import emit_result, enforce_gate
 from agent.core.registry.genre_merger import GenreMerger, load_conflicts, save_conflicts
-from agent.core.registry.genre_pack import GenrePackRegistry
+from agent.core.registry.genre_pack import GenrePackRegistry, extract_frozen_section
 
 
 def _replace_section(md_text: str, heading_prefix: str, new_body: str) -> str:
@@ -218,9 +218,10 @@ def _write_back(pdir: Path, result, genre_list: list[str]) -> None:
         post.metadata["genre_label"] = " / ".join(reg.load(g).manifest.display_name for g in genre_list)
     except Exception:
         post.metadata["genre_label"] = " / ".join(genre_list)
-    # 替换 realm_system 段落
+    # 替换 realm_system 段落（只写冻结核心分节，禁止整模板回写——
+    # 否则通用「力量体系/势力框架/金手指登记模板」会再次泄漏进 world.md）
     new_body = _replace_section(
-        post.content, "境界体系", result.world_template
+        post.content, "境界体系", extract_frozen_section(result.world_template)
     )
     post.content = new_body
     world_file.write_text(frontmatter.dumps(post), encoding="utf-8")

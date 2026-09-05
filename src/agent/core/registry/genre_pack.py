@@ -139,6 +139,45 @@ class GenrePack:
 # ============================================================
 # 加载器
 # ============================================================
+def extract_frozen_section(template: str) -> str:
+    """从 world-template.md 提取首个 ``## `` 分节正文（冻结核心体系）。
+
+    所有题材包的 world-template 均含「## <核心体系>（冻结字段）」分节
+    （境界体系 / 末世时间线 / 武功境界体系等，命名随题材变化），
+    且通常排在首位；例外如 nanpin-shuangwen 首节是「背景设定（任选一类，
+    不锁定）」，冻结核心「实力/阶层体系」在第二节。故优先取标题含
+    「冻结」的首个分节，无则退化为首个分节。
+    历史实现曾把整个模板作为 realm_system 注入 world.md.j2，导致模板内的
+    通用「力量体系 / 势力框架 / 金手指登记模板」样板块整体泄漏进 world.md，
+    与 LLM 生成内容冲突、并被下游 M4/M5 的 ``split("## 金手指登记")`` 前缀误匹配。
+    统一改为只取该分节正文（不含标题，标题由 world.md.j2 提供）。
+
+    Returns:
+        分节正文；模板为空或无 ``## `` 分节时返回空字符串
+    """
+    if not template or "## " not in template:
+        return ""
+    # 按 "## " 切出全部分节（含标题行）
+    body = template.split("## ", 1)[1]
+    sections: list[str] = []
+    while True:
+        if "\n## " in body:
+            seg, body = body.split("\n## ", 1)
+        else:
+            seg, body = body, ""
+        sections.append(seg)
+        if not body:
+            break
+    # 优先取标题行含「冻结」的分节
+    for seg in sections:
+        head = seg.split("\n", 1)[0]
+        if "冻结" in head:
+            content = seg.split("\n", 1)[1] if "\n" in seg else ""
+            return content.strip()
+    content = sections[0].split("\n", 1)[1] if "\n" in sections[0] else ""
+    return content.strip()
+
+
 def load_genre_manifest(skill_dir: Path) -> GenreManifest:
     """从 SKILL.md 解析题材包能力声明
 

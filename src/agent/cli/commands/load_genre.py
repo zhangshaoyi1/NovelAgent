@@ -42,8 +42,17 @@ def load_genre(
             f"[dim]如需应用题材模板，请手动合并或先删除 world.md[/dim]"
         )
     elif pack.world_template:
-        # 写入模板草稿
-        world_file.write_text(pack.world_template, encoding="utf-8")
+        # 写入种子草稿：只写冻结核心分节（与 M1 正式产出的分节结构一致，M1 会整体覆盖）；
+        # 整模板落盘会让「金手指登记模板」样板块被下游 M4/M5 的 split("## 金手指登记") 前缀误匹配
+        from agent.core.registry.genre_pack import extract_frozen_section
+
+        seed = (
+            "# 总设定集（题材模板草稿，待 M1 生成覆盖）\n\n"
+            "## 境界体系（冻结）\n\n"
+            + extract_frozen_section(pack.world_template)
+            + "\n"
+        )
+        world_file.write_text(seed, encoding="utf-8")
         console.print(
             f"[bold green]✓ 已加载题材包 {name}[/bold green]\n"
             f"[dim]world.md 模板草稿已写入: {world_file}[/dim]"

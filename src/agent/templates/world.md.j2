@@ -1,15 +1,4 @@
----
-title: "{{ title }}"
-scope: "{{ scope }}"
-genres: {{ genres }}
-genre_label: "{{ genre_label }}"
-created_at: "{{ created_at }}"
-format_version: "0.1.0"
-frozen_fields:
-  - realm_system
-  - golden_finger_limits
----
-
+{# 注意：本模板只输出正文；frontmatter 由 SettingManager.save_world 统一写入（元数据以 metadata dict 为准），在此重复输出会导致双 frontmatter。 #}
 # 总设定集 · {{ title }}
 
 ## 故事简介

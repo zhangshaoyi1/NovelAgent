@@ -31,7 +31,7 @@ from agent import __version__
 from agent.client.gateway_adapter import create_gateway, chat_creative, chat_utility
 from llmagent.gateway import Gateway
 from agent.core.infra.prompt_manager import pm
-from agent.core.registry.genre_pack import GenrePackRegistry
+from agent.core.registry.genre_pack import GenrePackRegistry, extract_frozen_section
 from agent.core.registry.genre_merger import GenreMerger, save_conflicts
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
@@ -61,7 +61,15 @@ def load_genre_template(project_dir: Path, genre: str, pack: Any) -> Path:
     project_dir = Path(project_dir)
     world_file = project_dir / "world.md"
     if not world_file.exists() and pack.world_template:
-        world_file.write_text(pack.world_template, encoding="utf-8")
+        # 种子草稿：只写冻结核心分节（与 M1 正式产出的分节结构一致，M1 会整体覆盖）；
+        # 整模板落盘会让「金手指登记模板」样板块被下游 M4/M5 的 split("## 金手指登记") 前缀误匹配
+        seed = (
+            "# 总设定集（题材模板草稿，待 M1 生成覆盖）\n\n"
+            "## 境界体系（冻结）\n\n"
+            + extract_frozen_section(pack.world_template)
+            + "\n"
+        )
+        world_file.write_text(seed, encoding="utf-8")
     return world_file
 
 
@@ -146,7 +154,16 @@ class M1ConfigWorkflow:
 
         # 1. 收集输入
         if user_input is None:
-            user_input = self._collect_input_interactive()
+            try:
+                user_input = self._collect_input_interactive()
+            except EOFError as e:
+                # 非交互环境（Web runner / 脚本 stdin=DEVNULL）：给出可操作的
+                # 明确报错，而不是裸的 "EOF when reading a line" 让人摸不着头脑。
+                raise RuntimeError(
+                    "非交互环境无法交互式收集 M1 配置（stdin 已关闭）。"
+                    "请改用 --title 等参数以非交互模式运行"
+                    "（Web UI / 脚本调用请传 --title，其余参数有默认值）。"
+                ) from e
         else:
             user_input = self._fill_defaults(user_input)
 
@@ -161,7 +178,10 @@ class M1ConfigWorkflow:
         # 2. 加载并合并题材包模板（支持多题材混搭 + 冲突裁决）
         self._genre_registry = GenrePackRegistry()
         self._current_genres = list(user_input.genres)
-        realm_system, merge_conflicts = self._load_merged_genre_template(self._current_genres)
+        # 只取题材包模板的首个「冻结核心体系」分节作为 realm_system；
+        # 整模板会导致通用「力量体系/势力框架/金手指登记模板」泄漏进 world.md
+        raw_template, merge_conflicts = self._load_merged_genre_template(self._current_genres)
+        realm_system = extract_frozen_section(raw_template)
         if merge_conflicts:
             self.console.print(
                 f"[yellow]⚠ 检测到 {len(merge_conflicts)} 处题材设定冲突，"
@@ -182,7 +202,7 @@ class M1ConfigWorkflow:
             "正在调用 LLM 生成世界观（通常需 1-2 分钟）",
             stage="generate_world",
         )
-        world_data = self._generate_world(user_input)
+        world_data = self._generate_world(user_input, realm_system)
 
         # 4. 渲染并保存 world.md
         metadata, content = self._render_world(user_input, world_data, realm_system)
@@ -392,11 +412,19 @@ class M1ConfigWorkflow:
         return result.world_template, result.conflicts
 
     # ------ LLM 生成 ------
-    def _generate_world(self, user_input: M1Input) -> dict[str, Any]:
+    def _generate_world(
+        self, user_input: M1Input, realm_system: str = ""
+    ) -> dict[str, Any]:
         """调用 LLM 生成世界观
 
         解析失败时重试一次（要求只输出纯 JSON）；两次均失败则明确抛错，
         绝不静默写入残缺世界观（否则作者输入的 story_core / 风格偏好会静默丢失）。
+
+        Args:
+            user_input: M1 用户输入
+            realm_system: 冻结境界体系（题材包模板核心分节）。
+                注入 prompt，要求 LLM 的 power_system 严格沿用，
+                否则 LLM 会自创第二套境界与冻结表冲突。
 
         Returns:
             包含 synopsis/worldview/power_system/factions/golden_finger 的 dict
@@ -492,6 +520,11 @@ class M1ConfigWorkflow:
             # 风格配置也存入 metadata 便于程序读取
             "style": style,
         }
+
+        # 风格表展示一致性：mega/custom 下单章字数以 scope 生效值为准，
+        # 避免「风格表 3000 字 vs frontmatter scope_chapter_length 2500 字」的口径分裂
+        if metadata["scope_chapter_length"]:
+            style = {**style, "chapter_length": metadata["scope_chapter_length"]}
 
         template = self.jinja_env.get_template("world.md.j2")
         content = template.render(
