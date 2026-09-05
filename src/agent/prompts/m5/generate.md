@@ -28,6 +28,7 @@ validation:
 13. 禁止在正文写入任何写作元指令（如【章末悬念】、章末钩子标记、内部章节编号 chN 等）；章末钩子/悬念用情节自然呈现，绝不可把 agent 给 LLM 的指令原样抄进正文
 14. 正文必须是纯中文叙事，绝对禁止出现任何英文单词、变量名、缩写或外文词（如 allocation_weight、NGOs、VIP、KPI、CEO、bug、IP、ID、logo、Plan B、shoulders、loys、kreisel、thirty 等）。赛博/系统/代码设定一律用中文表达：VIP→贵宾认证；CEO→掌权者/总裁；KPI→绩效指标；bug→漏洞/差错；IP→网络地址；ID→身份标识；Plan B→备选方案；allocation_weight→分配权重的后门代码；NGOs→国际非政府组织。代码/变量名严禁直接写进正文，必须译为叙事化中文（如『分配权重的后门代码』）。整句英文（如 "thirty多道目光…shoulders 很稳"）尤其禁止
 15. 正文必须使用标准 Markdown 段落格式：段落之间用空行分隔，每个自然段独立成段；对话（引号内）与叙述混合时，同一人物的对话与动作可同段，不同人物对话各起新段；禁止输出无分段的长文本块。章节开头不要空格
+16. 上下文遵循"最简记忆包"原则：注入的角色状态/前情提要/账本投影/世界约束均为"若不知晓便会写错本章"的权威信息，必须严格遵守；未提及的历史细节一律不得自行虚构补全（如需引用更早情节，只使用已注入的信息或做模糊化处理）
 
 # user
 【小说信息】
@@ -38,12 +39,6 @@ validation:
 信息密度：{{ info_density }}
 禁用元素：{{ banned_elements }}
 禁用词限量：突然/忽然/就在这时/微微一笑 全章 ≤ 2 次
-
-【当前进度】
-第 {{ chapter_num }} 章
-当前支线：{{ subline_id }}（{{ subline_name }}）
-支线目标：{{ subline_goal }}
-当前压力曲线阶段：{{ pressure_stage }}（张力等级：{{ tension_level }}）
 
 【世界观核心】
 {{ world_synopsis }}
@@ -66,6 +61,12 @@ validation:
 
 【关系网当前状态】
 {{ relations_info }}
+
+【当前进度】
+第 {{ chapter_num }} 章
+当前支线：{{ subline_id }}（{{ subline_name }}）
+支线目标：{{ subline_goal }}
+当前压力曲线阶段：{{ pressure_stage }}（张力等级：{{ tension_level }}）
 
 【伏笔任务】
 {{ foreshadow_task }}

@@ -424,74 +424,119 @@ class M5WriteChapterWorkflow(
             open_debts=open_debts_text,
         )
 
+        # P0-1（KV 缓存感知）：system 段按 stable → semi → volatile 排序，
+        # 使跨章生成时稳定前缀（系统规则/文风/硬约束）尽量命中 provider 端 prompt cache。
+        from agent.core.infra.context_order import (
+            SEMI,
+            STABLE,
+            VOLATILE,
+            PromptSection,
+            order_sections,
+        )
+
+        system_base = pm.get("m5.generate").render_system(genre=wi.get("genre_label", ""))
+        sections: list[PromptSection] = [PromptSection("base", system_base, STABLE)]
+
         # E2 题材动态注入：将选中套路以 System Prompt 片段注入
-        system_prompt = pm.get("m5.generate").render_system(genre=wi.get("genre_label", ""))
         if injected_tropes_text:
-            system_prompt = (
-                system_prompt
-                + "\n\n【本章注入套路（运行时指定，请自然融入章节结构与标志性要素，"
-                "不要生硬堆砌）】\n"
-                + injected_tropes_text
+            sections.append(
+                PromptSection(
+                    "injected_tropes",
+                    "【本章注入套路（运行时指定，请自然融入章节结构与标志性要素，"
+                    "不要生硬堆砌）】\n" + injected_tropes_text,
+                    VOLATILE,
+                )
             )
 
         # E：项目学习记忆注入 System Prompt（长期保留、不清空；类似 injected tropes）
         learnings_text = ctx.get("learnings_text", "")
         if learnings_text and learnings_text != "（暂无已沉淀的写法记忆）":
-            system_prompt = (
-                system_prompt
-                + "\n\n【本项目已沉淀的写法记忆（长期积累，请自然融入本章，"
-                "不要生硬堆砌）】\n"
-                + learnings_text
+            sections.append(
+                PromptSection(
+                    "learnings",
+                    "【本项目已沉淀的写法记忆（长期积累，请自然融入本章，"
+                    "不要生硬堆砌）】\n" + learnings_text,
+                    SEMI,
+                )
             )
 
         # ---- G15：连续性账本投影注入（写前输入；缺账本 → 跳过，不阻断）----
         continuity_projection = (ctx.get("continuity_projection") or "").strip()
         if continuity_projection:
-            system_prompt = (
-                system_prompt
-                + "\n\n【连续性账本投影（已定事实/未闭环/上章交接，请遵守，"
-                "不要与之冲突）】\n"
-                + continuity_projection
+            sections.append(
+                PromptSection(
+                    "continuity",
+                    "【连续性账本投影（已定事实/未闭环/上章交接，请遵守，"
+                    "不要与之冲突）】\n" + continuity_projection,
+                    VOLATILE,
+                )
             )
 
         # ---- B1：写章防模板注入（本卷已用手段清单 + 灭门回忆计数；只约束字数/花式，不硬删）----
         reuse_guard_text = (ctx.get("reuse_guard_text") or "").strip()
         if reuse_guard_text:
-            system_prompt = (
-                system_prompt
-                + "\n\n【本节为防模板的运行时提醒（参考，若与情节冲突以情节为准）】\n"
-                + reuse_guard_text
+            sections.append(
+                PromptSection(
+                    "reuse_guard",
+                    "【本节为防模板的运行时提醒（参考，若与情节冲突以情节为准）】\n"
+                    + reuse_guard_text,
+                    VOLATILE,
+                )
             )
 
         # ---- G8（补充边界 4）：结局模式指令注入（ending 为空降级「收尾」通用指令，不阻断）----
         if ctx.get("ending_mode"):
             ending = (ctx.get("ending") or "").strip()
             if ending:
-                system_prompt = system_prompt + pm.get("g8.ending_instruction").render_user(
-                    subline_id=ctx.get("subline_id", ""),
-                    mainline="、".join(ctx.get("mainline", []) or []) or "—",
-                    ending=ending,
+                sections.append(
+                    PromptSection(
+                        "ending",
+                        pm.get("g8.ending_instruction").render_user(
+                            subline_id=ctx.get("subline_id", ""),
+                            mainline="、".join(ctx.get("mainline", []) or []) or "—",
+                            ending=ending,
+                        ),
+                        SEMI,
+                    )
                 )
             else:
-                system_prompt = system_prompt + pm.get("g8.ending_fallback_instruction").render_user()
+                sections.append(
+                    PromptSection(
+                        "ending_fallback",
+                        pm.get("g8.ending_fallback_instruction").render_user(),
+                        SEMI,
+                    )
+                )
 
         # ---- G11：风格指引注入（style.md 存在即注入；缺失/关闭 → 与 G10 输出逐字节一致）----
         style_guide = (ctx.get("style_guide") or "").strip()
         if style_guide:
-            system_prompt = system_prompt + pm.get("g11.style_instruction").render_user(
-                style_guide=style_guide
+            sections.append(
+                PromptSection(
+                    "style",
+                    pm.get("g11.style_instruction").render_user(style_guide=style_guide),
+                    STABLE,
+                )
             )
 
         # ---- G12：爽点剧本 + 情绪目标 + 读者反馈注入（追加顺序：爽点 → 情绪 → 反馈）----
         payoff_task = (ctx.get("payoff_task") or "").strip()
         if payoff_task:
-            system_prompt = system_prompt + pm.get("g12.payoff_instruction").render_user(
-                payoff_task=payoff_task
+            sections.append(
+                PromptSection(
+                    "payoff",
+                    pm.get("g12.payoff_instruction").render_user(payoff_task=payoff_task),
+                    VOLATILE,
+                )
             )
         emotion_target = (ctx.get("emotion_target") or "").strip()
         if emotion_target:
-            system_prompt = system_prompt + pm.get("g12.emotion_instruction").render_user(
-                emotion_target=emotion_target
+            sections.append(
+                PromptSection(
+                    "emotion",
+                    pm.get("g12.emotion_instruction").render_user(emotion_target=emotion_target),
+                    VOLATILE,
+                )
             )
         signals = ctx.get("reader_signals") or []
         if signals:
@@ -502,16 +547,28 @@ class M5WriteChapterWorkflow(
                 marker = "（位于本章之前，请针对此反馈强化本章）" if planted and planted < ctx.get("chapter_num", 0) else ""
                 lines.append(f"- {desc}{marker}")
             if lines:
-                system_prompt = system_prompt + pm.get("g12.reader_feedback").render_user(
-                    reader_signals="\n".join(lines)
+                sections.append(
+                    PromptSection(
+                        "reader_feedback",
+                        pm.get("g12.reader_feedback").render_user(reader_signals="\n".join(lines)),
+                        VOLATILE,
+                    )
                 )
 
         # ---- 角色状态硬约束（P-C 修复）：把 characters/*.md 的生死/时间线真源注入为不可违背规则 ----
         character_constraints = (ctx.get("character_constraints") or "").strip()
         if character_constraints:
-            system_prompt = system_prompt + pm.get("g.character_state_constraint").render_user(
-                character_constraints=character_constraints
+            sections.append(
+                PromptSection(
+                    "character_constraints",
+                    pm.get("g.character_state_constraint").render_user(
+                        character_constraints=character_constraints
+                    ),
+                    SEMI,
+                )
             )
+
+        system_prompt = order_sections(sections)
 
         resp = chat_creative(
             self.llm,

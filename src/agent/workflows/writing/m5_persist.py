@@ -142,7 +142,12 @@ class M5PersistMixin:
         metadata["word_count"] = word_count
         body = f"# 第 {ctx['chapter_num']} 章 · {title}\n\n{text}"
         post = frontmatter.Post(body, **metadata)
-        file.write_text(frontmatter.dumps(post), encoding="utf-8")
+        # P0-3（原子落盘）：temp + replace，杜绝进程中断留下截断的半成品章节文件。
+        # 与 state_machine.save()（同样 temp+replace）配合，写序为「先正文后状态指针」，
+        # 即使中途崩溃也只会出现"章节已存在、进度落后"的可恢复态，不会出现反向损坏。
+        from agent.core.infra.atomic import atomic_write_text
+
+        atomic_write_text(file, frontmatter.dumps(post))
         return file
     def _archive_chapter(self, ctx: dict[str, Any], chapter_title: str) -> None:
         """G15 章后归档 hook：本章最小交接归档进连续性账本 + 伏笔 beats 标记落地。

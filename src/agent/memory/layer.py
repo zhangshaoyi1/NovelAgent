@@ -54,6 +54,28 @@ class MemoryLayer:
         """语义召回。"""
         return self.semantic.retrieve(query, top_k=top_k, types=types)
 
+    def recall_minimal(
+        self,
+        query: str,
+        top_k: int = 8,
+        types: list[str] | None = None,
+    ) -> list[tuple[Any, float]]:
+        """P0-4 最简记忆包召回：按"不知道就会写错"判据过滤后再截断 top_k。
+
+        判据见 ``memory_pack.minimal_memory_pack``——只保留当前状态 / 历史因果 /
+        世界硬约束三类权威信息，其余（脑暴、反馈、临场杂记）不进写章上下文。
+        """
+        from agent.memory.memory_pack import classify_memory_type
+
+        # 多召回一些再按判据过滤，保证过滤后仍有 top_k 条可用
+        hits = self.semantic.retrieve(query, top_k=max(top_k * 3, top_k), types=types)
+        packed = [
+            (entry, score)
+            for entry, score in hits
+            if classify_memory_type(getattr(entry, "type", "")) 
+        ]
+        return packed[:top_k]
+
     # ---------------------------------------------------------------- 会话
     def log(
         self,

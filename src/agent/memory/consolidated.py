@@ -97,6 +97,8 @@ class ConsolidatedMemory:
             self._data["characters"] = _merge_unique(
                 self._data.get("characters", []), characters
             )
+            self._prune_character_changes()
+
         if quality_targets:
             merged = dict(self._data.get("quality_targets", {}) or {})
             merged.update(quality_targets)
@@ -114,6 +116,23 @@ class ConsolidatedMemory:
         if len(debts):
             self._data["open_debts"] = [d for d in debts if d != debt]
             self.touch()
+
+    def _prune_character_changes(self) -> None:
+        """P0-4 最简记忆包：角色状态变更每角色最多保留最近 MAX_RECENT_CHANGES 条。
+
+        角色条目中名为 ``changes`` / ``recent_changes`` / ``状态变更`` 的列表字段
+        会被折叠（超出部分合并为一条摘要行），防止长篇后期变更流水撑爆上下文。
+        判据见 ``memory_pack.prune_recent_changes``。
+        """
+        from agent.memory.memory_pack import MAX_RECENT_CHANGES, prune_recent_changes
+
+        for entry in self._data.get("characters", []):
+            if not isinstance(entry, dict):
+                continue
+            for key in ("changes", "recent_changes", "状态变更"):
+                changes = entry.get(key)
+                if isinstance(changes, list):
+                    entry[key] = prune_recent_changes(changes, MAX_RECENT_CHANGES)
 
     @property
     def last_consolidated_chapter(self) -> int:

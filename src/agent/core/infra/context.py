@@ -11,12 +11,45 @@
    人物档案）标注 ``cache_control``，供支持缓存的模型复用前缀、降本提速。
 
 全部离线、零依赖、零网络；token 估算与摘要函数均可注入（生产接入 tiktoken / 真 LLM）。
+
+**受保护上下文（P0-2，对齐 inkos protected/compressible 两层）**：标记 ``protected=True``
+的条目属于"若被压缩/丢弃、本章就会写错"的权威事实（账本事实 / 本章意图 / 伏笔硬约束），
+``compress`` 永不合并它们，``fit`` 永不丢弃它们；当 protected 总量超过预算时抛出
+``ProtectedContextOverflowError``（携带逐条 token 统计）而非静默截断——宁可显式失败，
+由上层按稳定性分层裁剪非受保护段后重试（降级不阻断）。
 """
 
 from __future__ import annotations
 
 from dataclasses import dataclass, field
 from typing import Any, Callable
+
+
+class ProtectedContextOverflowError(Exception):
+    """受保护上下文总量超过 token 预算（拒绝静默截断）。
+
+    Attributes:
+        budget: token 预算。
+        protected_tokens: 受保护条目总 token 估算。
+        stats: 逐条 ``[(key, est_tokens), ...]``（按 token 降序），供诊断与上层降级。
+    """
+
+    def __init__(
+        self,
+        budget: int,
+        protected_tokens: int,
+        stats: list[tuple[str, int]],
+    ) -> None:
+        self.budget = budget
+        self.protected_tokens = protected_tokens
+        self.stats = stats
+        top = ", ".join(f"{k}={t}" for k, t in stats[:5])
+        raise_msg = (
+            f"受保护上下文超出预算：protected={protected_tokens} > budget={budget}，"
+            f"拒绝静默截断。逐条统计（降序前 5）：{top}；"
+            f"请提高预算或裁剪非受保护段后重试。"
+        )
+        super().__init__(raise_msg)
 
 # 不同类别的基线重要性（越高越该保留）。
 _KIND_BASE_IMPORTANCE: dict[str, float] = {
@@ -33,12 +66,18 @@ _KIND_BASE_IMPORTANCE: dict[str, float] = {
 
 @dataclass
 class ContextItem:
-    """一条待纳入上下文的条目。"""
+    """一条待纳入上下文的条目。
+
+    ``protected=True`` 表示权威事实（账本事实/本章意图/伏笔硬约束等）：
+    压缩永不合并、裁剪永不丢弃；protected 总量超预算时 ``fit`` 直接抛
+    ``ProtectedContextOverflowError``。
+    """
 
     key: str
     text: str
     kind: str = "fact"
     ts: int = 0  # 单调递增序号，越大越新
+    protected: bool = False
 
 
 class ContextEngine:
@@ -90,8 +129,14 @@ class ContextEngine:
         recent = [it for it in ordered if it.key in recent_ids]
         old = [it for it in ordered if it.key not in recent_ids]
 
-        compressible = [it for it in old if it.kind in ("event", "fact")]
-        others = [it for it in old if it.kind not in ("event", "fact")]
+        # P0-2：受保护条目永不并入压缩摘要（即便 kind 属可压缩类）
+        compressible = [
+            it for it in old if it.kind in ("event", "fact") and not it.protected
+        ]
+        others = [
+            it for it in old
+            if it.kind not in ("event", "fact") or it.protected
+        ]
         if compressible:
             summary_text = self.summarizer(compressible)
             summary_item = ContextItem(
@@ -116,10 +161,26 @@ class ContextEngine:
         self, items: list[ContextItem], budget: int | None = None
     ) -> list[ContextItem]:
         budget = budget if budget is not None else self.token_budget
+        # P0-2：受保护条目无条件保留；总量超预算直接报错（拒绝静默截断）
+        protected = [it for it in items if it.protected]
+        protected_stats = sorted(
+            ((it.key, self.est_fn(it.text)) for it in protected),
+            key=lambda pair: pair[1],
+            reverse=True,
+        )
+        protected_tokens = sum(t for _, t in protected_stats)
+        if protected_tokens > budget:
+            raise ProtectedContextOverflowError(budget, protected_tokens, protected_stats)
+
+        remaining = budget - protected_tokens
         total = len(items)
-        scored = sorted(items, key=lambda it: self.score(it, total), reverse=True)
-        picked: list[ContextItem] = []
-        used = 0
+        scored = sorted(
+            (it for it in items if not it.protected),
+            key=lambda it: self.score(it, total),
+            reverse=True,
+        )
+        picked: list[ContextItem] = list(protected)
+        used = protected_tokens
         for it in scored:
             cost = self.est_fn(it.text)
             if used + cost <= budget:
