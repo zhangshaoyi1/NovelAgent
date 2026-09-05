@@ -485,6 +485,15 @@ def api_relations_seed(name: str) -> JSONResponse:
     )
 
 
+@app.post("/api/relations/{name}/sync")
+def api_relations_sync(name: str) -> JSONResponse:
+    """根据项目当前数据（relations/graph.md / characters/ / foreshadows.md）
+    自动生成/同步世界关系图谱（保留已有拖拽坐标）"""
+    rm = RelationManager(state.project_path(name))
+    counts = rm.sync_from_project()
+    return JSONResponse({"ok": True, **counts})
+
+
 @app.get("/api/roster")
 def api_roster() -> JSONResponse:
     """Agent 阵容 JSON（前端消费）"""

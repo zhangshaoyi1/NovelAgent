@@ -20,6 +20,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -368,6 +369,186 @@ class RelationManager:
                 )
             )
         self.save()
+
+    # ------ 从项目数据自动生成 ------
+    # graph.md 分组 → 节点类型（graph.md 只记录角色）
+    _GROUP_KIND = {
+        "protagonist": "character",
+        "antagonist": "character",
+        "mentor": "character",
+        "supporting": "character",
+    }
+
+    def sync_from_project(self) -> dict[str, int]:
+        """根据项目当前数据自动生成世界图谱。
+
+        数据来源（存在才用，逐项 best-effort）：
+            - ``relations/graph.md``：节点表（ID/角色/分组）与边表（起/止/类型/强度/备注）
+            - ``characters/*.md``：补齐角色描述（身份/势力 frontmatter）
+            - ``foreshadows.md``：伏笔登记表 → 伏笔节点 + 到关联角色的暗线边
+
+        已有节点按名称保留拖拽坐标与人工编辑的描述，未被删除。
+        """
+        old_by_name = {n.name: n for n in self.graph.nodes}
+        nodes: dict[str, WorldNode] = {}
+        edges: list[WorldEdge] = []
+        id_to_name: dict[str, str] = {}
+
+        def _make_node(node_id: str, name: str, kind: str, desc: str = "") -> WorldNode:
+            old = old_by_name.get(name)
+            return WorldNode(
+                id=node_id,
+                name=name,
+                kind=old.kind if old else (kind if kind in NODE_KINDS else "character"),
+                description=old.description if old else desc,
+                x=old.x if old else None,
+                y=old.y if old else None,
+            )
+
+        # 1) relations/graph.md —— 节点表
+        graph_md = self.project_dir / "relations" / "graph.md"
+        if graph_md.exists():
+            try:
+                text = graph_md.read_text(encoding="utf-8")
+                node_sec = self._md_section(text, "节点")
+                for m in re.finditer(
+                    r"^\|\s*([A-Za-z0-9_\-]+)\s*\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|",
+                    node_sec,
+                    re.M,
+                ):
+                    rid, name, group = m.group(1), m.group(2), m.group(3)
+                    if set(rid) <= {"-"} or name == "角色":  # 跳过表头/分隔行
+                        continue
+                    id_to_name[rid] = name
+                    nodes[name] = _make_node(rid, name, self._GROUP_KIND.get(group.strip(), "character"))
+
+                # 2) relations/graph.md —— 边表
+                edge_sec = self._md_section(text, "边")
+                for m in re.finditer(
+                    r"^\|\s*([^|]+?)\s*\|\s*([^|]+?)\s*\|\s*([^|]*?)\s*\|\s*(\d+)\s*\|[^|]*\|?([^|]*)\|",
+                    edge_sec,
+                    re.M,
+                ):
+                    src, dst, rtype, strength, note = (
+                        m.group(1).strip(),
+                        m.group(2).strip(),
+                        m.group(3).strip(),
+                        m.group(4).strip(),
+                        m.group(5).strip() if m.group(5) else "",
+                    )
+                    if set(src) <= {"-"} or src == "起":  # 跳过表头/分隔行
+                        continue
+                    s_name, t_name = id_to_name.get(src, src), id_to_name.get(dst, dst)
+                    if s_name not in nodes or t_name not in nodes:
+                        continue
+                    edges.append(
+                        WorldEdge(
+                            source=nodes[s_name].id,
+                            target=nodes[t_name].id,
+                            relation_type=rtype or "关联",
+                            strength=min(100, max(0, int(strength) * 10)),
+                            direction="one",
+                            hidden=False,
+                            note=note.strip("| ").strip(),
+                        )
+                    )
+            except Exception:  # noqa: BLE001 - 图谱同步是 best-effort
+                pass
+
+        # 3) characters/*.md —— 补充未入网的角色 + frontmatter 描述
+        chars_dir = self.project_dir / "characters"
+        if chars_dir.exists():
+            used_ids = {n.id for n in nodes.values()}
+            for fp in sorted(chars_dir.glob("*.md")):
+                try:
+                    text = fp.read_text(encoding="utf-8")
+                except Exception:  # noqa: BLE001
+                    continue
+                name_m = re.search(r'^name:\s*"?(.+?)"?\s*$', text, re.M)
+                faction_m = re.search(r'^faction:\s*"?(.+?)"?\s*$', text, re.M)
+                role_m = re.search(r'^role:\s*"?(.+?)"?\s*$', text, re.M)
+                name = (name_m.group(1).strip() if name_m else fp.stem)
+                if name in nodes:
+                    if faction_m and not nodes[name].description:
+                        nodes[name].description = f"势力：{faction_m.group(1).strip()}"
+                    continue
+                # 名称近似去重（如「魏长风（魏老）」vs「魏长风」）
+                dup = next((nm for nm in nodes if name in nm or nm in name), None)
+                if dup is not None:
+                    if faction_m and not nodes[dup].description:
+                        nodes[dup].description = f"势力：{faction_m.group(1).strip()}"
+                    continue
+                nid = "c_" + re.sub(r"\W+", "_", name) or fp.stem
+                base = nid
+                i = 2
+                while nid in used_ids:
+                    nid = f"{base}_{i}"
+                    i += 1
+                used_ids.add(nid)
+                desc = ""
+                if faction_m:
+                    desc += f"势力：{faction_m.group(1).strip()}"
+                if role_m:
+                    desc += f" · 定位：{role_m.group(1).strip()}"
+                nodes[name] = _make_node(nid, name, "character", desc.strip(" ·"))
+
+        # 4) foreshadows.md —— 伏笔节点 + 到关联角色的暗线
+        fs_md = self.project_dir / "foreshadows.md"
+        if fs_md.exists():
+            try:
+                text = fs_md.read_text(encoding="utf-8")
+                used_ids = {n.id for n in nodes.values()}
+                for m in re.finditer(
+                    r"^\|\s*(F-\d+)\s*\|\s*([^|]+?)\s*\|[^|]*\|[^|]*\|[^|]*\|\s*([^|]*)\|",
+                    text,
+                    re.M,
+                ):
+                    fid, content, rels = m.group(1), m.group(2).strip(), m.group(3).strip()
+                    if fid == "ID":
+                        continue
+                    if fid not in used_ids:
+                        # 画布标签取短（完整内容放 description / 悬浮提示）
+                        short = content if len(content) <= 10 else content[:9] + "…"
+                        node = _make_node(fid, f"伏笔·{short}", "foreshadow", content)
+                        # 伏笔节点可能撞名，id 用 fid
+                        nodes.setdefault(f"__fs__{fid}", node)
+                        used_ids.add(fid)
+                    for role in re.split(r"[,，、]", rels):
+                        role = role.strip()
+                        if not role:
+                            continue
+                        target = next(
+                            (n for nm, n in nodes.items() if role in nm or nm in role),
+                            None,
+                        )
+                        if target is not None:
+                            edges.append(
+                                WorldEdge(
+                                    source=fid,
+                                    target=target.id,
+                                    relation_type="关联伏笔",
+                                    strength=40,
+                                    direction="one",
+                                    hidden=True,
+                                    note="",
+                                )
+                            )
+            except Exception:  # noqa: BLE001
+                pass
+
+        self.graph = WorldGraph(nodes=list(nodes.values()), edges=edges)
+        self.save()
+        return {"nodes": len(self.graph.nodes), "edges": len(self.graph.edges)}
+
+    @staticmethod
+    def _md_section(text: str, title: str) -> str:
+        """截取 markdown 中 `## <title>` 到下一个 `##` 之前的内容"""
+        m = re.search(rf"^##\s*{re.escape(title)}.*?$", text, re.M)
+        if not m:
+            return ""
+        rest = text[m.end():]
+        nxt = re.search(r"^##\s", rest, re.M)
+        return rest[: nxt.start()] if nxt else rest
 
 
 # 便捷导出，供需要时引用
