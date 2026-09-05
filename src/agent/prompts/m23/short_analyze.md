@@ -99,7 +99,8 @@ validation:
 2. explosion 六维度齐全；无传统反转时 reversal.foreshadowing 注明「无」。
 3. techniques ≥5 项；resonance ≥3 层；reusable_structures ≥3 条，每条含适用场景。
 4. 情绪强度用 -9（虐）~+9（爽）表示；开头/结尾情绪强度用 1-10 绝对强度。
-5. 只输出 JSON，不要 ```json 标记，不要任何额外说明。
+5. 五维评分（1-5）区分度约束：禁止默认给 3-4 的"安全分"；平庸给 2-3，满分 5 必须在 note 中用原文具体表现证明；低分（≤2）的 note 必须指出具体缺陷与改进方向。
+6. 只输出 JSON，不要 ```json 标记，不要任何额外说明。
 
 # user
 【作品标题】{{ title }}

@@ -95,6 +95,19 @@ function appendProgress(el, ev) {
   el.scrollTop = el.scrollHeight;
 }
 
+/* ---------- run_id 持久化 + 页面重载后重新接管 ----------
+   run_id 原本只活在前端闭包里：浏览器丢弃后台标签页（切走再切回）或用户
+   手动刷新后页面重载，运行中的任务就「失联」了。这里把 run_id 按 project
+   存进 sessionStorage，并由 reattachRun 在页面加载时找回进行中的任务。 */
+function rememberRun(project, runId) {
+  if (!project || !runId) return;
+  try { sessionStorage.setItem('na:run:' + project, runId); } catch (e) { /* 隐私模式等场景忽略 */ }
+}
+function forgetRun(project) {
+  if (!project) return;
+  try { sessionStorage.removeItem('na:run:' + project); } catch (e) { /* 忽略 */ }
+}
+
 /* 运行命令：argv 为数组（推荐）或字符串（兼容）。
    profile：可选模型档案 id（写作间等场景按次指定模型，经 NOVEL_MODEL_PROFILE 注入子进程）。 */
 async function runCommand(project, command, argv, consoleObj, onDone, profile) {
@@ -113,10 +126,11 @@ async function runCommand(project, command, argv, consoleObj, onDone, profile) {
     appendLog(consoleObj.logEl, '✗ 请求失败：' + e);
     return;
   }
-  streamEvents(runId, consoleObj, onDone);
+  rememberRun(project, runId);
+  streamEvents(runId, consoleObj, onDone, project);
 }
 
-function streamEvents(runId, consoleObj, onDone) {
+function streamEvents(runId, consoleObj, onDone, project) {
   let finished = false;
   let es = null;
 
@@ -126,6 +140,7 @@ function streamEvents(runId, consoleObj, onDone) {
     finished = true;
     if (es) es.close();
     stopTimer();
+    forgetRun(project);
     const ok = d.exit_code === 0;
     const code = d.exit_code;
     let badge = ok
@@ -235,10 +250,58 @@ async function createProject(params, onDone) {
     alert('创建失败：' + e);
     return;
   }
+  rememberRun(params.get('name') || '', runId);
   const c = startRunConsole('创建项目（start）');
   // 预期管理：M1 需调用 LLM 生成世界观，实测 1-2 分钟，先给出提示避免误判卡死
   appendLog(c.logEl, '已提交。正在生成世界观（需调用 LLM，通常 1-2 分钟），请稍候…');
-  streamEvents(runId, c, onDone);
+  streamEvents(runId, c, onDone, params.get('name') || '');
+}
+
+/* 页面重载后重新接管进行中的任务：
+   1) 优先用 sessionStorage 里本项目最近一次的 run_id（快速路径）；
+   2) 失效则退回 /api/runs?project= 查询后端登记的运行实例。
+   找到未完成的 run 就重建控制台并接上事件流；后端 stream() 会先回放
+   存量日志和进度时间线，所以切走再切回也能补齐「错过」的全部进展。
+   返回 true 表示已接管。 */
+async function reattachRun(project, label, onDone) {
+  if (!project) return false;
+  let runId = null, command = '';
+  try { runId = sessionStorage.getItem('na:run:' + project); } catch (e) { /* 忽略 */ }
+  if (runId) {
+    try {
+      const resp = await fetch('/api/runs/' + runId);
+      if (resp.ok) {
+        const j = await resp.json();
+        if (j.done) { forgetRun(project); runId = null; } // 已结束：清掉记录，走列表兜底
+        else command = j.command || '';
+      } else {
+        forgetRun(project); // 404：服务器重启过，运行实例已不在
+        runId = null;
+      }
+    } catch (e) { runId = null; }
+  }
+  if (!runId) {
+    try {
+      const resp = await fetch('/api/runs?project=' + encodeURIComponent(project));
+      const j = await resp.json();
+      const active = (j.runs || []).filter((r) => !r.done);
+      if (active.length) {
+        runId = active[active.length - 1].run_id; // 最新一次进行中的运行
+        command = active[active.length - 1].command || '';
+        rememberRun(project, runId);
+      }
+    } catch (e) { return false; }
+  }
+  if (!runId) return false;
+
+  const c = startRunConsole(label || command || '运行中任务');
+  appendLog(c.logEl, '检测到进行中的任务（' + (command || runId) + '），已重新接管，正在补齐历史日志…');
+  if (typeof dockRunning === 'function') dockRunning(true);
+  streamEvents(runId, c, (d) => {
+    if (typeof dockRunning === 'function') dockRunning(false);
+    if (typeof onDone === 'function') onDone(d);
+  }, project);
+  return true;
 }
 
 /* 向导步骤：根据当前状态渲染不同的可用动作 */

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import re
 from typing import Any
@@ -606,6 +607,7 @@ class M5ContextMixin:
             )
         head = body[:160].rstrip()
         tail = body[-300:].rstrip()
+        handoff = self._load_prev_handoff(chapter_num)
         return (
             "【上一章开头（情景氛围）】"
             + head
@@ -615,7 +617,30 @@ class M5ContextMixin:
             + "\n\n【续写硬约束】1) 严格从上述「上一章结尾」的真实状态继续推进，不得重演/倒退。"
             "2) 涉及无名身世、宗门、角色关系、金手指等既有设定，必须全线沿用前文与角色档案，"
             "严禁凭空发明并行背景（如改名换姓、换师门、已死角色无故复活）。"
+            + handoff
         )
+
+    def _load_prev_handoff(self, chapter_num: int) -> str:
+        """读取上一章摘要沉淀的「下一章交接包」（m12.summary handoff；缺则空，不阻断）。
+
+        m12 章节摘要（chapters/_summaries/ch{N-1:03d}.json）定稿后沉淀了 handoff——
+        上一章结束时"写下一章必须知道的最小事实集"，作为 prev_summary 的权威补充注入。
+        """
+        try:
+            handoff_file = (
+                self.chapters_dir / "_summaries" / f"ch{chapter_num - 1:03d}.json"
+            )
+            if not handoff_file.exists():
+                return ""
+            data = json.loads(handoff_file.read_text(encoding="utf-8"))
+            handoff = str(data.get("handoff", "")).strip()
+            if not handoff:
+                return ""
+            return (
+                "\n\n【下一章交接（上一章定稿时沉淀的最小事实集，权威信息）】\n" + handoff
+            )
+        except Exception:  # noqa: BLE001 - 交接包读取失败降级为空
+            return ""
     def _determine_pressure_stage(
         self, subline_data: dict[str, Any], chapter_num: int, default_hi: int = 200
     ) -> tuple[str, str]:

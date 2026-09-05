@@ -235,6 +235,7 @@ class ChapterSummary:
     character_changes: list[dict[str, str]] = field(default_factory=list)
     new_settings: list[str] = field(default_factory=list)
     foreshadows: list[str] = field(default_factory=list)
+    handoff: str = ""
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -245,6 +246,7 @@ class ChapterSummary:
             "character_changes": self.character_changes,
             "new_settings": self.new_settings,
             "foreshadows": self.foreshadows,
+            "handoff": self.handoff,
         }
 
     def to_markdown(self) -> str:
@@ -269,6 +271,10 @@ class ChapterSummary:
             lines.append("**伏笔：**")
             for f in self.foreshadows:
                 lines.append(f"- {f}")
+            lines.append("")
+        if self.handoff:
+            lines.append("**下一章交接：**")
+            lines.append(self.handoff)
             lines.append("")
         return "\n".join(lines)
 
@@ -361,6 +367,7 @@ class ChapterSummarizer:
             ],
             new_settings=[str(s) for s in (data.get("new_settings") or [])],
             foreshadows=[str(f) for f in (data.get("foreshadows") or [])],
+            handoff=str(data.get("handoff", "")),
         )
 
     def _save_summary(self, summary: ChapterSummary) -> Path:

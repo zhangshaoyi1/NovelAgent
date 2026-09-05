@@ -775,6 +775,26 @@ async def api_run(
     return JSONResponse({"run_id": run_id})
 
 
+@app.get("/api/runs")
+def api_runs(project: str = "") -> JSONResponse:
+    """按项目列出运行实例（最新在前）。
+
+    供页面重载后「重新接管」：run_id 只存在于前端页面里，浏览器丢弃
+    后台标签页再切回时页面已重载，前端靠此接口找回该项目进行中的任务。
+    """
+    runs = [
+        {
+            "run_id": r["id"],
+            "command": r["command"],
+            "done": r["done"],
+            "exit_code": r["exit_code"],
+        }
+        for r in reversed(runner.run_manager.runs.values())
+        if not project or r["project"] == project
+    ]
+    return JSONResponse({"runs": runs})
+
+
 @app.get("/api/runs/{run_id}/events")
 async def run_events(run_id: str) -> StreamingResponse:
     if run_id not in runner.run_manager.runs:

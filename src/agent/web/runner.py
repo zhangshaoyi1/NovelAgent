@@ -65,13 +65,29 @@ class RunManager:
             "command": command,
             "argv": argv,
             "env_extra": dict(env_extra or {}),
-            "queue": asyncio.Queue(),
+            # 订阅者广播：每个 SSE 连接持有独立队列，事件全量投递。
+            # 独享队列（而非共享队列）保证重连的新连接不会被残留的
+            # 旧连接抢走事件，断线期间的日志由存量回放补齐。
+            "subscribers": set(),
             "logs": [],
+            # 进度事件缓存：供晚订阅者（如切走又切回的页面）回放时间线
+            "progress_events": [],
             "done": False,
             "exit_code": None,
+            "done_data": None,
             "proc": None,
         }
         return run_id
+
+    def _emit(self, run: dict[str, Any], ev: dict[str, Any]) -> None:
+        """向所有订阅者广播事件；同步执行，与快照之间不会发生事件丢失。
+
+        队列积压超过上限视为死连接（页面已丢弃，未走到 finally 清理），
+        停止投递防止无界增长；该订阅者下次 stream 调用时仍会被清理。
+        """
+        for q in list(run["subscribers"]):
+            if q.qsize() < 2000:
+                q.put_nowait(ev)
 
     async def execute(self, run_id: str) -> None:
         """执行指定 run 的子进程，并把事件推入其队列。"""
@@ -107,9 +123,7 @@ class RunManager:
                 stdin=asyncio.subprocess.DEVNULL,
             )
         except Exception as e:  # noqa: BLE001 - 启动失败也走 done 事件
-            await run["queue"].put(
-                {"type": "log", "data": {"text": f"✗ 启动失败：{e}"}}
-            )
+            self._emit(run, {"type": "log", "data": {"text": f"✗ 启动失败：{e}"}})
             await self._finish(run, exit_code=-1)
             return
 
@@ -124,11 +138,11 @@ class RunManager:
                 if not line:
                     break
                 text = strip_rich(line.decode("utf-8", "replace")).rstrip("\r\n")
-                # 累计日志：SSE 掉线时轮询兜底也能回看
+                # 累计日志：SSE 掉线时轮询兜底也能回看，晚订阅者重连时回放
                 run["logs"].append(text)
                 if len(run["logs"]) > 300:
                     run["logs"] = run["logs"][-300:]
-                await run["queue"].put({"type": "log", "data": {"text": text}})
+                self._emit(run, {"type": "log", "data": {"text": text}})
 
         async def tail_progress() -> None:
             nonlocal seen_seq, last_mtime
@@ -149,9 +163,12 @@ class RunManager:
                                 seq = ev.get("seq", 0)
                                 if seq > seen_seq:
                                     seen_seq = seq
-                                    await run["queue"].put(
-                                        {"type": "progress", "data": ev}
-                                    )
+                                    run["progress_events"].append(ev)
+                                    if len(run["progress_events"]) > 200:
+                                        run["progress_events"] = (
+                                            run["progress_events"][-200:]
+                                        )
+                                    self._emit(run, {"type": "progress", "data": ev})
                 except FileNotFoundError:
                     pass
                 if finished:
@@ -178,33 +195,54 @@ class RunManager:
         except Exception:  # noqa: BLE001
             summary = None
             state_val = None
-        await run["queue"].put(
-            {
-                "type": "done",
-                "data": {
-                    "exit_code": exit_code,
-                    "summary": summary,
-                    "state": state_val,
-                },
-            }
-        )
+        done_data = {
+            "exit_code": exit_code,
+            "summary": summary,
+            "state": state_val,
+        }
+        run["done_data"] = done_data
+        self._emit(run, {"type": "done", "data": done_data})
 
     async def stream(self, run_id: str):
-        """生成 SSE 事件序列（dict 形式，由路由层序列化为 text/event-stream）。"""
+        """生成 SSE 事件序列（dict 形式，由路由层序列化为 text/event-stream）。
+
+        支持晚订阅回放：页面切走再切回、EventSource 重连、或任务已结束后
+        才打开页面，都会先收到存量日志 + 进度时间线，再进入实时监听；
+        任务已结束时补发 done 后收尾。订阅者使用独立队列，重连不会与
+        残留的旧连接争抢事件。
+        """
         run = self.runs.get(run_id)
         if run is None:
             return
-        while True:
-            try:
-                ev = await asyncio.wait_for(run["queue"].get(), timeout=2.0)
-            except asyncio.TimeoutError:
-                if run["done"] and run["queue"].empty():
-                    break
-                yield {"type": "ping", "data": {}}
-                continue
-            yield ev
-            if ev["type"] == "done":
-                break
+        # 快照必须在订阅之前同步完成（两步之间无 await，事件循环不会切换），
+        # 保证「回放的存量」与「队列里的增量」恰好互补：不重复、不遗漏。
+        logs_snapshot = list(run["logs"])
+        progress_snapshot = list(run["progress_events"])
+        q: asyncio.Queue = asyncio.Queue()
+        run["subscribers"].add(q)
+        try:
+            for text in logs_snapshot:
+                yield {"type": "log", "data": {"text": text}}
+            for ev in progress_snapshot:
+                yield {"type": "progress", "data": ev}
+            if run["done"]:
+                yield {
+                    "type": "done",
+                    "data": run["done_data"]
+                    or {"exit_code": run["exit_code"] or 0, "summary": None, "state": None},
+                }
+                return
+            while True:
+                try:
+                    ev = await asyncio.wait_for(q.get(), timeout=2.0)
+                except asyncio.TimeoutError:
+                    yield {"type": "ping", "data": {}}
+                    continue
+                yield ev
+                if ev["type"] == "done":
+                    return
+        finally:
+            run["subscribers"].discard(q)
 
 
 # 全局单例（进程内）

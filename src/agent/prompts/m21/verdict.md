@@ -43,6 +43,7 @@ validation:
 
 规则：
 - severity=block：不改会明显破坏成书质量；severity=warn：细节问题可顺手调整。
+- 【评分区分度约束】禁止默认给 70-80 的"安全分"：差的内容必须给低分（1-50），平庸给及格线附近，高分必须能用正文中具体表现证明其确实出色；total_score 需在 verdict_text 中说明依据；issues 数量与分数挂钩——低分必须有 4-5 条以上 issues。
 - 完全没有问题时返回 {"overall_verdict": "APPROVE", "total_score": 85, "issues": [], ...}。
 - 只输出 JSON，不要 ```json 标记。
 

@@ -12,6 +12,7 @@ from agent.core.quality.scoring import QualityChecker, LLMBackedChecker, Severit
 from agent.core.quality.scoring.quality_checker import (
     _chapter_length_from_ctx,
     _count_cjk,
+    _rhythm_from_ctx,
     resolve_min_cjk_words,
     resolve_max_cjk_words,
 )
@@ -179,7 +180,9 @@ class M5QualityGateMixin:
             # ---- 字数硬关卡（确定性扫描，不依赖 LLM 自觉）----
             # 中文字数低于动态下限（随目标字数伸缩，有绝对下限兜底）即判不通过，
             # 触发修订扩写，杜绝截断短章落盘
-            min_words = resolve_min_cjk_words(_chapter_length_from_ctx(ctx))
+            min_words = resolve_min_cjk_words(
+                _chapter_length_from_ctx(ctx), _rhythm_from_ctx(ctx)
+            )
             if cjk_count < min_words:
                 report["overall_pass"] = False
                 report.setdefault("rules", []).append(

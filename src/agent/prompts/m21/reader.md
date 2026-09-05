@@ -37,6 +37,7 @@ validation:
 
 规则：
 - severity=block：会直接导致读者流失 / 追读率崩塌；severity=warn：影响阅读体验但可承受。
+- 证据约束：每个问题必须在 location/description 中引用原文具体句子作为证据；没有问题的检查项不凑数（宁缺毋滥）。
 - 问题必须附具体位置与可执行建议，禁止空话。
 
 # user

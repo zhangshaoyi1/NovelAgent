@@ -58,6 +58,9 @@ class GenreManifest:
     dependencies: list[str] = field(default_factory=list)
     independent: bool = False
     skill_dir: Path | None = None
+    # P2-2.3（竞品优化方案，对标 inkos 题材包规则引擎）：可确定性执行的题材级规则
+    fatigue_words: list[str] = field(default_factory=list)   # 题材疲劳词（接入 guardrail_scan）
+    pacing_rules: list[str] = field(default_factory=list)    # 节奏硬规则（advisory 注入写章提示）
 
     @property
     def genre_id(self) -> str:
@@ -214,6 +217,8 @@ def load_genre_manifest(skill_dir: Path) -> GenreManifest:
         dependencies=list(meta.get("dependencies") or []),
         independent=bool(meta.get("independent", False)),
         skill_dir=skill_dir,
+        fatigue_words=[str(w) for w in (meta.get("fatigue_words") or [])],
+        pacing_rules=[str(r) for r in (meta.get("pacing_rules") or [])],
     )
 
 

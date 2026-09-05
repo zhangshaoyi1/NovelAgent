@@ -126,6 +126,19 @@
       statusEl: document.querySelector('.dock-console .rc-status'),
       timerEl: document.querySelector('.dock-console .rc-timer'),
     };
+    // 页面重载 / 后台标签页被浏览器丢弃后切回：重新接管仍在进行的写作任务，
+    // 服务端会回放历史日志与进度时间线，避免「切回来就不知道写到哪了」。
+    reattachRun('{{ name }}', '写作任务（重新接管）', () => {
+      loadChapters();
+      loadProjectState();
+    });
+    // 切回本页时立即刷新章节列表与项目状态（后台期间产出的新章节马上可见）
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') {
+        loadChapters();
+        loadProjectState();
+      }
+    });
   });
 
   /* ---------- 弹窗开关 ---------- */

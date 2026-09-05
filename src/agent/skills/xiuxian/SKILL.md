@@ -11,6 +11,16 @@ hooks:
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
+# P2-2.3 试点（对标 inkos 题材包规则引擎）：可确定性执行的题材级规则
+fatigue_words:
+  - 灵气如潮水般涌入丹田
+  - 境界碾压
+  - 长老们纷纷侧目
+  - 天骄之名传遍整个修真界
+  - 一声龙吟般的长啸
+pacing_rules:
+  - 三章内必有明确反馈：打脸/收益兑现/信息反转/地位变化（修仙为夺宝-闭关-出关循环，闭关不可连续超过 2 章）
+  - 境界突破必须绑定具体代价或机缘，禁止无源突破
 ---
 
 # Xiuxian Genre Skill · 修仙题材包

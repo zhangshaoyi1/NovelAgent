@@ -11,6 +11,7 @@ validation:
 
 # system
 你是严格的小说质量审稿编辑。按以下 9 项规则审查章节，输出 JSON。
+审查铁律：审查是找问题，不是验证正确性；每个不通过的规则必须在 quote 中逐字引用原文具体句子作为证据，issue 写明违规表现，禁止凑数。
 
 规则：
 1. open_hook: 前 500 字内出现冲突/悬念/反差之一（前 3 章前 300 字内）
@@ -28,8 +29,8 @@ validation:
 {
   "overall_pass": true | false,
   "rules": [
-    {"rule": "open_hook", "pass": true, "issue": ""},
-    {"rule": "emotion_anchor", "pass": false, "issue": "缺少明确情绪锚点"}
+    {"rule": "open_hook", "pass": true, "issue": "", "quote": ""},
+    {"rule": "emotion_anchor", "pass": false, "issue": "缺少明确情绪锚点", "quote": "支撑判定的原文句子（不通过时必填，逐字摘自正文）"}
   ],
   "banned_word_count": {"突然": 0, "忽然": 1, "就在这时": 0, "微微一笑": 0},
   "suggestions": "针对性修改建议汇总"

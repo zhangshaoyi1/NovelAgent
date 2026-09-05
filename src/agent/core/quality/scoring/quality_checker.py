@@ -87,12 +87,45 @@ ABSOLUTE_MIN_CJK_WORDS = 1500   # 恒硬下限（对应 MIN_CHAPTER_LENGTH）
 MIN_WORD_RATIO = 0.8            # 目标字数的 80% 视为达标下限（保留合理余量）
 MAX_WORD_RATIO = 1.2            # 目标字数的 120% 视为合理上限（超限仅提示，非硬阻断）
 
+# P2-2.4（竞品优化方案，对标 oh-story 字数硬约束表）：按 world 节奏档位的字数下限。
+# 仅在目标字数未知（无 chapter_length）时替代统一绝对下限——舒缓/正常章信息量需求更高；
+# 目标字数已知时仍以 目标×0.8 为主口径，节奏档位不与用户设定冲突。
+RHYTHM_MIN_CJK_WORDS: dict[str, int] = {
+    "舒缓": 3000,
+    "正常": 3000,
+    "标准": 3000,
+    "高速": 2000,
+    "快": 2000,
+    "高潮": 2000,
+}
 
-def resolve_min_cjk_words(chapter_length: int | float | None = None) -> int:
-    """解析本章字数门禁下限：随目标字数动态伸缩，恒有绝对下限兜底"""
+
+def resolve_min_cjk_words(
+    chapter_length: int | float | None = None,
+    rhythm: str | None = None,
+) -> int:
+    """解析本章字数门禁下限：随目标字数动态伸缩，恒有绝对下限兜底。
+
+    ``rhythm``（world 节奏档位）仅在目标字数未知时生效：按 RHYTHM_MIN_CJK_WORDS
+    取档位下限（未知档位回落 ABSOLUTE_MIN_CJK_WORDS）。
+    """
     if chapter_length:
         return max(ABSOLUTE_MIN_CJK_WORDS, int(chapter_length * MIN_WORD_RATIO))
+    if rhythm:
+        for key, floor in RHYTHM_MIN_CJK_WORDS.items():
+            if key in str(rhythm):
+                return floor
     return ABSOLUTE_MIN_CJK_WORDS
+
+
+def _rhythm_from_ctx(ctx: dict[str, Any] | None) -> str | None:
+    """从校验上下文中取节奏档位（可选）"""
+    ctx = ctx or {}
+    rhythm = ctx.get("rhythm")
+    if not rhythm:
+        wi = ctx.get("world_info")
+        rhythm = wi.get("rhythm") if isinstance(wi, dict) else None
+    return str(rhythm) if rhythm else None
 
 
 def resolve_max_cjk_words(chapter_length: int | float | None = None) -> int:

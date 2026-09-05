@@ -91,6 +91,24 @@ _META_LEAK_RE = re.compile(
     r"|ch\d+章|第\d+章里|第\d+段[：:]"
 )
 
+# ---- P2（竞品优化方案 2.2）：第五类确定性检查——叙事越界（narrative_tell，对标 inkos
+# post-write-validator）。三类高置信 AI 腔/旁白模式，warn 级标红不阻断（防误杀，全禁
+# 是 inkos 的反面教训）；实际模式可经 .state/guardrails.json 覆盖。
+NARRATIVE_TELL_RULE_ID: str = "narrative_tell"
+# 1) 元叙事旁白：叙述者突然对"读者/故事"说话
+_NARRATIVE_TELL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("元叙事旁白", re.compile(r"到这里[，,]?算是|读者[，,]?(?:可能|应该|也许)|恐怕连读者|命运的车轮|故事(的?)走向")),
+    # 2) 分析报告腔：论文/复盘术语侵入叙事
+    ("分析报告腔", re.compile(r"核心动机|信息边界|情绪外化|沉没成本|逻辑闭环|博弈论|底层逻辑|顶层设计")),
+    # 3) 全场集体反应：群像脸谱化（不写具体的人）
+    ("集体反应", re.compile(r"全场(?:一片)?(?:哗然|震惊|死寂|沸腾)|众人齐声|所有人都(惊呆|倒吸|愣住)")),
+]
+# ---- P2（竞品优化方案 2.1）：段级密度确定性规则（oh-story narrative-writer 硬约束）。
+# 超长段落/超长单句 warn 标红；对话段（以引号开头）豁免——对白连排属正常排版。
+DENSITY_RULE_ID: str = "paragraph_density"
+_DEFAULT_MAX_PARAGRAPH_CHARS = 300   # 单自然段（\n 分隔）超过即 warn
+_DEFAULT_MAX_SENTENCE_CHARS = 120    # 单句（。！？…分隔）超过即 warn
+
 
 class GateMode(str, Enum):
     """护栏门禁模式。
@@ -181,6 +199,10 @@ class Guardrails:
         check_meta_leak: bool = True,                # 写作元指令泄漏检测开关（G14 补充）
         published_titles: list[str] | None = None,   # 全书已发布标题（用于标题重复判定）
         fingerprint_db: dict[str, list[str]] | None = None,  # 全书指纹库 {章号: [段落hash]}
+        check_narrative_tell: bool = True,           # P2-2.2：元叙事旁白/报告腔/集体反应开关
+        check_density: bool = True,                  # P2-2.1：段级密度开关
+        max_paragraph_chars: int = _DEFAULT_MAX_PARAGRAPH_CHARS,
+        max_sentence_chars: int = _DEFAULT_MAX_SENTENCE_CHARS,
     ) -> None:
         self.banned_words = list(banned_words if banned_words is not None else _DEFAULT_BANNED)
         self.placeholder_patterns = [
@@ -202,6 +224,11 @@ class Guardrails:
         self.published_titles: list[str] = list(published_titles or [])
         # 指纹库：章号(str) -> 段落归一化 hash 列表；落盘后由调用方增量更新
         self.fingerprint_db: dict[str, list[str]] = dict(fingerprint_db or {})
+        # ---- P2：narrative_tell / 段级密度 ----
+        self.check_narrative_tell = check_narrative_tell
+        self.check_density = check_density
+        self.max_paragraph_chars = max(int(max_paragraph_chars), 1)
+        self.max_sentence_chars = max(int(max_sentence_chars), 1)
 
     # ---------------------------------------------------------------- 文本校验
     def check_text(
@@ -303,7 +330,44 @@ class Guardrails:
                     META_LEAK_RULE_ID, "error", leak,
                 ))
 
+        # 10) 叙事越界（narrative_tell，P2-2.2）：元叙事旁白/分析报告腔/集体反应。
+        #     warn 级标红不阻断（对齐 ai_flavor 的"确定性词表默认 warn"拍板）。
+        if self.check_narrative_tell:
+            for label, pat in _NARRATIVE_TELL_PATTERNS:
+                m = pat.search(t)
+                if m:
+                    violations.append(GuardrailViolation(
+                        NARRATIVE_TELL_RULE_ID, "warn",
+                        f"疑似{label}：「{m.group(0)}」（叙述越出故事世界，建议改为具体动作/反应）",
+                    ))
+
+        # 11) 段级密度（paragraph_density，P2-2.1）：超长自然段 / 超长单句，warn 标红。
+        if self.check_density:
+            violations.extend(self._check_density(t))
+
         return GuardrailResult(violations)
+
+    def _check_density(self, text: str) -> list[GuardrailViolation]:
+        """段级密度确定性检查：超长段落 / 超长单句（对话段豁免）。"""
+        out: list[GuardrailViolation] = []
+        for para in text.split("\n"):
+            para = para.strip()
+            if not para or para.startswith(("「", '"', "“")):
+                continue  # 空行/对话段豁免（对白连排属正常排版）
+            if len(para) > self.max_paragraph_chars:
+                out.append(GuardrailViolation(
+                    DENSITY_RULE_ID, "warn",
+                    f"自然段过长：{len(para)} 字 > {self.max_paragraph_chars}（按句号/动作转折拆段）",
+                ))
+            for sent in re.split(r"[。！？…]+", para):
+                sent = sent.strip()
+                if len(sent) > self.max_sentence_chars:
+                    out.append(GuardrailViolation(
+                        DENSITY_RULE_ID, "warn",
+                        f"单句过长：{len(sent)} 字 > {self.max_sentence_chars}（拆短句）",
+                    ))
+                    break  # 每段只报一次，防刷屏
+        return out
 
     # ---------------------------------------------------------------- 结构化校验
     def check_schema(
@@ -602,6 +666,11 @@ def load_guardrail_config(path: str | Path | None = None) -> dict[str, Any]:
         "check_title": True,
         "check_dup": True,
         "check_meta_leak": True,       # G14 补充：写作元指令泄漏检测
+        # ---- P2：narrative_tell / 段级密度 ----
+        "check_narrative_tell": True,
+        "check_density": True,
+        "max_paragraph_chars": _DEFAULT_MAX_PARAGRAPH_CHARS,
+        "max_sentence_chars": _DEFAULT_MAX_SENTENCE_CHARS,
     }
     if path is None:
         return cfg
@@ -637,6 +706,14 @@ def load_guardrail_config(path: str | Path | None = None) -> dict[str, Any]:
         cfg["check_dup"] = raw["check_dup"]
     if isinstance(raw.get("check_meta_leak"), bool):
         cfg["check_meta_leak"] = raw["check_meta_leak"]
+    if isinstance(raw.get("check_narrative_tell"), bool):
+        cfg["check_narrative_tell"] = raw["check_narrative_tell"]
+    if isinstance(raw.get("check_density"), bool):
+        cfg["check_density"] = raw["check_density"]
+    for k in ("max_paragraph_chars", "max_sentence_chars"):
+        v = raw.get(k)
+        if isinstance(v, int) and v > 0:
+            cfg[k] = v
     return cfg
 
 
@@ -664,6 +741,10 @@ def build_guardrails(
         check_title=cfg["check_title"],
         check_dup=cfg["check_dup"],
         check_meta_leak=cfg["check_meta_leak"],
+        check_narrative_tell=cfg["check_narrative_tell"],
+        check_density=cfg["check_density"],
+        max_paragraph_chars=cfg["max_paragraph_chars"],
+        max_sentence_chars=cfg["max_sentence_chars"],
         published_titles=published_titles,
         fingerprint_db=fingerprint_db,
     )
