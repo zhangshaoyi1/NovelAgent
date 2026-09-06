@@ -98,7 +98,32 @@ def _build_mock_llm(
     utility_responses = iter([_json.dumps(quality_report, ensure_ascii=False)])
 
     def chat_side_effect(req, **kwargs):
-        """mock Gateway.chat() → 返回含 .text 的对象"""
+        """mock Gateway.chat() → 返回含 .text 的对象
+
+        Agentic 决策链（WriterAgent._make_decide → chat_structured）在 system
+        prompt 中嵌入 AgentAction 的 JSON Schema：识别到该标记时返回 finish
+        动作 JSON（draft=正文），否则按 hint 走旧的 creative/utility 分支。
+        """
+        import os as _os
+        first_content = ""
+        msgs = getattr(req, "messages", None) or []
+        if msgs and isinstance(msgs[0], dict):
+            first_content = str(msgs[0].get("content", ""))
+        if 'tool_call' in first_content and 'finish' in first_content:
+            # CLI 路径按项目 chapter_length 推导字数下限；CHAPTER_TEXT 仅 200+ 字，
+            # 不够下限会触发「过短章节」保护。此处扩写草稿到 ≥2000 字。
+            draft = chapter_text
+            while len(draft) < 3500:
+                draft += "\n" + chapter_text
+            action = _json.dumps(
+                {
+                    "think": "mock decide",
+                    "action": "finish",
+                    "draft": draft,
+                },
+                ensure_ascii=False,
+            )
+            return SimpleNamespace(text=action)
         hint = getattr(req, 'hint', None)
         is_creative = hint is None or getattr(hint, 'complexity', None) != 'simple'
         try:

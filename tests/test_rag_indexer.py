@@ -89,9 +89,11 @@ class TestReindexCommand:
     def test_reindex_cli_json(self, tmp_path: Path, monkeypatch) -> None:
         """reindex --json 经命令注册 + 注入假 embedder，输出合法信封"""
         d = make_project(tmp_path, n_chapters=3)
-        # 注入假 embedder（命令内部 Indexer 默认 LLMClient → 由 patch 替换为假）
+        # P1-11：命令内部 Indexer() 走 _default_embedder（真实 embedding 网络
+        # 调用），直接替换为假 embedder（旧补丁 agent.client.LLMClient 已过时）
         monkeypatch.setattr(
-            "agent.client.LLMClient", _FakeLLMClient
+            "agent.core.rag.indexer.Indexer._default_embedder",
+            staticmethod(lambda: FakeEmbedder()),
         )
 
         runner = CliRunner()

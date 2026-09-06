@@ -240,6 +240,8 @@ class AgenticPipelineWorkflow:
         method_enabled: bool = True,
         # ---- G12 新增参数（读者反馈闭环：爽点剧本/情绪目标注入）----
         payoff_enabled: bool = True,
+        # ---- 写章失败冷却重试等待（秒；0=关闭；默认 90s 抵御 provider 间歇性风暴）----
+        chapter_retry_wait_s: float = 90.0,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client
@@ -285,7 +287,7 @@ class AgenticPipelineWorkflow:
         self.ending_gate = bool(ending_gate)
         # 写章失败的冷却重试等待（秒；0=关闭）。>0 时单章失败先冷却等待再重试 1 次，
         # 用于抵御 provider 间歇性 403/429 风暴（免费池过载），避免整批报废。
-        self._chapter_retry_wait_s = 90.0
+        self._chapter_retry_wait_s = float(chapter_retry_wait_s)
         # G11：风格模仿 + 写作方法模板（透传给 writer/planner/outline；默认开）
         self.style_enabled = bool(style_enabled)
         self.style_file = style_file
