@@ -258,8 +258,11 @@ def test_writer_structured_parse_retries_once_with_json_prompt():
     assert raised["n"] == 1  # 只失败一次，第二次已带指令重试
 
 
-def test_writer_structured_parse_raises_after_two_failures():
+def test_writer_structured_parse_raises_after_two_failures(monkeypatch):
     # 两次均失败 → decide 在第二次明确抛错，AgentLoop 无法提交 → run 报 RuntimeError
+    # P1-11：AgentLoop 决策失败按指数退避重试（默认 3s 起、上限 10 轮 ≈ 4 分钟），
+    # 测试无需验证退避时长，跳过 sleep 让用例毫秒级完成
+    monkeypatch.setattr("agent.core.engine.agent_loop.time.sleep", lambda s: None)
     agent = WriterAgent(
         project_dir=".",
         tier="light",

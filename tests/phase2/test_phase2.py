@@ -272,7 +272,14 @@ def test_evaluator_auto_rollback_on_failure(tmp_path):
     )
     # 强制 recycle 不达标：score_fn 不影响 recycle（确定性），但让其他维度也通过，
     # 仅靠 recycle<0.9 触发回溯。
-    ev = EvaluatorAgent(proj, rollback_window=5)  # 默认 auto_rollback=True
+    ev = EvaluatorAgent(
+        proj,
+        rollback_window=5,
+        # D-J：回退能力由上层注入（懒加载兜底已随 R6 红线移除）
+        rollback_provider=__import__(
+            "agent.workflows.evaluation.m10_rollback", fromlist=["M10RollbackWorkflow"]
+        ).M10RollbackWorkflow(proj),
+    )  # 默认 auto_rollback=True
     rep = ev.evaluate()
     assert rep.overall_pass is False
     assert rep.rolled_back is True

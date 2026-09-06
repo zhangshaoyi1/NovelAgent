@@ -7,6 +7,9 @@
 - R4  业务层（workflows/core/agents）不得 import `agent.cli` / `agent.web`（依赖只能向下）
 - R5  API key 直读仅允许白名单文件（gateway secrets / client 凭据装配 / base 配置 /
       doctor 诊断 / web 模型档案回显），白名单外出现即失败——收紧增量，存量不扩散
+- R6  分层依赖矩阵：base/client/core/tasks/agents/memory 各层仅可 import 白名单内的
+      `agent.*` 前缀（含函数体延迟 import），依赖只能向下——存量违规进 R6_WAIVED，
+      收紧增量不扩散
 """
 
 from __future__ import annotations
@@ -28,6 +31,7 @@ KEY_ACCESS_WHITELIST = {
     "base/llm.py",
     "core/infra/doctor.py",
     "web/app.py",
+    "web/rag_admin.py",  # RAG 配置管理页：.env 读写 + api key 打码，性质同 web/app.py
 }
 
 
@@ -139,3 +143,45 @@ class TestR5KeyAccessWhitelist:
         assert not violations, "API key 直读超出白名单（新文件请走 client/gateway_adapter）:\n" + "\n".join(
             violations
         )
+
+
+# R6 分层依赖矩阵：每个层允许 import 的 `agent.*` 前缀白名单。
+# 依赖方向（架构文档 §3.4）：base ← client ← core ← agents ← workflows ← 接入层；
+# tasks 是 core.engine → llmagent Catalog 的派生桥，允许依赖 core。
+# ast.walk 连函数体内的延迟 import 一并检查——延迟导入只是规避导入顺序错误，
+# 不改变架构依赖方向，同样受红线约束。
+R6_ALLOWED = {
+    "base": {"agent.base"},
+    "client": {"agent.base", "agent.client"},
+    "core": {"agent.base", "agent.client", "agent.core"},
+    "tasks": {"agent.base", "agent.client", "agent.core", "agent.tasks"},
+    "agents": {"agent.base", "agent.client", "agent.core", "agent.agents"},
+    "memory": {"agent.base", "agent.client", "agent.memory"},
+    # 下述层允许依赖所有下层，不在本表中即跳过
+}
+# 全层通用：包根本体与根级纯工具模块（agent/__init__、agent/utils）
+R6_UNIVERSAL = {"agent", "agent.utils"}
+# 允许依赖所有下层的层（workflows 及接入层）不在 R6_ALLOWED 中，天然跳过
+# 存量豁免：收紧增量，存量不扩散（当前无存量违规）
+R6_WAIVED: set[str] = set()
+
+
+class TestR6LayerDependencyMatrix:
+    def test_layer_imports_stay_within_whitelist(self):
+        violations = []
+        for layer, allowed in R6_ALLOWED.items():
+            for p in _iter_py_files(layer):
+                rel = _rel(p)
+                if rel in R6_WAIVED:
+                    continue
+                for mod in _imports_of(p):
+                    top = mod.split(".")
+                    if top[0] != "agent":
+                        continue  # llmagent / 第三方由其他红线管
+                    prefix = ".".join(top[:2]) if len(top) > 1 else "agent"
+                    if prefix in R6_UNIVERSAL:
+                        continue
+                    if any(prefix == w or prefix.startswith(w) for w in allowed):
+                        continue
+                    violations.append(f"{rel}: import {mod}（{layer} 层仅允许 {sorted(allowed)}）")
+        assert not violations, "分层依赖矩阵违规（依赖只能向下）:\n" + "\n".join(violations)

@@ -46,7 +46,8 @@ def _make_project(tmp_path: Path) -> Path:
     return d
 
 
-def _make_pipeline(d: Path, writer, *, target: int = 5, on_event=None, progress_file=None):
+def _make_pipeline(d: Path, writer, *, target: int = 5, on_event=None, progress_file=None,
+                   chapter_retry_wait_s: float = 0):
     return AgenticPipelineWorkflow(
         project_dir=d,
         llm_client=getattr(writer, "llm", None),
@@ -62,6 +63,7 @@ def _make_pipeline(d: Path, writer, *, target: int = 5, on_event=None, progress_
         ending_gate=False,
         on_event=on_event,
         progress_file=progress_file,
+        chapter_retry_wait_s=chapter_retry_wait_s,
     )
 
 
@@ -72,8 +74,10 @@ def test_write_failure_event_and_result_failures(tmp_path: Path) -> None:
     d = _make_project(tmp_path)
     writer = _RaisingWriter(d, message="LLM 调用失败：connection timeout")
     events: list[dict] = []
+    # P1-11：写章失败冷却默认 90s，测试关闭（chapter_retry_wait_s=0）
     p = _make_pipeline(d, writer, target=5, on_event=events.append,
-                       progress_file=d / ".state" / "progress.json")
+                       progress_file=d / ".state" / "progress.json",
+                       chapter_retry_wait_s=0)
     result = p.run()
 
     # failure 事件已发射
