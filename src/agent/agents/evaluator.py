@@ -930,13 +930,18 @@ class EvaluatorAgent:
             return 0
 
     def _resolve_rollback(self) -> "RollbackProvider":
-        """返回回退能力：优先使用构造注入的 provider；否则懒加载 M10RollbackWorkflow 兜底。"""
-        if self._rollback_provider is not None:
-            return self._rollback_provider
-        # D-J 兜底：仅在真正触发回溯时才 import workflows（静态依赖已消除，便于 standalone/测试）
-        from agent.workflows.evaluation.m10_rollback import M10RollbackWorkflow
+        """返回回退能力：仅使用构造注入的 provider。
 
-        return M10RollbackWorkflow(self.project_dir)
+        D-J 反转（2026-08-29）后所有生产调用方（CLI/service/agentic_pipeline）
+        均显式注入；未注入即构造缺失，如实报错，不再懒加载 workflows 兜底
+        （消除 agents→workflows 越层依赖，见 R6 红线）。
+        """
+        if self._rollback_provider is None:
+            raise RuntimeError(
+                "EvaluatorAgent 未注入 rollback_provider：请由 workflow/CLI/service 层"
+                "构造 m10_rollback.M10RollbackWorkflow 后经 rollback_provider= 注入"
+            )
+        return self._rollback_provider
 
     def trigger_rollback(self, last_written: int | None = None) -> Optional[RepairPlan]:
         """回退最近 ``rollback_window`` 章并归档，返回修复方案；无法回退则返回 None。"""

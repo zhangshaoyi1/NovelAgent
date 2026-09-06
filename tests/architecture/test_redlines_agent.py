@@ -162,10 +162,8 @@ R6_ALLOWED = {
 # 全层通用：包根本体与根级纯工具模块（agent/__init__、agent/utils）
 R6_UNIVERSAL = {"agent", "agent.utils"}
 # 允许依赖所有下层的层（workflows 及接入层）不在 R6_ALLOWED 中，天然跳过
-# 存量豁免：收紧增量，存量不扩散。待 evaluator 拆分时改协议注入后移除。
-R6_WAIVED = {
-    "agents/evaluator.py",  # 回滚执行依赖 m10_rollback，规划改 RollbackProvider 注入
-}
+# 存量豁免：收紧增量，存量不扩散（当前无存量违规）
+R6_WAIVED: set[str] = set()
 
 
 class TestR6LayerDependencyMatrix:
