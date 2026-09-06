@@ -493,6 +493,19 @@ def autowrite(
         payoff_enabled=not bool(_cli_value(no_payoff, False)),
     )
 
+    # ---- 规划一致性守护（缺口 A/C，2026-09-06）：写前对账 + 确定性不变量 fail-fast ----
+    from agent.workflows.pipeline.plan_consistency import prepare_for_write
+
+    _fatal = prepare_for_write(project_path, console=console)
+    if _fatal:
+        for _msg in _fatal:
+            console.print(f"[red]✗ 规划校验失败：{_msg}[/red]")
+        console.print(
+            "[red]已安全退出（不进入写章）：数据不变量破坏时静默降级只会产出废稿。"
+            "请按上述提示修复后重跑。[/red]"
+        )
+        raise typer.Exit(1)
+
     try:
         result = pipeline.run()
 

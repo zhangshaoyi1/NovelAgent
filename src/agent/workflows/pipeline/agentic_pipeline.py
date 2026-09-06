@@ -1254,6 +1254,23 @@ class AgenticPipelineWorkflow:
         # G4 记录起始时间（墙钟计时）
         self._start_time = time.monotonic()
 
+        # ---- 规划一致性守护（缺口 A/C，2026-09-06）：写前对账 + 不变量 fail-fast ----
+        # 覆盖直接调用 pipeline 的入口（Web / 测试）；CLI autowrite 已另行前置校验。
+        try:
+            from agent.workflows.pipeline.plan_consistency import prepare_for_write
+
+            _fatal = prepare_for_write(self.project_dir, console=self.console)
+            if _fatal:
+                result.blocked = True
+                result.block_reason = "规划校验失败：" + "；".join(_fatal)
+                self.console.print(f"[red]✗ {result.block_reason}[/red]")
+                self._emit_failure("plan_block", result.block_reason, severity="error")
+                self._finalize_cost(result)
+                self._finalize_g9(result)
+                return result
+        except Exception as e:  # noqa: BLE001 - 守护自身异常不阻断既有流程
+            self.console.print(f"[yellow]规划一致性守护异常（忽略）：{e}[/yellow]")
+
         # 1) 规划（若提供 planner 且尚未有计划文件）
         planner = self._ensure_planner()
         if planner is not None and self.brief:

@@ -191,6 +191,36 @@ class M5TextHygieneMixin:
     """正文格式化 / 标题提取 / 正文清理 / 整章去重（纯文本处理）"""
 
     # ============================================================
+    # 1.4 Canonical chapter 成文管线（缺口 B，2026-09-06）
+    # ============================================================
+    @staticmethod
+    def _finalize_chapter_text(text: str) -> str:
+        """产出「最终落盘正文」（canonical body）——与 _save_chapter 落盘链完全同源。
+
+        缺口 B 根治：此前门禁（字数/标题/查重/指纹）各自消费不同口径的中间态
+        （原始文本、去标题正文……），导致短章漏判、标题全量误报、G14 标题查重
+        失效（同族前科：2026-08-30 / 2026-09-02 / 2026-09-06 三次复发）。
+        现约定：**落盘、门禁、指纹注册一律消费本方法 + compose_chapter_markdown
+        的产物**；调用方在 _save_chapter 之前先 finalize，_save_chapter 内部
+        再走一遍同链（链内各步幂等）。
+        """
+        text = M5TextHygieneMixin._clean_chapter_body(text)
+        text = M5TextHygieneMixin._dedup_repeated_chapter(text)
+        text = M5TextHygieneMixin._dedup_tail_loop(text)
+        text = M5TextHygieneMixin._format_chapter_body(text)
+        clean_text, _still = hard_replace_english(text)
+        return clean_text
+
+    @staticmethod
+    def compose_chapter_markdown(chapter_num: int, title: str, body: str) -> str:
+        """合成「最终成文」（canonical artifact）：`# 第 N 章 · 标题` + 正文。
+
+        这是门禁（标题合规 / 标题查重 / 段落指纹）与落盘共用的唯一成文形态：
+        guardrails._check_title 只在此产物上才可能命中，标题查重（G14）随之生效。
+        """
+        return f"# 第 {chapter_num} 章 · {title}\n\n{body}"
+
+    # ============================================================
     # 1.5 章节正文后格式化（安全网，兜底 LLM 段落格式遗漏）
     # ============================================================
     @staticmethod

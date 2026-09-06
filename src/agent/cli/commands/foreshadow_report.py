@@ -19,7 +19,16 @@ def foreshadow_report(
     """
     from pathlib import Path
 
-    from agent.workflows.evaluation.m13_foreshadow import M13ForeshadowWorkflow
+    from agent.workflows.evaluation.m13_foreshadow import (
+        M13ForeshadowWorkflow,
+        sync_foreshadow_states,
+    )
+
+    # 报表前先对账：登记表状态与已发布正文对齐（确定性，失败降级）
+    try:
+        sync_foreshadow_states(project_path)
+    except Exception:  # noqa: BLE001 - 对账失败不阻断报表
+        pass
 
     project_path = Path(project_dir)
     enforce_gate(str(project_path), "foreshadow_report")

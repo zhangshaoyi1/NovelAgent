@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json as _json
 import logging
+import re
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -149,6 +150,96 @@ class M5WriteChapterWorkflow(
             except Exception:  # noqa: BLE001 - 子阶段事件异常不阻断写章（拍板 3）
                 pass
 
+    def _load_published_titles(self) -> set[str]:
+        """扫描 chapters/ 已发布章节的标题（实例内缓存一次；本方法在落盘前调用，
+        因此缓存不含本章）。"""
+        cache = getattr(self, "_published_titles_cache", None)
+        if cache is not None:
+            return cache
+        titles: set[str] = set()
+        try:
+            for f in self.chapters_dir.glob("ch*.md"):
+                try:
+                    m = re.search(r"^title: (.+)$", f.read_text(encoding="utf-8"), re.M)
+                    if m:
+                        titles.add(m.group(1).strip())
+                except Exception:  # noqa: BLE001 - 单文件读失败跳过
+                    continue
+        except Exception:  # noqa: BLE001 - 目录不存在等 → 空集合
+            pass
+        self._published_titles_cache = titles
+        return titles
+
+    def _ensure_unique_title(
+        self, chapter_num: int, title: str, body: str
+    ) -> str:
+        """保证本章标题非占位且与全书已发布标题不重复（2026-09-06）。
+
+        占位（「第N章」「第N章·第N章」）/ 过短（<4 字）/ 重复 → 用一次轻量
+        LLM 调用基于本章结尾内容生成新的场景化标题；LLM 失败或仍撞名时，
+        退化为确定性编号后缀（「原标题·二」「·三」…），保证收敛且不阻断。
+        """
+        used = self._load_published_titles()
+
+        def is_bad(t: str) -> bool:
+            t = (t or "").strip()
+            if len(t) < 4:
+                return True
+            if t == f"第{chapter_num}章" or t.startswith(f"第{chapter_num}章"):
+                return True
+            return t in used
+
+        if not is_bad(title):
+            return title
+
+        # 1) 轻量 LLM 重生（creative，低 token；失败降级）
+        try:
+            from agent.client.gateway_adapter import chat_creative
+
+            tail = (body or "")[-300:]
+            resp = chat_creative(
+                self.llm,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": (
+                            "你是中文网文编辑。根据章节结尾内容拟一个 4-10 字的"
+                            "场景化章节标题：具体、有画面感、含信息量。"
+                            "只输出标题本身，不要书名号、引号、序号或任何解释。"
+                        ),
+                    },
+                    {
+                        "role": "user",
+                        "content": (
+                            f"本章结尾片段：\n{tail}\n\n"
+                            f"禁止使用以下已用过的标题：\n"
+                            + "\n".join(sorted(used)[-80:])
+                        ),
+                    },
+                ],
+                temperature=0.9,
+                max_tokens=30,
+            )
+            new = str(getattr(resp, "content", resp) or "").strip().strip("《》\"“”'")
+            new = new.splitlines()[0].strip() if new else ""
+            if new and is_bad(new) is False:
+                return new[:30]
+        except Exception:  # noqa: BLE001 - 重生失败退化为确定性后缀
+            pass
+
+        # 2) 确定性兜底：编号后缀直到唯一
+        base = (
+            title.strip()
+            if title
+            and not title.startswith(f"第{chapter_num}章")
+            and len(title) >= 4
+            else "凡骨争锋"
+        )
+        n = 2
+        while f"{base}·{n}" in used:
+            n += 1
+        return f"{base}·{n}"
+
     def _maybe_deslop(self, text: str, ctx: dict[str, Any]) -> str:
         """P0 去AI味：质量门禁通过后、落盘前执行（轻度规则/中重 LLM）。
 
@@ -273,8 +364,20 @@ class M5WriteChapterWorkflow(
         # 落盘/计数前去掉模型误输出的标题行、原文标题、编辑批注，保证字数统计正确、无双标题
         final_text = self._clean_chapter_body(final_text)
 
+        # ------ 4.4 标题唯一性保障（2026-09-06）：占位/重复标题就地重生，不再依赖整章重写 ------
+        # 此前标题重复只能靠 G14 门禁打回整章重写，重写不收敛时按「降级保留」带病落盘
+        # （无灵 ch247/249/250/251/255/256 实证）。现在在提取点就近修复：一次轻量
+        # LLM 调用换一个未用过的场景化标题，失败退化为确定性编号后缀。
+        chapter_title = self._ensure_unique_title(
+            ctx["chapter_num"], chapter_title, final_text
+        )
+
         # ------ 4.5 P0 去AI味：质量门禁通过后、落盘前（轻度规则/中重 LLM；失败降级原文）------
         final_text = self._maybe_deslop(final_text, ctx)
+
+        # ------ 4.7 缺口 B（2026-09-06）：canonical body 成文管线 ------
+        # 落盘 / 门禁 / 指纹一律消费同一产物；_save_chapter 内部再走同链幂等兜底。
+        final_text = self._finalize_chapter_text(final_text)
 
         # ------ 5. 依据链（E4 结构化） ------
         evidence_chain = self._build_evidence_chain(ctx)
@@ -287,10 +390,26 @@ class M5WriteChapterWorkflow(
             ctx, final_text, chapter_title, word_count,
             quality_passed, revision_attempts, evidence_chain,
         )
+        # 标题已发布 → 失效缓存，下一章查重可见本章标题
+        self._published_titles_cache = None
+        # canonical artifact（成文 = 标题 + 正文）：供管线门禁（标题合规/查重/指纹）
+        # 消费，保证「过检的 == 落盘的」。
+        canonical_text = self.compose_chapter_markdown(
+            ctx["chapter_num"], chapter_title, final_text
+        )
 
         # ---- G15 章后归档 hook：本章 deltas 归档进连续性账本 + 伏笔 beats 标记落地。
         # 缺账本/失败一律 try/except 降级不阻断（对齐 `_maybe_advance_mainline` hook 位置）。
         self._archive_chapter(ctx, chapter_title)
+
+        # ---- M13 伏笔对账 hook（2026-09-06）：按正文实证同步 foreshadows.md 状态。
+        # 此前登记表只读不写（update_state 死桥），回收率恒 0%；失败降级不阻断。
+        try:
+            from agent.workflows.evaluation.m13_foreshadow import sync_foreshadow_states
+
+            sync_foreshadow_states(self.project_dir, console=self.console)
+        except Exception:  # noqa: BLE001 - 对账失败不阻断写章
+            pass
 
         # A：增量索引（仅当 .state/rag/ 已建立；否则跳过，绝不阻断写章）
         rag_context_len = len(ctx.get("rag_context", []))
@@ -366,7 +485,7 @@ class M5WriteChapterWorkflow(
             chapter_file=chapter_file,
             chapter_num=ctx["chapter_num"],
             chapter_title=chapter_title,
-            chapter_text=final_text,
+            chapter_text=canonical_text,
             word_count=word_count,
             quality_passed=quality_passed,
             revision_attempts=revision_attempts,

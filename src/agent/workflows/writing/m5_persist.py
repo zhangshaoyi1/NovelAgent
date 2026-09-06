@@ -12,7 +12,7 @@ from rich.panel import Panel
 
 from agent.core.quality.consistency import ConflictReport
 from agent.core.story.evidence_chain import EvidenceChain, EvidenceRef
-from agent.workflows.writing.m5_text_hygiene import hard_replace_english
+from agent.workflows.writing.m5_text_hygiene import hard_replace_english  # noqa: F401 - 兼容旧导入路径
 
 logger = logging.getLogger(__name__)
 
@@ -117,30 +117,14 @@ class M5PersistMixin:
             "evidence_chain": evidence_chain.to_dict(),
         }
         # ---- G-EN：落盘前绝对零英文关卡（单一写盘点，任何写章路径都过此门）----
-        # 同时做元信息清理兜底（剔除模型误输出的标题/原文标题/编辑批注），
-        # 保证不同写章入口（M5 / agentic_write）成稿都干净、字数统计准确。
-        text = self._clean_chapter_body(text)
-        # P-DEDUP：剔除 LLM 把整章正文重复输出两遍的情况（正文中途再次出现章节标题）。
-        # 必须在字数统计之前，保证字数基于去重后的最终文本。
-        text = self._dedup_repeated_chapter(text)
-        # P-DEDUP-2：剔除章节尾部把前面已写段落整段复读的循环重复（无标题锚点）。
-        # 与 P-DEDUP 并排，同为落盘前确定性去重，避免重复段虚增字数、影响门禁准判。
-        text = self._dedup_tail_loop(text)
-        # P-FMT：统一写盘点强制段落格式化（M5 / agentic_write 共用本方法）。
-        # 兜底 LLM 完全不输出段落分隔的情况（正文被压成单段），按句自动分段。
-        # 注意：这段必须在 word_count 计算之前，保证字数统计基于最终落盘文本。
-        text = self._format_chapter_body(text)
-        # 不论上游 _quality_check_and_revise 的 G-EN 块是否生效，这里都再做一次确定性兜底，
-        # 保证写到磁盘的正文一定零英文（已知词翻译、未知串剔除）。
-        clean_text, _still = hard_replace_english(text)
-        if clean_text != text:
-            logger.warning(
-                "[no_english] _save_chapter 落盘前确定性清理英文残留(上游兜底未生效)"
-            )
-        text = clean_text
+        # 缺口 B（2026-09-06）：统一改走 _finalize_chapter_text（canonical body 链，
+        # 与门禁消费口径同源）。链内各步幂等，上游已 finalize 过时此为确定性兜底。
+        text = self._finalize_chapter_text(text)
         word_count = len(text.replace("\n", "").replace(" ", ""))
         metadata["word_count"] = word_count
-        body = f"# 第 {ctx['chapter_num']} 章 · {title}\n\n{text}"
+        # 缺口 B：成文（标题 + 正文）由 compose_chapter_markdown 唯一合成，
+        # 落盘形态 == 门禁形态，guardrails 标题检查/查重自此生效。
+        body = self.compose_chapter_markdown(ctx["chapter_num"], title, text)
         post = frontmatter.Post(body, **metadata)
         # P0-3（原子落盘）：temp + replace，杜绝进程中断留下截断的半成品章节文件。
         # 与 state_machine.save()（同样 temp+replace）配合，写序为「先正文后状态指针」，

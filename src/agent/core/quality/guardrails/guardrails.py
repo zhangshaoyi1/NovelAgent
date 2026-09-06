@@ -610,8 +610,20 @@ class Guardrails:
         return None
 
     def register_fingerprints(self, chapter: str | int, text: str) -> None:
-        """落盘后增量更新全书指纹库（仅收录 ≥40 字长段落的归一化文本）。"""
+        """落盘后增量更新全书指纹库（仅收录 ≥40 字长段落的归一化文本）。
+
+        2026-09-06 补缺：同时把本章标题收进 ``published_titles``——该列表此前
+        只在 autowrite 启动时从磁盘加载一次，运行中发布的新标题不入库，
+        ``_check_title`` 的 G14 标题查重对本次运行内发布的章节形同虚设
+        （无灵 ch234《凡骨出鞘》与 ch223 同名过审实证）。canonical 文本
+        （`# 第 N 章 · 标题` 开头）由调用方传入，直接解析标题行即可。
+        """
         body = re.sub(r"^---[\s\S]*?---", "", text, flags=re.MULTILINE)
+        m = _TITLE_RE.search(body)
+        if m:
+            title_body = m.group(2).strip()
+            if title_body and title_body not in self.published_titles:
+                self.published_titles.append(title_body)
         paras = [p.strip() for p in re.split(r"\n\s*\n", body) if p.strip()]
         entries: list[tuple[int, str]] = []
         for para in paras:

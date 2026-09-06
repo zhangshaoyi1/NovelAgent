@@ -62,6 +62,7 @@ def _subline_md(sid: str, curve_rows: list[tuple[str, str, str]] | None = None) 
         f"---\nsubline_id: \"{sid}\"\nsubline_name: \"{sid}\"\n"
         "status: \"planned\"\ncharacters: []\n---\n\n"
         "# 支线设定\n\n## 支线目标\n\n测试支线目标\n\n## 出场角色\n\n测试角色\n"
+        "\n## 情节点序列\n\n1. 测试情节点\n"
     )
     if curve_rows:
         rows = "\n".join(f"| {a} | {b} | {c} |" for a, b, c in curve_rows)

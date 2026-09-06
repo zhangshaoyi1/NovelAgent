@@ -91,7 +91,15 @@ class MainlineOrchestrator:
     # 预算计划（.state/mainline.json）
     # ------------------------------------------------------------------
     def load_plan(self) -> dict[str, Any]:
-        """读主线预算计划；缺失则按体量均衡分账自动生成并落盘。"""
+        """读主线预算计划；缺失则按体量均衡分账自动生成并落盘。
+
+        缺口 A（2026-09-06）：plan.json 是全书规模唯一权威，mainline.json 是派生物。
+        读取时统一做对齐（horizon 钳制 + subline_share 等比缩放），保证 cap 在
+        plan 体量内可达——否则 horizon 被旧体量（如 mega=1200）抬高后，
+        ``decide_mainline_advance`` 的切线条件整书不可触发（无灵锁死 S01 实证）。
+        """
+        from agent.workflows.pipeline.plan_consistency import align_mainline_to_plan
+
         if not self._plan_file.exists():
             plan = self._default_plan()
             try:
@@ -104,14 +112,24 @@ class MainlineOrchestrator:
                 )
             except Exception:  # noqa: BLE001 - 写失败降级为内存计划，不阻断推进
                 return plan
-            return plan
+            align_mainline_to_plan(self.project_dir, console=self.console)
+            return self._reload_plan_file()
         try:
-            data = json.loads(self._plan_file.read_text(encoding="utf-8"))
-            if not isinstance(data, dict):
-                raise ValueError("mainline.json 顶层非对象")
-            return data
+            json.loads(self._plan_file.read_text(encoding="utf-8"))
         except Exception:  # noqa: BLE001 - 读失败降级为空
             return {"subline_share": {}, "phase_ratio": {}, "horizon_chapters": None}
+        align_mainline_to_plan(self.project_dir, console=self.console)
+        return self._reload_plan_file()
+
+    def _reload_plan_file(self) -> dict[str, Any]:
+        """对齐后重读 plan 文件（对齐可能改写 horizon/share）。"""
+        try:
+            data = json.loads(self._plan_file.read_text(encoding="utf-8"))
+            if isinstance(data, dict):
+                return data
+        except Exception:  # noqa: BLE001 - 读失败降级为空
+            pass
+        return {"subline_share": {}, "phase_ratio": {}, "horizon_chapters": None}
 
     def save_plan(self, plan: dict[str, Any]) -> None:
         """写主线预算计划（供 CLI init 用）。"""
@@ -191,11 +209,32 @@ class MainlineOrchestrator:
         return new_subline
 
     def _cap_for(self, subline_id: str) -> Optional[int]:
-        """取该支线的预算硬上界；无预算返回 None（不设 cap）。"""
+        """取该支线的预算硬上界（**累计口径**）；无预算返回 None（不设 cap）。
+
+        2026-09-06 修正：``decide_mainline_advance`` 用 ``chapter > upper`` 比较，
+        其中 chapter 是**全书章号**。若 cap 取单支线预算（份额数），中段才切入的
+        支线（如 S02 从第 206 章开始、份额 87）会立刻满足 206 > 87 而被再次切换，
+        永远写不满自己的预算。故 cap 必须取「到本支线为止的累计预算」
+        （S01=140 → S02=140+87=227 → …），与全书章号同口径。
+        """
         plan = self.load_plan()
         share = plan.get("subline_share", {}) or {}
-        try:
-            cap = int(share.get(subline_id) or 0)
-        except (TypeError, ValueError):
+        if not share or subline_id not in share:
             return None
-        return cap if cap > 0 else None
+        try:
+            from agent.core.story.setting_manager import SettingManager
+
+            sublines = SettingManager(self.project_dir).list_sublines()
+        except Exception:  # noqa: BLE001 - 列不出支线时退回单线份额
+            sublines = None
+        if not sublines or subline_id not in sublines:
+            sublines = [subline_id]
+        cumulative = 0
+        for sid in sublines:
+            try:
+                cumulative += int(share.get(sid) or 0)
+            except (TypeError, ValueError):
+                return None
+            if sid == subline_id:
+                break
+        return cumulative if cumulative > 0 else None

@@ -531,3 +531,184 @@ class M13ForeshadowWorkflow:
                     border_style="red",
                 )
             )
+
+
+# ============================================================
+# 正文对账同步（2026-09-06）：修「账本只读」缺口
+# ============================================================
+# 缺口实证（无灵）：M13 扁平登记表（foreshadows.md）在写作路径中**只读不写**——
+# 写章只注入提示词，写完没有任何环节把「已埋/已回收」写回登记表；
+# G15 ForesightStore（foresight.json）又从未被播种，mark_committed 无 beat 可提交；
+# ``update_state`` 因此全仓零调用（死桥）。评分器读到的登记表永远停在「未埋」，
+# 结局段回收率恒为 0%。本模块提供**确定性**正文对账：以伏笔内容中可锚定的
+# 关键词（引号术语 / 长名词片段）扫描已发布章节，命中即推进状态，水印增量扫描。
+
+
+def extract_foreshadow_keywords(content: str) -> list[str]:
+    """从伏笔内容提取可锚定的正文关键词（确定性，无 LLM）。
+
+    优先取引号术语（「石碑」「黑血」类专有锚点）；无引号则取最长的名词片段
+    （按标点切分后 ≥4 字的最长两段）。返回空列表表示无法确定性锚定，跳过对账。
+    """
+    kws = [
+        k.strip()
+        for k in re.findall(r"[「『“\"]([^」』”\"]{2,12})[」』”\"]", content or "")
+        if len(k.strip()) >= 2
+    ]
+    if not kws:
+        # 无引号：取最长名词片段的「头部 3 字（专有名词锚，如 晏无咎）」+
+        # 「尾部 2 字（特征物锚，如 黑血）」；整句逐字匹配在正文中必然失配。
+        frags = [
+            f.strip()
+            for f in re.split(r"[，。；：、（）()「」『』“”\s]+", content or "")
+        ]
+        frags = [f for f in frags if len(f) >= 4]
+        frags.sort(key=len, reverse=True)
+        for run in frags[:2]:
+            kws.append(run[:3])
+            if len(run) >= 5:
+                kws.append(run[-2:])
+    # 去重保序，并剔除过于常见的高频二字词误报源
+    seen: set[str] = set()
+    out: list[str] = []
+    for k in kws:
+        if len(k) >= 2 and k not in seen:
+            seen.add(k)
+            out.append(k)
+    return out[:4]
+
+
+def sync_foreshadow_states(
+    project_dir: str | Path, console: Any = None
+) -> dict[str, list[str]]:
+    """按已发布正文对账 foreshadows.md 状态（确定性、增量、幂等）。
+
+    规则：
+    - ``未埋``：自埋设位置章起，正文命中关键词 → ``已埋``；
+    - ``已埋``：自预期回收点章起（且在埋设命中之后），正文命中关键词 →
+      ``已回收``，并把预期回收点改写为实际命中章（诚实记账）；
+    - 水印存 ``.state/foreshadow_sync.json``（已扫描到的最大章号），后续调用
+      只扫增量章；无法提取关键词的行跳过（宁缺毋假）。
+
+    Returns:
+        {"planted": ["F-01@ch005", ...], "recovered": ["F-03@ch338", ...]}
+    """
+    import json as _json
+
+    project = Path(project_dir)
+    foreshadow_file = project / "foreshadows.md"
+    chapters_dir = project / "chapters"
+    if not foreshadow_file.exists() or not chapters_dir.exists():
+        return {"planted": [], "recovered": []}
+
+    # ---- 章节文本缓存（归一化去空白，供跨行命中） ----
+    chapter_nums: list[int] = []
+    for f in chapters_dir.glob("ch*.md"):
+        m = re.fullmatch(r"ch(\d+)\.md", f.name)
+        if m:
+            chapter_nums.append(int(m.group(1)))
+    if not chapter_nums:
+        return {"planted": [], "recovered": []}
+    max_ch = max(chapter_nums)
+
+    wm_file = project / ".state" / "foreshadow_sync.json"
+    watermark = 0
+    if wm_file.exists():
+        try:
+            watermark = int(_json.loads(wm_file.read_text(encoding="utf-8")).get("scanned_to", 0))
+        except Exception:  # noqa: BLE001 - 水印损坏则全量重扫
+            watermark = 0
+
+    text = foreshadow_file.read_text(encoding="utf-8")
+    lines = text.splitlines()
+    planted: list[str] = []
+    recovered: list[str] = []
+    changed = False
+
+    # 行缓存：fid → 行号，用于跨状态二段推进（埋设命中章也供回收扫描起点用）
+    rows: list[tuple[int, str, str, str, str, int | None, int | None, list[str]]] = []
+    for i, ln in enumerate(lines):
+        if not ln.startswith("| F-"):
+            continue
+        parts = [p.strip() for p in ln.split("|")]
+        if len(parts) < 7 or parts[1] == "F-XX" or "---" in parts[2]:
+            continue
+        fid, content, planted_at, expected, state = parts[1:6]
+        plant_m = re.search(r"ch(\d+)", planted_at or "")
+        resolve_m = re.search(r"ch(\d+)", expected or "")
+        rows.append((
+            i, fid, content, state, expected,
+            int(plant_m.group(1)) if plant_m else None,
+            int(resolve_m.group(1)) if resolve_m else None,
+            extract_foreshadow_keywords(content),
+        ))
+
+    def _scan(lo: int, hi: int, kws: list[str]) -> int | None:
+        """在 [lo, hi] 章内找首个包含任一关键词的章号（文本已去空白）。"""
+        if not kws:
+            return None
+        for ch in range(max(1, lo), min(hi, max_ch) + 1):
+            f = chapters_dir / f"ch{ch:03d}.md"
+            if not f.exists():
+                continue
+            try:
+                body = re.sub(r"\s+", "", f.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001 - 单文件读失败跳过
+                continue
+            for kw in kws:
+                if kw in body:
+                    return ch
+        return None
+
+    changed_rows: dict[int, tuple[str, str]] = {}  # 行号 → (新预期回收点, 新状态)
+    hit_ch_by_fid: dict[str, int] = {}
+    for (i, fid, content, state, expected, plant_ch, resolve_ch, kws) in rows:
+        if not kws or state in ("已回收", "已废弃"):
+            continue
+        if state == "未埋":
+            hit = _scan(plant_ch or 1, max_ch, kws)
+            if hit:
+                hit_ch_by_fid[fid] = hit
+                planted.append(f"{fid}@ch{hit:03d}")
+                # 同一轮内继续找回收（完结书的最后一轮 sync 也必须能推到已回收）
+                hit2 = _scan(max(resolve_ch or 1, hit + 1), max_ch, kws)
+                if hit2:
+                    changed_rows[i] = (f"ch{hit2:03d}", "已回收")
+                    recovered.append(f"{fid}@ch{hit2:03d}")
+                else:
+                    changed_rows[i] = (expected, "已埋")
+        elif state == "已埋":
+            lo = max(resolve_ch or 1, hit_ch_by_fid.get(fid, 1))
+            hit = _scan(lo, max_ch, kws)
+            if hit:
+                changed_rows[i] = (f"ch{hit:03d}", "已回收")
+                recovered.append(f"{fid}@ch{hit:03d}")
+
+    if changed_rows:
+        new_lines = list(lines)
+        for i, (expected, state) in changed_rows.items():
+            parts = [p.strip() for p in new_lines[i].split("|")]
+            parts[4] = expected  # 预期回收点列 → 实际命中章
+            parts[5] = state
+            new_lines[i] = "| " + " | ".join(parts[1:7]) + " |"
+        try:
+            foreshadow_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            changed = True
+        except Exception:  # noqa: BLE001 - 写失败仅报告
+            if console is not None:
+                console.print("[yellow]⚠ foreshadows.md 对账写盘失败[/yellow]")
+
+    if watermark < max_ch or changed:
+        try:
+            wm_file.parent.mkdir(parents=True, exist_ok=True)
+            wm_file.write_text(
+                _json.dumps({"scanned_to": max_ch}, ensure_ascii=False), encoding="utf-8"
+            )
+        except Exception:  # noqa: BLE001 - 水印写失败下次重扫即可
+            pass
+    if (planted or recovered) and console is not None:
+        console.print(
+            f"[yellow]⚠ 伏笔对账：新埋 {len(planted)} 条（{', '.join(planted) or '无'}），"
+            f"新回收 {len(recovered)} 条（{', '.join(recovered) or '无'}）[/yellow]"
+        )
+    return {"planted": planted, "recovered": recovered}

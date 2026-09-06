@@ -450,9 +450,15 @@ class AgenticWriteWorkflow:
 
         # 落盘（复用 M5 方法，保证产物兼容）
         title = m5._extract_title(text, ctx)
+        # 标题唯一性保障（与 M5 同源）：占位/重复标题就地重生，不依赖整章重写
+        title = m5._ensure_unique_title(ctx["chapter_num"], title, text)
 
         # ---- P0 去AI味：质量门禁通过后、落盘前（轻度规则/中重 LLM；失败降级原文）----
         text = self._run_deslop(text, ctx)
+
+        # ---- 缺口 B（2026-09-06）：canonical body 成文管线 ----
+        # 与 M5 同链：落盘 / 门禁 / 指纹消费同一产物（_save_chapter 内部幂等兜底）。
+        text = m5._finalize_chapter_text(text)
 
         word_count = len(re.sub(r"\s", "", text))
         evidence_chain = m5._build_evidence_chain(ctx)
@@ -466,6 +472,15 @@ class AgenticWriteWorkflow:
             evidence_chain,
         )
         m5._update_progress(ctx)
+        # M13 伏笔对账 hook（与 M5 同源；失败降级不阻断）
+        try:
+            from agent.workflows.evaluation.m13_foreshadow import sync_foreshadow_states
+
+            sync_foreshadow_states(self.project_dir, console=self.console)
+        except Exception:  # noqa: BLE001
+            pass
+        # 标题已发布 → 失效缓存，下一章查重可见本章标题
+        m5._published_titles_cache = None
 
         # 修复（P0，2026-08-21）：与 M5 run() 对齐，首次写章后 CHARACTER_DESIGN → WRITING，
         # 否则磁盘状态一直停在 CHARACTER_DESIGN（门禁/看板/状态展示均受影响）。
@@ -479,7 +494,9 @@ class AgenticWriteWorkflow:
             chapter_file=chapter_file,
             chapter_num=ctx["chapter_num"],
             chapter_title=title,
-            chapter_text=text,
+            # 缺口 B：返回 canonical artifact（标题 + 正文），与落盘形态一致，
+            # 管线门禁（标题合规/查重/指纹）自此检查的是真正交付的成文。
+            chapter_text=m5.compose_chapter_markdown(ctx["chapter_num"], title, text),
             word_count=word_count,
             quality_passed=quality_passed,
             revision_attempts=revision_attempts,
