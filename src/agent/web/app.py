@@ -94,6 +94,23 @@ def _md_filter(text: str | None) -> str:
 templates.env.filters["md"] = _md_filter
 
 
+def _static_version() -> str:
+    """静态资源缓存穿透版本号（app.js / style.css 的最新 mtime）。
+
+    修改前端 JS/CSS 后无需用户强刷：URL 带上 ?v=<mtime>，浏览器自动拉新。
+    """
+    static_dir = _HERE / "static"
+    mtimes = [
+        int(p.stat().st_mtime)
+        for p in (static_dir / "app.js", static_dir / "style.css")
+        if p.exists()
+    ]
+    return str(max(mtimes, default=0))
+
+
+templates.env.globals["static_v"] = _static_version
+
+
 def _workspace_ctx() -> dict[str, Any]:
     """当前项目空间（侧栏徽标 / 页头提示用）。"""
     from agent.web import workspace
@@ -261,6 +278,7 @@ def _guide_stages(name: str) -> list[dict[str, Any]]:
     ps = state.get_project_state(name)
     avail = ps["available_commands"]
     world = state.read_project_file(name, "world.md") or ""
+    world_discussion = state.read_project_file(name, "world_discussion.md") or ""
     discussion = state.read_project_file(name, "discussion.md") or ""
     architecture = state.read_project_file(name, "architecture.md") or ""
     outline = state.read_project_file(name, "outline.md") or ""
@@ -282,7 +300,9 @@ def _guide_stages(name: str) -> list[dict[str, Any]]:
          "generate": "/start" in avail, "gen_label": "生成世界观",
          # 必须带 --title 走非交互模式：runner 子进程 stdin=DEVNULL，
          # 缺参会导致 start 进入交互式收集并立即 EOF 失败（world.md 永远生成不出来）。
-         "gen_argv": ["--title", name]},
+         "gen_argv": ["--title", name],
+         # 世界观讨论记录（world-discuss 命令追加，供 world 阶段页回显讨论过程）
+         "discussion_log": world_discussion},
         {"key": "discussion", "num": "②", "label": "脉络讨论", "desc": "与 Agent 讨论故事脉络，产出讨论纪要",
          "cmd": "/discuss", "file": "discussion.md", "content": discussion, "editable": bool(discussion),
          "generate": "/discuss" in avail, "gen_label": "开始讨论",

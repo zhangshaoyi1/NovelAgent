@@ -6,7 +6,7 @@
   <title>{% block title %}NovelAgent Web{% endblock %}</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&family=Noto+Sans+SC:wght@400;500;700&family=Noto+Serif+SC:wght@500;600;700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v={{ static_v }}" />
   <script src="https://unpkg.com/htmx.org@1.9.12" defer></script>
 </head>
 <body>
@@ -45,7 +45,7 @@
       <footer class="footer">NovelAgent · 设定集驱动的长篇一致性写作 Agent</footer>
     </div>
   </div>
-  <script src="/static/app.js" defer></script>
+  <script src="/static/app.js?v={{ static_v }}" defer></script>
   {% block scripts %}{% endblock %}
 </body>
 </html>

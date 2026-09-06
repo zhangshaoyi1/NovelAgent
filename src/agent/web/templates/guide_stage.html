@@ -81,6 +81,21 @@
   </div>
   {% endif %}
 
+  {# —— 世界阶段：讨论环节（生成后可与 Agent 对谈，结论可合并进 world.md） —— #}
+  {% if st.key == 'world' and st.editable %}
+  <div class="discuss-box">
+    <p class="muted small" style="margin-bottom:6px">💭 世界观不是一次定稿：把你的想法、疑问发出来与 Agent 讨论，讨论结论可合并回 world.md。审阅满意后点「✔ 确认本阶段」完成确认。</p>
+    <textarea id="world-discuss-message" rows="3" placeholder="例如：金手指太弱了，希望改成可以吞噬晋级的天赋体质；世界规则里禁飞这一条不合理……"></textarea>
+    <div class="actions-row">
+      <button class="btn primary" onclick="worldDiscuss('{{ name }}')">💬 发送讨论</button>
+      <button class="btn" onclick="worldDiscussApply('{{ name }}')">✨ 把讨论结论应用到世界观</button>
+    </div>
+    {% if st.discussion_log %}
+    <div class="md-preview" style="margin-top:8px" id="prev-world-discussion">{{ st.discussion_log|md|safe }}</div>
+    {% endif %}
+  </div>
+  {% endif %}
+
   {# —— 世界阶段：调整体量（改多大体量并重生成大纲） —— #}
   {% if st.key == 'world' %}
   <div class="discuss-box resize-box" id="resize-box" hidden>

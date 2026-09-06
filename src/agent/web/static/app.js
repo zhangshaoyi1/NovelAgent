@@ -340,6 +340,25 @@ function sendDiscussion(project) {
   runCommand(project, 'discuss', ['--message', msg], c, () => location.reload());
 }
 
+/* 世界观讨论：world 阶段页把讨论内容发给 /world-discuss --message，记录追加到 world_discussion.md */
+function worldDiscuss(project) {
+  const el = document.getElementById('world-discuss-message');
+  const msg = (el && el.value.trim()) || '';
+  if (!msg) { alert('请先输入你想讨论的世界观内容'); return; }
+  const c = startRunConsole('讨论（世界观）');
+  runCommand(project, 'world-discuss', ['--message', msg], c, () => location.reload());
+}
+
+/* 应用讨论结论：按 world_discussion.md 的结论重写 world.md 正文（保留元数据），完成后刷新回显 */
+function worldDiscussApply(project) {
+  if (!confirm('将把讨论结论合并进 world.md（覆盖当前世界观正文，元数据保留），确定继续？')) return;
+  const el = document.getElementById('world-discuss-message');
+  const msg = (el && el.value.trim()) || '';
+  const argv = msg ? ['--message', msg, '--apply'] : ['--apply'];
+  const c = startRunConsole('应用讨论结论到世界观');
+  runCommand(project, 'world-discuss', argv, c, () => location.reload());
+}
+
 /* 反馈修改：把用户意见作为 feedback 传给对应命令，由 LLM 按其意见迭代修改并回显 */
 function reviseStage(project, stage, taId) {
   const el = document.getElementById(taId);
