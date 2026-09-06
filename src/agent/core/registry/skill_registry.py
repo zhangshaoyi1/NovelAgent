@@ -103,7 +103,7 @@ class SkillRegistry(BaseRegistry[SkillProvider]):
                 info = self._parse_skill_info(d)
                 self._discovered[info.name] = info
             except (ValueError, Exception):
-                continue
+                continue  # noqa: SILENT_DEGRADE
 
     def _parse_skill_info(self, skill_dir: Path) -> SkillInfo:
         """从 SKILL.md 解析 skill 元信息

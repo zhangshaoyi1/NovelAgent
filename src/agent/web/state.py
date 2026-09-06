@@ -169,7 +169,7 @@ def _genre_label(name: str) -> str:
         if g:
             return str(g)
     except Exception:  # noqa: BLE001
-        pass
+        pass  # noqa: SILENT_DEGRADE
     srcs = get_conflicts(name).get("sources") or []
     if srcs:
         return ", ".join(srcs)
@@ -203,7 +203,7 @@ def list_projects() -> list[dict[str, Any]]:
                 sd = json.loads(state_file.read_text(encoding="utf-8"))
                 info["state"] = sd.get("state", "INIT")
             except Exception:
-                pass
+                pass  # noqa: SILENT_DEGRADE
         chapters_dir = d / "chapters"
         if chapters_dir.exists():
             info["chapters"] = len(
@@ -212,7 +212,7 @@ def list_projects() -> list[dict[str, Any]]:
         try:
             info["updated"] = d.stat().st_mtime
         except Exception:
-            pass
+            pass  # noqa: SILENT_DEGRADE
         out.append(info)
     return out
 
@@ -405,7 +405,7 @@ def get_conflicts(name: str) -> dict[str, Any]:
     try:
         data = load_conflicts(project_path(name)) or {}
     except Exception:
-        data = {}
+        data = {}  # noqa: SILENT_DEGRADE
     conflicts = data.get("conflicts", []) or []
     total = len(conflicts)
     pending = sum(
@@ -493,7 +493,7 @@ def _stage_file_mtime(pdir: Path, rel: str) -> float:
                 if f.is_file():
                     m = max(m, f.stat().st_mtime)
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return m
     return 0.0
 

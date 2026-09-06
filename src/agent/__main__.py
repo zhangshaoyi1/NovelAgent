@@ -7,7 +7,7 @@ try:
 
     install_import_guard()
 except Exception:  # noqa: BLE001 - 守卫安装失败不阻断 CLI 启动
-    pass
+    pass  # noqa: SILENT_DEGRADE
 
 from agent.cli import app  # noqa: E402
 

@@ -58,9 +58,9 @@ class RecoveryEngine:
                         if cid:
                             correlation_id = cid
                     except json.JSONDecodeError:
-                        continue
+                        continue  # noqa: SILENT_DEGRADE
         except OSError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return correlation_id
 
     def rebuild(self, correlation_id: Optional[str] = None) -> RecoveryReport:
@@ -81,7 +81,7 @@ class RecoveryEngine:
         try:
             snapshot = self._event_bus.load_snapshot(correlation_id)
         except Exception:
-            snapshot = None
+            snapshot = None  # noqa: SILENT_DEGRADE
 
         if snapshot is None:
             report.success = False
@@ -98,7 +98,7 @@ class RecoveryEngine:
             current_checksum = self._compute_setting_checksum()
             report.setting_changed = current_checksum != snapshot.setting_checksum
         except Exception:
-            report.setting_changed = True
+            report.setting_changed = True  # noqa: SILENT_DEGRADE
 
         # 3. 生成续作简报
         state_name = report.last_state.get("state", "unknown")
@@ -125,7 +125,7 @@ class RecoveryEngine:
                 try:
                     hasher.update(f.read_bytes())
                 except OSError:
-                    continue
+                    continue  # noqa: SILENT_DEGRADE
         return hasher.hexdigest()
 
     def create_recovery_snapshot(

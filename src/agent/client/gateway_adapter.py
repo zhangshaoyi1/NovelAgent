@@ -187,7 +187,7 @@ def _build_gateway_inner(env_file: str | None = None, console: Any = None) -> tu
             registry.register(fb_name, _GatewayModelProvider(fb_name, fb_provider))
         except Exception:
             if console:
-                console.print(f"[yellow]⚠ 注册 fallback provider {fb_name} 失败[/yellow]")
+                console.print(f"[yellow]⚠ 注册 fallback provider {fb_name} 失败[/yellow]")  # noqa: SILENT_DEGRADE
 
     # O4：hint 校准器（历史真实用量落盘到 ~/.novel-agent/hint_calibration.json，
     # 跨进程学习 Task 自评 simple 却大产出的标签）
@@ -200,7 +200,7 @@ def _build_gateway_inner(env_file: str | None = None, console: Any = None) -> tu
         )
         calibrator: Any = HintCalibrator(persist_path=calib_path)
     except Exception:  # noqa: BLE001 - 校准器不可用时退化为不校准
-        calibrator = None
+        calibrator = None  # noqa: SILENT_DEGRADE
 
     # 创建 Gateway
     gateway = Gateway(

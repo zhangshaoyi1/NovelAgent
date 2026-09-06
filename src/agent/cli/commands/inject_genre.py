@@ -78,7 +78,7 @@ def inject_genre(
             genre_name = g
             break
         except ValueError:
-            continue
+            continue  # noqa: SILENT_DEGRADE
     if trope is None:
         console.print(
             f"[bold red]✗[/bold red] 套路『{name}』未在题材 {candidates} 中找到，"

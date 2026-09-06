@@ -89,7 +89,7 @@ def parse_llm_json(text: str) -> dict[str, Any]:
     try:
         return json.loads(text)
     except json.JSONDecodeError:
-        pass
+        pass  # noqa: SILENT_DEGRADE
 
     # 策略 2: 去除 ```json ... ``` 标记
     fence_pattern = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
@@ -98,7 +98,7 @@ def parse_llm_json(text: str) -> dict[str, Any]:
         try:
             return json.loads(match.group(1).strip())
         except json.JSONDecodeError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     # 策略 3: 提取第一个 { ... } 块（简单范围）
     start = text.find("{")
@@ -107,7 +107,7 @@ def parse_llm_json(text: str) -> dict[str, Any]:
         try:
             return json.loads(text[start : end + 1])
         except json.JSONDecodeError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     # 策略 4: 严格括号配对，找从 start 开始的匹配 } 范围（处理 LLM 在 JSON 后
     # 又追加解释文本，导致 rfind('}') 错配的情形）
@@ -141,7 +141,7 @@ def parse_llm_json(text: str) -> dict[str, Any]:
             try:
                 return json.loads(text[start : match_end + 1])
             except json.JSONDecodeError:
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
     # 策略 5: 逐「{」起点扫描完整、可解析的 JSON 对象。
     # 创作模型（尤其 high-temperature creative）常「先写一段纯文本规划、再吐 JSON
@@ -180,7 +180,7 @@ def parse_llm_json(text: str) -> dict[str, Any]:
         try:
             return json.loads(_cand)
         except json.JSONDecodeError:
-            continue
+            continue  # noqa: SILENT_DEGRADE
 
     raise ValueError(f"无法解析为 JSON: {text[:200]}...")
 
@@ -227,7 +227,7 @@ def safe_remove(path: "Path | str", *, trash_root: "Path | str | None" = None) -
                 shutil.move(str(p), str(target))
         except OSError:
             warnings.warn(f"safe_remove 无法安全删除 {p}", stacklevel=2)
-            return False
+            return False  # noqa: SILENT_DEGRADE
 
     # 末态判断：仍存在的视为失败（从不抛错）
     if p.exists():

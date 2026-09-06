@@ -148,7 +148,7 @@ class M5WriteChapterWorkflow(
                     "substage": substage,
                 })
             except Exception:  # noqa: BLE001 - 子阶段事件异常不阻断写章（拍板 3）
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
     def _load_published_titles(self) -> set[str]:
         """扫描 chapters/ 已发布章节的标题（实例内缓存一次；本方法在落盘前调用，
@@ -164,9 +164,9 @@ class M5WriteChapterWorkflow(
                     if m:
                         titles.add(m.group(1).strip())
                 except Exception:  # noqa: BLE001 - 单文件读失败跳过
-                    continue
+                    continue  # noqa: SILENT_DEGRADE
         except Exception:  # noqa: BLE001 - 目录不存在等 → 空集合
-            pass
+            pass  # noqa: SILENT_DEGRADE
         self._published_titles_cache = titles
         return titles
 
@@ -225,7 +225,7 @@ class M5WriteChapterWorkflow(
             if new and is_bad(new) is False:
                 return new[:30]
         except Exception:  # noqa: BLE001 - 重生失败退化为确定性后缀
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
         # 2) 确定性兜底：编号后缀直到唯一
         base = (
@@ -409,7 +409,7 @@ class M5WriteChapterWorkflow(
 
             sync_foreshadow_states(self.project_dir, console=self.console)
         except Exception:  # noqa: BLE001 - 对账失败不阻断写章
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
         # A：增量索引（仅当 .state/rag/ 已建立；否则跳过，绝不阻断写章）
         rag_context_len = len(ctx.get("rag_context", []))
@@ -422,7 +422,7 @@ class M5WriteChapterWorkflow(
             except Exception:  # noqa: BLE001 - 索引失败不影响章节产出
                 self.console.print(
                     "[yellow]⚠ RAG 增量索引失败，已跳过（不影响本章产出）[/yellow]"
-                )
+                )  # noqa: SILENT_DEGRADE
 
         # ------ 6.5 M18 清除草稿（F18.4）------
         # 章节已成功持久化，清除草稿
@@ -479,7 +479,7 @@ class M5WriteChapterWorkflow(
                 _json.dumps(usage, ensure_ascii=False, indent=2), encoding="utf-8"
             )
         except Exception:  # noqa: BLE001 - 统计落盘失败不影响章节产出
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
         return M5Result(
             chapter_file=chapter_file,

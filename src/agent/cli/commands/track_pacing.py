@@ -147,7 +147,7 @@ def track_pacing(
         except Exception:  # noqa: BLE001 - 账本落盘失败不阻断追踪
             console.print(
                 f"[yellow]⚠ 第 {n} 章账本落盘失败，已跳过（不影响其他章节）[/yellow]"
-            )
+            )  # noqa: SILENT_DEGRADE
         processed.append(n)
 
     # 债务输出与持久化账本保持一致（已去重）：读取最终 open_debts

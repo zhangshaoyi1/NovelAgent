@@ -40,14 +40,14 @@ def _collect_published_titles(project_dir: Path) -> list[str]:
             try:
                 text = f.read_text(encoding="utf-8")
             except Exception:  # noqa: BLE001
-                continue
+                continue  # noqa: SILENT_DEGRADE
             # 去 frontmatter
             text = _re.sub(r"^---[\s\S]*?---", "", text, flags=_re.MULTILINE)
             m = _title_re.search(text)
             if m:
                 titles.append(m.group(1).strip())
     except Exception:  # noqa: BLE001
-        pass
+        pass  # noqa: SILENT_DEGRADE
     return titles
 
 
@@ -130,7 +130,7 @@ def _render_run_summary(summary: dict[str, Any]) -> None:
 
         RenderStreamer(console).render_run_summary(summary)
     except Exception:  # noqa: BLE001 - 摘要渲染异常不阻断
-        pass
+        pass  # noqa: SILENT_DEGRADE
 
 
 @command(allowed_states=(
@@ -405,7 +405,7 @@ def autowrite(
                 f"--budget-plan 加载 .state/budget.json；--no-auto-downgrade 关闭自动降档[/dim]"
             )
         except Exception:  # noqa: BLE001 - 预估引导失败降级，不阻断开写
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     # ---- G11（拍板 2）：--method 选择内置模板写入 project/method.md（用户可再编辑）----
     _method_val = _cli_value(method, None)
@@ -419,7 +419,7 @@ def autowrite(
             if _mt:
                 console.print(f"[cyan]已写入写作方法模板：{_mn or _method_val}（project/method.md，可再编辑）[/cyan]")
         except Exception:  # noqa: BLE001 - 模板写入失败降级，不阻断开写
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     # ---- G9：事件订阅（JSON 模式 JSONL 走 stderr；非 JSON 渲染进度条/事件行/正文流式）----
     on_event, stream_meta = _make_on_event(
@@ -537,7 +537,7 @@ def autowrite(
 
                 _env["cost_plan"] = build_cost_plan(project_path)  # 三档预估表（异常降级占位）
             except Exception:  # noqa: BLE001 - 预估异常信封置空占位
-                _env["cost_plan"] = {"chapters": 0, "tiers": [], "guidance": ""}
+                _env["cost_plan"] = {"chapters": 0, "tiers": [], "guidance": ""}  # noqa: SILENT_DEGRADE
             _env["budget_plan"] = bp  # 预算计划配置回显（hard_limit_tokens 仅回显不参与判定）
             # ---- G11（拍板 6）：信封只增 style / method 字段；关闭置 null ----
             if bool(_cli_value(no_style, False)):
@@ -560,7 +560,7 @@ def autowrite(
                         "chars": len(_sg),
                     }
                 except Exception:  # noqa: BLE001 - 信封异常降级
-                    _env["style"] = {"active": False, "file": None, "chars": 0}
+                    _env["style"] = {"active": False, "file": None, "chars": 0}  # noqa: SILENT_DEGRADE
             if bool(_cli_value(no_method, False)):
                 _env["method"] = None
             else:
@@ -574,7 +574,7 @@ def autowrite(
                         "name": _mn or None,
                     }
                 except Exception:  # noqa: BLE001 - 信封异常降级
-                    _env["method"] = {"active": False, "file": None, "name": None}
+                    _env["method"] = {"active": False, "file": None, "name": None}  # noqa: SILENT_DEGRADE
             # ---- G12（拍板 6）：信封只增 payoff 字段；--no-payoff 置 null ----
             if bool(_cli_value(no_payoff, False)):
                 _env["payoff"] = None
@@ -589,7 +589,7 @@ def autowrite(
                         "chapters": len(_ps.get("chapters") or []),
                     }
                 except Exception:  # noqa: BLE001 - 信封异常降级
-                    _env["payoff"] = {"active": False, "file": None, "chapters": 0}
+                    _env["payoff"] = {"active": False, "file": None, "chapters": 0}  # noqa: SILENT_DEGRADE
             emit_result({"success": success, **_env}, json_mode=True)
             return
 

@@ -83,7 +83,7 @@ class AgentService:
         try:
             self.mcp_bridge.discover()
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
         # 接线：全局 Tracer 指向本项目 TraceStore
         set_tracer(self.trace_store)

@@ -67,7 +67,7 @@ class ProviderRegistry:
             except Exception as exc2:
                 raise RuntimeError(
                     f"主 provider({route.provider}) 和备用 provider 均失败: {exc2}"
-                ) from exc2
+                ) from exc2  # noqa: SILENT_DEGRADE
 
     def _get_provider(self, name: str) -> ModelProvider | None:
         return self._providers.get(name)

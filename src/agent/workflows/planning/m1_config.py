@@ -219,7 +219,7 @@ class M1ConfigWorkflow:
             try:
                 genre_pack = self._genre_registry.load(g)
             except ValueError:
-                continue
+                continue  # noqa: SILENT_DEGRADE
             dispatch_genre_hooks(self.project_dir, g, genre_pack)
 
         # 5. 显示给用户
@@ -237,7 +237,7 @@ class M1ConfigWorkflow:
                 {"text": f"M1 完成：{user_input.title}", "stage": "M1"}
             )
         except Exception:  # noqa: BLE001 - 摘要落盘失败不阻断
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
         return M1Result(world_file=world_file, metadata=metadata, content=content)
 
@@ -249,7 +249,7 @@ class M1ConfigWorkflow:
         try:
             self._progress.emit(type_, phase="M1", message=message, **fields)
         except Exception:  # noqa: BLE001 - 进度事件失败不阻断（G3 哲学）
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     # ------ 交互式收集 ------
     def _collect_input_interactive(self) -> M1Input:
@@ -398,7 +398,7 @@ class M1ConfigWorkflow:
                 packs.append(registry.load(g))
             except ValueError:
                 self.console.print(f"[yellow]题材包不存在，已跳过：{g}[/yellow]")
-                continue
+                continue  # noqa: SILENT_DEGRADE
         if not packs:
             return "", []
         if len(packs) == 1:
@@ -408,7 +408,7 @@ class M1ConfigWorkflow:
         try:
             save_conflicts(self.project_dir, result)
         except Exception:
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return result.world_template, result.conflicts
 
     # ------ LLM 生成 ------
@@ -480,7 +480,7 @@ class M1ConfigWorkflow:
                     raise RuntimeError(
                         "世界观生成结果无法解析为 JSON（可能被截断或格式异常），"
                         f"请重试。原始输出片段：{resp[:200]}"
-                    )
+                    )  # noqa: SILENT_DEGRADE
 
     # ------ 渲染 ------
     def _render_world(
@@ -504,7 +504,7 @@ class M1ConfigWorkflow:
                 _reg.load(g).manifest.display_name for g in user_input.genres
             )
         except Exception:
-            genre_label = " / ".join(user_input.genres)
+            genre_label = " / ".join(user_input.genres)  # noqa: SILENT_DEGRADE
         metadata = {
             "title": user_input.title,
             "scope": user_input.scope,

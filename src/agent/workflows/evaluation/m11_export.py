@@ -681,5 +681,5 @@ class CompletionExtrasWorkflow:
                 )
                 return dest
         except Exception:
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return None

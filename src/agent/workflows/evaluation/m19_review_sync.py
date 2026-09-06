@@ -183,7 +183,7 @@ class M19ReviewSyncWorkflow:
             try:
                 text = p.read_text(encoding="utf-8", errors="replace")
             except OSError:
-                text = ""
+                text = ""  # noqa: SILENT_DEGRADE
         elif p.is_dir():
             parts: list[str] = []
             try:
@@ -194,7 +194,7 @@ class M19ReviewSyncWorkflow:
                             + f.read_text(encoding="utf-8", errors="replace")
                         )
             except OSError:
-                pass
+                pass  # noqa: SILENT_DEGRADE
             text = "\n\n".join(parts)
         return text[:max_chars]
 
@@ -264,7 +264,7 @@ class M19ReviewSyncWorkflow:
                         pm.get("m19.review").system
                         + "\n\n【重要】请只输出一个合法的 JSON 对象，"
                         "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
-                    )
+                    )  # noqa: SILENT_DEGRADE
         # 两次均失败：明确提示，绝不把 LLM 原始文本塞进 summary（否则前端会显示乱码）。
         self.console.print(
             "[yellow]⚠ 复核 JSON 解析失败（重试后），未生成检查单。[/yellow]"

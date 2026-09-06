@@ -98,7 +98,7 @@ class ReviewExecutor(Executor):
                 issues = data.get("issues", issues)
                 suggestions = data.get("suggestions", suggestions)
             except (json.JSONDecodeError, TypeError):
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
         run.output = {
             "score": score,

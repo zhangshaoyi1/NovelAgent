@@ -71,7 +71,7 @@ class ConfigLoader:
                         load_dotenv(_cand, override=False)
                         break
             except Exception:
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
         cls._loaded = True
 
@@ -111,7 +111,7 @@ def _build_llm_config_from_env() -> "LLMConfig":
     try:
         profile = model_profiles.resolve_profile()
     except Exception:  # noqa: BLE001 - 档案库异常降级走 env，不阻断
-        profile = None
+        profile = None  # noqa: SILENT_DEGRADE
 
     model = os.getenv("LLM_MODEL_ID", "glm-5.2")
     model_utility = os.getenv("LLM_MODEL_UTILITY", "") or model

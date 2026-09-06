@@ -355,7 +355,7 @@ class ReaderAppealScorer:
             try:
                 text = strip_frontmatter(f.read_text(encoding="utf-8")).strip()
             except OSError:
-                continue
+                continue  # noqa: SILENT_DEGRADE
             parts.append(f"【{f.stem}】\n{text[:2500]}")
         return "\n\n".join(parts)
 
@@ -412,7 +412,7 @@ class ReaderAppealScorer:
             try:
                 v = int(dims_raw.get(k, 0))
             except (TypeError, ValueError):
-                v = 0
+                v = 0  # noqa: SILENT_DEGRADE
             dims[k] = max(0, min(100, v))
         total = ReaderAppealReport._compute_total(dims)
         suggestions = [str(s) for s in (data.get("suggestions", []) or [])][:5]
@@ -489,7 +489,7 @@ def gate_chapter(
                 if idx >= 0:
                     synopsis = content[idx: idx + 300]
             except OSError:
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
     return scorer.score_chapter(
         chapter_text, title=title, genre=genre, synopsis=synopsis

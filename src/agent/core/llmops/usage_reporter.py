@@ -123,7 +123,7 @@ class UsageReporter:
             )
             tmp.replace(self.usage_file)
         except Exception:  # noqa: BLE001 - 落盘失败不阻断
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def load_store(self) -> dict[str, Any]:
         """读取最近一次落盘的用量快照；缺失/损坏 → 空 dict。"""

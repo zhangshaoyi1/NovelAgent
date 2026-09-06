@@ -282,7 +282,7 @@ class M4CharacterWorkflow:
                 try:
                     current = proto_file.read_text(encoding="utf-8")[-4000:]
                 except OSError:
-                    current = ""
+                    current = ""  # noqa: SILENT_DEGRADE
             chars_dir = self.project_dir / "characters"
             if chars_dir.exists():
                 try:
@@ -290,7 +290,7 @@ class M4CharacterWorkflow:
                         p.name for p in chars_dir.glob("*.md")
                     )[:10]
                 except OSError:
-                    chars = []
+                    chars = []  # noqa: SILENT_DEGRADE
             user_prompt += (
                 "\n\n【作者修改意见】请严格在『现有角色设计』基础上按以下意见修订，"
                 "只改动被要求的部分，其余保持稳定：\n"

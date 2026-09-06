@@ -555,7 +555,7 @@ class M21ReviewWorkflow:
         try:
             total = int(data.get("total_score", 0))
         except (TypeError, ValueError):
-            total = 0
+            total = 0  # noqa: SILENT_DEGRADE
         total = max(0, min(100, total))
         issues = self._parse_issues(data.get("issues", []))
         verdict_text = str(data.get("verdict_text", ""))

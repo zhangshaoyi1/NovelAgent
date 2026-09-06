@@ -57,7 +57,7 @@ def rag_retrieve(query: str, top_k: int = 5) -> Any:
         chunks = Retriever(get_project_dir()).retrieve(query, top_k=top_k)
     except Exception:
         # 索引缺失或 embedding 不可达：返回空，不阻断（与 RAG 降级策略一致）
-        chunks = []
+        chunks = []  # noqa: SILENT_DEGRADE
     return [
         {
             "source": c.source,

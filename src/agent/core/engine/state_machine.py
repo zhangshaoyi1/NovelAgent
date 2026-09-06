@@ -100,13 +100,13 @@ class StateMachine:
                 f"[state_machine] 警告：{self.state_file} 的状态值 "
                 f"{raw!r} 非法，已降级为 INIT"
             )
-            self.state = State.INIT
+            self.state = State.INIT  # noqa: SILENT_DEGRADE
         self.progress = data.get("progress", {})
         self.mode = data.get("mode", "heavy")
         try:
             self.autonomy_level = int(data.get("autonomy_level", 70))
         except (TypeError, ValueError):
-            self.autonomy_level = 70
+            self.autonomy_level = 70  # noqa: SILENT_DEGRADE
         self.autonomy_level = max(0, min(100, self.autonomy_level))
 
     def save(self) -> None:
@@ -149,7 +149,7 @@ class StateMachine:
             self.progress["consecutive_write_failures"] = 0
             self.save()
         except Exception:  # noqa: BLE001 - 清除失败不阻断主流程
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def bump_write_failure(self) -> int:
         """写章失败时累加连续失败计数，返回累加后的值（供巡检判定连续 2 次告警）。

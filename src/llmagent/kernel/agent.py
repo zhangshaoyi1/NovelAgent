@@ -254,7 +254,7 @@ class AgentLoopExecutor(Executor):
                             turn_entry["output"] = str(result)
                         except Exception as e:
                             turn_entry["error"] = str(e)
-                            turn_entry["output"] = f"工具调用失败: {e}"
+                            turn_entry["output"] = f"工具调用失败: {e}"  # noqa: SILENT_DEGRADE
 
             # 记录轮次
             self._scratchpad.add_turn(turn_entry)

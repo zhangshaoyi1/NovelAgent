@@ -59,7 +59,7 @@ class _EvaluatorMetricsMixin:
             try:
                 return float(self.score_fn(name, str(self.project_dir)))
             except Exception:  # noqa: BLE001
-                pass
+                pass  # noqa: SILENT_DEGRADE
         # 安全默认（无 LLM）：硬指标 0 通过，评分维度给满分。
         if name in ("character_stability_high", "setting_consistency_high", "logic_holes"):
             return 0.0

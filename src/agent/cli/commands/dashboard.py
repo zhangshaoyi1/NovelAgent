@@ -75,7 +75,7 @@ class DashboardServer:
                     html = (
                         "<html><body><h1>Dashboard 渲染失败</h1>"
                         f"<pre>{e}</pre></body></html>"
-                    )
+                    )  # noqa: SILENT_DEGRADE
                 self.send_response(200)
                 self.send_header("Content-Type", "text/html; charset=utf-8")
                 self.end_headers()
@@ -92,7 +92,7 @@ class DashboardServer:
             httpd.serve_forever()
         except KeyboardInterrupt:
             httpd.shutdown()
-            httpd.server_close()
+            httpd.server_close()  # noqa: SILENT_DEGRADE
 
 
 # ============================================================

@@ -43,7 +43,7 @@ def atomic_write_text(path: PathLike, text: str, *, encoding: str = "utf-8") -> 
             try:
                 tmp.unlink()
             except OSError:
-                pass
+                pass  # noqa: SILENT_DEGRADE
     return target
 
 
@@ -60,7 +60,7 @@ def atomic_write_bytes(path: PathLike, data: bytes) -> Path:
             try:
                 tmp.unlink()
             except OSError:
-                pass
+                pass  # noqa: SILENT_DEGRADE
     return target
 
 

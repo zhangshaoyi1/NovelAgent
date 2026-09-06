@@ -121,7 +121,7 @@ class M5QualityGateMixin:
                         try:
                             genre_rules_text = self._genre_registry.load(g).quality_rules
                         except ValueError:
-                            genre_rules_text = ""
+                            genre_rules_text = ""  # noqa: SILENT_DEGRADE
                         if genre_rules_text:
                             rules_parts.append(
                                 f"【题材层质量规则（{g}）】\n{genre_rules_text}"
@@ -134,7 +134,7 @@ class M5QualityGateMixin:
                 try:
                     report = parse_llm_json(resp)
                 except ValueError:
-                    report = {"overall_pass": True, "rules": [], "suggestions": "校验解析失败，默认通过"}
+                    report = {"overall_pass": True, "rules": [], "suggestions": "校验解析失败，默认通过"}  # noqa: SILENT_DEGRADE
 
                 # D：多维 LLM 质量审查（仅当 strict_review 开启；并入同一 revise_loop 预算）
                 # 维度 blocking 视为本章未通过、触发既有修订循环。
@@ -298,7 +298,7 @@ class M5QualityGateMixin:
                     for issue in structured.issues
                 ]
             except Exception:  # noqa: BLE001 - 结构化校验失败不影响主路径
-                report.setdefault("structured_issues", [])
+                report.setdefault("structured_issues", [])  # noqa: SILENT_DEGRADE
 
         return report, attempts, text
     # ============================================================

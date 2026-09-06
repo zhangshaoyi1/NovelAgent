@@ -41,5 +41,5 @@ def dispatch_genre_hooks(project_dir: Path, genre: str, pack: Any) -> list[str]:
             warnings.warn(
                 f"题材 hook 执行失败，已跳过：{hook_spec}（{exc}）",
                 stacklevel=2,
-            )
+            )  # noqa: SILENT_DEGRADE
     return dispatched

@@ -577,7 +577,7 @@ class BookwormSkill:
             try:
                 v = int(dims[key])
             except (TypeError, ValueError):
-                v = 0
+                v = 0  # noqa: SILENT_DEGRADE
             dims[key] = max(0, min(100, v))
 
         # 总分：若 LLM 未给或与加权不符，按权重重算
@@ -585,7 +585,7 @@ class BookwormSkill:
         try:
             total = int(total)
         except (TypeError, ValueError):
-            total = self._compute_total(dims)
+            total = self._compute_total(dims)  # noqa: SILENT_DEGRADE
         total = max(0, min(100, total))
 
         issues_raw = data.get("issues", []) or []

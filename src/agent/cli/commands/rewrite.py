@@ -134,7 +134,7 @@ def rewrite(
             try:
                 fb = input(f"\n[第 {chapter} 章] 输入反馈（空行/accept/done 退出）：").strip()
             except EOFError:
-                break
+                break  # noqa: SILENT_DEGRADE
             if fb.lower() in ("", "accept", "done", "q"):
                 break
             res = run_once(chapter, fb)

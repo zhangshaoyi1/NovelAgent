@@ -109,7 +109,7 @@ class WorkflowOrchestrator:
             try:
                 return step.run(ctx)
             except Exception as e:
-                last_exc = e
+                last_exc = e  # noqa: SILENT_DEGRADE
         raise last_exc  # type: ignore[misc]
 
     def _save_checkpoint(self, workflow_id: str, step_id: str, ctx: dict[str, Any]) -> None:

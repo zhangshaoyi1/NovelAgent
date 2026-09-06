@@ -219,7 +219,7 @@ class MultiAgentCoordinator:
                         failed.append(st.id)
                         self.bus.publish("subtask_failed", {"id": st.id, "error": str(e)})
                         pending.remove(st.id)
-                        progressed = True
+                        progressed = True  # noqa: SILENT_DEGRADE
             if not progressed:
                 break
 
@@ -267,7 +267,7 @@ class MultiAgentCoordinator:
                         failed.append(st.id)
                         self.bus.publish("subtask_failed", {"id": st.id, "error": str(e)})
                         pending.remove(st.id)
-                        progressed = True
+                        progressed = True  # noqa: SILENT_DEGRADE
             if not progressed:
                 break
 

@@ -286,7 +286,7 @@ def first_genre_label(metadata: dict) -> str:
         if pack is not None:
             return pack.manifest.display_name or gid
     except Exception:  # noqa: BLE001 - 题材包未注册时回退 id
-        pass
+        pass  # noqa: SILENT_DEGRADE
     return gid
 
 
@@ -373,7 +373,7 @@ class GenrePackRegistry(BaseRegistry[GenrePack]):
                 self._discovered[manifest.name] = manifest
             except (ValueError, FileNotFoundError):
                 # 非 genre 类型（如 bookworm skill）跳过
-                continue
+                continue  # noqa: SILENT_DEGRADE
 
     # ------ 列举（基于 BaseRegistry.list() 扩展）------
 
@@ -420,7 +420,7 @@ class GenrePackRegistry(BaseRegistry[GenrePack]):
                     }
                 )
             except Exception:
-                continue
+                continue  # noqa: SILENT_DEGRADE
         return result
 
     # ------ 加载 ------

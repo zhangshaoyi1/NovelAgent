@@ -101,7 +101,7 @@ class Gateway:
             try:
                 record(req, resp)
             except Exception:  # noqa: BLE001 - 校准记录失败不影响主链路
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
         # ⑦ 返回
         return resp

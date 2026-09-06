@@ -165,7 +165,7 @@ class EditorAgent:
                 if frozen:
                     return frozen
             except Exception:  # noqa: BLE001
-                pass
+                pass  # noqa: SILENT_DEGRADE
         return []
 
     def _check_frozen(self, chapter_text: str, frozen_fields: list[str]) -> list[str]:
@@ -225,7 +225,7 @@ class EditorAgent:
                     {"passed": passed, "block": report.block_count},
                 )
             except Exception:  # noqa: BLE001
-                pass
+                pass  # noqa: SILENT_DEGRADE
         return report
 
     def review_chapter_file(self, chapter_path: str | Path, ctx: Any = None) -> EditReport:

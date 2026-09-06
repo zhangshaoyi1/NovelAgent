@@ -240,7 +240,7 @@ class AgentLoop:
                 history.append(("user", f"决策失败（{e}），请严格按动作协议重新输出 JSON。"))
                 if self.fail_backoff_s > 0:
                     time.sleep(min(self.fail_backoff_s * (2 ** (i - 1)), 30.0))
-                continue
+                continue  # noqa: SILENT_DEGRADE
 
             step = LoopStep(
                 iteration=i,
@@ -312,7 +312,7 @@ class AgentLoop:
                 history.append(("user", f"决策失败（{e}），请严格按动作协议重新输出 JSON。"))
                 if self.fail_backoff_s > 0:
                     await asyncio.sleep(min(self.fail_backoff_s * (2 ** (i - 1)), 30.0))
-                continue
+                continue  # noqa: SILENT_DEGRADE
 
             step = LoopStep(
                 iteration=i,

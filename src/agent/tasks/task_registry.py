@@ -99,7 +99,7 @@ class WorkflowTaskExecutor:
             try:
                 instance = wf_cls(project_dir=self._orchestrator.project_dir)
             except TypeError:
-                instance = wf_cls()
+                instance = wf_cls()  # noqa: SILENT_DEGRADE
             run_fn = getattr(instance, "run", None)
             if not callable(run_fn):
                 # 部分 @workflow 类（export/import 等）是能力标记，只暴露领域方法，
@@ -182,7 +182,7 @@ class TaskRegistry:
                     registered += 1
                 except Exception:
                     # SchemaGate 拒绝等注册失败：不让派生视图阻断生产链路
-                    pass
+                    pass  # noqa: SILENT_DEGRADE
 
         return registered
 

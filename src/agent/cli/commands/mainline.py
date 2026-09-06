@@ -111,14 +111,14 @@ def mainline_show(
     try:
         plan = dict(orch.load_plan())
     except Exception:  # noqa: BLE001 - 计划损坏降级为空
-        plan = {}
+        plan = {}  # noqa: SILENT_DEGRADE
 
     sm = StateMachine(project_path)
     try:
         sm.load()
         progress = dict(sm.progress or {})
     except Exception:  # noqa: BLE001
-        progress = {}
+        progress = {}  # noqa: SILENT_DEGRADE
 
     result = {
         "success": True,

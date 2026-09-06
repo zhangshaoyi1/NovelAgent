@@ -195,7 +195,7 @@ class M14ArchitectureWorkflow:
                     "genre_label", ""
                 )
         except Exception:  # noqa: BLE001 - world.md 读取失败降级，不阻断迭代
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
         self.console.print("\n[cyan]正在根据反馈修订架构...[/cyan]")
         new_arch = self._llm_iterate_architecture(
@@ -435,7 +435,7 @@ class M14ArchitectureWorkflow:
                     raise RuntimeError(
                         "故事架构生成结果无法解析为 JSON（可能被截断或格式异常），"
                         f"请重试。原始输出片段：{resp[:200]}"
-                    )
+                    )  # noqa: SILENT_DEGRADE
 
     def _llm_iterate_architecture(
         self,
@@ -490,7 +490,7 @@ class M14ArchitectureWorkflow:
                     pm.get("m14.iterate").render_system(genre=genre_label)
                     + "\n\n【重要】请只输出一个合法的 JSON 对象（结构与初版一致），"
                     "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
-                )
+                )  # noqa: SILENT_DEGRADE
 
     def _check_feedback_gaps(
         self, feedback: str, revised: dict[str, Any]

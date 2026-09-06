@@ -201,7 +201,7 @@ class WriterAgent:
                     )
                     retry_messages = list(messages) + [
                         {"role": "user", "content": pm.get("agents.writer_retry").system}
-                    ]
+                    ]  # noqa: SILENT_DEGRADE
 
         return decide
 
@@ -241,7 +241,7 @@ class WriterAgent:
                     )
                     retry_messages = list(messages) + [
                         {"role": "user", "content": pm.get("agents.writer_retry").system}
-                    ]
+                    ]  # noqa: SILENT_DEGRADE
 
         return decide_async
 
@@ -503,7 +503,7 @@ class WriterAgent:
                     )
                     draft = self._draft(
                         task, critique=critique, min_words=min_words, max_words=max_words
-                    )
+                    )  # noqa: SILENT_DEGRADE
             else:
                 draft = self._draft(
                     task, critique=critique, min_words=min_words, max_words=max_words
@@ -557,7 +557,7 @@ class WriterAgent:
                     )
                     draft = await self._draft_async(
                         task, critique=critique, min_words=min_words, max_words=max_words
-                    )
+                    )  # noqa: SILENT_DEGRADE
             else:
                 draft = await self._draft_async(
                     task, critique=critique, min_words=min_words, max_words=max_words

@@ -111,7 +111,7 @@ class SemanticMemory:
             if vecs and len(vecs) == len(texts):
                 return vecs
         except Exception:  # noqa: BLE001 - 向量不可达时回退离线打分
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return []
 
     def _load(self) -> None:
@@ -122,7 +122,7 @@ class SemanticMemory:
                 if line.strip():
                     self._entries.append(MemoryEntry.from_dict(json.loads(line)))
         except (json.JSONDecodeError, OSError):
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def _persist(self) -> None:
         if not self._file:
@@ -136,7 +136,7 @@ class SemanticMemory:
             )
             tmp.replace(self._file)
         except OSError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def add(
         self,

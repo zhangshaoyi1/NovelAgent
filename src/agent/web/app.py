@@ -84,7 +84,7 @@ def _md_filter(text: str | None) -> str:
     try:
         body = frontmatter.loads(text).content or text
     except Exception:  # noqa: BLE001 - 无 frontmatter / 解析失败降级为原文
-        body = text
+        body = text  # noqa: SILENT_DEGRADE
     try:
         return _md.markdown(body, extensions=["tables", "fenced_code", "sane_lists"])
     except Exception:  # noqa: BLE001 - 渲染失败降级为转义原文，不阻断页面
@@ -169,7 +169,7 @@ async def api_rag_test(request: Request) -> JSONResponse:
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001
-        body = {}
+        body = {}  # noqa: SILENT_DEGRADE
     job_id = rag_admin.start_test(str(body.get("text") or ""))
     return JSONResponse({"ok": True, "job_id": job_id})
 
@@ -847,7 +847,7 @@ def run_status(run_id: str) -> JSONResponse:
         try:
             data["state"] = state.get_project_state(run["project"]).get("state")
         except Exception:  # noqa: BLE001 - 状态读取失败不阻断返回
-            data["state"] = None
+            data["state"] = None  # noqa: SILENT_DEGRADE
     return JSONResponse(data)
 
 

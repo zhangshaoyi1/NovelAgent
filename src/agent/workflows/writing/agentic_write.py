@@ -22,6 +22,7 @@
 from __future__ import annotations
 
 from agent.core.infra.prompt_manager import pm
+from agent.core.infra.degrade import degrade
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -125,7 +126,7 @@ class AgenticWriteWorkflow:
                     "substage": substage,
                 })
             except Exception:  # noqa: BLE001 - 子阶段事件异常不阻断写章（拍板 3）
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
     def _run_deslop(self, text: str, ctx: dict[str, Any]) -> str:
         """P0 去AI味：质量门禁通过后、落盘前执行（轻度规则/中重 LLM）。
@@ -195,7 +196,8 @@ class AgenticWriteWorkflow:
                 f"（已访问 {len(visited)} 条）[/cyan]"
             )
             self._emit_substage(f"mainline_advance:{new_subline}", chapter)
-        except Exception:  # noqa: BLE001 - 决策异常降级不阻断写章（G3 哲学）
+        except Exception as e:  # noqa: BLE001 - 决策异常降级不阻断写章（G3 哲学）
+            degrade("agentic_write.mainline", "主线推进决策异常，维持原支线继续写章", e)
             pass
 
     # ------------------------------------------------------------------
@@ -218,7 +220,8 @@ class AgenticWriteWorkflow:
             if ctx.get("pressure_stage") == "高潮":
                 parts.append(pm.get("methods.payoff").render_system())
             return "\n\n".join(p for p in parts if p and p.strip())
-        except Exception:  # noqa: BLE001 - 技法知识加载失败降级为空，不阻断写章
+        except Exception as e:  # noqa: BLE001 - 技法知识加载失败降级为空，不阻断写章
+            degrade("agentic_write.craft_guide", "写作技法知识库加载失败，降级为空（本章无技法参考）", e)
             return ""
 
     def _build_task(self, ctx: dict[str, Any]) -> str:
@@ -383,7 +386,8 @@ class AgenticWriteWorkflow:
             )
             report = parse_llm_json(resp)
             passed = bool(report.get("overall_pass", True))
-        except Exception:  # noqa: BLE001 - 质检失败降级为通过，不阻断出章
+        except Exception as e:  # noqa: BLE001 - 质检失败降级为通过，不阻断出章
+            degrade("agentic_write.quality_gate", "LLM 质检失败，降级为通过（本章未经质量门禁）", e)
             report = {"overall_pass": True, "rules": [], "suggestions": "门禁解析失败，默认通过"}
             passed = True
         return passed, report
@@ -478,7 +482,7 @@ class AgenticWriteWorkflow:
 
             sync_foreshadow_states(self.project_dir, console=self.console)
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
         # 标题已发布 → 失效缓存，下一章查重可见本章标题
         m5._published_titles_cache = None
 
@@ -514,4 +518,4 @@ class AgenticWriteWorkflow:
             if hasattr(retriever, "index_chapter"):
                 retriever.index_chapter(chapter_file)
         except Exception:  # noqa: BLE001 - 索引失败不阻断出章
-            pass
+            pass  # noqa: SILENT_DEGRADE

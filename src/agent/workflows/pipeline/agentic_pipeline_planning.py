@@ -54,7 +54,7 @@ class _PipelinePlanningMixin:
             self.state_machine.load()
             self.state_machine.set_mode("auto")
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
         sm = SettingManager(self.project_dir)
         llm = self._traced_llm()
@@ -218,7 +218,7 @@ class _PipelinePlanningMixin:
                         advanced = True
                         break
                     except ValueError:
-                        break
+                        break  # noqa: SILENT_DEGRADE
             if not advanced:
                 break
 
@@ -249,14 +249,14 @@ class _PipelinePlanningMixin:
                 self.console.print(
                     f"[yellow]⚠ 规划步骤[{name}] 第{attempt + 1}次失败：{e}[/yellow]"
                 )
-                self._alert_cost(name)
+                self._alert_cost(name)  # noqa: SILENT_DEGRADE
         if key:
             return _PlanStepResult(ok=False)
         if degrade is not None:
             try:
                 degrade()
             except Exception:  # noqa: BLE001
-                pass
+                pass  # noqa: SILENT_DEGRADE
         return _PlanStepResult(ok=False)
 
     # ---------------------------------------------------------------- 降级占位（非关键失败）
@@ -299,12 +299,12 @@ class _PipelinePlanningMixin:
                     SettingManager(self.project_dir).load_world()["metadata"].get("title", "")
                 )
             except Exception:  # noqa: BLE001
-                title = ""
+                title = ""  # noqa: SILENT_DEGRADE
             wf._render_characters(placeholder, title)
             wf._render_graph({})
             wf._render_foreshadows([])
             wf._render_golden_finger({})
             wf._render_route({})
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
 

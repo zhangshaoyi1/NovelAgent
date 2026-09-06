@@ -82,7 +82,7 @@ def status(
         state = State(state_val)
         state_label = state.value
     except ValueError:
-        state_label = state_val
+        state_label = state_val  # noqa: SILENT_DEGRADE
 
     console.print(f"[bold]当前状态[/bold]: [green]{state_label}[/green]")
     console.print(f"[bold]介入模式[/bold]: [cyan]{mode}[/cyan]")

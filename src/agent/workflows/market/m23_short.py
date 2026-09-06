@@ -647,7 +647,7 @@ class M23ShortAnalyzeWorkflow:
             self.console.print(
                 "[yellow]⚠ 拆文 JSON 解析失败，返回空报告。[/yellow]"
             )
-            report = AnalyzeReport(title=title, platform=platform)
+            report = AnalyzeReport(title=title, platform=platform)  # noqa: SILENT_DEGRADE
 
         if save:
             self._save(report, output_dir)

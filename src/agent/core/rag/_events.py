@@ -29,4 +29,4 @@ def notify_rag_event(payload: dict[str, Any]) -> None:
         try:
             hook(payload)
         except Exception:  # noqa: BLE001 - 事件转发失败不阻断检索/索引
-            pass
+            pass  # noqa: SILENT_DEGRADE

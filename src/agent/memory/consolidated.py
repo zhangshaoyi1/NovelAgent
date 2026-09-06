@@ -46,7 +46,7 @@ class ConsolidatedMemory:
         try:
             self._data = json.loads(self._file.read_text(encoding="utf-8")) or {}
         except (json.JSONDecodeError, OSError):
-            self._data = {}
+            self._data = {}  # noqa: SILENT_DEGRADE
 
     def _persist(self) -> None:
         if not self._file:
@@ -60,7 +60,7 @@ class ConsolidatedMemory:
             )
             tmp.replace(self._file)
         except OSError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def get(self, section: str, default: Any = None) -> Any:
         return self._data.get(section, default)

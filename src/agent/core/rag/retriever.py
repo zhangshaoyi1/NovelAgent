@@ -152,7 +152,7 @@ class Retriever:
             vectors = self.embedder.embed([query])
             qvec = vectors[0] if vectors else None
         except Exception:  # noqa: BLE001 - 向量失败时纯 BM25 兜底
-            qvec = None
+            qvec = None  # noqa: SILENT_DEGRADE
         vec_hits = self.store.search(qvec, top_k=top_k) if qvec else []
 
         # 2) BM25 兜底

@@ -453,7 +453,7 @@ class RelationManager:
                         )
                     )
             except Exception:  # noqa: BLE001 - 图谱同步是 best-effort
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
         # 3) characters/*.md —— 补充未入网的角色 + frontmatter 描述
         chars_dir = self.project_dir / "characters"
@@ -463,7 +463,7 @@ class RelationManager:
                 try:
                     text = fp.read_text(encoding="utf-8")
                 except Exception:  # noqa: BLE001
-                    continue
+                    continue  # noqa: SILENT_DEGRADE
                 name_m = re.search(r'^name:\s*"?(.+?)"?\s*$', text, re.M)
                 faction_m = re.search(r'^faction:\s*"?(.+?)"?\s*$', text, re.M)
                 role_m = re.search(r'^role:\s*"?(.+?)"?\s*$', text, re.M)
@@ -534,7 +534,7 @@ class RelationManager:
                                 )
                             )
             except Exception:  # noqa: BLE001
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
         self.graph = WorldGraph(nodes=list(nodes.values()), edges=edges)
         self.save()

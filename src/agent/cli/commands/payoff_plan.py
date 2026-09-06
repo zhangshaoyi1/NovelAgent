@@ -36,7 +36,7 @@ def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None
         if plan is not None and getattr(plan, "total_chapters", 0):
             return int(plan.total_chapters)
     except Exception:  # noqa: BLE001
-        pass
+        pass  # noqa: SILENT_DEGRADE
     try:
         from agent.core.engine.state_machine import StateMachine
 
@@ -46,7 +46,7 @@ def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None
         if n > 0:
             return n
     except Exception:  # noqa: BLE001
-        pass
+        pass  # noqa: SILENT_DEGRADE
     try:
         from agent.core.story.chapters import list_chapter_files
 
@@ -54,7 +54,7 @@ def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None
         if n > 0:
             return n
     except Exception:  # noqa: BLE001
-        pass
+        pass  # noqa: SILENT_DEGRADE
     return 300
 
 

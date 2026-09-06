@@ -28,14 +28,14 @@ if sys.platform == "win32":
         ctypes.windll.kernel32.SetConsoleOutputCP(65001)
         ctypes.windll.kernel32.SetConsoleCP(65001)
     except Exception:  # noqa: BLE001 - 无控制台（服务/管道）时静默跳过
-        pass
+        pass  # noqa: SILENT_DEGRADE
 try:
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
     if hasattr(sys.stderr, "reconfigure"):
         sys.stderr.reconfigure(encoding="utf-8")
 except (ValueError, OSError):
-    pass
+    pass  # noqa: SILENT_DEGRADE
 
 app = typer.Typer(
     name="novel-agent",

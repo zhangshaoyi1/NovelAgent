@@ -21,7 +21,7 @@ class _PipelineCostMixin:
             try:
                 set_tracer(TraceStore(self.project_dir))
             except Exception:  # noqa: BLE001
-                pass
+                pass  # noqa: SILENT_DEGRADE
             self._traced_llm_cache = TracedLLMClient(self.llm, model="creative-strong")
         return self._traced_llm_cache
 
@@ -39,7 +39,7 @@ class _PipelineCostMixin:
             if msg:
                 self.console.print(f"[yellow]{msg}（步骤：{step}）[/yellow]")
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def _check_budget(self, step: str) -> bool:
         """检查预算/墙钟是否超限。
@@ -86,7 +86,7 @@ class _PipelineCostMixin:
 
         except Exception:  # noqa: BLE001
             # 检查失败不阻断（避免熔断本身异常）
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
         return False
 

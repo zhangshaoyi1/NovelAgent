@@ -254,7 +254,7 @@ class AgenticPipelineWorkflow(
                 self._finalize_g9(result)
                 return result
         except Exception as e:  # noqa: BLE001 - 守护自身异常不阻断既有流程
-            self.console.print(f"[yellow]规划一致性守护异常（忽略）：{e}[/yellow]")
+            self.console.print(f"[yellow]规划一致性守护异常（忽略）：{e}[/yellow]")  # noqa: SILENT_DEGRADE
 
         # 1) 规划（若提供 planner 且尚未有计划文件）
         planner = self._ensure_planner()
@@ -268,7 +268,7 @@ class AgenticPipelineWorkflow(
                     f"{len(plan.episode_tree)} 剧情弧[/cyan]"
                 )
             except Exception as e:  # noqa: BLE001 - 规划失败不阻断写作
-                self.console.print(f"[yellow]Planner 失败（{e}），跳过规划[/yellow]")
+                self.console.print(f"[yellow]Planner 失败（{e}），跳过规划[/yellow]")  # noqa: SILENT_DEGRADE
 
         # 1.5) 自主模式引导：复用真实 M1~M4 自主规划（G3）。失败不阻断写章；
         #      关键前置失败则安全退出（不进入半残写章，拍板 #2）。
@@ -376,9 +376,9 @@ class AgenticPipelineWorkflow(
                         self.console.print(f"[red]本章重试仍失败：{e2}[/red]")
                         self._emit_failure(
                             "write_chapter_retry", str(e2), severity="warn"
-                        )
+                        )  # noqa: SILENT_DEGRADE
                 if not retry_ok:
-                    break
+                    break  # noqa: SILENT_DEGRADE
             ch_num = int(getattr(wf_result, "chapter_num", 0))
             ch_text = str(getattr(wf_result, "chapter_text", ""))
             ch_title = str(getattr(wf_result, "chapter_title", ""))
@@ -387,7 +387,7 @@ class AgenticPipelineWorkflow(
             try:
                 edit = editor.review(ch_text)
             except Exception:  # noqa: BLE001
-                edit = None
+                edit = None  # noqa: SILENT_DEGRADE
             if edit is not None:
                 block_conflicts = [c for c in edit.conflicts if c.severity == "block"]
                 if block_conflicts:
@@ -416,7 +416,7 @@ class AgenticPipelineWorkflow(
                         self.console.print(
                             f"[red]第 {ch_num} 章一致性门禁重写失败（{re_e}）："
                             f"已标记告警并保留该章[/red]"
-                        )
+                        )  # noqa: SILENT_DEGRADE
                 elif edit.conflicts:
                     self.console.print(
                         f"[yellow]第 {ch_num} 章编辑提示：{len(edit.conflicts)} 项一致性警告[/yellow]"
@@ -481,7 +481,7 @@ class AgenticPipelineWorkflow(
                                 self.console.print(
                                     f"[red]第 {ch_num} 章门禁重写失败（{re_e}）："
                                     f"已标记告警并保留该章[/red]"
-                                )
+                                )  # noqa: SILENT_DEGRADE
                     else:
                         gr = self.guardrails.check(ch_text)
                         if not gr.passed:
@@ -499,7 +499,7 @@ class AgenticPipelineWorkflow(
                                     "message": v.message,
                                 })
                 except Exception:  # noqa: BLE001
-                    pass
+                    pass  # noqa: SILENT_DEGRADE
 
             # ---- G14：章节落盘后增量更新全书指纹库（决策③：存 .state/ 下）----
             try:
@@ -509,13 +509,13 @@ class AgenticPipelineWorkflow(
                     fp_path = self.project_dir / ".state" / "chapter_fingerprints.json"
                     save_fingerprints(self.guardrails.fingerprint_db, fp_path)
             except Exception:  # noqa: BLE001 - 指纹持久化失败不阻断
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
             # 记忆回写
             try:
                 self.memory.record_chapter(ch_num, ch_title, facts=[])
             except Exception:  # noqa: BLE001
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
             wrote += 1
             self.console.print(f"[green]✓ 第 {ch_num} 章完成（{len(ch_text)} 字）[/green]")
@@ -537,7 +537,7 @@ class AgenticPipelineWorkflow(
                         f"（{_usage['llm_calls']} 次调用）[/cyan]"
                     )
             except Exception:  # noqa: BLE001 - 用量统计失败不影响写作
-                _usage = None
+                _usage = None  # noqa: SILENT_DEGRADE
             # ---- G9：chapter_done（words/quality_passed/chapter_elapsed_s/eta_s/用量）----
             self._emit_event(
                 "chapter_done",
@@ -602,7 +602,7 @@ class AgenticPipelineWorkflow(
                 self.console.print(f"[red]评测失败：{e}[/red]")
                 # ---- G9：failure 事件（评测失败，warn；不阻断继续）----
                 self._emit_failure("eval", str(e), severity="warn")
-                report = None
+                report = None  # noqa: SILENT_DEGRADE
 
             if report is not None:
                 # G6：B5 结果写入 PipelineResult.guardrails + health_report.ai_flavor 子块（拍板 4）
@@ -629,7 +629,7 @@ class AgenticPipelineWorkflow(
                 try:
                     self.memory.log("eval", "全书体检完成", report.to_dict())
                 except Exception:  # noqa: BLE001
-                    pass
+                    pass  # noqa: SILENT_DEGRADE
 
         # ---- G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）----
         self._finalize_cost(result)

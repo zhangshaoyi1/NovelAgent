@@ -89,7 +89,7 @@ def load_method_text(
                     f"# {name}\n\n{text}", encoding="utf-8"
                 )
             except Exception:  # noqa: BLE001 - 写失败不阻断
-                pass
+                pass  # noqa: SILENT_DEGRADE
         else:
             if not method_file.exists():
                 return "", ""

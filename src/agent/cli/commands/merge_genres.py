@@ -217,7 +217,7 @@ def _write_back(pdir: Path, result, genre_list: list[str]) -> None:
         reg = GenrePackRegistry()
         post.metadata["genre_label"] = " / ".join(reg.load(g).manifest.display_name for g in genre_list)
     except Exception:
-        post.metadata["genre_label"] = " / ".join(genre_list)
+        post.metadata["genre_label"] = " / ".join(genre_list)  # noqa: SILENT_DEGRADE
     # 替换 realm_system 段落（只写冻结核心分节，禁止整模板回写——
     # 否则通用「力量体系/势力框架/金手指登记模板」会再次泄漏进 world.md）
     new_body = _replace_section(
@@ -229,4 +229,4 @@ def _write_back(pdir: Path, result, genre_list: list[str]) -> None:
     try:
         save_conflicts(pdir, result)
     except Exception:
-        pass
+        pass  # noqa: SILENT_DEGRADE

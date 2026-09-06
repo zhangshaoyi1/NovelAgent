@@ -37,7 +37,7 @@ class PromptRegistry:
         try:
             self._data = json.loads(self._file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
-            self._data = {}
+            self._data = {}  # noqa: SILENT_DEGRADE
 
     def _persist(self) -> None:
         if self._file is None:

@@ -58,7 +58,7 @@ class _PipelineAgentsMixin:
                 if plan is not None:
                     qt = plan.quality_targets.model_dump()
             except Exception:  # noqa: BLE001
-                pass
+                pass  # noqa: SILENT_DEGRADE
             score_fn = None
             try:
                 from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
@@ -66,7 +66,7 @@ class _PipelineAgentsMixin:
                 # 默认接真 LLM 评分（B1）；LLM 不可用时 scorer 内部自动降级为离线安全默认。
                 score_fn = ReaderAppealScorer(llm_client=self.llm).score
             except Exception:  # noqa: BLE001
-                score_fn = None
+                score_fn = None  # noqa: SILENT_DEGRADE
             appeal_scorer = None
             if self.appeal_gate:
                 try:
@@ -74,7 +74,7 @@ class _PipelineAgentsMixin:
 
                     appeal_scorer = ReaderAppealScorer(llm_client=self.llm)
                 except Exception:  # noqa: BLE001
-                    appeal_scorer = None
+                    appeal_scorer = None  # noqa: SILENT_DEGRADE
             # G6：B4 golden_scorer 复用同一六维评分器实例（评前三章与评末章可共用，拍板 §12-3）
             golden_scorer = appeal_scorer if self.golden_three_gate else None
             # D-J：由 workflow 侧注入回退能力（agents 不再直接 import workflows）
@@ -112,7 +112,7 @@ class _PipelineAgentsMixin:
         try:
             self.evaluator.memory_log = lambda kind, msg, data: self.memory.log(kind, msg, data)  # type: ignore[attr-defined]
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return self.evaluator
 
     # ---------------------------------------------------------------- 进度
@@ -132,7 +132,7 @@ class _PipelineAgentsMixin:
             if plan is not None and plan.total_chapters:
                 return plan.total_chapters
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return 100
 
     def _book_total(self) -> int:
@@ -155,7 +155,7 @@ class _PipelineAgentsMixin:
                 if data.get("total_chapters"):
                     return int(data["total_chapters"])
         except Exception:  # noqa: BLE001 - 读取失败走兜底
-            pass
+            pass  # noqa: SILENT_DEGRADE
         # 修复（2026-09-05）：plan.json 缺失时绝不能把本轮批次目标（--chapters）
         # 当全书总章数——否则 10 章批次会让结局模式在第 8 章触发、路线跨度失真。
         # 与 _resolve_target 的兜底一致，回归设计默认值 100。

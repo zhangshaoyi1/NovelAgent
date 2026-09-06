@@ -128,6 +128,12 @@ class BudgetPlanner:
                 )
                 return True
         except Exception as e:  # noqa: BLE001 - 规划失败降级，G3
+            try:
+                from agent.core.infra.degrade import degrade
+
+                degrade("budget_planner.llm", "LLM 预算规划失败，沿用现值/均衡分账兜底", e)
+            except Exception:  # noqa: BLE001, SILENT_DEGRADE
+                pass
             self.console.print(f"[yellow]⚠ LLM 预算规划失败，沿用现值：{e}[/yellow]")
             reason_ok = False
 

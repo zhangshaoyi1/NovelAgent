@@ -158,7 +158,7 @@ class BadPointScanner:
             try:
                 report.points.extend(self._llm_scan(texts))
             except Exception as e:  # noqa: BLE001 - LLM 失败降级，不阻断
-                self.console.print(f"[yellow]⚠ LLM 坏点精扫失败（保留静态结果）：{e}[/yellow]")
+                self.console.print(f"[yellow]⚠ LLM 坏点精扫失败（保留静态结果）：{e}[/yellow]")  # noqa: SILENT_DEGRADE
 
         report.points.sort(
             key=lambda p: (
@@ -274,7 +274,7 @@ class BadPointScanner:
                 temperature=0.1,
                 max_tokens=2000,
             )
-            data = parse_llm_json(retry.text)
+            data = parse_llm_json(retry.text)  # noqa: SILENT_DEGRADE
         out: list[BadPoint] = []
         for item in data.get("bad_points", []) or []:
             btype = str(item.get("type", "plot_hole"))

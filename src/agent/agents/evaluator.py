@@ -340,7 +340,7 @@ class EvaluatorAgent(
             try:
                 self.memory_log("rollback", f"回退至第 {plan.target_chapter} 章", plan.to_dict())
             except Exception:  # noqa: BLE001
-                pass
+                pass  # noqa: SILENT_DEGRADE
         return report
 
     def evaluate_with_repair(self, rewriter: RewriterFn) -> NovelHealthReport:

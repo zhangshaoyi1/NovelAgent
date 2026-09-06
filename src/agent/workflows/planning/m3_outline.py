@@ -259,7 +259,7 @@ class M3OutlineWorkflow:
                         method_text=method_text
                     )
             except Exception:  # noqa: BLE001 - 模板读取失败降级，不阻断大纲生成
-                pass
+                pass  # noqa: SILENT_DEGRADE
         # A 系列：问答面板确定的作者偏好注入初始生成 prompt（迭代修订以作者意见为准）
         if not feedback:
             from agent.workflows.pipeline.qa_sync import format_qa_constraints
@@ -274,7 +274,7 @@ class M3OutlineWorkflow:
                 try:
                     current = self.outline_file.read_text(encoding="utf-8")[-4000:]
                 except OSError:
-                    current = ""
+                    current = ""  # noqa: SILENT_DEGRADE
             user_prompt += (
                 "\n\n【作者修改意见】请严格在『现有大纲』基础上按以下意见修订，"
                 "只改动被要求的部分，其余保持稳定：\n"
@@ -320,7 +320,7 @@ class M3OutlineWorkflow:
                     pm.get("m3.outline").render_system(genre=world_info.get("genre_label", ""))
                     + "\n\n【重要】请只输出一个合法的 JSON 对象，"
                     "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
-                )
+                )  # noqa: SILENT_DEGRADE
         raise RuntimeError(
             "大纲生成结果无法解析为 JSON（可能被截断或格式异常），"
             f"请重试。原始输出片段：{last_text[:200]}"

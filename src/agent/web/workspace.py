@@ -54,7 +54,7 @@ def load_store() -> dict[str, Any]:
     try:
         data = json.loads(store_path().read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001 - 缺失/损坏降级为默认
-        data = {}
+        data = {}  # noqa: SILENT_DEGRADE
     spaces = data.get("workspaces") or []
     if not any(s.get("id") == "default" for s in spaces):
         spaces.insert(0, dft)
@@ -211,7 +211,7 @@ def fs_browse(raw: str = "") -> dict[str, Any]:
                     if child.is_dir():
                         dirs.append({"name": child.name, "path": str(child)})
                 except OSError:  # noqa: BLE001 - 无权限子项直接跳过
-                    continue
+                    continue  # noqa: SILENT_DEGRADE
         except OSError as e:
             return {"ok": False, "message": f"无法读取目录：{e}", "current": str(p),
                     "parent": "", "dirs": [], "drives": drives}

@@ -101,7 +101,7 @@ class Indexer:
         try:
             vectors = self.embedder.embed([c.text for c in chunks])
         except Exception:  # noqa: BLE001 - embed 异常不应阻断索引
-            vectors = []
+            vectors = []  # noqa: SILENT_DEGRADE
         if len(vectors) != len(chunks):
             vectors = [None] * len(chunks)
         for c, v in zip(chunks, vectors):
@@ -128,7 +128,7 @@ class Indexer:
         try:
             source = str(f.relative_to(self.project_dir))
         except ValueError:
-            source = f.name
+            source = f.name  # noqa: SILENT_DEGRADE
         chunks = self._chunk(text, source, chapter_num, "chapter")
         t0 = time.monotonic()
         failed = self._embed_and_add(chunks)

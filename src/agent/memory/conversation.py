@@ -66,7 +66,7 @@ class ConversationMemory:
                 if line.strip():
                     self._events.append(ConversationEvent.from_dict(json.loads(line)))
         except (json.JSONDecodeError, OSError):
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def _persist(self) -> None:
         if not self._file:
@@ -80,7 +80,7 @@ class ConversationMemory:
             )
             tmp.replace(self._file)
         except OSError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def append(
         self,

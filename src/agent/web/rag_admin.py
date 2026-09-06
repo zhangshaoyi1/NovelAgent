@@ -148,7 +148,7 @@ def project_rag_status(project_dir: Path) -> dict[str, Any]:
     try:
         status["updated_at"] = datetime.fromtimestamp(idx.stat().st_mtime).strftime("%Y-%m-%d %H:%M")
     except OSError:
-        pass
+        pass  # noqa: SILENT_DEGRADE
     return status
 
 
@@ -241,7 +241,7 @@ def _run_job(job_id: str, kind: str, payload: dict[str, Any]) -> None:
             status="error",
             message=f"{e}",
             result={"trace": traceback.format_exc(limit=3)},
-        )
+        )  # noqa: SILENT_DEGRADE
 
 
 def _apply_env_for_embedding() -> None:
@@ -299,7 +299,7 @@ def _reindex_project(payload: dict[str, Any]) -> dict[str, Any]:
 
         wire_llm_event_hook(str(project_dir))
     except Exception:  # noqa: BLE001 - 事件接线失败不阻断索引
-        pass
+        pass  # noqa: SILENT_DEGRADE
 
     stats = Indexer(project_dir).reindex()
     status = project_rag_status(project_dir)

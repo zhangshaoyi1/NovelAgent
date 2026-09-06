@@ -51,14 +51,14 @@ def build_track(project_dir: str | Path) -> dict[str, Any]:
         sm.load()
         written = int((sm.progress or {}).get("total_written", 0) or 0)
     except Exception:  # noqa: BLE001
-        pass
+        pass  # noqa: SILENT_DEGRADE
     if written <= 0:
         try:
             from agent.core.story.chapters import list_chapter_files
 
             written = len(list_chapter_files(project_dir))
         except Exception:  # noqa: BLE001
-            written = 0
+            written = 0  # noqa: SILENT_DEGRADE
 
     items = []
     for c in chapters:

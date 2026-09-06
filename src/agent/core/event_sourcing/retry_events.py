@@ -45,7 +45,7 @@ def _build_on_retry(func_name: str, max_attempts: int) -> RetryCallback:
                     },
                 )
         except Exception:
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     return _on_retry
 

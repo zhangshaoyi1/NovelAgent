@@ -7,6 +7,7 @@ from typing import Any
 
 from agent.core.registry.genre_pack import first_genre, first_genre_label
 from agent.core.story.volume import estimate_chapters
+from agent.core.infra.degrade import degrade
 import frontmatter
 
 from agent.core.registry.genre_pack import GenrePackRegistry
@@ -96,7 +97,8 @@ class M5ContextMixin:
                 rag_context = retriever.retrieve_multi(
                     guard_queries, top_k_each=5, max_total=12
                 ) or retriever.retrieve(main_query, top_k=5)
-            except Exception:  # noqa: BLE001 - RAG 失败降级为空，不影响写章
+            except Exception as e:  # noqa: BLE001 - RAG 失败降级为空，不影响写章
+                degrade("m5.context.rag", "RAG 语义召回失败，降级为空（影响章节一致性素材）", e)
                 rag_context = []
 
         # C：追读力账本中的开放债务（缺账本则空，不阻断写章）
@@ -119,7 +121,8 @@ class M5ContextMixin:
                 for d in all_debts
                 if d.kind == "reader_feedback"  # G12：kind 字面量扩展（结构零改动）
             ]
-        except Exception:  # noqa: BLE001 - 账本读取失败降级为空
+        except Exception as e:  # noqa: BLE001 - 账本读取失败降级为空
+            degrade("m5.context.debts", "追读力账本读取失败，开放债务为空", e)
             open_debts = []
 
         # E：项目学习记忆（长期保留，注入生成 prompt；缺则空，不阻断写章）
@@ -141,7 +144,8 @@ class M5ContextMixin:
                 for x in capped
             ]
             learnings_text = format_learnings(capped)
-        except Exception:  # noqa: BLE001 - 学习记忆读取失败降级为空
+        except Exception as e:  # noqa: BLE001 - 学习记忆读取失败降级为空
+            degrade("m5.context.learnings", "学习记忆读取失败，降级为空（写作偏好记忆缺失）", e)
             learnings = []
             learnings_text = "（暂无已沉淀的写法记忆）"
 
@@ -165,7 +169,8 @@ class M5ContextMixin:
                     }
                     for lo in _proj.open_loops
                 ]
-        except Exception:  # noqa: BLE001 - 账本投影失败降级为空
+        except Exception as e:  # noqa: BLE001 - 账本投影失败降级为空
+            degrade("m5.context.continuity", "连续性账本投影失败，降级为空（写前一致性素材缺失）", e)
             continuity_projection = ""
             continuity_loops = []
 
@@ -177,7 +182,8 @@ class M5ContextMixin:
 
                 _script = load_payoff_script(self.project_dir, enabled=True)
                 _payoff_task, _emotion_target = chapter_payoff(_script, chapter_num)
-            except Exception:  # noqa: BLE001 - 剧本读取失败降级为空
+            except Exception as e:  # noqa: BLE001 - 剧本读取失败降级为空
+                degrade("m5.context.payoff", "爽点剧本/情绪目标读取失败，降级为空", e)
                 pass
 
         # ---- 细纲钩子设计（m3 chapter_hooks → subline.md「章节钩子设计」段；缺则空，不阻断）----
@@ -757,7 +763,7 @@ class M5ContextMixin:
                     found = True
                     break
                 except ValueError:
-                    continue
+                    continue  # noqa: SILENT_DEGRADE
             if not found:
                 self.console.print(
                     f"[yellow]⚠ 注入套路失败（{name}）：未在题材 {genres or ['(未声明)']} 中找到[/yellow]"

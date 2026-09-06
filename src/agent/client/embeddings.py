@@ -100,7 +100,7 @@ class OllamaEmbedding(EmbeddingProvider):
                     out.append([float(x) for x in embedding])
             except (urllib.error.URLError, OSError, ValueError, KeyError) as e:
                 # 单条失败不影响其它条；返回空向量，由调用方降级为 BM25-only
-                out.append([])
+                out.append([])  # noqa: SILENT_DEGRADE
         return out
 
 

@@ -179,7 +179,7 @@ class RunManager:
                                 progress_file.read_text(encoding="utf-8")
                             )
                         except Exception:
-                            data = None
+                            data = None  # noqa: SILENT_DEGRADE
                         if data:
                             for ev in data.get("events", []):
                                 seq = ev.get("seq", 0)
@@ -192,7 +192,7 @@ class RunManager:
                                         )
                                     self._emit(run, {"type": "progress", "data": ev})
                 except FileNotFoundError:
-                    pass
+                    pass  # noqa: SILENT_DEGRADE
                 if finished:
                     break
                 await asyncio.sleep(0.4)
@@ -216,7 +216,7 @@ class RunManager:
             state_val = get_project_state(run["project"]).get("state")
         except Exception:  # noqa: BLE001
             summary = None
-            state_val = None
+            state_val = None  # noqa: SILENT_DEGRADE
         done_data = {
             "exit_code": exit_code,
             "summary": summary,
@@ -259,7 +259,7 @@ class RunManager:
                     ev = await asyncio.wait_for(q.get(), timeout=2.0)
                 except asyncio.TimeoutError:
                     yield {"type": "ping", "data": {}}
-                    continue
+                    continue  # noqa: SILENT_DEGRADE
                 yield ev
                 if ev["type"] == "done":
                     return

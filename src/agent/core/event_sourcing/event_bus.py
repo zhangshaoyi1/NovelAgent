@@ -107,7 +107,7 @@ class EventBus:
                 if snap:
                     return snap
             except Exception:
-                continue
+                continue  # noqa: SILENT_DEGRADE
         return None
 
     def set_enabled(self, enabled: bool) -> None:

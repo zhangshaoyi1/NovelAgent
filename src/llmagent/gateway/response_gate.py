@@ -49,7 +49,7 @@ class ResponseGate:
             json.loads(text)
             return text
         except json.JSONDecodeError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
         # 提取花括号内容
         brace_match = re.search(r"\{.*\}", text, re.DOTALL)
@@ -59,7 +59,7 @@ class ResponseGate:
                 json.loads(candidate)
                 return candidate
             except json.JSONDecodeError:
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
         # 提取方括号内容
         bracket_match = re.search(r"\[.*\]", text, re.DOTALL)
@@ -69,7 +69,7 @@ class ResponseGate:
                 json.loads(candidate)
                 return candidate
             except json.JSONDecodeError:
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
         return text  # 无法修复，原样返回
 

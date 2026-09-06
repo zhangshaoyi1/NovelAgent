@@ -406,7 +406,7 @@ class Guardrails:
             try:
                 parsed = json.loads(text)
             except Exception:  # noqa: BLE001
-                parsed = None
+                parsed = None  # noqa: SILENT_DEGRADE
             if parsed is not None:
                 schema_res = self.check_schema(parsed, required_fields)
                 result.violations.extend(schema_res.violations)
@@ -806,7 +806,7 @@ def save_fingerprints(
         )
         tmp.replace(p)
     except Exception:  # noqa: BLE001 - 持久化失败不影响主流程
-        pass
+        pass  # noqa: SILENT_DEGRADE
 
 
 # ----------------------------------------------------------------------
@@ -832,7 +832,7 @@ def fullbook_dup_scan(project_dir: str | Path) -> None:
             try:
                 text = f.read_text(encoding="utf-8")
             except Exception:  # noqa: BLE001
-                continue
+                continue  # noqa: SILENT_DEGRADE
             ch_num = f.stem
             hits = gr._check_dup(text)
             if hits:

@@ -168,7 +168,7 @@ class ForesightStore:
             )
             tmp.replace(self.file)
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def upsert(self, thread: ForesightThread) -> None:
         threads = [t for t in self.load() if t.fid != thread.fid]

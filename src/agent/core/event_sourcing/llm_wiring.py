@@ -45,7 +45,7 @@ def wire_llm_event_hook(project_dir: str) -> None:
                     context={"origin": origin},
                 )
             except Exception:  # noqa: BLE001 - 事件转发失败不阻断调用
-                pass
+                pass  # noqa: SILENT_DEGRADE
         return _hook
 
     set_llm_event_hook(_hook_factory("LLMClient"))
@@ -67,7 +67,7 @@ def _usage_hook_factory():
                 context={"origin": "Gateway"},
             )
         except Exception:  # noqa: BLE001 - 事件转发失败不阻断调用
-            pass
+            pass  # noqa: SILENT_DEGRADE
         # 2) LLMOps TraceStore（未 set_tracer 时为 NullTracer，零开销跳过）
         try:
             from agent.core.llmops.trace import NullTracer, TraceSpan, get_tracer
@@ -89,6 +89,6 @@ def _usage_hook_factory():
                 )
             )
         except Exception:  # noqa: BLE001 - 追踪失败不阻断调用
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     return _hook

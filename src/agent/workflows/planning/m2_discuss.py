@@ -38,6 +38,8 @@ from agent.base.validation import ValidationSpec
 EXIT_COMMANDS = {"/next", "/done", "/exit", "/quit"}
 # 最大默认轮次
 DEFAULT_MAX_ROUNDS = 10
+# 注入讨论 prompt 的 world.md 正文上限（字符），控制上下文长度
+_MAX_WORLD_CHARS = 6000
 
 
 @dataclass
@@ -195,6 +197,8 @@ class M2DiscussWorkflow:
             "genre_label": first_genre_label(metadata),
             "story_core": story_synopsis or metadata.get("title", ""),
             "style": str(metadata.get("style", {})),
+            # 世界观正文（含等级/力量体系等已定设定），讨论必须以其为准
+            "world_content": content[:_MAX_WORLD_CHARS],
         }
 
     def _llm_respond(
@@ -204,6 +208,7 @@ class M2DiscussWorkflow:
         user_prompt = pm.get("m2.discuss").render_user(
             title=world_info["title"],
             story_core=world_info["story_core"],
+            world_content=world_info["world_content"],
             user_input=self._format_history_for_prompt(history),
         )
         # A 系列：问答面板确定的作者偏好注入首轮 prompt（后续轮次沿用上下文）

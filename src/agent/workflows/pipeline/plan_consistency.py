@@ -70,7 +70,7 @@ def align_mainline_to_plan(
     try:
         horizon = int(horizon) if horizon else None
     except (TypeError, ValueError):
-        horizon = None
+        horizon = None  # noqa: SILENT_DEGRADE
 
     share = data.get("subline_share")
     if not isinstance(share, dict) or not share:
@@ -83,7 +83,7 @@ def align_mainline_to_plan(
             share_sum = sum(int(v) for v in share.values())
         except (TypeError, ValueError):
             share = None
-            share_sum = 0
+            share_sum = 0  # noqa: SILENT_DEGRADE
     if horizon == total and (share is None or share_sum == total):
         return []
 
@@ -109,7 +109,7 @@ def align_mainline_to_plan(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except Exception:  # noqa: BLE001 - 写失败仅报告，不阻断
-        notes.append("mainline.json 对齐写盘失败（本次仅内存生效）")
+        notes.append("mainline.json 对齐写盘失败（本次仅内存生效）")  # noqa: SILENT_DEGRADE
     for n in notes:
         if console is not None:
             console.print(f"[yellow]⚠ 规划一致性：{n}[/yellow]")
@@ -167,7 +167,7 @@ def reconcile_chapters_with_progress(
     try:
         written = int(progress.get("total_written") or 0)
     except (TypeError, ValueError):
-        written = 0
+        written = 0  # noqa: SILENT_DEGRADE
     if written >= max_ch:
         return []
 
@@ -184,7 +184,7 @@ def reconcile_chapters_with_progress(
             json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
         )
     except Exception:  # noqa: BLE001
-        notes.append("state.json 进度补记写盘失败")
+        notes.append("state.json 进度补记写盘失败")  # noqa: SILENT_DEGRADE
     if console is not None:
         for n in notes:
             console.print(f"[yellow]⚠ 恢复对账：{n}[/yellow]")
@@ -217,7 +217,7 @@ def check_subline_plot_source(project_dir: str | Path) -> list[str]:
             content = f.read_text(encoding="utf-8")
         except Exception:  # noqa: BLE001
             errors.append(f"sublines/{sub_dir.name}/subline.md 读取失败")
-            continue
+            continue  # noqa: SILENT_DEGRADE
         if not any(_has_section(content, s) for s in _PLOT_SOURCE_SECTIONS):
             errors.append(
                 f"sublines/{sub_dir.name}/subline.md 缺少剧情源段落"

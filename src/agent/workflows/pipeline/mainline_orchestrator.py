@@ -128,7 +128,7 @@ class MainlineOrchestrator:
             if isinstance(data, dict):
                 return data
         except Exception:  # noqa: BLE001 - 读失败降级为空
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return {"subline_share": {}, "phase_ratio": {}, "horizon_chapters": None}
 
     def save_plan(self, plan: dict[str, Any]) -> None:
@@ -226,7 +226,7 @@ class MainlineOrchestrator:
 
             sublines = SettingManager(self.project_dir).list_sublines()
         except Exception:  # noqa: BLE001 - 列不出支线时退回单线份额
-            sublines = None
+            sublines = None  # noqa: SILENT_DEGRADE
         if not sublines or subline_id not in sublines:
             sublines = [subline_id]
         cumulative = 0

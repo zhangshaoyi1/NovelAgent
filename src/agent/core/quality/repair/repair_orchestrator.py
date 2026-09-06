@@ -278,7 +278,7 @@ class RepairOrchestrator:
                 result.summary.llm_failures.append(
                     {"chapter": chapter, "error": str(e)}
                 )
-                self.console.print(f"[yellow]⚠ 第{chapter}章重写失败：{e}[/yellow]")
+                self.console.print(f"[yellow]⚠ 第{chapter}章重写失败：{e}[/yellow]")  # noqa: SILENT_DEGRADE
 
         return result
 

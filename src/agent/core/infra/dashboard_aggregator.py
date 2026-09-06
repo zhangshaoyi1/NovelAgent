@@ -215,7 +215,7 @@ class DashboardAggregator:
             try:
                 panel.node_count = self._count_table_rows(node_section)
             except Exception:  # noqa: BLE001 - 统计失败降级为 null
-                panel.node_count = None
+                panel.node_count = None  # noqa: SILENT_DEGRADE
 
         # 边计数：## 边（关系） 表数据行（**排除** ## 归档边）
         edge_section = self._section_after(text, "边（关系）")
@@ -223,7 +223,7 @@ class DashboardAggregator:
             try:
                 panel.edge_count = self._count_table_rows(edge_section)
             except Exception:  # noqa: BLE001
-                panel.edge_count = None
+                panel.edge_count = None  # noqa: SILENT_DEGRADE
 
         return panel
 
@@ -241,7 +241,7 @@ class DashboardAggregator:
         try:
             toc = re.findall(r"^##\s+(N\d+\s*·\s*.+)$", text, re.MULTILINE)
         except Exception:  # noqa: BLE001
-            toc = []
+            toc = []  # noqa: SILENT_DEGRADE
         return RoutePanel(available=True, markdown=text, toc=toc)
 
     # ----------------------------------------------------------
@@ -324,13 +324,13 @@ class DashboardAggregator:
             try:
                 files = sorted(chapters_dir.glob("ch*.md"))
             except OSError:
-                files = []
+                files = []  # noqa: SILENT_DEGRADE
             for f in files:
                 try:
                     post = frontmatter.load(f)
                     meta = post.metadata
                 except Exception:  # noqa: BLE001, S112 - 单章解析失败跳过，不中断聚合
-                    continue
+                    continue  # noqa: SILENT_DEGRADE
                 num = meta.get("chapter")
                 if not isinstance(num, int):
                     m = re.search(r"ch(\d+)", f.name)

@@ -60,7 +60,7 @@ def _notify_llm_event(payload: dict[str, Any]) -> None:
         try:
             hook(payload)
         except Exception:  # noqa: BLE001 - 事件转发失败绝不阻断 LLM 调用
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
 
 class LLMClient:
@@ -362,7 +362,7 @@ class LLMClient:
             except Exception as e2:
                 raise StructuredOutputError(
                     f"结构化输出失败（含回退）: {e} | {e2}"
-                ) from e2
+                ) from e2  # noqa: SILENT_DEGRADE
 
     async def chat_structured_async(
         self,
@@ -408,7 +408,7 @@ class LLMClient:
                 if provider is not None:
                     return provider.embed(texts)
             except Exception:
-                pass
+                pass  # noqa: SILENT_DEGRADE
             return []
 
 

@@ -50,7 +50,7 @@ class PlotProgressChecker(SupervisorPlugin):
             try:
                 text = cf.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
-                continue
+                continue  # noqa: SILENT_DEGRADE
 
             progress_count = sum(text.count(w) for w in self.PROGRESS_KEYWORDS)
             filler_count = sum(text.count(w) for w in self.FILLER_KEYWORDS)
@@ -101,7 +101,7 @@ class LanguageGuardChecker(SupervisorPlugin):
             try:
                 text = cf.read_text(encoding="utf-8")
             except (OSError, UnicodeDecodeError):
-                continue
+                continue  # noqa: SILENT_DEGRADE
 
             # 提取章节号
             chapter_num = self._extract_chapter_num(cf.stem)
@@ -245,7 +245,7 @@ class StyleDriftChecker(SupervisorPlugin):
                         text = cf.read_text(encoding="utf-8")
                         count += sum(text.count(k) for k in keywords)
                     except (OSError, UnicodeDecodeError):
-                        continue
+                        continue  # noqa: SILENT_DEGRADE
                 category_scores[sub_name] = count
             profile[category] = category_scores
         return profile
@@ -357,7 +357,7 @@ class TropePayoffChecker(SupervisorPlugin):
                 if chapters:
                     return len(chapters) * 2  # 每个大纲章节约 2 个实际章节
             except (OSError, UnicodeDecodeError):
-                pass
+                pass  # noqa: SILENT_DEGRADE
         return 100  # 默认 100 章
 
     def _get_current_chapter(self, project_path: Path) -> int:

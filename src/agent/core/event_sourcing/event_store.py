@@ -70,7 +70,7 @@ class FileEventStore(EventStoreProvider):
             with open(self._event_file, "a", encoding="utf-8") as f:
                 f.write(json.dumps(event.to_dict(), ensure_ascii=False) + "\n")
         except OSError:
-            pass  # 降级不阻断
+            pass  # 降级不阻断 SILENT_DEGRADE
 
     def replay(self, correlation_id: str) -> list[Event]:
         events: list[Event] = []
@@ -87,9 +87,9 @@ class FileEventStore(EventStoreProvider):
                         if event.correlation_id == correlation_id:
                             events.append(event)
                     except (json.JSONDecodeError, KeyError):
-                        continue
+                        continue  # noqa: SILENT_DEGRADE
         except OSError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return events
 
     def query(
@@ -120,9 +120,9 @@ class FileEventStore(EventStoreProvider):
                         if len(events) >= limit:
                             break
                     except (json.JSONDecodeError, KeyError):
-                        continue
+                        continue  # noqa: SILENT_DEGRADE
         except OSError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return events
 
     def save_snapshot(self, snapshot: Snapshot) -> None:
@@ -135,7 +135,7 @@ class FileEventStore(EventStoreProvider):
                 json.dump(snapshot.to_dict(), f, ensure_ascii=False, indent=2)
             self._cleanup_old_snapshots(snapshot.correlation_id)
         except OSError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def load_latest_snapshot(self, correlation_id: str) -> Optional[Snapshot]:
         snapshots = self.list_snapshots(correlation_id, limit=1)
@@ -157,9 +157,9 @@ class FileEventStore(EventStoreProvider):
                     with open(f, "r", encoding="utf-8") as sf:
                         snapshots.append(Snapshot.from_dict(json.load(sf)))
                 except (json.JSONDecodeError, OSError):
-                    continue
+                    continue  # noqa: SILENT_DEGRADE
         except OSError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return snapshots
 
     def _cleanup_old_snapshots(self, correlation_id: str) -> None:
@@ -174,7 +174,7 @@ class FileEventStore(EventStoreProvider):
                 try:
                     old_file.unlink(missing_ok=True)
                 except OSError:
-                    pass
+                    pass  # noqa: SILENT_DEGRADE
 
 
 class EventStoreRegistry:

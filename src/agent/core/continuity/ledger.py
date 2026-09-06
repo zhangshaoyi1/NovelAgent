@@ -54,9 +54,9 @@ class ContinuityLedgerStore:
                 try:
                     self.file.replace(bak)
                 except Exception:
-                    pass
+                    pass  # noqa: SILENT_DEGRADE
         except Exception:  # noqa: BLE001 - 读失败降级空账本
-            self.ledger = ContinuityLedger()
+            self.ledger = ContinuityLedger()  # noqa: SILENT_DEGRADE
         return self.ledger
 
     def save(self) -> None:
@@ -74,7 +74,7 @@ class ContinuityLedgerStore:
             )
             tmp.replace(self.file)
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     # ---------------- 归档 ----------------
     def commit(

@@ -156,7 +156,7 @@ class LocalVectorStore(VectorStore):
                         np.array(vecs, dtype=float),
                     )
             except Exception:  # noqa: BLE001
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
     def load(self) -> None:
         if not self.file.exists():

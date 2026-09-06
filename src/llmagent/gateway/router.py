@@ -45,7 +45,7 @@ class HintCalibrator:
                     self._persist_path.read_text(encoding="utf-8")
                 )
             except Exception:  # noqa: BLE001 - 校准数据损坏时归零，不阻断路由
-                self._history = {}
+                self._history = {}  # noqa: SILENT_DEGRADE
 
     def record(
         self,
@@ -70,7 +70,7 @@ class HintCalibrator:
                         encoding="utf-8",
                     )
                 except Exception:  # noqa: BLE001 - 落盘失败不影响本次调用
-                    pass
+                    pass  # noqa: SILENT_DEGRADE
 
     def suggest(
         self,
@@ -271,7 +271,7 @@ class ComplexityRouter:
         try:
             self._calibrator.record(label, req.hint.complexity, int(resp.usage_output))
         except Exception:  # noqa: BLE001 - 校准记录失败不影响主链路
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     @staticmethod
     def _match_explicit(

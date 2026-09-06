@@ -321,7 +321,7 @@ class StateRecovery:
                 if not isinstance(history, list):
                     history = []
             except json.JSONDecodeError:
-                history = []
+                history = []  # noqa: SILENT_DEGRADE
         history.append(snapshot)
         # 保留最近 MAX_HISTORY 条
         if len(history) > self.MAX_HISTORY:

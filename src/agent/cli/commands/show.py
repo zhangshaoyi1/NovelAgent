@@ -102,7 +102,7 @@ def _extract_title(raw: str) -> str:
             post = frontmatter.loads(raw)
             return str(post.metadata.get("title", "") or "")
     except Exception:  # noqa: BLE001 - 解析失败回退空串
-        pass
+        pass  # noqa: SILENT_DEGRADE
     return ""
 
 

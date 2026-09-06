@@ -127,7 +127,7 @@ def run_compose(
             try:
                 fullbook_scan(project_dir)
             except Exception as e:  # noqa: BLE001 - 扫描异常非致命
-                print(f"⚠ 全量段落去重扫描异常（非致命）：{e}")
+                print(f"⚠ 全量段落去重扫描异常（非致命）：{e}")  # noqa: SILENT_DEGRADE
 
         print("✅ 体检完成，报告见项目目录（evaluate / foreshadow_report.md / dup_scan_report.md）。")
 

@@ -617,7 +617,7 @@ def sync_foreshadow_states(
         try:
             watermark = int(_json.loads(wm_file.read_text(encoding="utf-8")).get("scanned_to", 0))
         except Exception:  # noqa: BLE001 - 水印损坏则全量重扫
-            watermark = 0
+            watermark = 0  # noqa: SILENT_DEGRADE
 
     text = foreshadow_file.read_text(encoding="utf-8")
     lines = text.splitlines()
@@ -654,7 +654,7 @@ def sync_foreshadow_states(
             try:
                 body = re.sub(r"\s+", "", f.read_text(encoding="utf-8"))
             except Exception:  # noqa: BLE001 - 单文件读失败跳过
-                continue
+                continue  # noqa: SILENT_DEGRADE
             for kw in kws:
                 if kw in body:
                     return ch
@@ -696,7 +696,7 @@ def sync_foreshadow_states(
             changed = True
         except Exception:  # noqa: BLE001 - 写失败仅报告
             if console is not None:
-                console.print("[yellow]⚠ foreshadows.md 对账写盘失败[/yellow]")
+                console.print("[yellow]⚠ foreshadows.md 对账写盘失败[/yellow]")  # noqa: SILENT_DEGRADE
 
     if watermark < max_ch or changed:
         try:
@@ -705,7 +705,7 @@ def sync_foreshadow_states(
                 _json.dumps({"scanned_to": max_ch}, ensure_ascii=False), encoding="utf-8"
             )
         except Exception:  # noqa: BLE001 - 水印写失败下次重扫即可
-            pass
+            pass  # noqa: SILENT_DEGRADE
     if (planted or recovered) and console is not None:
         console.print(
             f"[yellow]⚠ 伏笔对账：新埋 {len(planted)} 条（{', '.join(planted) or '无'}），"

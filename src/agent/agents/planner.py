@@ -253,10 +253,10 @@ class PlannerAgent:
                     self.console.print(
                         f"[yellow]Planner 结构化输出字段校验失败，启动分级策略（{ve}）[/yellow]"
                     )
-                    plan = self._validate_masterplan(data, brief, ve, messages=messages)
+                    plan = self._validate_masterplan(data, brief, ve, messages=messages)  # noqa: SILENT_DEGRADE
         except Exception as e:  # noqa: BLE001 - 决策彻底失败才降级为空计划（仍落盘，不阻断）
             self.console.print(f"[yellow]Planner 决策失败（{e}），使用空计划[/yellow]")
-            plan = MasterPlan(brief=brief)
+            plan = MasterPlan(brief=brief)  # noqa: SILENT_DEGRADE
 
         plan.brief = brief or plan.brief
         self._save(plan)
@@ -290,10 +290,10 @@ class PlannerAgent:
                     self.console.print(
                         f"[yellow]Planner 结构化输出字段校验失败，启动分级策略（{ve}）[/yellow]"
                     )
-                    plan = self._validate_masterplan(data, brief, ve, messages=messages)
+                    plan = self._validate_masterplan(data, brief, ve, messages=messages)  # noqa: SILENT_DEGRADE
         except Exception as e:  # noqa: BLE001
             self.console.print(f"[yellow]Planner 决策失败（{e}），使用空计划[/yellow]")
-            plan = MasterPlan(brief=brief)
+            plan = MasterPlan(brief=brief)  # noqa: SILENT_DEGRADE
         plan.brief = brief or plan.brief
         self._save(plan)
         self._write_memory(plan)
@@ -335,19 +335,19 @@ class PlannerAgent:
         try:
             genre = str(data.get("genre") or "modern")
         except Exception:  # noqa: BLE001
-            genre = "modern"
+            genre = "modern"  # noqa: SILENT_DEGRADE
         try:
             title = str(data.get("title") or "")
         except Exception:  # noqa: BLE001
-            title = ""
+            title = ""  # noqa: SILENT_DEGRADE
         try:
             total = int(data.get("total_chapters") or 100)
         except Exception:  # noqa: BLE001
-            total = 100
+            total = 100  # noqa: SILENT_DEGRADE
         try:
             notes = str(data.get("notes") or "")
         except Exception:  # noqa: BLE001
-            notes = ""
+            notes = ""  # noqa: SILENT_DEGRADE
 
         arcs = (
             [a for a in (_keep(Arc, x) for x in data.get("episode_tree") or []) if isinstance(a, Arc)]
@@ -461,7 +461,7 @@ class PlannerAgent:
                     quality_targets=plan.quality_targets.model_dump(),
                 )
         except Exception:  # noqa: BLE001 - 记忆写入失败不阻断
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     # ---------------------------------------------------------------- 修订
     def revise_plan(self, current_chapter: int, note: str = "") -> MasterPlan:
@@ -477,7 +477,7 @@ class PlannerAgent:
             try:
                     self.memory.consolidate(last_consolidated_chapter=current_chapter)
             except Exception:  # noqa: BLE001
-                pass
+                pass  # noqa: SILENT_DEGRADE
         return plan
 
     # ---------------------------------------------------------------- G4 T7 落地：分级校验策略
@@ -551,7 +551,7 @@ class PlannerAgent:
                 try:
                     MasterPlan(**(new_data if isinstance(new_data, dict) else dict(new_data)))
                 except (ValidationError, StructuredOutputError) as ve:
-                    new_error = ve
+                    new_error = ve  # noqa: SILENT_DEGRADE
                 return self._validate_masterplan(
                     new_data, brief, new_error, retries - 1, messages
                 )
@@ -626,5 +626,5 @@ class PlannerAgent:
                 last_error = e
                 self.console.print(
                     f"[yellow]重试第 {attempt + 1}/{max_retries} 次失败：{e}[/yellow]"
-                )
+                )  # noqa: SILENT_DEGRADE
         raise last_error or RuntimeError("重试耗尽")

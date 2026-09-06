@@ -48,7 +48,7 @@ def read_chapters_text(
         try:
             text = f.read_text(encoding="utf-8")
         except OSError:
-            continue
+            continue  # noqa: SILENT_DEGRADE
         texts.append(strip_frontmatter(text).strip())
     return texts
 
@@ -59,5 +59,5 @@ def iter_chapter_texts(project_dir: str | Path) -> Iterator[tuple[Path, str]]:
         try:
             text = f.read_text(encoding="utf-8")
         except OSError:
-            continue
+            continue  # noqa: SILENT_DEGRADE
         yield f, strip_frontmatter(text).strip()

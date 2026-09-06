@@ -28,7 +28,7 @@ def foreshadow_report(
     try:
         sync_foreshadow_states(project_path)
     except Exception:  # noqa: BLE001 - 对账失败不阻断报表
-        pass
+        pass  # noqa: SILENT_DEGRADE
 
     project_path = Path(project_dir)
     enforce_gate(str(project_path), "foreshadow_report")

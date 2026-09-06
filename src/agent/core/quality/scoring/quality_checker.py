@@ -491,7 +491,7 @@ class QualityChecker:
             try:
                 rule_issues = rule.check(chapter_text, ctx, getattr(self, "llm", None))
             except Exception:  # noqa: BLE001 - 单条规则异常不影响整体校验
-                continue
+                continue  # noqa: SILENT_DEGRADE
             if rule_issues:
                 issues.extend(rule_issues)
         passed = not any(i.severity == Severity.BLOCK for i in issues)

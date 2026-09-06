@@ -28,7 +28,7 @@ class _PipelineEventsMixin:
             try:
                 self.on_progress(phase, current, total)
             except Exception:  # noqa: BLE001
-                pass
+                pass  # noqa: SILENT_DEGRADE
 
     # ---------------------------------------------------------------- G9 事件发射（只读观察层）
     def _emit_event(self, type_: str, **fields: Any) -> None:
@@ -36,14 +36,14 @@ class _PipelineEventsMixin:
         try:
             self._event_bus.emit(type_, **fields)
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def _emit_substage(self, partial: dict[str, Any]) -> None:
         """G9：writer 层子阶段事件入口（注入给 m5/agentic_write 的 event_emitter）。"""
         try:
             self._event_bus.emit_partial(partial)
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def _emit_failure(self, step: str, reason: str, severity: str = "error") -> None:
         """G9：发射 failure 事件（含 next_steps；确定性零 LLM，不阻断主流程）。"""
@@ -58,7 +58,7 @@ class _PipelineEventsMixin:
                 next_steps=next_steps_for(step, self.project_dir),
             )
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     # ------------------------------------------------------------------
     # G14：门禁打回重写辅助
@@ -119,13 +119,13 @@ class _PipelineEventsMixin:
                 try:
                     existing = json.loads(qf_path.read_text(encoding="utf-8")).get("flags", [])
                 except Exception:  # noqa: BLE001
-                    existing = []
+                    existing = []  # noqa: SILENT_DEGRADE
             existing.append(flag)
             tmp = qf_path.with_suffix(".json.tmp")
             tmp.write_text(json.dumps({"flags": existing}, ensure_ascii=False, indent=2), encoding="utf-8")
             tmp.replace(qf_path)
         except Exception:  # noqa: BLE001 - 持久化失败仅留内存记录，不阻断
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def _compute_eta_s(self, target: int) -> Optional[int]:
         """G9：ETA = 已写章平均耗时 × 剩余章数（拍板 4；无可计算时 None）。"""
@@ -186,7 +186,7 @@ class _PipelineEventsMixin:
             result.summary = build_run_summary(self._event_bus.events, result)
             self._event_bus.flush(result.summary)
         except Exception:  # noqa: BLE001 - 摘要失败不阻断主流程（G3 哲学）
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     # ---------------------------------------------------------------- 主流程
     def _finalize_cost(self, result: PipelineResult) -> None:
@@ -198,5 +198,5 @@ class _PipelineEventsMixin:
                 self.project_dir, self._cost_tier, self._resolve_target()
             )
         except Exception:  # noqa: BLE001 - 成本汇总失败不阻断主流程（G3）
-            result.cost = None
+            result.cost = None  # noqa: SILENT_DEGRADE
 

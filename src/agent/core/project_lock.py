@@ -84,9 +84,9 @@ def acquire_project_lock(project_dir: Path | str, command: str = "autowrite") ->
             try:
                 lock_path.unlink()
             except OSError:
-                pass
+                pass  # noqa: SILENT_DEGRADE
             time.sleep(0.05)
-            continue
+            continue  # noqa: SILENT_DEGRADE
         else:
             with os.fdopen(fd, "w", encoding="utf-8") as f:
                 f.write(payload)
@@ -120,4 +120,4 @@ def _release_lock(lock_path: Path) -> None:
         if int(info.get("pid") or 0) == os.getpid():
             lock_path.unlink()
     except OSError:
-        pass
+        pass  # noqa: SILENT_DEGRADE

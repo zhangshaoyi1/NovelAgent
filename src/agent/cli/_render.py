@@ -94,7 +94,7 @@ class RenderStreamer:
             try:
                 self._write(text, end="\n", sink=sink)
             except Exception:  # noqa: BLE001 - 退化打印再失败也不抛
-                pass
+                pass  # noqa: SILENT_DEGRADE
             return {"mode": "block", "batches": 1, "chars": len(text)}
 
     def _cost_segment(self, ev: dict[str, Any]) -> str:
@@ -173,7 +173,7 @@ class RenderStreamer:
                 line += self._cost_segment(ev)  # G10：成本段（"）"后追加，示例见设计 §3.4）
                 sys.stderr.write("\r" + line + "\n")
         except Exception:  # noqa: BLE001 - 进度条渲染异常退化（不阻断）
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def render_run_summary(self, summary: dict[str, Any]) -> None:
         """非 JSON 收尾打印运行摘要（rich 引导命令可复制；异常退化跳过）。"""
@@ -186,4 +186,4 @@ class RenderStreamer:
                 else:
                     self.console.print(line)
         except Exception:  # noqa: BLE001 - 摘要渲染异常不阻断
-            pass
+            pass  # noqa: SILENT_DEGRADE

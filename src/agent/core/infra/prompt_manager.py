@@ -133,7 +133,7 @@ class PromptDef:
         try:
             self._user_j2 = _ENV.from_string(self.user_template) if self.user_template else None  # type: ignore[assignment]
         except Exception:
-            self._user_j2 = None
+            self._user_j2 = None  # noqa: SILENT_DEGRADE
 
     def render_system(self, **ctx: Any) -> str:
         if not self.system:
@@ -269,6 +269,18 @@ class PromptManager:
         loader = LEGACY_MAP.get(name)
         if loader is None:
             return None
+        # F-1/F-3：legacy 兜底命中即告警（使用即告警，限期移除）
+        try:
+            from agent.core.infra.degrade import degrade
+
+            degrade(
+                "prompt_manager.legacy",
+                f"提示词 {name} 命中 LEGACY_MAP 兜底（md 单一真源缺失，双源漂移风险）",
+                event="degrade.legacy_prompt",
+                payload={"prompt_name": name},
+            )
+        except Exception:  # noqa: BLE001, SILENT_DEGRADE - 告警本身失败不影响回退
+            pass  # noqa: SILENT_DEGRADE
         system, user = loader()
         return PromptDef(
             name=name,
@@ -307,9 +319,9 @@ class PromptManager:
                 try:
                     out[str(p.relative_to(self.root))] = p.stat().st_mtime
                 except OSError:
-                    continue
+                    continue  # noqa: SILENT_DEGRADE
         except OSError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return out
 
     def _watch_loop(self) -> None:
@@ -353,16 +365,16 @@ class PromptManager:
             try:
                 rel = p.relative_to(self.root)
             except ValueError:
-                continue
+                continue  # noqa: SILENT_DEGRADE
             name = ".".join(rel.with_suffix("").parts)
             try:
                 pd = self._load_file(p, name)
             except Exception:  # noqa: BLE001 - 单文件解析失败跳过，不影响其余
-                continue
+                continue  # noqa: SILENT_DEGRADE
             try:
                 mtime = p.stat().st_mtime
             except OSError:
-                mtime = 0.0
+                mtime = 0.0  # noqa: SILENT_DEGRADE
             rows.append(
                 {
                     "name": name,

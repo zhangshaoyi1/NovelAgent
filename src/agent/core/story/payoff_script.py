@@ -146,5 +146,5 @@ def chapter_payoff(script: dict[str, Any], chapter: int) -> tuple[str, str]:
                 emotion_target = f"情绪目标：{emo}（张力 {t}/5）" if emo else ""
                 return payoff_task, emotion_target
     except Exception:  # noqa: BLE001 - 剧本解析失败降级为空
-        pass
+        pass  # noqa: SILENT_DEGRADE
     return "", ""

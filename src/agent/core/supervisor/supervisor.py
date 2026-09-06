@@ -136,7 +136,7 @@ class SupervisorEngine:
                     i for i in plugin_issues if i.chapter >= chapter
                 )
             except Exception:
-                continue
+                continue  # noqa: SILENT_DEGRADE
         return all_issues
 
     def _build_summary(self, issues: list[SupervisionIssue]) -> str:

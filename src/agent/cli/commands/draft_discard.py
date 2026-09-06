@@ -36,7 +36,7 @@ def draft_discard(
                 console.print("[yellow]已取消[/yellow]")
                 return
         except (EOFError, OSError):
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     if dm.clear_draft():
         console.print("[bold green]✓ 草稿已丢弃[/bold green]")

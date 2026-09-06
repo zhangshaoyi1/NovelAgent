@@ -94,7 +94,7 @@ class TraceStore:
                 if line:
                     self._spans.append(TraceSpan.from_dict(json.loads(line)))
         except (json.JSONDecodeError, OSError):
-            self._spans = []
+            self._spans = []  # noqa: SILENT_DEGRADE
 
     def _persist(self) -> None:
         if self._file is None:

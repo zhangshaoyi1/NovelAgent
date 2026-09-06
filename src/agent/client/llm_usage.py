@@ -39,7 +39,7 @@ def notify_llm_usage(payload: dict[str, Any]) -> None:
     try:
         hook(dict(payload))
     except Exception:  # noqa: BLE001 - 埋点失败不阻断调用
-        pass
+        pass  # noqa: SILENT_DEGRADE
 
 
 __all__ = ["set_llm_usage_hook", "notify_llm_usage"]

@@ -38,7 +38,7 @@ def _rescue_disk_chapter(project_path: Path) -> dict | None:
         try:
             _wc = int(_wc)
         except (TypeError, ValueError):
-            _wc = 0
+            _wc = 0  # noqa: SILENT_DEGRADE
         _cjk = len(_re.findall(r"[一-鿿]", _post.content or ""))
         if _qp is not True or (_wc < 600 and _cjk < 600):
             return None
@@ -167,7 +167,7 @@ def write(
             _sm.load()
             _sm.clear_write_error()
         except Exception:  # noqa: BLE001 - 清错失败不阻断
-            pass
+            pass  # noqa: SILENT_DEGRADE
         if json_output:
             # subline / route_node 取自章节 frontmatter（_save_chapter 必写这两个字段）
             import frontmatter
@@ -218,7 +218,7 @@ def write(
             )
             _sm.bump_write_failure()
         except Exception:  # noqa: BLE001 - 记录失败不阻断
-            pass
+            pass  # noqa: SILENT_DEGRADE
         if json_output:
             emit_result(
                 {
@@ -253,7 +253,7 @@ def write(
                 _s2.load()
                 _s2.clear_write_error()
             except Exception:  # noqa: BLE001 - 清错失败不阻断
-                pass
+                pass  # noqa: SILENT_DEGRADE
             if json_output:
                 emit_result(_rescued, json_mode=True)
             else:
@@ -273,7 +273,7 @@ def write(
             _sm.record_write_error("write_failed", str(e))
             _sm.bump_write_failure()
         except Exception:  # noqa: BLE001 - 记录失败不阻断
-            pass
+            pass  # noqa: SILENT_DEGRADE
         if json_output:
             emit_result(
                 {

@@ -126,7 +126,7 @@ class _EvaluatorDimensionsMixin:
                 # 仅由 padding 子块报告标注（拍板 #5）
             except Exception as e:  # noqa: BLE001 - 确定性指标异常降级不阻断（G3）
                 if self.console is not None:
-                    self.console.print(f"[yellow]⚠ 防注水指标计算失败，跳过：{e}[/yellow]")
+                    self.console.print(f"[yellow]⚠ 防注水指标计算失败，跳过：{e}[/yellow]")  # noqa: SILENT_DEGRADE
 
         # ---- G5：迷爱看六维门禁（方案 A，并入 overall_pass）----
         self._last_appeal_report = None
@@ -166,7 +166,7 @@ class _EvaluatorDimensionsMixin:
                     ))
             except Exception as e:  # noqa: BLE001 - 六维评分异常降级不阻断（G3）
                 if self.console is not None:
-                    self.console.print(f"[yellow]⚠ 迷爱看门禁评分失败，跳过：{e}[/yellow]")
+                    self.console.print(f"[yellow]⚠ 迷爱看门禁评分失败，跳过：{e}[/yellow]")  # noqa: SILENT_DEGRADE
 
         # ---- G6：B4 黄金三章门禁（拍板 #1 方案 A，并入 overall_pass；离线短路仿 G5 修正点 A）----
         self._last_golden_report = None
@@ -206,7 +206,7 @@ class _EvaluatorDimensionsMixin:
                     ))
             except Exception as e:  # noqa: BLE001 - golden 评分异常降级不阻断（G3）
                 if self.console is not None:
-                    self.console.print(f"[yellow]⚠ 黄金三章门禁评分失败，跳过：{e}[/yellow]")
+                    self.console.print(f"[yellow]⚠ 黄金三章门禁评分失败，跳过：{e}[/yellow]")  # noqa: SILENT_DEGRADE
 
         # ---- G8（拍板 3）：主线推进 + 结局收敛验收维度（确定性 computed，并入 overall_pass）----
         if self.mainline_gate:
@@ -214,13 +214,13 @@ class _EvaluatorDimensionsMixin:
                 dims.append(self._dim_mainline_progress())
             except Exception as e:  # noqa: BLE001 - 降级不阻断（G3 哲学）
                 if self.console is not None:
-                    self.console.print(f"[yellow]⚠ mainline_progress 计算失败，跳过：{e}[/yellow]")
+                    self.console.print(f"[yellow]⚠ mainline_progress 计算失败，跳过：{e}[/yellow]")  # noqa: SILENT_DEGRADE
         if self.ending_gate:
             try:
                 dims.append(self._dim_ending_convergence())
             except Exception as e:  # noqa: BLE001
                 if self.console is not None:
-                    self.console.print(f"[yellow]⚠ ending_convergence 计算失败，跳过：{e}[/yellow]")
+                    self.console.print(f"[yellow]⚠ ending_convergence 计算失败，跳过：{e}[/yellow]")  # noqa: SILENT_DEGRADE
 
         failed = [d for d in dims if not d.passed]
         hard_failed = [d for d in failed if d.required]
@@ -358,7 +358,7 @@ class _EvaluatorDimensionsMixin:
             sm.load()
             progress = sm.progress or {}
         except Exception:  # noqa: BLE001
-            progress = {}
+            progress = {}  # noqa: SILENT_DEGRADE
         visited: set[str] = set(progress.get("mainline_visited", []) or [])
         # 双保险：章 frontmatter subline 反推
         try:
@@ -370,11 +370,11 @@ class _EvaluatorDimensionsMixin:
                     if sub:
                         visited.add(str(sub))
         except Exception:  # noqa: BLE001 - 反推失败不影响主记录
-            pass
+            pass  # noqa: SILENT_DEGRADE
         try:
             total = len(SettingManager(self.project_dir).list_sublines())
         except Exception:  # noqa: BLE001
-            total = 0
+            total = 0  # noqa: SILENT_DEGRADE
         if total > 0:
             visited &= set(SettingManager(self.project_dir).list_sublines())  # 只统计本书支线
         return visited, total
@@ -457,7 +457,7 @@ class _EvaluatorDimensionsMixin:
                 if data.get("total_chapters"):
                     return int(data["total_chapters"])
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE
         return 100
 
     def _g8_structural_escalation_detail(self, report: NovelHealthReport) -> str:

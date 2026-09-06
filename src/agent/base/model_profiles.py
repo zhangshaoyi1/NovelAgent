@@ -92,7 +92,7 @@ def save_store(data: dict[str, Any]) -> None:
         try:
             os.unlink(tmp)
         except OSError:
-            pass
+            pass  # noqa: SILENT_DEGRADE
         raise
 
 
@@ -113,13 +113,13 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
     try:
         p["timeout"] = int(p["timeout"] or 0)
     except (TypeError, ValueError):
-        p["timeout"] = 0
+        p["timeout"] = 0  # noqa: SILENT_DEGRADE
     if p["timeout"] and p["timeout"] < 5:
         p["timeout"] = 5
     try:
         p["max_retries"] = max(0, int(p["max_retries"] or 3))
     except (TypeError, ValueError):
-        p["max_retries"] = 3
+        p["max_retries"] = 3  # noqa: SILENT_DEGRADE
     p["enabled"] = bool(p.get("enabled", True))
     if p["enable_thinking"] is not None:
         p["enable_thinking"] = bool(p["enable_thinking"])

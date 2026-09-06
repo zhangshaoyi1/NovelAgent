@@ -45,7 +45,7 @@ def _atomic_write_progress(progress_file: Path, events: list[dict], summary: dic
         tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
         tmp.replace(progress_file)
     except Exception:  # noqa: BLE001 - 落盘失败不阻断（G3 哲学）
-        pass
+        pass  # noqa: SILENT_DEGRADE
 
 
 class ProgressEventBus:
@@ -84,7 +84,7 @@ class ProgressEventBus:
                 self.seq = max((int(e.get("seq", 0)) for e in self.events), default=0)
         except Exception:  # noqa: BLE001 - 读失败降级空列表
             self.events = []
-            self.seq = 0
+            self.seq = 0  # noqa: SILENT_DEGRADE
 
     def emit(self, type_: str, **fields: Any) -> None:
         """构造并发射一个事件（pipeline 主路径）。全 try/except 不阻断。"""
@@ -102,7 +102,7 @@ class ProgressEventBus:
                 try:
                     event.update(self.cost_provider() or {})
                 except Exception:  # noqa: BLE001 - provider 异常不丢事件
-                    pass
+                    pass  # noqa: SILENT_DEGRADE
             self.events.append(event)
             if self.on_event is not None:
                 self.on_event(event)  # 回调异常不外抛（下方 except 兜底）
@@ -127,9 +127,9 @@ class ProgressEventBus:
                         },
                     )
                 except Exception:  # noqa: BLE001 - 转发失败不阻断主流程
-                    pass
+                    pass  # noqa: SILENT_DEGRADE
         except Exception:  # noqa: BLE001 - 事件发射异常不阻断主流程（拍板 3）
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def emit_partial(self, partial: dict[str, Any]) -> None:
         """从 writer 层（m5/agentic_write）发射章内子阶段事件：partial 已含

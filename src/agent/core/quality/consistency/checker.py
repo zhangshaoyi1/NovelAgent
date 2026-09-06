@@ -167,7 +167,7 @@ def _load_character_index(project_dir: Path) -> dict[str, dict[str, Any]]:
         try:
             text = p.read_text(encoding="utf-8")
         except Exception:  # noqa: BLE001
-            continue
+            continue  # noqa: SILENT_DEGRADE
         # frontmatter name 优先，否则用文件名
         fm = re.search(r"name\s*[:=]\s*[\"']?([^\"'\n]+)", text)
         display = fm.group(1).strip().strip('"\'') if fm else p.stem
@@ -396,7 +396,7 @@ def _rule_relation_conflict(ctx: dict[str, Any], checker: "ConsistencyChecker") 
                 if len(parts) >= 3 and re.fullmatch(r"[A-Z]", parts[0]):
                     id_to_name[parts[0]] = parts[1]
     except Exception:  # noqa: BLE001
-        id_to_name = {}
+        id_to_name = {}  # noqa: SILENT_DEGRADE
 
     conflicts: list[Conflict] = []
     for name in dead_here:
@@ -569,7 +569,7 @@ class ConsistencyChecker:
             try:
                 rule_conflicts = rule.check(ctx, arbiter)
             except Exception:  # noqa: BLE001 - 单条规则异常不影响整体校验
-                continue
+                continue  # noqa: SILENT_DEGRADE
             if rule_conflicts:
                 conflicts.extend(rule_conflicts)
         passed = not any(c.severity == Severity.BLOCK for c in conflicts)

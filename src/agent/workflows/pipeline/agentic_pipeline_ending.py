@@ -45,7 +45,7 @@ class _PipelineEndingMixin:
                     _plan = json.loads(plan_file.read_text(encoding="utf-8"))
                     plan_configured = bool(_plan.get("total_chapters"))
                 except Exception:  # noqa: BLE001 - 读取失败视为未配置
-                    plan_configured = False
+                    plan_configured = False  # noqa: SILENT_DEGRADE
                 if plan_configured and ended_at and ended_at < trigger_chapter:
                     progress["ending_mode"] = False
                     progress.pop("ending_mode_at", None)
@@ -75,7 +75,7 @@ class _PipelineEndingMixin:
                 # ---- G9（补充边界 6）：记录型事件（只记录不反写，G8 语义零改动）----
                 self._emit_event("ending_mode", chapter=chapter, ending_ratio=self.ending_ratio)
         except Exception:  # noqa: BLE001 - 触发异常降级不阻断写章
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def _maybe_advance_mainline(self, target: int) -> None:
         """每 mainline_window 章执行主线推进裁决（委托 MainlineOrchestrator，唯一仲裁点）。
@@ -120,7 +120,7 @@ class _PipelineEndingMixin:
                 visited=len(visited),
             )
         except Exception:  # noqa: BLE001 - 决策异常降级不阻断（G3 哲学）
-            pass
+            pass  # noqa: SILENT_DEGRADE
 
     def _finalize_g8(self, result: PipelineResult) -> None:
         """G8：填充 result.mainline / result.ending（读 state.json progress，降级占位）。"""
@@ -140,5 +140,5 @@ class _PipelineEndingMixin:
             } if self.ending_gate else None
         except Exception:  # noqa: BLE001 - 摘要失败不阻断主流程
             result.mainline = None
-            result.ending = None
+            result.ending = None  # noqa: SILENT_DEGRADE
 

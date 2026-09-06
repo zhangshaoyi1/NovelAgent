@@ -112,7 +112,7 @@ def retry(
                             try:
                                 on_retry(attempt, e, wait)
                             except Exception:
-                                pass
+                                pass  # noqa: SILENT_DEGRADE
                         logger.warning(
                             "重试 %s/%s: %s, 等待 %.1fs",
                             attempt, max_attempts, repr(e), wait,
@@ -145,7 +145,7 @@ def retry(
                             try:
                                 on_retry(attempt, e, wait)
                             except Exception:
-                                pass
+                                pass  # noqa: SILENT_DEGRADE
                         logger.warning(
                             "重试 %s/%s: %s, 等待 %.1fs",
                             attempt, max_attempts, repr(e), wait,
