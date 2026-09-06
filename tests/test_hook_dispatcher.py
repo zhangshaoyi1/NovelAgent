@@ -88,14 +88,18 @@ def test_m5_check_prompt_includes_genre_rules(tmp_path: Path) -> None:
 
 
 def test_load_genre_template_writes_when_absent(tmp_path: Path) -> None:
-    """m1_config.load_genre_template 在 world.md 缺失时落盘模板，存在时跳过"""
+    """m1_config.load_genre_template 在 world.md 缺失时落盘种子草稿，存在时跳过"""
     pack = GenrePackRegistry().load("xiuxian")
     world_file = tmp_path / "world.md"
     assert not world_file.exists()
 
     m1_config.load_genre_template(tmp_path, "xiuxian", pack)
     assert world_file.exists()
-    assert world_file.read_text(encoding="utf-8") == pack.world_template
+    # R2-D：实现演进（bbd2ea6）——只写「冻结核心分节」种子草稿，不整模板落盘
+    # （整模板会让「金手指登记模板」样板块泄漏进 world.md，被 M4/M5 前缀误匹配）。
+    text = world_file.read_text(encoding="utf-8")
+    assert "境界体系（冻结）" in text, "种子草稿应含冻结核心分节（境界体系）"
+    assert "金手指登记模板" not in text, "样板块不得泄漏进 world.md（bbd2ea6 修复语义）"
 
     # 再次调用（world.md 已存在）不应覆盖（保持幂等）
     world_file.write_text("# 用户自定义 world", encoding="utf-8")

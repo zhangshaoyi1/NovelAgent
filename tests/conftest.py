@@ -133,6 +133,21 @@ def _build_mock_llm(
                 text = next(utility_responses)
         except StopIteration:
             text = chapter_text if is_creative else _json.dumps(QUALITY_PASS, ensure_ascii=False)
+        # R2-D：M5 旧路径（chat_creative）同样过确定性字数门禁——chapter_length=3000 时
+        # 下限 ≥2400 字，短 mock 正文会触发「过短章节」保护 → 质检失败 → 误入 revise。
+        # creative 分支统一扩写至 ≥3500 字（句子轮换防 deslop 重复命中，测试适配实现演进）。
+        if is_creative:
+            _pad = [
+                "他推门而入，环顾四周，神色不变。",
+                "山风灌进廊道，卷起几片枯叶。",
+                "远处传来守夜人的梆子声。",
+                "他垂目调息，丹田里的灵力缓缓转动。",
+                "檐角的铜铃轻响了一声。",
+            ]
+            _i = 0
+            while len(text) < 3500:
+                text += "\n" + _pad[_i % len(_pad)]
+                _i += 1
         return SimpleNamespace(text=text)
 
     llm.chat.side_effect = chat_side_effect

@@ -299,7 +299,14 @@ def test_mainline_upper_takes_max_of_pressure_and_episode(tmp_path: Path) -> Non
 # ============================================================
 # 5. 零 LLM（monkeypatch 计数为 0）
 # ============================================================
-def test_mainline_zero_llm(tmp_path: Path) -> None:
+def test_mainline_zero_llm(tmp_path: Path, monkeypatch) -> None:
+    # R2-D：预算规划集成后 _maybe_advance_mainline 注入 BudgetPlanner(llm_client=writer.llm)
+    # → 每窗口调 LLM 预算规划。测试意图是「主线推进裁决零 LLM」——预算规划置为无 LLM
+    # （plan 返回 False，replan 跳过，确定性裁决不受影响）。
+    monkeypatch.setattr(
+        "agent.workflows.pipeline.budget_planner.BudgetPlanner.plan",
+        lambda self: False,
+    )
     d = _make_g8_project(tmp_path, n_sublines=5, target=30)
     writer = _FakeWriter(d)
     p = _make_pipeline(d, writer, mainline_gate=True, ending_gate=False, target=30)

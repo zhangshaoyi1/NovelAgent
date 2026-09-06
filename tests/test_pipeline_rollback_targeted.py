@@ -97,7 +97,7 @@ def _seed_writable_project(tmp_path: Path) -> None:
     sm.save_subline(
         "S01_主线",
         {"subline_name": "主线", "characters": []},
-        "# s\n\n## 支线目标\nx\n\n## 剧集压力曲线\n"
+        "# s\n\n## 支线目标\nx\n\n## 情节点序列\n铺垫阶段：主角调查线索；冲突阶段：与对手交锋\n\n## 剧集压力曲线\n"
         "| 阶段 | 章节 | 张力等级 |\n|---|---|---|\n| 铺垫 | 1-100 | 低 |\n",
     )
     st = StateMachine(tmp_path)
@@ -106,8 +106,14 @@ def _seed_writable_project(tmp_path: Path) -> None:
     st.save()
 
 
-def test_pipeline_passes_targeted_hint_to_writer(tmp_path: Path) -> None:
+def test_pipeline_passes_targeted_hint_to_writer(tmp_path: Path, monkeypatch) -> None:
     _seed_writable_project(tmp_path)
+    # R2-D：预算规划集成后写章循环注入 BudgetPlanner(llm_client=...)；
+    # 本测试聚焦回溯重写链路，预算规划置为无 LLM（plan 返回 False）排除干扰。
+    monkeypatch.setattr(
+        "agent.workflows.pipeline.budget_planner.BudgetPlanner.plan",
+        lambda self: False,
+    )
 
     fake_eval = _FakeEvaluator()
     fake_writer = _FakeWriter()

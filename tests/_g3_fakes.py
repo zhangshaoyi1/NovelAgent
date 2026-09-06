@@ -40,6 +40,10 @@ _GENERIC_PLAN: dict = {
                 "setup": "1-10", "conflict": "11-30",
                 "climax": "31-50", "relief": "51-60",
             },
+            # R2-D：M3 输出适配 plot_points/chapter_hooks（规划一致性守护
+            # check_subline_plot_source 要求 subline 含剧情源段，否则 fail-fast）
+            "plot_points": "铺垫阶段：主角觉醒；冲突阶段：对抗强敌；高潮阶段：突破境界；舒缓阶段：复盘",
+            "chapter_hooks": "铺垫章：章尾=神秘物品（弱）；冲突章：章尾=危机升级（中）；高潮章：章尾=突然揭示（强）",
         }
     ],
     "protagonist_route": {

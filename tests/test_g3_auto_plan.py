@@ -140,6 +140,13 @@ def test_m4_failure_degrades_and_continues(tmp_path: Path, monkeypatch) -> None:
         raise RuntimeError("M4 故意失败（测试）")
 
     monkeypatch.setattr(m4_character.M4CharacterWorkflow, "run", _boom)
+    # R2-D：预算规划集成（agent 演进）会经 _maybe_advance_mainline 注入
+    # BudgetPlanner(llm_client=...)，本测试意图是「非关键失败降级不阻塞」——
+    # 预算规划置为无 LLM（plan 返回 False，replan 跳过），排除其影响。
+    monkeypatch.setattr(
+        "agent.workflows.pipeline.budget_planner.BudgetPlanner.plan",
+        lambda self: False,
+    )
 
     fake = _FakeLLM()
     p = _make_pipeline(tmp_path, fake)

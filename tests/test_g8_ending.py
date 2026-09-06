@@ -48,7 +48,12 @@ def _make_ending_project(
     total_written: int = 0,
     foreshadows: str = FORESHADOWS_TABLE,
 ) -> Path:
-    d = _make_g8_project(tmp_path, n_sublines=2, target=target)
+    # R2-D：显式写 plan.json（total_chapters=target）——结局触发读 _book_total()
+    # 且优先取 plan.json；缺 plan.json 时依赖 target 解析路径，易随实现漂移。
+    d = _make_g8_project(
+        tmp_path, n_sublines=2, target=target,
+        plan_json={"total_chapters": target, "subline_share": {}},
+    )
     # 架构 ending：默认 ARCH_JSON.ending="殉道"；可覆盖为空
     if ending != "殉道":
         arch_path = d / "architecture.md"

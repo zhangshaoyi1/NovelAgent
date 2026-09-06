@@ -139,8 +139,11 @@ def test_substage_no_revise_when_quality_pass(tmp_path: Path) -> None:
     )
     m5.run()
     substages = [e["substage"] for e in bus.events if e["type"] == "chapter_substage"]
-    assert substages == ["generate", "quality_check", "deslop:light"], (
-        "质量通过不应出现 revise；去AI味默认开 → 尾阶段 deslop:light"
+    # R2-D：档位由 DeslopRewriter(level="auto") 按正文命中判定（mock 正文命中 → heavy 属正常），
+    # 测试意图是「质量通过 → 无 revise 且存在去AI味阶段」，不再锁定具体档位。
+    assert "revise" not in substages, f"质量通过不应出现 revise，实际 {substages}"
+    assert any(s.startswith("deslop:") for s in substages), (
+        f"去AI味默认开 → 应有 deslop 尾阶段，实际 {substages}"
     )
 
 

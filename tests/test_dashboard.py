@@ -32,6 +32,12 @@ from tests.conftest import make_project
 REPO_ROOT = Path(__file__).resolve().parent.parent
 SAMPLE = REPO_ROOT / "projects" / "rules-horror"
 
+# R2-D：样例项目 projects/rules-horror 不在仓库（环境依赖）——skip 而非失败，保证基线干净
+_skip_no_sample = pytest.mark.skipif(
+    not SAMPLE.exists(),
+    reason="样例项目 projects/rules-horror 不在仓库（环境依赖，R2-D：skip 而非失败）",
+)
+
 # 样例伏笔关联角色中的 curly quote（U+2018 / U+2019）
 CURTLY_DOCTOR = "\u2018\u533b\u751f\u2019"  # '医生'
 
@@ -56,6 +62,7 @@ def _snapshot(project: Path) -> dict[str, str]:
 # ① 关系网
 # ============================================================
 class TestDashboardRelations:
+    @_skip_no_sample
     def test_relations_counts_and_mermaid(self) -> None:
         data = DashboardAggregator(SAMPLE).aggregate()
         rel = data.relations
@@ -82,6 +89,7 @@ class TestDashboardRelations:
 # ② 主角路线
 # ============================================================
 class TestDashboardRoute:
+    @_skip_no_sample
     def test_route_toc_and_markdown(self) -> None:
         data = DashboardAggregator(SAMPLE).aggregate()
         route = data.route
@@ -104,6 +112,7 @@ class TestDashboardRoute:
 # ③ 伏笔
 # ============================================================
 class TestDashboardForeshadows:
+    @_skip_no_sample
     def test_foreshadows_by_status_and_pending(self) -> None:
         data = DashboardAggregator(SAMPLE).aggregate()
         fs = data.foreshadows
@@ -131,6 +140,7 @@ class TestDashboardForeshadows:
 # ④ 进度
 # ============================================================
 class TestDashboardProgress:
+    @_skip_no_sample
     def test_progress_from_sample(self) -> None:
         data = DashboardAggregator(SAMPLE).aggregate()
         prog = data.progress
@@ -155,6 +165,7 @@ class TestDashboardProgress:
 # ⑤⑥⑦ 可选数据降级（缺 / 损坏 → available=False）
 # ============================================================
 class TestDashboardOptionalDegrade:
+    @_skip_no_sample
     def test_optional_missing_in_sample(self) -> None:
         """rules-horror 无 pacing/learnings/rag → 三面板 available=False 不崩。"""
         data = DashboardAggregator(SAMPLE).aggregate()
@@ -350,6 +361,7 @@ class TestDashboardCliJson:
 # CLI HTML 产物合法
 # ============================================================
 class TestDashboardCliHtml:
+    @_skip_no_sample
     def test_html_contains_mermaid_and_data(self, tmp_path: Path, monkeypatch) -> None:
         _set_api_key(monkeypatch)
         out = tmp_path / "dash.html"
@@ -437,6 +449,7 @@ class TestDashboardCliHtml:
 # 只读契约
 # ============================================================
 class TestDashboardReadOnly:
+    @_skip_no_sample
     def test_cli_does_not_modify_project_files(self, tmp_path: Path, monkeypatch) -> None:
         _set_api_key(monkeypatch)
         # 复制一份 sample 到临时区，避免触碰真实样例工程
@@ -458,6 +471,7 @@ class TestDashboardReadOnly:
         assert set(after.keys()) == set(before.keys())
         assert after == before
 
+    @_skip_no_sample
     def test_aggregator_does_not_modify_project_files(
         self, tmp_path: Path, monkeypatch
     ) -> None:
