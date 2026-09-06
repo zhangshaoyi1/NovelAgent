@@ -190,6 +190,9 @@ def _make_pipeline(
         ending_ratio=ending_ratio,
         mainline_gate=mainline_gate,
         ending_gate=ending_gate,
+        # P1-11：主线 replan 缺预算时会惰性创建真实 Gateway；本组测试零 LLM，
+        # 注入与 writer 同源的 stub，保证 chat_structured 走到 AttributeError 降级
+        chapter_retry_wait_s=0,
     )
 
 

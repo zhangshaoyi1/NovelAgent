@@ -178,7 +178,7 @@ def test_traced_llm_records_failure_and_reraises():
 # ============================================================
 # 6. AgentService（离线体检 + 看板）
 # ============================================================
-def test_agent_service_evaluate_offline(tmp_path):
+def test_agent_service_evaluate_offline(tmp_path, monkeypatch):
     proj = _make_project(
         tmp_path, n_chapters=8,
         foreshadows=(
@@ -188,6 +188,14 @@ def test_agent_service_evaluate_offline(tmp_path):
         ),
     )
     from agent.service.agent_service import AgentService
+
+    # P1-11 补遗：service 装配真实 Gateway，读者吸引力评分器会走真实 LLM
+    # （本用例名 offline 但此前依赖"无 .env 报错降级"才侥幸离线）。主工作区有
+    # .env 时会真发网络请求导致挂死；显式打掉评分器的 LLM 出口，走降级默认。
+    monkeypatch.setattr(
+        "agent.core.quality.scoring.reader_appeal.chat_utility",
+        lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("offline test: LLM disabled")),
+    )
 
     svc = AgentService(proj, tier="auto")
     out = svc.run_evaluate(no_rollback=False)

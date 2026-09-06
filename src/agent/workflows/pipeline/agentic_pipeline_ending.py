@@ -96,7 +96,9 @@ class _PipelineEndingMixin:
                 self.state_machine,
                 self.mainline_window,
                 self.console,
-                budget_planner=BudgetPlanner(self.project_dir, console=self.console),
+                budget_planner=BudgetPlanner(
+                    self.project_dir, console=self.console, llm_client=self.llm
+                ),
             )
             orch.replan_if_due()  # 每窗口先由 LLM 主编重规划分线预算
             new_subline = orch.maybe_advance()
