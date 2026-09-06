@@ -174,9 +174,9 @@ agent/
 | `src/agent/base/`                         | 基础抽象层（Agent 基类/消息/类型/LLM协议）             |
 | `src/agent/client/`                       | 统一 LLM 客户端（Gateway 原生，gateway_adapter 为唯一出口）                    |
 | `src/agent/agents/`                       | Planner/Writer/Editor/Evaluator 四个核心智能体 |
-| `src/agent/workflows/agentic_pipeline.py` | 自主写作主编排                                 |
-| `src/agent/workflows/agentic_write.py`    | 唯一写章入口                                  |
-| `src/agent/workflows/mainline.py`         | 主流程编排                                   |
+| `src/agent/workflows/pipeline/agentic_pipeline.py` | 自主写作主编排（2026-09-05 起位于 pipeline/ 子包） |
+| `src/agent/workflows/writing/agentic_write.py`    | 唯一写章入口（2026-09-05 起位于 writing/ 子包）        |
+| `src/agent/workflows/pipeline/mainline.py`         | 主流程编排（2026-09-05 起位于 pipeline/ 子包）        |
 | `src/agent/core/engine/`                  | 核心引擎（状态机/Agent循环/工作流编排）                 |
 | `src/agent/core/story/`                   | 故事领域模型（设定/伏笔/章节/高潮曲线）                   |
 | `src/agent/core/quality/`                 | 质量保障体系（护栏/一致性/评分/改写）                    |
