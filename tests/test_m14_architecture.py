@@ -399,3 +399,12 @@ def test_m14_full_workflow_generate_iterate_confirm(
     # 状态转换
     workflow_iterate.state_machine.load()
     assert workflow_iterate.state_machine.state == State.ARCH_CONFIRMED
+
+
+def test_m14_prompt_injects_world_content(
+    workflow, mock_llm
+) -> None:
+    """架构生成的 user prompt 应包含世界观正文（等级体系等既定前提）"""
+    workflow.generate()
+    req = mock_llm.chat.call_args[0][0]
+    assert "世界观设定（架构的既定前提）" in req.messages[1]["content"]

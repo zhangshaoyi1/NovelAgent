@@ -71,3 +71,34 @@ def test_apply_without_log_rejected(tmp_path):
     w = WorldDiscussWorkflow(proj, llm_client=_fake_llm("x"))
     with pytest.raises(RuntimeError, match="尚无讨论记录"):
         w.run(apply=True)
+
+
+def test_find_stale_realm_refs_detects_leftover_old_realm_names():
+    """讨论改写境界体系后，旧境界名残留在故事简介等其它分节应被检出"""
+    old = (
+        "## 境界体系（冻结）\n\n"
+        "1. **炼气**\n2. **筑基**\n3. **金丹**\n\n"
+        "## 故事简介\n\n他从筑基起步，越阶斩杀金丹老怪。"
+    )
+    new = (
+        "## 修炼境界体系\n\n"
+        "1. **引灵**\n2. **栖气**\n\n"
+        "## 故事简介\n\n他从筑基起步，越阶斩杀金丹老怪。"
+    )
+    stale = WorldDiscussWorkflow._find_stale_realm_refs(old, new)
+    assert stale == ["筑基", "金丹"]
+
+
+def test_find_stale_realm_refs_clean_when_synced():
+    """全文已同步为新境界名时，不应误报（避免误伤林凡/五行等非境界词条）"""
+    old = (
+        "## 境界体系（冻结）\n\n"
+        "1. **炼气**\n2. **筑基**\n3. **金丹**\n\n"
+        "## 故事简介\n\n林凡天生五行灵根。"
+    )
+    new = (
+        "## 修炼境界体系\n\n"
+        "1. **引灵**\n2. **栖气**\n\n"
+        "## 故事简介\n\n林凡天生五行灵根，自引灵起步。"
+    )
+    assert WorldDiscussWorkflow._find_stale_realm_refs(old, new) == []

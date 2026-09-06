@@ -153,6 +153,17 @@ function streamEvents(runId, consoleObj, onDone, project) {
     consoleObj.statusEl.innerHTML = badge;
     if (d.state) consoleObj.statusEl.insertAdjacentHTML('beforeend',
       ` <span class="badge">新状态：${d.state}</span>`);
+    // 失败时禁止自动刷新：onDone（如 location.reload）会立刻清空控制台，
+    // 导致报错信息「一闪而过」看不到。改为弹出错误摘要并保留控制台，
+    // 让用户读完再手动关闭/重试。
+    if (!ok) {
+      const logText = (consoleObj.logEl && consoleObj.logEl.textContent || '').trim();
+      const snippet = logText ? logText.split('\n').slice(-6).join('\n') : '（无日志）';
+      consoleObj.statusEl.insertAdjacentHTML('beforeend',
+        `<div class="rc-err-tip">错误摘要（退出码 ${code}）：<pre>${escapeHtml(snippet)}</pre></div>`);
+      try { alert('命令执行失败（退出码 ' + code + '），详情见下方控制台：\n\n' + snippet); } catch (_) { /* ignore */ }
+      return;
+    }
     if (typeof onDone === 'function') onDone(d);
   };
 

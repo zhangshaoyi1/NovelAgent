@@ -499,6 +499,8 @@ input[type="range"] { flex: 1; min-height: 0; padding: 0; accent-color: var(--co
 }
 .rc-log .log-line { padding: 2px 0; border-bottom: 1px solid #F5F5F4; }
 .rc-log .log-line:last-child { border-bottom: 0; }
+.rc-err-tip { margin: 10px 0 0; padding: 10px 12px; border: 1px solid #FECACA; border-radius: var(--radius-sm); background: #FEF2F2; font-size: 12px; color: #991B1B; }
+.rc-err-tip pre { margin: 6px 0 0; white-space: pre-wrap; word-break: break-word; font-family: var(--font-mono); font-size: 11px; background: #FFF7F7; padding: 8px; border-radius: 6px; max-height: 200px; overflow: auto; }
 .rc-timeline { margin: 12px 0 0; max-height: 140px; overflow: auto; font-size: 12px; color: var(--color-muted-fg); }
 .rc-timeline:empty { margin: 0; }
 .rc-timeline .tl-item { padding: 3px 0; border-bottom: 1px dashed var(--color-border); }

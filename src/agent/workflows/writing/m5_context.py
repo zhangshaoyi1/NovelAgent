@@ -270,7 +270,11 @@ class M5ContextMixin:
         synopsis = self._extract_section(content, "故事简介") or ""
 
         # 境界体系
-        realm_system = self._extract_section(content, "境界体系") or ""
+        # 讨论结果至上：作者可能在 world-discuss 后把「## 境界体系（冻结）」
+        # 整节改写/改名（如「## 修炼境界体系」），不能再靠精确标题取——
+        # 取不到就会把空的 realm_system 注入写作提示，讨论确立的境界体系
+        # 在下游彻底丢失。这里按「含『境界』的首个 ## 分节」取，取不到再降级空串。
+        realm_system = self._extract_section(content, "境界体系") or self._extract_section_by_keyword(content, "境界") or ""
 
         # 金手指
         golden_finger = self._extract_section(content, "金手指登记") or ""
@@ -792,6 +796,17 @@ class M5ContextMixin:
     def _extract_section(content: str, section_name: str) -> str:
         """从 markdown 内容提取 ## 段落"""
         pattern = rf"## {re.escape(section_name)}\s*\n(.*?)(?=\n## |\Z)"
+        m = re.search(pattern, content, re.DOTALL)
+        return m.group(1).strip() if m else ""
+
+    @staticmethod
+    def _extract_section_by_keyword(content: str, keyword: str) -> str:
+        """按标题含关键词（不区分冻结标注）提取首个 ## 分节
+
+        用于「讨论结果至上」场景：作者可能把冻结分节改写或改名
+        （如「## 修炼境界体系」），精确标题匹配会取空，导致下游丢失境界体系。
+        """
+        pattern = rf"## [^\n]*{re.escape(keyword)}[^\n]*\s*\n(.*?)(?=\n## |\Z)"
         m = re.search(pattern, content, re.DOTALL)
         return m.group(1).strip() if m else ""
     @staticmethod

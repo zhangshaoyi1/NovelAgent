@@ -383,6 +383,8 @@ class M14ArchitectureWorkflow:
             "genre_label": first_genre_label(metadata),
             "tone": style.get("tone", "") if isinstance(style, dict) else str(style),
             "synopsis": synopsis,
+            # 世界观正文（含等级/力量体系等既定设定），架构必须以其为准
+            "world_content": content[:6000],
         }
 
     def _llm_generate_architecture(
@@ -397,6 +399,7 @@ class M14ArchitectureWorkflow:
             title=world_info["title"],
             scope=world_info["scope"],
             tone=world_info["tone"],
+            world_content=world_info["world_content"],
             discussion=discussion or world_info["synopsis"] or "（无讨论纪要）",
         )
         # A 系列：问答面板确定的作者偏好注入初始生成 prompt

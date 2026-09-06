@@ -422,9 +422,10 @@ class M1ConfigWorkflow:
 
         Args:
             user_input: M1 用户输入
-            realm_system: 冻结境界体系（题材包模板核心分节）。
-                注入 prompt，要求 LLM 的 power_system 严格沿用，
-                否则 LLM 会自创第二套境界与冻结表冲突。
+            realm_system: 题材包模板核心分节，作为【参考境界体系】注入 prompt。
+                模板只是参考：若与作者 story_core 冲突，以 story_core 为准；
+                注入的目的是让 power_system / golden_finger 成长曲线
+                与境界体系保持同一套名称，避免 LLM 自创平行第二套体系。
 
         Returns:
             包含 synopsis/worldview/power_system/factions/golden_finger 的 dict
@@ -445,6 +446,7 @@ class M1ConfigWorkflow:
             rhythm=style.get("rhythm", ""),
             info_density=style.get("info_density", ""),
             story_core=user_input.story_core,
+            realm_system=realm_system,
         )
 
         qa_text = format_qa_constraints(self.project_dir, "world")

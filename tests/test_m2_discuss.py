@@ -220,3 +220,22 @@ def test_m2_discussion_md_has_frontmatter(
     assert content.startswith("---")
     assert "title:" in content
     assert "rounds:" in content
+
+
+def test_extract_world_info_includes_world_content(
+    workflow: M2DiscussWorkflow,
+) -> None:
+    """讨论上下文必须包含 world.md 正文（等级/力量体系等既定设定）"""
+    info = workflow._extract_world_info(workflow.sm.load_world())
+    assert "世界观内容" in info["world_content"]
+
+
+def test_m2_prompt_injects_world_content(
+    workflow: M2DiscussWorkflow, mock_llm: MagicMock
+) -> None:
+    """发给 LLM 的 user prompt 应包含世界观正文（含等级体系）"""
+    user_input = M2Input(preset_answers=["回答", "/next"])
+    workflow.run(user_input=user_input)
+    chat_request = mock_llm.chat.call_args_list[0][0][0]
+    assert "世界观设定（讨论的既定前提）" in chat_request.messages[1]["content"]
+    assert "世界观内容" in chat_request.messages[1]["content"]
