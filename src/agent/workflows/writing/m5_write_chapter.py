@@ -1,4 +1,4 @@
-"""M5 章节创作工作流（编排主干）
+"""M5 章节创作工作流（共享工具方法库）
 
 单章生成闭环的编排入口：run() 驱动 上下文装配 → 生成 → 质量闸 → 净化 → 落盘。
 具体职责已按 Mixin 拆分：
@@ -7,6 +7,14 @@
     m5_text_hygiene.py 文本净化/去重（M5TextHygieneMixin + 模块级净化函数）
     m5_persist.py      依据链/持久化/归档/进度/呈现（M5PersistMixin）
 类名与导入路径保持不变，旧代码/测试无需改动。
+
+⚠️ R2-C（2026-09-06）：**写章主流程已收敛为单语义**
+- CLI/Web 唯一写章入口是 ``AgenticWriteWorkflow``（``workflows/writing/agentic_write.py``），
+  本项目不再经 ``M5WriteChapterWorkflow.run()`` 写章；
+- ``M5WriteChapterWorkflow`` 保留为 **共享工具方法库**（``_load_context``/落盘/质检等被 agentic 复用），
+  ``run()`` 主流程标记 @deprecated（测试基线保留、生产零调用，见
+  ``tests/architecture/test_m5_run_deprecated.py`` 红线）；
+- 新增代码禁止调用 ``M5WriteChapterWorkflow.run()``。
 """
 
 from __future__ import annotations
@@ -14,6 +22,7 @@ from __future__ import annotations
 import json as _json
 import logging
 import re
+import warnings
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
@@ -280,11 +289,21 @@ class M5WriteChapterWorkflow(
     # 入口
     # ============================================================
     def run(self) -> M5Result:
-        """运行 M5 章节创作工作流
+        """运行 M5 章节创作工作流（**已废弃，R2-C**）
+
+        ⚠️ 本项目写章唯一入口已收敛为 ``AgenticWriteWorkflow``（agentic_write.py）。
+        本方法保留仅为测试基线兼容，**生产代码禁止调用**；新增调用会被
+        ``tests/architecture/test_m5_run_deprecated.py`` 红线拦截。
 
         Raises:
             RuntimeError: 状态不符 / 架构未确认 / 必要文件缺失
         """
+        warnings.warn(
+            "M5WriteChapterWorkflow.run() 已废弃（R2-C）：本项目写章唯一入口为 "
+            "AgenticWriteWorkflow；本方法仅保留测试基线兼容，生产代码禁止调用。",
+            DeprecationWarning,
+            stacklevel=2,
+        )
         self.state_machine.load()
         if self.state_machine.state not in (State.CHARACTER_DESIGN, State.WRITING):
             raise RuntimeError(

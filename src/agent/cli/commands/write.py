@@ -131,16 +131,38 @@ def write(
 
     wire_llm_event_hook(project_path)
 
-    # --mode 引擎选择：pipeline 已移除，统一走 Agentic Loop
+    # --mode 引擎选择：pipeline 已移除，统一走 Agentic Loop（构造经 service 层收敛，R2-B）
     workflow_console = make_quiet_console() if json_output else console
     if mode in ("auto", "heavy", "light"):
-        from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
+        from agent.service import build_write_workflow, probe_write_lock
+        from agent.core.project_lock import ProjectLockBusy
 
-        workflow = AgenticWriteWorkflow(
-            project_dir=project_path,
-            console=workflow_console,
-            tier=mode,
-        )
+        # 锁预检：已有活跃写进程 → 友好提示不启动（防并发写坏项目）
+        _busy = probe_write_lock(project_path)
+        if _busy:
+            _msg = (
+                f"项目 {project_path} 已有写进程在运行（锁 {_busy.get('lock_path', '?')}"
+                f"，pid {_busy.get('pid', '?')}）。请等待其结束，或确认已无写进程后手动删除锁文件。"
+            )
+            if json_output:
+                emit_result(
+                    {"success": False, "error": {"code": "write_lock_busy", "message": _msg}},
+                    json_mode=True,
+                )
+            else:
+                console.print(f"[bold red]✗[/bold red] {_msg}")
+            raise typer.Exit(code=2)
+        try:
+            workflow = build_write_workflow(project_path, tier=mode, console=workflow_console)
+        except ProjectLockBusy as _lock_err:
+            if json_output:
+                emit_result(
+                    {"success": False, "error": {"code": "write_lock_busy", "message": str(_lock_err)}},
+                    json_mode=True,
+                )
+            else:
+                console.print(f"[bold red]✗[/bold red] {_lock_err}")
+            raise typer.Exit(code=2) from _lock_err
     else:
         if json_output:
             emit_result(

@@ -36,6 +36,48 @@ from agent.core.tools.mcp_bridge import MCPBridge
 from agent.core.quality.guardrails import build_guardrails
 
 
+def build_write_workflow(
+    project_dir: str | Path,
+    tier: str = "auto",
+    console: Console | None = None,
+    **wf_kwargs: Any,
+) -> Any:
+    """写章唯一业务构造入口（R2-B：service 层收敛）。
+
+    收口「写章」的两个横切关注点：
+    1. **单写者锁**：写章前获取项目写锁（``<project>/.state/write.lock``），
+       被占用抛 ``ProjectLockBusy``（防多入口并发写坏项目，见 F-5）；
+    2. **统一装配**：CLI ``write`` 命令与本模块均经此处构造 ``AgenticWriteWorkflow``，
+       不再各自 import workflows（消除 Web/CLI 双入口参数契约分叉的土壤）。
+
+    Args:
+        project_dir: 小说项目目录。
+        tier: 写章引擎档位（auto/heavy/light）。
+        console: rich 控制台（None 时静默）。
+        **wf_kwargs: 透传给 AgenticWriteWorkflow 的其余构造参数。
+
+    Returns:
+        AgenticWriteWorkflow 实例（未运行）。
+    """
+    from agent.core.project_lock import acquire_project_lock
+
+    acquire_project_lock(project_dir, command="write")
+
+    from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
+
+    wf_kwargs.setdefault("project_dir", Path(project_dir))
+    wf_kwargs.setdefault("tier", tier)
+    wf_kwargs.setdefault("console", console)
+    return AgenticWriteWorkflow(**wf_kwargs)
+
+
+def probe_write_lock(project_dir: str | Path) -> dict | None:
+    """探测写章锁占用情况（供 CLI 预检给友好提示；None=空闲）。"""
+    from agent.core.project_lock import probe_project_lock
+
+    return probe_project_lock(project_dir, command="write")
+
+
 class AgentService:
     """自主写作服务接口（进程内）。
 
