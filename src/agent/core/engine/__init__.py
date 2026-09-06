@@ -24,7 +24,6 @@ from agent.core.engine.workflow_registry import (
     list_workflows,
     WorkflowType,
 )
-from agent.tasks.task_registry import TaskRegistry, create_task_spec
 from agent.core.engine.events import ProgressEventBus
 from agent.core.engine.collab import AgentNode, SubtaskDAG, MessageBus, CollaborationError
 
@@ -52,8 +51,6 @@ __all__ = [
     "workflow",
     "get_workflow",
     "list_workflows",
-    "TaskRegistry",
-    "create_task_spec",
     "ProgressEventBus",
     "AgentNode",
     "SubtaskDAG",

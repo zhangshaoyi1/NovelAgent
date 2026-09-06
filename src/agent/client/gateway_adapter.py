@@ -14,7 +14,7 @@ from typing import Any
 
 from pydantic import BaseModel
 
-from agent.base.llm import LLMConfig, LLMProvider
+from agent.base.llm import LLMConfig, LLMProvider, FatalProviderError, is_fatal_provider_error
 from agent.base.structured_output import (
     StructuredOutputError,
     extract_json,
@@ -119,13 +119,6 @@ class _GatewayModelProvider:
                 "latency_ms": round(elapsed, 2),
                 "error": str(e)[:300],
             })
-            # 延迟导入：agent.core.__init__ 会反向 import 本模块，
-            # 顶层导入会造成导入顺序相关的循环依赖
-            from agent.core.base.exceptions import (
-                FatalProviderError,
-                is_fatal_provider_error,
-            )
-
             # 配额耗尽/欠费/鉴权失败 → 抛 FatalProviderError，让上层立即熔断
             # 而非按瞬时故障退避重试（403 重试必然再次 403）
             if is_fatal_provider_error(e):
