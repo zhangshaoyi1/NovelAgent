@@ -29,7 +29,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from agent.core.base.exceptions import is_fatal_provider_error
 from agent.core.engine.tool_contracts import Tool, ToolRegistry, ToolResult
@@ -48,6 +48,46 @@ class AgentAction(BaseModel):
     tool: Optional[str] = Field(default=None, description="要调用的工具名（action=tool_call 时必填）")
     args: dict[str, Any] = Field(default_factory=dict, description="工具参数（JSON 对象）")
     draft: Optional[str] = Field(default=None, description="最终交付物（action=finish 时必填）")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _infer_missing_action(cls, data: Any) -> Any:
+        """容错推断：弱 schema 遵从度的 provider 常漏掉 action 字段。
+
+        典型形态（2026-09-07 Writer 事故）：模型输出合法 JSON 但缺 action，
+        如 ``{"think":..., "tool":..., "args":...}``（想调工具）或
+        ``{"think":..., "draft":...}``（想交付）。按其余字段语义反推，
+        两者都缺失时维持原样让校验照常失败（真正无意义的输出）。
+        """
+        if not isinstance(data, dict):
+            return data
+        if data.get("action") in (None, ""):
+            if data.get("draft"):
+                data["action"] = "finish"
+            elif data.get("tool"):
+                data["action"] = "tool_call"
+        return data
+
+    @model_validator(mode="after")
+    def _normalize_action(self) -> "AgentAction":
+        """action 值的常见变体归一（finish/done/submit → finish 等），未知值拒绝。"""
+        aliases = {
+            "finish": "finish",
+            "done": "finish",
+            "submit": "finish",
+            "final": "finish",
+            "tool_call": "tool_call",
+            "toolcall": "tool_call",
+            "tool": "tool_call",
+            "call_tool": "tool_call",
+        }
+        normalized = aliases.get(str(self.action).strip().lower())
+        if normalized is None:
+            raise ValueError(
+                f"action 必须是 'finish' 或 'tool_call'（含常见别名），收到：{self.action!r}"
+            )
+        self.action = normalized
+        return self
 
 
 @dataclass

@@ -234,8 +234,13 @@ class _FakeLLM:
         return SimpleNamespace(text=text)
 
 
-def test_writer_structured_parse_retries_once_with_json_prompt():
+def test_writer_structured_parse_retries_once_with_json_prompt(monkeypatch):
     # 第一次 chat_structured 解析失败 → 第二次必须带着纯 JSON 指令成功
+    # （md 是运行时真源；pm.get 热加载，断言以实际注入内容为准）
+    monkeypatch.setattr("agent.core.engine.agent_loop.time.sleep", lambda s: None)
+    from agent.core.infra.prompt_manager import pm
+
+    retry_prompt = pm.get("agents.writer_retry").system
     raised = {"n": 0}
 
     def fail_once(messages, **kw):
@@ -243,9 +248,9 @@ def test_writer_structured_parse_retries_once_with_json_prompt():
         raise StructuredOutputError("解析失败（模拟模型输出正文而非 JSON）")
 
     def succeed_after_retry(messages, **kw):
-        # 重试调用必须追加了 _RETRY_JSON_PROMPT
+        # 重试调用必须追加了重试指令（可能附带具体错误详情，故用 in 断言）
         assert messages[-1]["role"] == "user"
-        assert _RETRY_JSON_PROMPT in messages[-1]["content"]
+        assert retry_prompt in messages[-1]["content"]
         return {"think": "重试成功", "action": "finish", "draft": "第7章正文"}
 
     agent = WriterAgent(
