@@ -155,6 +155,7 @@ def command(
     help: Optional[str] = None,
     writes: bool = False,
     writes_when: Optional[Callable[[dict], bool]] = None,
+    context_settings: Optional[dict] = None,
 ) -> Callable[[Callable[..., Any]], Callable[..., Any]]:
     """命令注册装饰器（单一注册点）。
 
@@ -168,6 +169,9 @@ def command(
             同一项目上与其他写命令互斥（L1-2，根治 Web/CLI 并发写事故）。
         writes_when: 可选的精确判定函数，接收已绑定的关键字参数，返回 True 才加锁。
             适用于「只有加了 --apply 才落盘」这类命令（如 deslop）。
+        context_settings: 透传给 typer 的 Click context 设置，如
+            ``{"allow_extra_args": True, "ignore_unknown_options": True}``
+            （task-submit 参数透传用）。
 
     Returns:
         装饰器。
@@ -190,7 +194,7 @@ def command(
         #    并保持 c.name=None，兼容既有测试 ``c.name or c.callback.__name__`` 的取值。
         #    若调用方显式传入 name，则作为 typer 命令名（与注册表 display 一致）。
         target = _with_write_lock(display, fn, writes_when) if writes else fn
-        app.command(name, help=help)(target)
+        app.command(name, help=help, context_settings=context_settings)(target)
         # 2) 登记/补全元数据（命令名唯一键）。
         #    命令模块经 @command 装饰即注册点；但若命令名已存在于基线 COMMAND_REGISTRY
         #    （如 command_router 中 curated 的元数据），则跳过覆盖，保留基线描述与门禁字段，

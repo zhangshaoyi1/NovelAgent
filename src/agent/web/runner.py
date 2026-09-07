@@ -1,16 +1,11 @@
 """SSE 命令运行器（Web UI 实时性核心）。
 
-设计要点（遵循项目「降级不阻断」哲学与 G9 进度流复用）：
-- 以子进程方式驱动 ``python -m agent.cli <command> --dir <项目> <args>``，
-  完全复用既有 CLI 逻辑，零侵入、不触碰 1112 个既有测试。
-- stdin=DEVNULL：任何遗漏的交互式命令会在 EOF 处快速失败，绝不卡死。
-- stdout/stderr 合并流式读取，剥离 rich 标记后作为 ``log`` 事件推送。
-- 轮询项目 ``.state/progress.json``（G9 已落地），按事件 seq 增量推送 ``progress``
-  事件，复用既有进度流，无需额外埋点。
-- 进程结束后推送 ``done`` 事件（含退出码 + 看板摘要 + 最新状态），供前端收尾。
+D2 起 Web 降级为**薄客户端**：``execute`` 不再 spawn 子进程，而是把命令
+提交到 writer daemon 的落盘任务队列（``agent.daemon``），由 daemon 全局
+串行执行；Web 只轮询任务状态 / 日志增量 / progress.json（G9）并经 SSE
+推送给前端。因此 Web 重启不再影响运行中的写任务，也不产生孤儿进程。
 
-事件经 asyncio.Queue 在 execute 协程与 SSE 流之间传递；execute 由 API 端点
-``asyncio.create_task`` 调度，SSE 流通过 ``run_manager.stream`` 消费。
+保留的 L1 单写者锁预检：对「绕过 daemon 的遗留直跑者」给出即时反馈。
 """
 
 from __future__ import annotations
@@ -22,11 +17,11 @@ import os
 import re
 import shlex
 import subprocess
-import sys
 import uuid
 from pathlib import Path
 from typing import Any
 
+from agent.daemon.task_queue import NO_DIR_COMMANDS  # noqa: F401  # 单一真相源（re-export）
 from agent.web.state import project_path
 
 # 仅剥离常见 rich 样式标记，尽量不误伤正文里的普通方括号
@@ -99,22 +94,32 @@ class RunManager:
                 _kill_process_tree(proc)
 
     async def stop(self, run_id: str) -> bool:
-        """请求停止某次运行；返回是否找到可停止的进程。
+        """请求停止某次运行；返回是否找到可停止的任务。
 
-        Windows 上进程树必须整体终止（``proc.terminate()`` 只杀直接子进程），
-        故走 ``taskkill /T /F``；失败时退回 ``proc.kill()``。
-        进程退出后 ``execute`` 中的 ``await proc.wait()`` 自然收尾并推送 done。
+        D2 起 Web 不再自己持有子进程：运行主体是 daemon 队列里的任务，
+        停止 = 向任务文件写 ``stop_requested`` 标记，daemon 轮询到后
+        ``taskkill /T /F`` 杀进程树。无 task_id 的历史 run 退回旧路径。
         """
         run = self.runs.get(run_id)
         if run is None:
             return False
         run["stop_requested"] = True
-        proc = run.get("proc")
-        if proc is None or proc.returncode is not None:
-            return False
-        self._emit(run, {"type": "log", "data": {"text": "■ 已请求停止，正在终止进程…"}})
-        await asyncio.to_thread(_kill_process_tree, proc)
-        return True
+        task_id = run.get("task_id")
+        if not task_id:
+            proc = run.get("proc")
+            if proc is None or proc.returncode is not None:
+                return False
+            self._emit(run, {"type": "log", "data": {"text": "■ 已请求停止，正在终止进程…"}})
+            await asyncio.to_thread(_kill_process_tree, proc)
+            return True
+        from agent.daemon import task_queue as tq
+
+        pdir = project_path(run["project"])
+        result = await asyncio.to_thread(tq.request_stop, pdir, task_id)
+        if result:
+            self._emit(run, {"type": "log", "data": {"text": "■ 已请求停止，daemon 正在终止任务进程树…"}})
+            return True
+        return False
 
     def new_run(
         self,
@@ -146,6 +151,7 @@ class RunManager:
             "exit_code": None,
             "done_data": None,
             "proc": None,
+            "task_id": None,  # D2：daemon 队列任务 ID（submit 后填充）
             "stop_requested": False,
         }
         return run_id
@@ -193,97 +199,126 @@ class RunManager:
                 await self._finish(run, exit_code=9)
                 return
 
-        cmd: list[str] = [
-            sys.executable,
-            "-m",
-            "agent.cli",
+        # D2：Web 降级为薄客户端——不再自己 spawn 子进程，而是把任务提交到
+        # writer daemon 的落盘队列，由 daemon 全局串行执行（单一权威）。
+        # Web 进程只负责「看盘」：轮询任务状态 / 日志 / progress.json 回灌 SSE。
+        # 好处：Web 重启不影响写任务、无孤儿进程、停止走统一停止标记。
+        from agent.daemon import task_queue as tq
+        from agent.daemon.core import ensure_daemon
+
+        task = await asyncio.to_thread(
+            tq.submit_task,
+            pdir,
             run["command"],
-        ]
-        if run["command"] not in NO_DIR_COMMANDS:
-            cmd += ["--dir", str(pdir)]
-        cmd += run["argv"]
-        env = dict(os.environ)
-        env["PYTHONUNBUFFERED"] = "1"  # 保证 stdout 逐行实时流出
-        # 把当前项目空间透传给 CLI 子进程：CLI 侧 compose_runner 等依赖
-        # NOVEL_DATA_ROOT 定位数据根，保证 Web 切换空间后 CLI 读写同一目录。
-        env["NOVEL_DATA_ROOT"] = str(project_path(run["project"]).parent)
-        env.update(run.get("env_extra") or {})
-
-        # L2-A：Windows 上新建进程组，避免 Ctrl+C 等控制台信号直接穿透到子进程
-        # 造成半途退出；配合 RunManager 的 atexit 钩子保证 Web 退出时子进程随亡。
-        popen_kwargs: dict[str, Any] = {}
-        if os.name == "nt":
-            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                cwd=str(project_path(run["project"]).parent.parent),
-                env=env,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.STDOUT,
-                stdin=asyncio.subprocess.DEVNULL,
-                **popen_kwargs,
+            run["argv"],
+            "web",
+            run.get("env_extra") or {},
+        )
+        run["task_id"] = task["task_id"]
+        self._emit(
+            run,
+            {
+                "type": "log",
+                "data": {
+                    "text": (
+                        f"□ 任务已提交 daemon 队列：{task['task_id']}"
+                        f"（{run['command']}），等待串行执行"
+                    )
+                },
+            },
+        )
+        ok = await asyncio.to_thread(ensure_daemon, [pdir.parent])
+        if not ok:
+            self._emit(
+                run,
+                {
+                    "type": "log",
+                    "data": {
+                        "text": "⚠ daemon 自动拉起失败；任务已排队，请手动运行 `python -m agent.daemon`"
+                    },
+                },
             )
-        except Exception as e:  # noqa: BLE001 - 启动失败也走 done 事件
-            self._emit(run, {"type": "log", "data": {"text": f"✗ 启动失败：{e}"}})
-            await self._finish(run, exit_code=-1)
-            return
 
-        run["proc"] = proc
+        await self._watch_task(run, task["task_id"])
+
+    async def _watch_task(self, run: dict[str, Any], task_id: str) -> None:
+        """轮询 daemon 任务：任务文件（状态/停止）+ 日志增量 + progress.json 增量。"""
+        from agent.daemon import task_queue as tq
+
+        pdir = project_path(run["project"])
+        log_path = tq.tasks_root(pdir) / "logs" / f"{task_id}.log"
         seen_seq = -1
         last_mtime = 0.0
+        log_offset = 0
+        log_remainder = ""
 
-        async def pump_stdout() -> None:
-            assert proc.stdout is not None
-            while True:
-                line = await proc.stdout.readline()
-                if not line:
-                    break
-                text = strip_rich(line.decode("utf-8", "replace")).rstrip("\r\n")
-                # 累计日志：SSE 掉线时轮询兜底也能回看，晚订阅者重连时回放
+        def read_log_increment() -> list[str]:
+            """读日志文件新增部分，返回完整行列表（半行留到下轮）。"""
+            nonlocal log_offset, log_remainder
+            try:
+                with open(log_path, "rb") as f:
+                    f.seek(log_offset)
+                    chunk = f.read()
+                if not chunk:
+                    return []
+                log_offset += len(chunk)
+            except OSError:
+                return []
+            text = log_remainder + chunk.decode("utf-8", "replace")
+            if not text.endswith("\n"):
+                *lines, log_remainder = text.split("\n")
+            else:
+                lines = text.split("\n")[:-1]
+                log_remainder = ""
+            return [strip_rich(line).rstrip("\r") for line in lines if line.strip()]
+
+        while True:
+            task = await asyncio.to_thread(tq.get_task, pdir, task_id)
+            task_status = (task or {}).get("status")
+
+            for text in await asyncio.to_thread(read_log_increment):
                 run["logs"].append(text)
                 if len(run["logs"]) > 300:
                     run["logs"] = run["logs"][-300:]
                 self._emit(run, {"type": "log", "data": {"text": text}})
 
-        async def tail_progress() -> None:
-            nonlocal seen_seq, last_mtime
-            while True:
-                finished = proc.returncode is not None
-                try:
-                    mtime = progress_file.stat().st_mtime
-                    if mtime != last_mtime:
-                        last_mtime = mtime
-                        try:
-                            data = json.loads(
-                                progress_file.read_text(encoding="utf-8")
-                            )
-                        except Exception:
-                            data = None  # noqa: SILENT_DEGRADE
-                        if data:
-                            for ev in data.get("events", []):
-                                seq = ev.get("seq", 0)
-                                if seq > seen_seq:
-                                    seen_seq = seq
-                                    run["progress_events"].append(ev)
-                                    if len(run["progress_events"]) > 200:
-                                        run["progress_events"] = (
-                                            run["progress_events"][-200:]
-                                        )
-                                    self._emit(run, {"type": "progress", "data": ev})
-                except FileNotFoundError:
-                    pass  # noqa: SILENT_DEGRADE
-                if finished:
-                    break
-                await asyncio.sleep(0.4)
+            # progress.json 增量（G9 事件流，逻辑与旧 tail_progress 一致）
+            progress_file = pdir / ".state" / "progress.json"
+            try:
+                mtime = progress_file.stat().st_mtime
+                if mtime != last_mtime:
+                    last_mtime = mtime
+                    try:
+                        data = json.loads(progress_file.read_text(encoding="utf-8"))
+                    except Exception:
+                        data = None  # noqa: SILENT_DEGRADE
+                    if data:
+                        for ev in data.get("events", []):
+                            seq = ev.get("seq", 0)
+                            if seq > seen_seq:
+                                seen_seq = seq
+                                run["progress_events"].append(ev)
+                                if len(run["progress_events"]) > 200:
+                                    run["progress_events"] = run["progress_events"][-200:]
+                                self._emit(run, {"type": "progress", "data": ev})
+            except FileNotFoundError:
+                pass  # noqa: SILENT_DEGRADE
 
-        t_out = asyncio.create_task(pump_stdout())
-        t_prog = asyncio.create_task(tail_progress())
-        await proc.wait()
-        await t_out
-        await t_prog
-
-        await self._finish(run, exit_code=proc.returncode or 0)
+            if task_status in tq.TERMINAL_STATUSES:
+                rc = (task or {}).get("exit_code")
+                if task_status == tq.STATUS_STOPPED:
+                    self._emit(run, {"type": "log", "data": {"text": "■ 任务已停止"}})
+                    await self._finish(run, exit_code=rc if rc is not None else 9)
+                elif task_status == tq.STATUS_FAILED:
+                    self._emit(
+                        run,
+                        {"type": "log", "data": {"text": f"✗ 任务失败（exit={rc}），日志见 .state/tasks/logs/"}},
+                    )
+                    await self._finish(run, exit_code=rc if rc is not None else 1)
+                else:
+                    await self._finish(run, exit_code=rc or 0)
+                return
+            await asyncio.sleep(0.5)
 
     async def _finish(self, run: dict[str, Any], exit_code: int) -> None:
         run["exit_code"] = exit_code
@@ -353,16 +388,6 @@ class RunManager:
 # 全局单例（进程内）
 run_manager = RunManager()
 
-
-# 不接受 --dir 的全局工具命令（避免误传未知选项）
-NO_DIR_COMMANDS = {
-    "export-skill",
-    "genre-info",
-    "help",
-    "list-genres",
-    "load-skill",
-    "version",
-}
 
 def writer_commands() -> set[str]:
     """会向项目落盘的写命令名单——从 ``@command(writes=True)`` 注册表推导。
