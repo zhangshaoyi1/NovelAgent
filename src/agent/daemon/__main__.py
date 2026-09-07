@@ -36,7 +36,12 @@ def main(argv: list[str] | None = None) -> int:
     for r in roots:
         r.mkdir(parents=True, exist_ok=True)
 
-    from agent.daemon.core import WriterDaemon
+    from agent.daemon.core import WriterDaemon, detach_console_if_present
+
+    # 弹窗根治兜底：若 daemon 被以带控制台的方式拉起（可见 python 窗口），
+    # 立即解除关联——窗口随之关闭。前台调试（daemon-start -f）不走此入口，
+    # 不受影响。
+    detach_console_if_present()
 
     print(f"[daemon] 启动：roots={[str(r) for r in roots]} pid={__import__('os').getpid()}")
     WriterDaemon(roots, poll_interval=ns.poll).run_forever()

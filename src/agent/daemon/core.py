@@ -30,6 +30,31 @@ from agent.daemon import task_queue as tq
 REPO_ROOT = Path(__file__).resolve().parents[3]
 
 
+def detach_console_if_present() -> None:
+    """Windows 兜底：daemon 带可见控制台时主动解除关联（弹窗根治的最后一道保险）。
+
+    背景：ensure_daemon 已用 DETACHED_PROCESS|CREATE_NO_WINDOW 拉起 daemon，
+    但实测仍有「第三方/脚本以普通方式 spawn daemon」的路径（父进程链含 Web
+    服务进程树，2026-09-07 用户复现弹窗）——此时 python.exe 会分配可见控制台。
+    FreeConsole 后若无其他进程附着该控制台，conhost 退出、窗口立即关闭，
+    且不依赖「谁拉起、怎么拉起」，彻底兜底。
+    """
+    if os.name != "nt":
+        return
+    import ctypes
+
+    k32 = ctypes.windll.kernel32
+    if k32.GetConsoleWindow():
+        k32.FreeConsole()
+        # 控制台句柄已失效，后续 print 可能抛错 → 输出重定向到空
+        try:
+            devnull = open(os.devnull, "w", encoding="utf-8")  # noqa: SIM115 - 进程生命周期
+            sys.stdout = devnull  # type: ignore[assignment]
+            sys.stderr = devnull  # type: ignore[assignment]
+        except Exception:  # noqa: BLE001
+            pass
+
+
 def default_root() -> Path:
     """默认监听的数据根：NOVEL_DATA_ROOT 优先，否则 <仓库根>/../novels。"""
     import os
