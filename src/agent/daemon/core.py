@@ -154,7 +154,13 @@ class WriterDaemon:
 
         popen_kwargs: dict[str, Any] = {}
         if os.name == "nt":
-            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+            # CREATE_NEW_PROCESS_GROUP：进程树可整体管理（taskkill /T /F）；
+            # CREATE_NO_WINDOW：daemon 无控制台，控制台型子进程（python.exe）
+            # 会被系统自动分配一个可见控制台窗口——Web 自动写作时弹出 python
+            # 黑窗（2026-09-07 用户反馈），必须显式压制。
+            popen_kwargs["creationflags"] = (
+                subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+            )
 
         try:
             proc = subprocess.Popen(
@@ -233,7 +239,9 @@ def ensure_daemon(roots: list[Path | str]) -> bool:
     }
     if os.name == "nt":
         kwargs["creationflags"] = (
-            subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP
+            subprocess.DETACHED_PROCESS
+            | subprocess.CREATE_NEW_PROCESS_GROUP
+            | subprocess.CREATE_NO_WINDOW  # 双保险：任何路径拉起 daemon 都不弹窗
         )
     else:
         kwargs["start_new_session"] = True

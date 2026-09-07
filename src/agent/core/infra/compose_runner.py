@@ -86,6 +86,12 @@ def run_compose(
     from agent.core.project_lock import INHERIT_ENV
 
     child_env = {**os.environ, INHERIT_ENV: str(os.getpid())}
+    # 无窗口：compose 经 daemon 队列执行时父链无控制台，控制台型子进程
+    # （python.exe）会被系统分配可见窗口（Web 自动写作弹 python 黑窗），
+    # 显式压制。前台 CLI 直跑时该标志同样无害。
+    run_kwargs: dict = {}
+    if os.name == "nt":
+        run_kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
     auto_cmd = cli + [
         "autowrite",
         "-d", str(project_dir),
@@ -95,7 +101,7 @@ def run_compose(
     ]
     if env:
         auto_cmd += ["--env", env]
-    rc = subprocess.run(auto_cmd, cwd=str(AGENT_ROOT), env=child_env).returncode
+    rc = subprocess.run(auto_cmd, cwd=str(AGENT_ROOT), env=child_env, **run_kwargs).returncode
     if rc != 0:
         print("✗ autowrite 未成功完成（可能熔断/阻塞），详见上方输出")
         print("  可复用同一命令加 --dir 接力续写。")
@@ -114,7 +120,7 @@ def run_compose(
         eval_cmd = cli + ["evaluate", "-d", str(project_dir), "--no-rollback"]
         if env:
             eval_cmd += ["--env", env]
-        rc_eval = subprocess.run(eval_cmd, cwd=str(AGENT_ROOT), env=child_env).returncode
+        rc_eval = subprocess.run(eval_cmd, cwd=str(AGENT_ROOT), env=child_env, **run_kwargs).returncode
         if rc_eval != 0:
             print("⚠ evaluate 体检异常（非致命），请稍后手动重跑："
                   f" python -m agent.cli evaluate -d {project_dir}")
@@ -122,7 +128,7 @@ def run_compose(
         fs_cmd = cli + ["foreshadow-report", "-d", str(project_dir)]
         if env:
             fs_cmd += ["--env", env]
-        rc_fs = subprocess.run(fs_cmd, cwd=str(AGENT_ROOT), env=child_env).returncode
+        rc_fs = subprocess.run(fs_cmd, cwd=str(AGENT_ROOT), env=child_env, **run_kwargs).returncode
         if rc_fs != 0:
             print("⚠ foreshadow-report 异常（非致命），请稍后手动重跑："
                   f" python -m agent.cli foreshadow-report -d {project_dir}")

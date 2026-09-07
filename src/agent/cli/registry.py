@@ -128,23 +128,198 @@ def _acquire_write_lock(fn: Callable[..., Any], display: str, args: tuple, kwarg
         raise typer.Exit(code=2) from exc
 
 
-def _with_write_lock(
+# ---------------------------------------------------------------- D3 队列路由
+_PYTEST_ENV = "PYTEST_CURRENT_TEST"
+
+#: 从捕获的原始 argv 中剥离的布尔开关（daemon 子进程无需，任务 argv 保持纯净）。
+_BOOL_STRIP_FLAGS = ("--direct", "--wait", "--no-wait")
+
+
+def _capture_raw_argv(display: str) -> list[str] | None:
+    """从当前进程 sys.argv 捕获命令名之后的原始参数。
+
+    非 CLI 调用（进程内直调、sys.argv 里找不到命令名）返回 None → 不路由。
+    """
+    import sys
+
+    argv = sys.argv[1:]
+    for i, tok in enumerate(argv):
+        if tok == display:
+            return argv[i + 1 :]
+    return None
+
+
+def _dir_opt_names(fn: Callable[..., Any]) -> set[str]:
+    """收集命令的项目目录参数对应的 CLI 选项名（如 --dir / -d）。"""
+    opts: set[str] = set()
+    try:
+        sig = inspect.signature(fn)
+    except (TypeError, ValueError):
+        return {"--dir", "-d"}
+    for name, param in sig.parameters.items():
+        if name in _DIR_ARG_NAMES:
+            decl = param.default
+            if type(decl).__name__ == "OptionInfo":
+                opts.update(getattr(decl, "opts", None) or ())
+    return opts or {"--dir", "-d"}
+
+
+def _strip_argv(
+    argv: list[str], value_flags: set[str], bool_flags: tuple[str, ...] = ()
+) -> list[str]:
+    """剥离指定开关。value_flags 选项带值（``--dir x`` / ``--dir=x``），
+    bool_flags 开关不带值。"""
+    out: list[str] = []
+    skip_next = False
+    for tok in argv:
+        if skip_next:
+            skip_next = False
+            continue
+        base = tok.split("=", 1)[0]
+        if base in value_flags:
+            if "=" not in tok:
+                skip_next = True  # 剥离选项值
+            continue
+        if base in bool_flags:
+            continue
+        out.append(tok)
+    return out
+
+
+def _json_requested(kwargs: dict) -> bool:
+    """命令是否请求了 JSON 输出（stdout 信封契约优先，保持直跑）。"""
+    for k, v in kwargs.items():
+        if "json" in k.lower() and _unwrap_option_default(v):
+            return True
+    return False
+
+
+def _route_via_queue(
+    display: str,
+    fn: Callable[..., Any],
+    args: tuple,
+    kwargs: dict,
+    writes_when: Optional[Callable[[dict], bool]],
+    wait: bool,
+) -> bool:
+    """尝试把写命令路由到 daemon 队列。返回 True 表示已处理（提交/跟随）。
+
+    任何不满足路由前提的情况返回 False → 调用方走原直跑路径（锁 + 函数体）。
+    """
+    import os
+    import sys
+
+    if os.environ.get("NOVELAGENT_TASK_ID"):
+        return False  # 本进程就是 daemon 派生的执行子进程
+    if os.environ.get(_PYTEST_ENV):
+        return False  # 测试环境保持直跑语义（既有用例零改动）
+    if writes_when is not None and not writes_when(kwargs):
+        return False  # 只读模式（如 deslop 无 --apply），无写操作
+    if _json_requested(kwargs):
+        return False  # --json：stdout 信封契约保持原样（自动化解析兼容）
+    project = resolve_project_dir(fn, args, kwargs)
+    if project is None:
+        return False  # 新书/非项目目录：维持原直跑
+    raw = _capture_raw_argv(display)
+    if raw is None:
+        return False  # 进程内直调（非 CLI 入口）
+
+    from agent.cli._app import console
+    from agent.daemon import task_queue as tq
+
+    argv = _strip_argv(
+        raw, _dir_opt_names(fn), _BOOL_STRIP_FLAGS
+    )  # --dir 由 daemon 注入绝对路径，先剥掉避免 cwd 相对路径错位
+
+    task = tq.submit_task(project, display, argv=argv, submitted_by="cli")
+    queued = sum(1 for _ in tq.iter_tasks(project, tq.STATUS_QUEUED))
+    console.print(
+        f"[bold green]✓[/bold green] 任务已提交 [bold]{task['task_id']}[/bold] "
+        f"（{display}，排队数 {queued}）"
+    )
+
+    from agent.daemon.core import ensure_daemon
+
+    if not ensure_daemon([project.parent]):
+        cancelled = tq.request_stop(project, task["task_id"])
+        if cancelled == "cancelled":
+            console.print(
+                "[yellow]⚠ daemon 自动拉起失败，已取消排队任务，降级为本进程直跑"
+                "（锁保护照常生效）[/yellow]"
+            )
+            return False  # 可见降级：不阻断
+        console.print("[yellow]⚠ daemon 心跳异常但任务已被认领，继续跟随…[/yellow]")
+    elif not wait:
+        console.print(
+            f"[dim]任务排队中；查看：agent task-status {task['task_id']} -d {project}；"
+            f"日志：.state/tasks/logs/{task['task_id']}.log[/dim]"
+        )
+        import typer
+
+        raise typer.Exit(code=0)
+
+    from agent.daemon.follow import follow_task
+
+    rc = follow_task(project, task["task_id"])
+    import typer
+
+    raise typer.Exit(code=rc)
+
+
+def _with_write_dispatch(
     display: str,
     fn: Callable[..., Any],
     writes_when: Optional[Callable[[dict], bool]],
 ) -> Callable[..., Any]:
-    """给命令函数套一层「派发前自动加项目写锁」的外壳。
+    """给命令函数套「派发层路由 + 项目写锁」外壳（D3 + L1-2）。
 
-    用 ``functools.wraps`` 保持原始签名与注解，typer 仍按原函数签名构建 CLI
-    （已验证 typer 0.27 在 ``from __future__ import annotations`` 场景下正确解析）。
+    D3 路由语义（写命令默认经 writer daemon 队列执行，单一权威）：
+    - 默认：提交队列任务并前台跟随（``--wait`` 默认开，保持既有交互体验，
+      自动化脚本零改动兼容）；``--no-wait`` 提交即返回。
+    - ``--direct`` / daemon 子进程（NOVELAGENT_TASK_ID）/ pytest / ``--json`` /
+      解析不出项目目录 / 进程内直调 → 保持直跑（锁照常，L1 兜底不变）。
+    - daemon 自动拉起失败时取消排队任务并**可见地降级**为直跑（降级不阻断）。
+
+    用 ``functools.wraps`` 保持原始签名与注解，typer 仍按原函数签名构建 CLI；
+    额外通过合成 ``__signature__`` 注入 ``--direct/--wait`` 两个路由开关
+    （typer 0.27 已验证兼容，含 ``from __future__ import annotations`` 场景）。
     """
+    import typer
+
+    sig = inspect.signature(fn)
+    extended = sig.replace(
+        parameters=[
+            *sig.parameters.values(),
+            inspect.Parameter(
+                "direct",
+                inspect.Parameter.KEYWORD_ONLY,
+                default=typer.Option(
+                    False, "--direct",
+                    help="绕过 daemon 队列，在本进程直接执行（逃生口；daemon 子进程自动直跑）",
+                ),
+                annotation=bool,
+            ),
+            inspect.Parameter(
+                "wait",
+                inspect.Parameter.KEYWORD_ONLY,
+                default=typer.Option(
+                    True, "--wait/--no-wait",
+                    help="提交 daemon 队列后前台跟随直至任务结束（默认开）",
+                ),
+                annotation=bool,
+            ),
+        ]
+    )
 
     @functools.wraps(fn)
-    def wrapper(*args: Any, **kwargs: Any) -> Any:
+    def wrapper(*args: Any, direct: bool = False, wait: bool = True, **kwargs: Any) -> Any:
+        if not direct and _route_via_queue(display, fn, args, kwargs, writes_when, wait):
+            return None  # 已走队列（提交/跟随均在 _route_via_queue 内完成）
         if writes_when is None or writes_when(kwargs):
             _acquire_write_lock(fn, display, args, kwargs)
         return fn(*args, **kwargs)
 
+    wrapper.__signature__ = extended  # type: ignore[attr-defined]
     return wrapper
 
 
@@ -193,7 +368,7 @@ def command(
         #    不传显式 name（name 默认 None）→ typer 从 callback 函数名派生命令名，
         #    并保持 c.name=None，兼容既有测试 ``c.name or c.callback.__name__`` 的取值。
         #    若调用方显式传入 name，则作为 typer 命令名（与注册表 display 一致）。
-        target = _with_write_lock(display, fn, writes_when) if writes else fn
+        target = _with_write_dispatch(display, fn, writes_when) if writes else fn
         app.command(name, help=help, context_settings=context_settings)(target)
         # 2) 登记/补全元数据（命令名唯一键）。
         #    命令模块经 @command 装饰即注册点；但若命令名已存在于基线 COMMAND_REGISTRY

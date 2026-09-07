@@ -130,17 +130,33 @@ def submit_task(
     return task
 
 
+_STATUS_TO_SUBDIR = {
+    STATUS_QUEUED: "pending",
+    STATUS_RUNNING: "running",
+    STATUS_DONE: "done",
+    STATUS_FAILED: "done",
+    STATUS_STOPPED: "done",
+}
+
+
 def iter_tasks(project_dir: Path | str, status: str | None = None) -> Iterator[dict]:
-    """按状态枚举任务（status=None 时遍历 pending/running/done 全部）。"""
+    """按状态枚举任务（status=None 时遍历 pending/running/done 全部）。
+
+    状态与目录的映射：queued→pending/；running→running/；
+    done/failed/stopped→done/（再按任务内 status 字段过滤）。
+    """
     root = tasks_root(Path(project_dir))
-    subdirs = [status] if status else ("pending", "running", "done")
+    if status is None:
+        subdirs = ("pending", "running", "done")
+    else:
+        subdirs = (_STATUS_TO_SUBDIR.get(status, status),)
     for sub in subdirs:
         d = root / sub
         if not d.is_dir():
             continue
         for p in sorted(d.glob("*.json")):
             task = _read_json(p)
-            if task:
+            if task and (status is None or task.get("status") == status):
                 yield task
 
 

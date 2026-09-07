@@ -52,7 +52,8 @@ class ProjectLockBusy(RuntimeError):
         super().__init__(
             f"项目已有写进程在运行：pid={info.get('pid')} "
             f"started={info.get('started_at')} cmd={info.get('command')} "
-            f"（锁文件：{lock_path}）。确认该进程已结束后再启动，或手动删除锁文件。"
+            f"（锁文件：{lock_path}）。等待其结束，或运行 "
+            f"`agent unlock -d <项目目录>` 清理已确认死亡的陈旧锁。"
         )
 
 
