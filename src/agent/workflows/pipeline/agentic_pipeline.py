@@ -307,7 +307,11 @@ class AgenticPipelineWorkflow(
         start_total = self._current_total()
 
         wrote = 0
-        while self._current_total() < target:
+        # F-7：双条件终止——本地 wrote 兜底 + state 校验。
+        # 并发写（双进程）时 state.total_written 可能被竞争滞后，单靠
+        # `while _current_total() < target` 会多写章节（五灵破归档事故：目标 5 章出 6 章）；
+        # 本地 wrote 达到「本轮应写章数」即停，不依赖外部 state 的唯一性。
+        while wrote < target - start_total and self._current_total() < target:
             # ── G10 检查点顺序（拍板 4）：_check_budget → G8 决策点 → 降档判定 → 事件 ──
             # 1) G4 熔断检查点（判定逻辑零改动，727-774）
             budget_over = self._check_budget("write_chapter")

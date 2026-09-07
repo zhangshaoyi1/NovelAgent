@@ -37,10 +37,17 @@ def _pid_alive(pid: int) -> bool:
     if os.name == "nt":
         import ctypes
 
-        kernel32 = ctypes.windll.kernel32
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
         SYNCHRONIZE = 0x00100000
+        ERROR_ACCESS_DENIED = 5
         handle = kernel32.OpenProcess(SYNCHRONIZE, False, pid)
         if not handle:
+            # F-8：OpenProcess 失败不一律判死——ERROR_ACCESS_DENIED 表示进程
+            # 存在但权限不足（跨会话/受保护进程，如不同用户启动的 CLI 与 Web 子进程），
+            # 此时误判「陈旧锁」会删锁接管，导致双写并发（五灵破归档事故根因）。
+            # 保守：权限不足视为存活（不接管，交人工确认）；仅“进程不存在”类错误判死。
+            if ctypes.get_last_error() == ERROR_ACCESS_DENIED:
+                return True
             return False
         try:
             # WAIT_TIMEOUT(0x102) 表示仍在运行

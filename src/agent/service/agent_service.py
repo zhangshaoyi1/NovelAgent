@@ -243,6 +243,12 @@ class AgentService:
         **pipeline_kwargs: Any,
     ) -> dict[str, Any]:
         """全流程自主写作。返回 {pipeline, llmops, result}（result 为原始结果对象）。"""
+        # F-8：service 层入口补单写者锁（幂等）——CLI autowrite 已持锁时
+        # （同 PID）视为已持有直接通过；被其他进程持有则抛 ProjectLockBusy，
+        # 防「Web/服务直调 + CLI」双入口并发写同一本书。
+        from agent.core.project_lock import acquire_project_lock
+
+        acquire_project_lock(self.project_dir, "autowrite")
         pipeline = self.build_pipeline(
             brief=brief,
             target_chapters=target_chapters,
