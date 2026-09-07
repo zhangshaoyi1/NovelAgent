@@ -90,7 +90,7 @@
     </div>
     <div class="modal-body">
       <div class="form-grid">
-        <label>目标章节数
+        <label>本轮续写章数（从当前进度往后写，非目标总章数）
           <input type="number" id="aw-chapters" value="5" min="1" max="200" />
         </label>
         <label>引擎模式
@@ -152,7 +152,7 @@
     const batch = parseInt(document.getElementById('aw-chapters').value, 10) || 0;
     const from = existingChapters + 1;
     document.getElementById('aw-note').textContent =
-      batch > 0 ? `将从第 ${from} 章写到第 ${existingChapters + batch} 章` : '请填写目标章节数';
+      batch > 0 ? `将从第 ${from} 章写到第 ${existingChapters + batch} 章（共写 ${batch} 章）` : '请填写本轮续写章数';
   }
   document.addEventListener('DOMContentLoaded', () => {
     const el = document.getElementById('aw-chapters');
