@@ -80,6 +80,12 @@ def run_compose(
         print("[compose] 新书模式，autowrite 将自主规划生成设定集/架构/大纲/角色...")
 
     print("[compose] 启动多角色自主写作...")
+    # 锁继承：compose 进程已被派发层加了 writer.lock，spawn 的子进程若不声明
+    # 血缘会被父锁挡死（父子 PID 不同）。注入 NOVEL_AGENT_INHERIT_LOCK_PID
+    # 让子进程共享父锁；外部进程（CLI/Web 另起的写命令）不受影响、照常被拒。
+    from agent.core.project_lock import INHERIT_ENV
+
+    child_env = {**os.environ, INHERIT_ENV: str(os.getpid())}
     auto_cmd = cli + [
         "autowrite",
         "-d", str(project_dir),
@@ -89,7 +95,7 @@ def run_compose(
     ]
     if env:
         auto_cmd += ["--env", env]
-    rc = subprocess.run(auto_cmd, cwd=str(AGENT_ROOT)).returncode
+    rc = subprocess.run(auto_cmd, cwd=str(AGENT_ROOT), env=child_env).returncode
     if rc != 0:
         print("✗ autowrite 未成功完成（可能熔断/阻塞），详见上方输出")
         print("  可复用同一命令加 --dir 接力续写。")
@@ -108,7 +114,7 @@ def run_compose(
         eval_cmd = cli + ["evaluate", "-d", str(project_dir), "--no-rollback"]
         if env:
             eval_cmd += ["--env", env]
-        rc_eval = subprocess.run(eval_cmd, cwd=str(AGENT_ROOT)).returncode
+        rc_eval = subprocess.run(eval_cmd, cwd=str(AGENT_ROOT), env=child_env).returncode
         if rc_eval != 0:
             print("⚠ evaluate 体检异常（非致命），请稍后手动重跑："
                   f" python -m agent.cli evaluate -d {project_dir}")
@@ -116,7 +122,7 @@ def run_compose(
         fs_cmd = cli + ["foreshadow-report", "-d", str(project_dir)]
         if env:
             fs_cmd += ["--env", env]
-        rc_fs = subprocess.run(fs_cmd, cwd=str(AGENT_ROOT)).returncode
+        rc_fs = subprocess.run(fs_cmd, cwd=str(AGENT_ROOT), env=child_env).returncode
         if rc_fs != 0:
             print("⚠ foreshadow-report 异常（非致命），请稍后手动重跑："
                   f" python -m agent.cli foreshadow-report -d {project_dir}")

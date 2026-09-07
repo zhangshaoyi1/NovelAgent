@@ -33,7 +33,8 @@
   <section class="panel card" style="background:#FAFAF9">
     <div class="card-h"><h3>实时日志（SSE）</h3><span class="tag acc" id="dock-state">空闲</span></div>
     <div class="card-b dock-console">
-      <div class="rc-status-row"><span class="rc-status"></span><span class="modal-sub rc-timer"></span></div>
+      <div class="rc-status-row"><span class="rc-status"></span><span class="modal-sub rc-timer"></span>
+        <button class="btn danger rc-stop" hidden onclick="stopRun()">停止</button></div>
       <div class="rc-log"><span style="color:#78716C">等待写作任务…</span></div>
       <div class="rc-timeline"></div>
     </div>
@@ -125,6 +126,7 @@
       timelineEl: document.querySelector('.dock-console .rc-timeline'),
       statusEl: document.querySelector('.dock-console .rc-status'),
       timerEl: document.querySelector('.dock-console .rc-timer'),
+      stopBtn: document.querySelector('.dock-console .rc-stop'),
     };
     // 页面重载 / 后台标签页被浏览器丢弃后切回：重新接管仍在进行的写作任务，
     // 服务端会回放历史日志与进度时间线，避免「切回来就不知道写到哪了」。

@@ -110,7 +110,7 @@ def _render_table(rows: list[dict]) -> None:
     console.print(table)
 
 
-@command(global_=True)
+@command(global_=True, writes=True, writes_when=lambda kw: bool(kw.get("apply")))
 def deslop(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"
@@ -248,7 +248,7 @@ def deslop(
     console.print(f"[dim]原章备份：{backup_dir}[/dim]")
 
 
-@command(global_=True)
+@command(global_=True, writes=True, writes_when=lambda kw: bool(kw.get("apply")))
 def deslop_chapter(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"

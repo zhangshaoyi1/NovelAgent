@@ -790,9 +790,39 @@ async def api_run(
         if model_profiles.get_profile(profile.strip()) is None:
             raise HTTPException(status_code=400, detail=f"模型档案不存在：{profile}")
         env_extra = {"NOVEL_MODEL_PROFILE": profile.strip()}
+    # L2-A：同一项目已有进行中的运行实例时，写命令拒绝再启动。
+    # 此前缺乏此去重，用户在 Web 上重复点击「自动续写」即 fork 出第二个写进程，
+    # 进而与 CLI 侧进程并发写同一本书（五灵破归档「写 5 章出 6 章」事故通道之一）。
+    if runner.is_write_command(command):
+        active = runner.run_manager.active_run_for(project)
+        if active is not None:
+            return JSONResponse(
+                {
+                    "error": "busy",
+                    "message": (
+                        f"项目「{project}」已有运行中的任务（{active['command']}），"
+                        "请等待其完成或先停止该任务。"
+                    ),
+                    "run_id": active["id"],
+                },
+                status_code=409,
+            )
     run_id = runner.run_manager.new_run(project, command, argv, env_extra=env_extra)
     asyncio.create_task(runner.run_manager.execute(run_id))
     return JSONResponse({"run_id": run_id})
+
+
+@app.post("/api/runs/{run_id}/stop")
+async def api_run_stop(run_id: str) -> JSONResponse:
+    """停止进行中的运行实例（L2-A）。
+
+    此前 Web 侧没有任何终止手段，任务一旦启动只能等它自己跑完；Web 关闭后
+    子进程还会变孤儿继续写章。现在可显式停止，进程树整体终止。
+    """
+    if run_id not in runner.run_manager.runs:
+        raise HTTPException(status_code=404, detail="运行不存在")
+    stopped = await runner.run_manager.stop(run_id)
+    return JSONResponse({"run_id": run_id, "stopped": stopped})
 
 
 @app.get("/api/runs")

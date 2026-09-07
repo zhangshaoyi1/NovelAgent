@@ -27,6 +27,7 @@ from agent.core.engine.state_machine import State
         State.ARCH_CONFIRMED, State.OUTLINING, State.CHARACTER_DESIGN, State.WRITING,
     ),
     help="一键自动写书：生成约束文档 → 多角色推进 → 完本（非定时，跑完即止）",
+    writes=True,
 )
 def compose(
     name: str = typer.Option("", "--name", help="新书名（非空则开新书）"),

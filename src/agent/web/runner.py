@@ -16,10 +16,12 @@
 from __future__ import annotations
 
 import asyncio
+import atexit
 import json
 import os
 import re
 import shlex
+import subprocess
 import sys
 import uuid
 from pathlib import Path
@@ -40,11 +42,79 @@ def strip_rich(text: str) -> str:
     return _RICH_TAG_RE.sub("", text)
 
 
+def _kill_process_tree(proc: Any) -> None:
+    """终止子进程及其子孙（Windows 需要 /T，否则只杀直接子进程留孤儿）。"""
+    pid = getattr(proc, "pid", None)
+    if pid is None:
+        return
+    try:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                capture_output=True,
+                timeout=10,
+                check=False,
+            )
+            return
+    except Exception:  # noqa: BLE001 - taskkill 失败退回 proc.kill()
+        pass  # noqa: SILENT_DEGRADE
+    try:
+        proc.kill()
+    except Exception:  # noqa: BLE001 - 进程已退出
+        pass  # noqa: SILENT_DEGRADE
+
+
 class RunManager:
     """管理进行中 / 已完成的命令运行实例。"""
 
     def __init__(self) -> None:
         self.runs: dict[str, dict[str, Any]] = {}
+        # L2-A：项目 → 进行中 run_id。同一项目同一时刻只允许一个运行实例，
+        # 防止用户在 Web 上重复点击（或页面重载后重发）fork 出第二个写进程——
+        # 这是「Web 与 CLI 双写」之外另一条并发写通道。
+        self.active_by_project: dict[str, str] = {}
+        atexit.register(self._kill_all_children)
+
+    # ---------- L2-A：进程主权 ----------
+
+    def active_run_for(self, project: str) -> dict[str, Any] | None:
+        """返回该项目进行中的运行实例（无则 None）。"""
+        run_id = self.active_by_project.get(project)
+        if run_id is None:
+            return None
+        run = self.runs.get(run_id)
+        if run is None or run.get("done"):
+            self.active_by_project.pop(project, None)
+            return None
+        return run
+
+    def kill_all_children(self) -> None:
+        """终止所有仍在运行的子进程（Web 关闭 / 重启时调用，杜绝孤儿写者）。"""
+        self._kill_all_children()
+
+    def _kill_all_children(self) -> None:
+        for run in list(self.runs.values()):
+            proc = run.get("proc")
+            if proc is not None and proc.returncode is None:
+                _kill_process_tree(proc)
+
+    async def stop(self, run_id: str) -> bool:
+        """请求停止某次运行；返回是否找到可停止的进程。
+
+        Windows 上进程树必须整体终止（``proc.terminate()`` 只杀直接子进程），
+        故走 ``taskkill /T /F``；失败时退回 ``proc.kill()``。
+        进程退出后 ``execute`` 中的 ``await proc.wait()`` 自然收尾并推送 done。
+        """
+        run = self.runs.get(run_id)
+        if run is None:
+            return False
+        run["stop_requested"] = True
+        proc = run.get("proc")
+        if proc is None or proc.returncode is not None:
+            return False
+        self._emit(run, {"type": "log", "data": {"text": "■ 已请求停止，正在终止进程…"}})
+        await asyncio.to_thread(_kill_process_tree, proc)
+        return True
 
     def new_run(
         self,
@@ -76,6 +146,7 @@ class RunManager:
             "exit_code": None,
             "done_data": None,
             "proc": None,
+            "stop_requested": False,
         }
         return run_id
 
@@ -96,12 +167,15 @@ class RunManager:
             return
         pdir = project_path(run["project"])
         progress_file = pdir / ".state" / "progress.json"
+        # L2-A：登记为该项目活跃实例（同一项目后续启动请求会被 api_run 拦截）
+        self.active_by_project[run["project"]] = run_id
 
-        # 单写者锁预检：同一小说已有活跃写进程时不再启动，直接给前端明确反馈
-        if run["command"] in WRITER_COMMANDS:
+        # 单写者锁预检：同一小说已有活跃写进程时不再启动，直接给前端明确反馈。
+        # 名单来自注册表（writer_commands()），锁为全项目唯一的 writer.lock。
+        if run["command"] in writer_commands():
             from agent.core.project_lock import probe_project_lock
 
-            holder = probe_project_lock(pdir, run["command"])
+            holder = probe_project_lock(pdir)
             if holder:
                 self._emit(
                     run,
@@ -135,6 +209,11 @@ class RunManager:
         env["NOVEL_DATA_ROOT"] = str(project_path(run["project"]).parent)
         env.update(run.get("env_extra") or {})
 
+        # L2-A：Windows 上新建进程组，避免 Ctrl+C 等控制台信号直接穿透到子进程
+        # 造成半途退出；配合 RunManager 的 atexit 钩子保证 Web 退出时子进程随亡。
+        popen_kwargs: dict[str, Any] = {}
+        if os.name == "nt":
+            popen_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
         try:
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -143,6 +222,7 @@ class RunManager:
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 stdin=asyncio.subprocess.DEVNULL,
+                **popen_kwargs,
             )
         except Exception as e:  # noqa: BLE001 - 启动失败也走 done 事件
             self._emit(run, {"type": "log", "data": {"text": f"✗ 启动失败：{e}"}})
@@ -208,6 +288,9 @@ class RunManager:
     async def _finish(self, run: dict[str, Any], exit_code: int) -> None:
         run["exit_code"] = exit_code
         run["done"] = True
+        # L2-A：释放项目活跃占位，允许下一次启动
+        if self.active_by_project.get(run["project"]) == run["id"]:
+            self.active_by_project.pop(run["project"], None)
         # 收尾：附上看板摘要 + 最新状态（供前端刷新）
         try:
             from agent.web.state import get_project_state, get_summary
@@ -281,9 +364,32 @@ NO_DIR_COMMANDS = {
     "version",
 }
 
-# 会向小说项目落盘的写命令：启动前做单写者锁预检（UX 层拦截，
-# CLI 侧 acquire_project_lock 仍是兜底）
-WRITER_COMMANDS = {"autowrite", "rewrite"}
+def writer_commands() -> set[str]:
+    """会向项目落盘的写命令名单——从 ``@command(writes=True)`` 注册表推导。
+
+    历史教训（2026-09-07 五灵破归档事故）：此前此处硬编码 ``{"autowrite",
+    "rewrite"}``，与 CLI 侧真正建锁的命令**完全错位**——CLI 的 rewrite 从不建
+    ``rewrite.lock``，预检恒判「空闲」形同虚设；而真正会建锁的 ``write`` 反而不在
+    名单里。现改为单一真相源：命令在注册表声明 ``writes=True``，Web 自动跟随。
+    """
+    try:
+        import agent.cli.commands  # noqa: F401  # 触发 @command 注册副作用
+    except Exception:  # noqa: BLE001 - 注册表加载失败时退回保守名单
+        pass  # noqa: SILENT_DEGRADE
+    try:
+        from agent.core.engine.command_router import WRITE_COMMANDS
+
+        if WRITE_COMMANDS:
+            return set(WRITE_COMMANDS)
+    except Exception:  # noqa: BLE001
+        pass  # noqa: SILENT_DEGRADE
+    # 兜底：宁可多拦，不可漏拦
+    return {"autowrite", "write", "rewrite", "compose", "rollback"}
+
+
+def is_write_command(name: str) -> bool:
+    """命令是否会计入项目写锁（供 API 层做同项目去重判断）。"""
+    return name in writer_commands()
 
 
 def sanitize_project_name(name: str) -> str:

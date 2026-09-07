@@ -35,10 +35,13 @@ function startRunConsole(title) {
     dock.timelineEl.innerHTML = '';
     dock.statusEl.innerHTML = '';
     if (dock.timerEl) dock.timerEl.textContent = '';
-    return {
+    const c = {
       logEl: dock.logEl, timelineEl: dock.timelineEl, statusEl: dock.statusEl,
       timerEl: dock.timerEl || null, overlay: null, logCursor: 0,
+      stopBtn: dock.stopBtn || null,
     };
+    ACTIVE_CONSOLE = c;
+    return c;
   }
   let overlay = document.getElementById('run-console');
   if (!overlay) {
@@ -51,7 +54,8 @@ function startRunConsole(title) {
           <span class="modal-sub rc-timer"></span>
           <button class="modal-close" onclick="closeRunConsole()" aria-label="关闭">×</button></div>
         <div class="modal-body">
-          <div class="rc-status-row"><span class="rc-status"></span></div>
+          <div class="rc-status-row"><span class="rc-status"></span>
+            <button class="btn danger rc-stop" hidden onclick="stopRun()">停止</button></div>
           <div class="rc-log"></div>
           <div class="rc-timeline"></div>
         </div>
@@ -66,7 +70,41 @@ function startRunConsole(title) {
   const tmEl = overlay.querySelector('.rc-timer');
   logEl.innerHTML = ''; tlEl.innerHTML = ''; stEl.innerHTML = ''; tmEl.innerHTML = '';
   // logCursor：SSE 与轮询两条通道共享的日志消费游标，避免同一条日志被渲染两次
-  return { logEl, timelineEl: tlEl, statusEl: stEl, timerEl: tmEl, overlay, logCursor: 0 };
+  const c = {
+    logEl, timelineEl: tlEl, statusEl: stEl, timerEl: tmEl, overlay,
+    logCursor: 0, stopBtn: overlay.querySelector('.rc-stop'),
+  };
+  ACTIVE_CONSOLE = c;
+  return c;
+}
+
+/* ---------- 停止运行（L2-A） ----------
+   此前任务一旦启动只能等它自己跑完；Web 关闭后子进程还会变孤儿继续写章，
+   用户以为停了、实际还在写，再启动一次即并发写同一本书。现在可显式停止，
+   后端以 taskkill /T /F 终止整个进程树。 */
+let ACTIVE_CONSOLE = null;
+
+function showStopButton(consoleObj, on) {
+  const btn = consoleObj && consoleObj.stopBtn;
+  if (!btn) return;
+  btn.hidden = !on;
+  btn.disabled = false;
+  btn.textContent = '停止';
+}
+
+async function stopRun(consoleObj) {
+  const c = consoleObj || ACTIVE_CONSOLE;
+  const runId = c && c.runId;
+  if (!runId) return;
+  const btn = c.stopBtn;
+  if (btn) { btn.disabled = true; btn.textContent = '停止中…'; }
+  try {
+    await fetch('/api/runs/' + runId + '/stop', { method: 'POST' });
+    if (c.logEl) appendLog(c.logEl, '■ 已请求停止，正在终止进程…');
+  } catch (e) {
+    if (c.logEl) appendLog(c.logEl, '✗ 停止失败：' + e);
+    if (btn) { btn.disabled = false; btn.textContent = '停止'; }
+  }
 }
 
 function closeRunConsole() {
@@ -121,12 +159,22 @@ async function runCommand(project, command, argv, consoleObj, onDone, profile) {
   try {
     const resp = await fetch('/api/run', { method: 'POST', body: fd });
     const j = await resp.json();
+    if (resp.status === 409) {
+      // 同项目已有任务在跑（L2-A 去重）：不再 fork 第二个写进程，直接给出提示
+      appendLog(consoleObj.logEl, '✗ ' + (j.message || '已有任务在运行，本次未启动'));
+      if (consoleObj.statusEl) {
+        consoleObj.statusEl.innerHTML = '<span class="badge err">已有任务在运行</span>';
+      }
+      return;
+    }
     runId = j.run_id;
   } catch (e) {
     appendLog(consoleObj.logEl, '✗ 请求失败：' + e);
     return;
   }
   rememberRun(project, runId);
+  consoleObj.runId = runId;
+  showStopButton(consoleObj, true);
   streamEvents(runId, consoleObj, onDone, project);
 }
 
@@ -141,6 +189,7 @@ function streamEvents(runId, consoleObj, onDone, project) {
     if (es) es.close();
     stopTimer();
     forgetRun(project);
+    showStopButton(consoleObj, false);
     const ok = d.exit_code === 0;
     const code = d.exit_code;
     let badge = ok
@@ -307,6 +356,8 @@ async function reattachRun(project, label, onDone) {
 
   const c = startRunConsole(label || command || '运行中任务');
   appendLog(c.logEl, '检测到进行中的任务（' + (command || runId) + '），已重新接管，正在补齐历史日志…');
+  c.runId = runId;              // 重新接管后同样可停止（L2-A）
+  showStopButton(c, true);
   if (typeof dockRunning === 'function') dockRunning(true);
   streamEvents(runId, c, (d) => {
     if (typeof dockRunning === 'function') dockRunning(false);

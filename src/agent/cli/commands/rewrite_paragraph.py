@@ -19,7 +19,11 @@ from agent.cli._shared import emit_result, make_quiet_console
 from agent.core.engine.state_machine import State
 
 
-@command(allowed_states=(State.WRITING, State.PAUSED, State.COMPLETED))
+@command(
+    allowed_states=(State.WRITING, State.PAUSED, State.COMPLETED),
+    writes=True,
+    writes_when=lambda kw: bool(kw.get("apply")),
+)
 def rewrite_paragraph(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"

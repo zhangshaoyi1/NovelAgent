@@ -58,7 +58,7 @@ def _rescue_disk_chapter(project_path: Path) -> dict | None:
         return None
 
 
-@command(allowed_states=(State.CHARACTER_DESIGN, State.WRITING,))
+@command(allowed_states=(State.CHARACTER_DESIGN, State.WRITING,), writes=True)
 def write(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"

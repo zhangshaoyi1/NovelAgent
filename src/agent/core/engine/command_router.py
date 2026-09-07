@@ -32,6 +32,8 @@ class CommandMeta:
     # T-1 扩展：门禁派生字段（T-6 起为唯一门禁真相源）
     allowed_states: "tuple[State, ...] | None" = None  # 允许执行命令的状态；None 表示无状态约束
     is_global: bool = False  # True 表示任意状态可用（辅助/全局命令）
+    # L1-2：该命令是否向小说项目落盘（True → 派发前自动获取项目写锁）
+    writes: bool = False
 
 
 # 全量命令清单（与 PRD F16.2 表一致）
@@ -65,6 +67,26 @@ COMMAND_REGISTRY: list[CommandMeta] = [
     CommandMeta("/help", "列出命令清单（带 --dir 按状态过滤当前可用命令）", "/help [--dir <dir>]", is_global=True),
     CommandMeta("/reset-state", "重置到上一稳定点", "/reset-state", is_global=True),
 ]
+
+
+# ============================================================
+# 写命令清单（L1-2：项目写锁的唯一真相源）
+# ============================================================
+# 由 ``@command(writes=True)`` 在命令模块导入时登记。基线 COMMAND_REGISTRY 中的
+# 同名条目不会被装饰器覆盖，故写命令单独成表，供：
+#   1. Web 端启动前预检（runner.py）推导拦截名单，避免与 CLI 加锁名单错位；
+#   2. 架构红线测试断言「所有落盘命令都已声明 writes=True」。
+WRITE_COMMANDS: set[str] = set()
+
+
+def register_write_command(display_name: str) -> None:
+    """登记一个会向项目落盘的命令名（连字符形式，如 ``autowrite``）。"""
+    WRITE_COMMANDS.add(display_name)
+
+
+def is_write_command(name: str) -> bool:
+    """命令名（可带前导斜杠）是否为写命令。"""
+    return name.lstrip("/") in WRITE_COMMANDS
 
 
 def command_allowed_in_state(cmd: str, state: "State | str") -> bool:

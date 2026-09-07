@@ -45,13 +45,34 @@ def test_probe_lock_absent_returns_none(tmp_path: Path) -> None:
 
 
 def test_probe_lock_alive_returns_holder(tmp_path: Path) -> None:
-    """锁被存活进程持有时探测返回持有者信息。"""
+    """锁被存活进程持有时探测返回持有者信息。
+
+    2026-09-07 L1-1 语义修正：本进程探测自己持有的锁返回 None（视为空闲）——
+    否则派发层加锁后命令体内的预检会把自己误判成「他人占用」而秒退。
+    「他人持有→返回持有者」改由真实子进程验证：
+    """
+    import subprocess
+    import sys
+
     from agent.core.project_lock import acquire_project_lock, probe_project_lock
 
+    # 本进程持锁 → probe 空闲（新契约）
     acquire_project_lock(tmp_path, "autowrite")
-    holder = probe_project_lock(tmp_path, "autowrite")
-    assert holder is not None
-    assert int(holder.get("pid") or 0) == os.getpid()
+    assert probe_project_lock(tmp_path, "autowrite") is None
+
+    # 模拟另一存活进程的视角：子进程 probe 应看到本进程（存活）为持有者
+    code = (
+        "import sys, json; sys.path.insert(0, 'src')\n"
+        "from agent.core.project_lock import probe_project_lock\n"
+        f"h = probe_project_lock(r'{tmp_path}', 'autowrite')\n"
+        "print(json.dumps({'pid': (h or {}).get('pid')}))\n"
+    )
+    r = subprocess.run(
+        [sys.executable, "-c", code], capture_output=True, text=True, timeout=60
+    )
+    assert r.returncode == 0, r.stderr
+    out = json.loads(r.stdout.strip().splitlines()[-1])
+    assert int(out["pid"]) == os.getpid()
 
 
 # ---------------------------------------------------------------- F-7 进度

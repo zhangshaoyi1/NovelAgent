@@ -5,7 +5,7 @@ from agent.cli._shared import *
 
 from agent.core.engine.state_machine import State
 
-@command(allowed_states=(State.PAUSED,))
+@command(allowed_states=(State.PAUSED,), writes=True)
 def resume(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"

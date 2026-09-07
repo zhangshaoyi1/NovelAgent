@@ -136,7 +136,7 @@ def _render_run_summary(summary: dict[str, Any]) -> None:
 @command(allowed_states=(
     State.INIT, State.CONFIGURING, State.DISCUSSING, State.ARCHITECTING,
     State.ARCH_CONFIRMED, State.OUTLINING, State.CHARACTER_DESIGN, State.WRITING,
-))
+), writes=True)
 def autowrite(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"

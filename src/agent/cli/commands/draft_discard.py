@@ -3,7 +3,7 @@ from __future__ import annotations
 from agent.cli._app import app, console, typer, command
 from agent.cli._shared import *
 
-@command(global_=True)
+@command(global_=True, writes=True)
 def draft_discard(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"
