@@ -231,9 +231,30 @@ def test_evaluator_foreshadow_recycle_rate(tmp_path):
     )
     ev = EvaluatorAgent(proj)
     rate, stat = ev._metric_foreshadow_recycle()
-    # resolved=1, unresolved=2 → rate = 1/3
+    # 到期口径（2026-09-07）：F-03 状态「逾期」→ 到期未回收；F-01 已回收但回收点
+    # ch010 未到（当前 3 章）不计入到期分母；F-02 未到期。
     assert stat["resolved"] == 1 and stat["unresolved"] == 2
-    assert abs(rate - 1 / 3) < 1e-6
+    assert stat["due"] == 1 and stat["due_resolved"] == 0 and stat["overdue"] == 1
+    assert rate == 0.0
+
+
+def test_evaluator_foreshadow_recycle_due_semantics(tmp_path):
+    """到期口径：未到期的未回收伏笔不惩罚（中途窗口不误杀）。"""
+    proj = _make_project(
+        tmp_path,
+        n_chapters=5,
+        foreshadows=(
+            "| ID | 内容 | 埋设 | 预期回收 | 状态 |\n"
+            "|---|---|---|---|---|\n"
+            "| F-01 | 古剑 | ch001 | ch010 | 已埋 |\n"
+            "| F-02 | 秘境 | ch002 | ch003 | 已回收 |\n"
+        ),
+    )
+    ev = EvaluatorAgent(proj)
+    rate, stat = ev._metric_foreshadow_recycle()
+    # F-02 已到期且已回收 → 到期回收率 1.0；F-01 回收点 ch010 未到，不计入
+    assert stat["due"] == 1 and stat["due_resolved"] == 1
+    assert rate == 1.0
 
 
 def test_evaluator_pacing_abnormal(tmp_path):

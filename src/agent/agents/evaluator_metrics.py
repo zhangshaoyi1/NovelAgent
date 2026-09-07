@@ -68,11 +68,24 @@ class _EvaluatorMetricsMixin:
         return 0.0
 
     def _metric_foreshadow_recycle(self) -> tuple[float, dict[str, int]]:
-        """确定性：伏笔回收率。"""
+        """确定性：伏笔回收率（到期口径）。
+
+        2026-09-07 根治（五灵破归档 20:58 轮假失败同族问题之三）：旧实现统计
+        全书未回收伏笔——中途窗口（如 1200 章书写到 16 章、回收点在 ch25+）
+        回收率必然趋 0，误触发末窗回退重写（修不到、白烧 token）。改为到期口径：
+        - 到期（due）= 状态为「逾期」，或 预期回收点章号 <= 当前进度（磁盘章数）；
+        - rate = 到期项中已回收占比；无到期项 → 1.0（不误杀）；
+        - 回收点无法解析（如「全书末段」）视为未到期；已废弃不参与。
+        兼容键：resolved/unresolved/total 仍统计全书口径供报告展示；
+        新增 due/due_resolved/overdue 供明细。
+        """
         f_file = self.project_dir / "foreshadows.md"
         resolved = 0
         unresolved = 0
+        due_total = 0
+        due_resolved = 0
         if f_file.exists():
+            current = self._current_chapter_for_due()
             for line in f_file.read_text(encoding="utf-8").splitlines():
                 line = line.strip()
                 if not line.startswith("|") or line.startswith("|---") or line.startswith("| ID"):
@@ -81,13 +94,51 @@ class _EvaluatorMetricsMixin:
                 if len(cells) < 5:
                     continue
                 state = cells[4]
+                if state == "已废弃":
+                    continue
                 if state == "已回收":
                     resolved += 1
-                elif state not in ("已废弃",):
+                else:
                     unresolved += 1
-        denom = resolved + unresolved
-        rate = (resolved / denom) if denom > 0 else 1.0
-        return rate, {"resolved": resolved, "unresolved": unresolved, "total": denom}
+                # 到期判定：状态逾期，或回收点章号 <= 当前进度
+                overdue_marked = state == "逾期"
+                due_point = self._parse_recycle_chapter(cells[3] if len(cells) > 3 else "")
+                is_due = overdue_marked or (due_point is not None and due_point <= current)
+                if is_due:
+                    due_total += 1
+                    if state == "已回收":
+                        due_resolved += 1
+        rate = (due_resolved / due_total) if due_total > 0 else 1.0
+        return rate, {
+            "resolved": resolved,
+            "unresolved": unresolved,
+            "total": resolved + unresolved,
+            "due": due_total,
+            "due_resolved": due_resolved,
+            "overdue": due_total - due_resolved,
+        }
+
+    def _current_chapter_for_due(self) -> int:
+        """当前写章进度（到期判定的基准）：磁盘 ch*.md 数（顶层，不含归档）。"""
+        ch_dir = self.project_dir / "chapters"
+        if not ch_dir.exists():
+            return 0
+        return sum(1 for f in ch_dir.glob("ch*.md") if f.is_file())
+
+    @staticmethod
+    def _parse_recycle_chapter(cell: str) -> int | None:
+        """从预期回收点单元格解析章号。
+
+        支持格式：``ch025`` / ``25`` / ``第25章`` / ``S03/E01/ch401``（取 ch 前缀
+        章号，避免把阶段编号 S03 误当章号）；解析失败返回 None。
+        """
+        text = cell or ""
+        m = re.search(r"ch\s*(\d+)", text)
+        if not m:
+            matches = re.findall(r"(\d+)", text)
+            m2 = matches[-1] if matches else None
+            return int(m2) if m2 else None
+        return int(m.group(1))
 
     def _metric_pacing(self) -> tuple[float, dict[str, Any]]:
         """确定性：异常章节比例（注水/赶进度）。G6：读取改走公共 helper（行为零变化）。"""

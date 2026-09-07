@@ -209,13 +209,16 @@ class _EvaluatorDimensionsMixin:
                     self.console.print(f"[yellow]⚠ 黄金三章门禁评分失败，跳过：{e}[/yellow]")  # noqa: SILENT_DEGRADE
 
         # ---- G8（拍板 3）：主线推进 + 结局收敛验收维度（确定性 computed，并入 overall_pass）----
-        if self.mainline_gate:
+        # 两维是全书收尾验收，只在结局窗口内生效；中途续写窗口不具备评估前提
+        # （1200 章书写到 16 章必然假失败：支线 1/5、结局段在第 901 章根本未开始）。
+        g8_final_phase = self._in_book_final_phase()
+        if self.mainline_gate and g8_final_phase:
             try:
                 dims.append(self._dim_mainline_progress())
             except Exception as e:  # noqa: BLE001 - 降级不阻断（G3 哲学）
                 if self.console is not None:
                     self.console.print(f"[yellow]⚠ mainline_progress 计算失败，跳过：{e}[/yellow]")  # noqa: SILENT_DEGRADE
-        if self.ending_gate:
+        if self.ending_gate and g8_final_phase:
             try:
                 dims.append(self._dim_ending_convergence())
             except Exception as e:  # noqa: BLE001
@@ -306,7 +309,9 @@ class _EvaluatorDimensionsMixin:
                 },
             }
         report.notes.append(
-            f"伏笔：已回收 {fstat['resolved']} / 未结 {fstat['unresolved']}；"
+            f"伏笔：到期回收 {fstat.get('due_resolved', fstat['resolved'])}/"
+            f"{fstat.get('due', fstat['resolved'] + fstat['unresolved'])}"
+            f"（全书已回收 {fstat['resolved']} / 未结 {fstat['unresolved']}）；"
             f"节奏：{pstat['chapters']} 章中异常 {pstat['abnormal']} 章"
         )
         if hard_failed:
@@ -334,6 +339,28 @@ class _EvaluatorDimensionsMixin:
         return "\n".join(lines)
 
     # ---------------------------------------------------------------- G8：主线推进 + 结局收敛维度
+    def _in_book_final_phase(self) -> bool:
+        """当前进度是否已进入全书结局窗口（G8 两维的生效前提）。
+
+        结局窗口判定：total_written >= ending_trigger(book_total, 0.25)
+        （与 pipeline ending mixin 的触发口径一致，例：1200 章书 → 第 901 章起）。
+        book_total 未知（无 plan.json / 读失败）→ 保守返回 True，保持旧语义
+        （无法证明是中途窗口时不禁用门禁，避免放走真正的收尾缺陷）。
+        """
+        try:
+            from agent.core.progress import book_total as _book_total
+            from agent.core.progress import ending_trigger as _ending_trigger
+
+            total = _book_total(self.project_dir)
+            if not total:
+                return True
+            sm = StateMachine(self.project_dir)
+            sm.load()
+            chapter = int((sm.progress or {}).get("total_written", 0) or 0)
+            return chapter >= _ending_trigger(int(total), 0.25)
+        except Exception:  # noqa: BLE001 - 判定失败保持旧语义
+            return True  # noqa: SILENT_DEGRADE
+
     def _dim_mainline_progress(self) -> DimensionResult:
         """已访问支线数 ≥ min(3, 支线总数) 才达标（direction=">="）。
 

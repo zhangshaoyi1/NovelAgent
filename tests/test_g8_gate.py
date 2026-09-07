@@ -104,6 +104,7 @@ def test_mainline_three_visited_passes(tmp_path: Path) -> None:
         ending_mode=True, target=30,
         plan_json={"total_chapters": 30, "episode_tree": []},
         write_last_chapter=True,
+        total_written=30,  # 结局窗口内（>=30×75%+1=23）G8 两维才启用
     )
     ev = _make_evaluator(d)
     report = ev._evaluate_once()
@@ -134,6 +135,7 @@ def test_ending_no_foreshadow_always_passes(tmp_path: Path) -> None:
         tmp_path, n_sublines=1, visited=[S01], ending_mode=True, target=30,
         plan_json={"total_chapters": 30, "episode_tree": []},
         write_last_chapter=True,
+        total_written=30,  # 结局窗口内（>=23）G8 两维才启用
     )
     ev = _make_evaluator(d)
     report = ev._evaluate_once()
@@ -147,6 +149,7 @@ def test_ending_missing_last_chapter_fails(tmp_path: Path) -> None:
         tmp_path, n_sublines=1, visited=[S01], ending_mode=True, target=30,
         plan_json={"total_chapters": 30, "episode_tree": []},
         write_last_chapter=False,  # 末章缺失
+        total_written=30,  # 结局窗口内（>=23）G8 两维才启用
     )
     ev = _make_evaluator(d, mainline_gate=False)
     report = ev._evaluate_once()
