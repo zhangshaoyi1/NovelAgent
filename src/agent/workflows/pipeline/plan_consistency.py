@@ -28,16 +28,14 @@ from typing import Any, Optional
 
 
 def load_plan_total(project_dir: str | Path) -> Optional[int]:
-    """读 plan.json 的 total_chapters（全书规模唯一权威）；缺失/非法返回 None。"""
-    f = Path(project_dir) / ".state" / "plan.json"
-    if not f.exists():
-        return None
-    try:
-        data = json.loads(f.read_text(encoding="utf-8"))
-        total = int(data.get("total_chapters") or 0)
-        return total if total > 0 else None
-    except Exception:  # noqa: BLE001 - 读失败视为未配置
-        return None
+    """读 plan.json 的 total_chapters（全书规模唯一权威）；缺失/非法返回 None。
+
+    P2（2026-09-07）：委托 core.progress.book_total（唯一底层实现），本函数
+    保留为 workflows 层的既有公共 API。
+    """
+    from agent.core.progress import book_total
+
+    return book_total(project_dir)
 
 
 def align_mainline_to_plan(

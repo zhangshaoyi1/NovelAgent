@@ -241,7 +241,9 @@ class AgenticWriteWorkflow:
             new_subline = orch.maybe_advance()
             if not new_subline:
                 return
-            chapter = int((self.state_machine.progress or {}).get("total_written", 0)) + 1
+            from agent.core.progress import next_chapter
+
+            chapter = next_chapter(self.state_machine.progress or {})
             visited = list(
                 (self.state_machine.progress or {}).get("mainline_visited", []) or []
             )

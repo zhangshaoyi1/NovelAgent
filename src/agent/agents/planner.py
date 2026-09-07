@@ -425,13 +425,17 @@ class PlannerAgent:
 
     # ---------------------------------------------------------------- 落盘
     def _save(self, plan: MasterPlan) -> None:
-        self.plan_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self.plan_file.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(plan.model_dump(), ensure_ascii=False, indent=2),
-            encoding="utf-8",
+        # P1（2026-09-07）：plan.json 唯一写入口收口——MasterPlan 是顶层骨架，
+        # 与旧文件合并保留 scope/route 等非 MasterPlan 字段（原整文件覆盖会丢），
+        # total_chapters 若与 scope.estimated_chapters 冲突由 PlanStore 强制推导校正。
+        from agent.core.plan_store import PlanStore
+
+        master = plan.model_dump()
+        PlanStore(self.project_dir).mutate(
+            lambda old: {**old, **master},
+            reason="M3 MasterPlan 生成（planner）",
+            console=self.console,
         )
-        tmp.replace(self.plan_file)
 
     def load_plan(self) -> MasterPlan | None:
         """读取已落盘的 Master Plan（不存在返回 None）。"""

@@ -27,6 +27,7 @@ from typing import Any, Optional
 from rich.console import Console
 
 from agent.core.engine.state_machine import StateMachine
+from agent.core.progress import next_chapter
 
 
 class MainlineOrchestrator:
@@ -75,7 +76,7 @@ class MainlineOrchestrator:
         try:
             self.state_machine.load()
             progress = self.state_machine.progress or {}
-            chapter = int(progress.get("total_written", 0)) + 1
+            chapter = next_chapter(progress)
             if chapter <= 1 or (chapter - 1) % self.replan_window != 0:
                 return False
             ok = bool(self.budget_planner.plan())

@@ -28,6 +28,8 @@ import re
 import shutil
 from dataclasses import dataclass, field
 from datetime import datetime
+
+from agent.core.progress import next_chapter
 from pathlib import Path
 from typing import Any
 from agent.core.engine.workflow_registry import workflow
@@ -113,8 +115,8 @@ class M10RollbackWorkflow:
                 message=f"目标章节 {target_chapter} 超过已写章节 {total_written}，无需回滚",
             )
 
-        if target_chapter == total_written + 1:
-            # 回滚最后一章（等于删除最后一章重写）
+        if target_chapter == next_chapter(progress):
+            # 回滚最后一章（等于删除最后一章重写）；P2：章号走统一推导
             pass
 
         # 归档章节文件（target_chapter 及之后）

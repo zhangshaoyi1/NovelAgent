@@ -46,7 +46,9 @@ def decide_mainline_advance(
 
     project_dir = Path(project_dir)
     progress = state_machine.progress or {}
-    chapter = int(progress.get("total_written", 0)) + 1  # 即将写的章号
+    from agent.core.progress import next_chapter
+
+    chapter = next_chapter(progress)  # 即将写的章号（P2 统一推导）
     current = progress.get("current_subline", "") or ""
     ending_mode = bool(progress.get("ending_mode", False))
 

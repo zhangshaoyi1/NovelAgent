@@ -20,13 +20,14 @@
 
 from __future__ import annotations
 
-from agent.core.infra.prompt_manager import pm
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from agent.core.infra.prompt_manager import pm
 import frontmatter
 from jinja2 import Environment, FileSystemLoader, select_autoescape
 from rich.console import Console
@@ -40,6 +41,7 @@ from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.core.registry.genre_pack import first_genre, first_genre_label
 from agent.core.engine.workflow_registry import workflow
+from agent.core.story.volume import describe_scope, estimate_chapters
 from agent.utils import parse_llm_json
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
@@ -144,6 +146,9 @@ class M4CharacterWorkflow:
         foreshadows_file = self._render_foreshadows(foreshadows)
         golden_finger_file = self._render_golden_finger(golden_finger)
 
+        # ★ 写入 .state/plan.json（规划数据单一真源，供 M5 及后续规划读取）
+        self._save_plan_json(protagonist_route, world_info)
+
         # 呈现
         self._present(
             title,
@@ -213,9 +218,21 @@ class M4CharacterWorkflow:
         if "## 金手指登记" in content:
             golden_finger_info = content.split("## 金手指登记", 1)[1].split("##", 1)[0].strip()[:600]
 
+        # B 方案：由体量估算全书总章数（供 LLM 生成路线时按真实章数分配节点范围）
+        scope_key = metadata.get("scope", "medium")
+        scope_total_words = metadata.get("scope_total_words")
+        scope_cl = (
+            metadata.get("scope_chapter_length")
+            or (style.get("chapter_length") if isinstance(style, dict) else None)
+        )
+        expected_chapters = estimate_chapters(scope_key, scope_total_words, scope_cl)
+        scope_description = describe_scope(scope_key, scope_total_words, scope_cl)
+
         return {
             "title": metadata.get("title", ""),
             "scope": metadata.get("scope", ""),
+            "scope_description": scope_description,
+            "expected_chapters": expected_chapters,
             "genre": first_genre(metadata),
             "genre_label": first_genre_label(metadata),
             "tone": style.get("tone", "") if isinstance(style, dict) else str(style),
@@ -249,7 +266,9 @@ class M4CharacterWorkflow:
 
         user_prompt = pm.get("m4.character").render_user(
             title=arch_data["title"],
-            scope=world_info.get("scope", ""),
+            scope=world_info.get("scope_description", ""),
+            scope_key=world_info.get("scope", ""),
+            expected_chapters=world_info.get("expected_chapters", 200),
             tone=world_info.get("tone", ""),
             story_core=arch.get("story_core", ""),
             protagonist_who=pt.get("who", ""),
@@ -372,6 +391,40 @@ class M4CharacterWorkflow:
         )
         file.write_text(content, encoding="utf-8")
         return file
+
+    def _save_plan_json(
+        self, protagonist_route: dict[str, Any], world_info: dict[str, Any]
+    ) -> None:
+        """写入 .state/plan.json —— 规划数据单一真源（路线 + 体量）。
+
+        M5 及后续规划从 JSON 读取，禁止回退到 md 正则解析。
+        """
+        plan_dir = self.project_dir / ".state"
+        plan_dir.mkdir(parents=True, exist_ok=True)
+        plan_file = plan_dir / "plan.json"
+
+        expected = world_info.get("expected_chapters", 200)
+        plan = {
+            "version": 1,
+            "total_chapters": expected,
+            "scope": {
+                "key": world_info.get("scope", ""),
+                "label": world_info.get("scope_description", ""),
+                "total_words": None,
+                "chapter_length": world_info.get("chapter_length", 3000),
+                "estimated_chapters": expected,
+            },
+            "route": {
+                "root_node": protagonist_route.get("root_node", "") or "路线起点",
+                "nodes": protagonist_route.get("nodes", []) or [],
+            },
+        }
+        # P1（2026-09-07）：走 PlanStore 唯一写入口（原子写 + 变更日志 + 派生重算）
+        from agent.core.plan_store import PlanStore
+
+        PlanStore(self.project_dir).mutate(
+            lambda _old: plan, reason="M4 路线+体量落盘（m4_character）"
+        )
 
     def _render_characters(self, characters: list[dict[str, Any]], title: str) -> list[Path]:
         chars_dir = self.project_dir / "characters"

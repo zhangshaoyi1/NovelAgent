@@ -29,13 +29,17 @@ class _PipelineEndingMixin:
             self.state_machine.load()
             progress = dict(self.state_machine.progress or {})
             book_total = self._book_total()
-            chapter = int(progress.get("total_written", 0)) + 1
-            trigger_chapter = int(book_total * (1 - self.ending_ratio)) + 1
+            # P2：章号/触发点统一走 core.progress 推导（唯一答案函数）
+            from agent.core.progress import ending_trigger, next_chapter
+
+            chapter = next_chapter(progress)
+            trigger_chapter = ending_trigger(book_total, self.ending_ratio)
             if progress.get("ending_mode"):
-                # 一致性自检：total_chapters 调大后触发点后移，早先进入的结局模式
-                # 不再自洽（否则全书会被强行带向大结局）。仅当触发点确实后移时
-                # 自动退出；book_total 未变时维持「一旦进入不退出」（拍板 4）。
+                # P4（2026-09-07）：派生态记源——ending_mode 携带进入时的
+                # ending_mode_book_total；总章数变化即重算重判（泛化原
+                # 「仅触发点后移自动退出」：前移/后移两个方向都覆盖）。
                 ended_at = int(progress.get("ending_mode_at") or 0)
+                bt_at_entry = int(progress.get("ending_mode_book_total") or 0)
                 # 仅信任 plan.json 显式配置的 total_chapters（权威来源）；
                 # _book_total() 的兜底默认值 100 只是猜测，不得据此退出结局模式
                 #（否则无 plan.json 的旧项目/夹具会被误清除，破坏拍板 4 原语义）。
@@ -46,26 +50,44 @@ class _PipelineEndingMixin:
                     plan_configured = bool(_plan.get("total_chapters"))
                 except Exception:  # noqa: BLE001 - 读取失败视为未配置
                     plan_configured = False  # noqa: SILENT_DEGRADE
-                if plan_configured and ended_at and ended_at < trigger_chapter:
-                    progress["ending_mode"] = False
-                    progress.pop("ending_mode_at", None)
-                    self.state_machine.progress = progress
-                    self.state_machine.save()
-                    self.console.print(
-                        f"[yellow]全书总章数已调整为 {book_total}，结局模式触发点后移至"
-                        f"第 {trigger_chapter} 章（原 {ended_at}），自动退出结局模式[/yellow]"
-                    )
-                    self._emit_event(
-                        "ending_mode_exit",
-                        chapter=chapter,
-                        ended_at=ended_at,
-                        new_trigger=trigger_chapter,
-                        book_total=book_total,
-                    )
+                total_changed = plan_configured and bt_at_entry and bt_at_entry != book_total
+                if plan_configured and ended_at and (
+                    ended_at < trigger_chapter or total_changed
+                ):
+                    if chapter < trigger_chapter:
+                        # 当前章已不在结局区间 → 退出（源变更重判，覆盖两个方向）
+                        progress["ending_mode"] = False
+                        progress.pop("ending_mode_at", None)
+                        progress.pop("ending_mode_book_total", None)
+                        self.state_machine.progress = progress
+                        self.state_machine.save()
+                        self.console.print(
+                            f"[yellow]全书总章数已调整为 {book_total}，结局模式触发点为"
+                            f"第 {trigger_chapter} 章（进入时 {ended_at}/总章数"
+                            f"{bt_at_entry or '未知'}），自动退出结局模式[/yellow]"
+                        )
+                        self._emit_event(
+                            "ending_mode_exit",
+                            chapter=chapter,
+                            ended_at=ended_at,
+                            new_trigger=trigger_chapter,
+                            book_total=book_total,
+                        )
+                    elif progress.get("ending_mode_book_total") != book_total:
+                        # 仍在结局区间 → 保留（拍板 4），仅跟随记录新总章数
+                        progress["ending_mode_book_total"] = book_total
+                        self.state_machine.progress = progress
+                        self.state_machine.save()
+                        self._emit_event(
+                            "ending_mode_total_follow",
+                            chapter=chapter,
+                            book_total=book_total,
+                        )
                 return  # 不退出（拍板 4）：book_total 未变时维持原语义
-            if chapter > book_total * (1 - self.ending_ratio):
+            if chapter >= trigger_chapter:  # 与 chapter > book_total*(1-ratio) 逐值等价（P2 统一口径）
                 progress["ending_mode"] = True
                 progress["ending_mode_at"] = chapter
+                progress["ending_mode_book_total"] = book_total
                 self.state_machine.progress = progress
                 self.state_machine.save()
                 self.console.print(
@@ -105,7 +127,9 @@ class _PipelineEndingMixin:
             if not new_subline:
                 return
             progress = dict(self.state_machine.progress or {})
-            chapter = int(progress.get("total_written", 0)) + 1
+            from agent.core.progress import next_chapter
+
+            chapter = next_chapter(progress)
             visited = list(progress.get("mainline_visited", []) or [])
             self.console.print(
                 f"[cyan]主线推进：第 {chapter} 章起切至支线 {new_subline}"
@@ -136,6 +160,7 @@ class _PipelineEndingMixin:
             result.ending = {
                 "ending_mode": bool(progress.get("ending_mode", False)),
                 "ending_mode_at": progress.get("ending_mode_at"),
+                "ending_mode_book_total": progress.get("ending_mode_book_total"),
                 "ending_ratio": self.ending_ratio,
             } if self.ending_gate else None
         except Exception:  # noqa: BLE001 - 摘要失败不阻断主流程

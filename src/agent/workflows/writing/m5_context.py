@@ -6,6 +6,7 @@ import re
 from typing import Any
 
 from agent.core.registry.genre_pack import first_genre, first_genre_label
+from agent.core.progress import next_chapter
 from agent.core.story.volume import estimate_chapters
 from agent.core.infra.degrade import degrade
 import frontmatter
@@ -14,6 +15,16 @@ from agent.core.registry.genre_pack import GenrePackRegistry
 from agent.core.story.method_style import load_style_guide
 
 logger = logging.getLogger(__name__)
+
+
+def _parse_chapter_range(range_str: str) -> tuple[int | None, int | None]:
+    """解析章节范围字符串如 '1-9' / '43~82' / '193-242'，返回 (lo, hi)。"""
+    if not range_str:
+        return None, None
+    m = re.search(r"(\d+)\s*[-~]\s*(\d+)", str(range_str))
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return None, None
 
 
 
@@ -61,8 +72,8 @@ class M5ContextMixin:
         # Step 7: 题材层质量规则（MVP 内置修仙）
         # — 已在 prompt 中编码
 
-        # 章节号
-        chapter_num = progress.get("total_written", 0) + 1
+        # 章节号（P2：统一推导函数，禁止手写 total_written+1）
+        chapter_num = next_chapter(progress)
 
         # 前情提要
         prev_summary = self._load_prev_summary(chapter_num)
@@ -306,21 +317,73 @@ class M5ContextMixin:
             "expected_chapters": expected_chapters,
         }
     def _load_route_node(self, progress: dict[str, Any]) -> dict[str, str]:
-        """从 protagonist_route.md 读取当前章节对应的节点"""
+        """从 .state/plan.json 读取当前章节对应的路线节点（单一真源，禁止回退到 md 解析）"""
+        plan_file = self.project_dir / ".state" / "plan.json"
+        chapter_num = next_chapter(progress)
+
+        if not plan_file.exists():
+            # 兼容旧项目：无 plan.json 时退化为读 protagonist_route.md（仅告警，不阻断）
+            logger.warning(
+                "[route] .state/plan.json 不存在，回退到 protagonist_route.md 解析（旧项目兼容）"
+            )
+            return self._load_route_node_from_md(chapter_num)
+
+        try:
+            plan = json.loads(plan_file.read_text(encoding="utf-8"))
+        except Exception as e:
+            logger.warning("[route] plan.json 解析失败（%s），回退到 md 解析", e)
+            return self._load_route_node_from_md(chapter_num)
+
+        nodes = (plan.get("route") or {}).get("nodes") or []
+        if not nodes:
+            logger.warning("[route] plan.json 中 route.nodes 为空，回退到 md 解析")
+            return self._load_route_node_from_md(chapter_num)
+
+        # 精确匹配：章节号落在节点范围内
+        for node in nodes:
+            lo, hi = _parse_chapter_range(node.get("chapter_range", ""))
+            if lo is not None and hi is not None and lo <= chapter_num <= hi:
+                mb = node.get("main_branch") or {}
+                return {
+                    "node_id": node.get("id", ""),
+                    "milestone": node.get("milestone", ""),
+                    "main_title": mb.get("title", ""),
+                    "main_result": mb.get("result", ""),
+                    "main_growth": mb.get("growth", ""),
+                }
+
+        # 兜底：按位置均匀分配（与旧逻辑一致，但数据来自 JSON）
+        total = max(
+            (_parse_chapter_range(n.get("chapter_range", ""))[1] or 0) for n in nodes
+        )
+        total = max(total, chapter_num)
+        idx = min(len(nodes) - 1, int((chapter_num - 1) / max(1, total) * len(nodes)))
+        node = nodes[idx]
+        mb = node.get("main_branch") or {}
+        logger.warning(
+            "[route] 第 %d 章未被任何路线节点范围覆盖（全书跨度 %d），"
+            "按位置分配到节点 %s",
+            chapter_num, total, node.get("id", ""),
+        )
+        return {
+            "node_id": node.get("id", ""),
+            "milestone": node.get("milestone", ""),
+            "main_title": mb.get("title", ""),
+            "main_result": mb.get("result", ""),
+            "main_growth": mb.get("growth", ""),
+        }
+
+    def _load_route_node_from_md(self, chapter_num: int) -> dict[str, str]:
+        """旧项目兼容：从 protagonist_route.md 解析路线节点（仅在 plan.json 不可用时调用）"""
         route_file = self.project_dir / "protagonist_route.md"
         if not route_file.exists():
             return {"node_id": "", "milestone": "", "main_title": "", "main_result": "", "main_growth": ""}
 
         text = route_file.read_text(encoding="utf-8")
-        chapter_num = progress.get("total_written", 0) + 1
-
-        # 按 ## NXX 分段
         blocks = re.split(r"\n## (N\d+)", text)
-        # blocks = ["前置", "N01", "N01内容", "N02", "N02内容", ...]
         for i in range(1, len(blocks), 2):
             node_id = blocks[i]
             block = blocks[i + 1] if i + 1 < len(blocks) else ""
-            # 提取章节范围（兼容 **章节范围** 加粗格式）
             range_match = re.search(r"章节范围\*{0,2}[：:]\s*(\d+)[-~](\d+)", block)
             if range_match:
                 lo = int(range_match.group(1))
@@ -328,7 +391,6 @@ class M5ContextMixin:
                 if lo <= chapter_num <= hi:
                     milestone = re.search(r"^\s*·\s*(.+)", block)
                     milestone_str = milestone.group(1).strip() if milestone else ""
-                    # 主分支
                     main_title = ""
                     main_result = ""
                     main_growth = ""
@@ -348,10 +410,9 @@ class M5ContextMixin:
                         "main_result": main_result,
                         "main_growth": main_growth,
                     }
-        # 没匹配到范围 → P-B 修复：均匀分配节点使路线随章节推进，而非恒为 N01
+        # 没匹配到范围 → 兜底分配
         node_ids = [blocks[i] for i in range(1, len(blocks), 2)]
         if node_ids:
-            # 用节点范围的最大 hi 作为全书跨度（无范围则退化为本章号）
             his: list[int] = []
             for i in range(1, len(blocks), 2):
                 m = re.search(r"章节范围\*{0,2}[：:]\s*(\d+)[-~](\d+)", blocks[i + 1] if i + 1 < len(blocks) else "")
@@ -413,7 +474,10 @@ class M5ContextMixin:
     def _load_characters(
         self, subline_data: dict[str, Any]
     ) -> tuple[str, str]:
-        """读取本章涉及角色的 character.md"""
+        """读取本章涉及角色的 character.md
+
+        优化（2026-09-07）：语言指纹字段截断，减少 prompt token 消耗。
+        """
         names = self._extract_character_names(subline_data)
 
         chars_dir = self.project_dir / "characters"
@@ -437,9 +501,9 @@ class M5ContextMixin:
                 identity = char_data["metadata"].get("identity", "")
                 info_parts.append(f"- **{name}**（{char_data['metadata'].get('role','')}）：{identity}。动机：{motivation[:80]}")
 
-                # 语言指纹
-                catchphrase = self._extract_field(content, "口头禅")
-                sentence_style = self._extract_field(content, "句式偏好")
+                # 语言指纹（截断以减少 prompt 长度）
+                catchphrase = (self._extract_field(content, "口头禅") or "")[:30]
+                sentence_style = (self._extract_field(content, "句式偏好") or "")[:40]
                 fingerprint_parts.append(f"- {name}：口头禅「{catchphrase}」| 句式：{sentence_style}")
             else:
                 info_parts.append(f"- **{name}**（角色档案未找到）")
@@ -509,7 +573,7 @@ class M5ContextMixin:
             return "（伏笔表未生成）"
 
         text = f_file.read_text(encoding="utf-8")
-        chapter_num = progress.get("total_written", 0) + 1
+        chapter_num = next_chapter(progress)
 
         # ---- G8（拍板 5）：结局段「回收优先 + 禁新埋长线」 ----
         if progress.get("ending_mode"):

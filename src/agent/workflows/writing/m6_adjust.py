@@ -28,12 +28,14 @@
 
 from __future__ import annotations
 
-from agent.core.infra.prompt_manager import pm
+import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+
+from agent.core.infra.prompt_manager import pm
 from agent.core.engine.workflow_registry import workflow
 
 import frontmatter
@@ -362,14 +364,42 @@ class M6AdjustRouteWorkflow:
 
     # ------ 内部：渲染路线 ------
     def _render_route(self, route: dict[str, Any]) -> Path:
+        # P3（2026-09-07）：路线单一真源 = plan.json.route.nodes。
+        # 顺序：route 先经 PlanStore 落 plan.json → 再从 plan.route 渲染 md
+        # （md 是渲染视图，保证与真源逐字节一致，杜绝双镜像分裂）。
+        saved = self._sync_plan_json(route)
+        render_route = saved if saved is not None else route
         file = self.project_dir / "protagonist_route.md"
         template = self.jinja_env.get_template("protagonist_route.md.j2")
         content = template.render(
-            root_node=route.get("root_node", "") or "路线起点",
-            nodes=route.get("nodes", []) or [],
+            root_node=render_route.get("root_node", "") or "路线起点",
+            nodes=render_route.get("nodes", []) or [],
         )
         file.write_text(content, encoding="utf-8")
         return file
+
+    def _sync_plan_json(self, route: dict[str, Any]) -> dict[str, Any] | None:
+        """路线调整后经 PlanStore 同步 .state/plan.json（P1 唯一写入口）。
+
+        Returns:
+            落盘后的 plan（plan.json 不存在时返回 None，调用方回退用入参渲染）。
+        """
+        from agent.core.plan_store import PlanStore
+
+        new_route = {
+            "root_node": route.get("root_node", "") or "路线起点",
+            "nodes": route.get("nodes", []) or [],
+        }
+        if not PlanStore(self.project_dir).plan_file.exists():
+            return None
+
+        def _apply(plan: dict[str, Any]) -> dict[str, Any]:
+            plan["route"] = new_route
+            return plan
+
+        return PlanStore(self.project_dir).mutate(
+            _apply, reason="M6 路线调整同步（m6_adjust）"
+        )
 
     # ------ 内部：提取未来节点摘要 ------
     @staticmethod
