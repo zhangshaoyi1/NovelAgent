@@ -28,6 +28,12 @@ validation:
 体量：{{ scope }}
 文风：{{ tone }}
 
+【体量换算（重要）】
+- 体量档位：{{ scope_key }}
+- 预计总章数：{{ expected_chapters }} 章
+- 请将全部 {{ expected_chapters }} 章均匀分配到各路线节点，每个节点的「章节范围」必须覆盖到预计总章数，最后一个节点的 hi 必须 ≈ {{ expected_chapters }}。
+- 节点数量 5-10 个，按故事阶段（起/承/转/合）均匀切分，每节点章节数尽量均衡。
+
 【故事架构（已确认）】
 故事内核：{{ story_core }}
 主角三要素：

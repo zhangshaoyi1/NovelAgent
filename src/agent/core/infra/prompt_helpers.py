@@ -12,11 +12,16 @@ md 的提示词常量），``format_*`` 前缀为白名单放行。
 from __future__ import annotations
 
 
-def format_rag_context(chunks: list) -> str:
+def format_rag_context(chunks: list, max_chunks: int = 3, max_text_len: int = 120) -> str:
     """把召回的 Chunk 列表渲染为可读文本块（供 M5 生成提示 / 命令输出复用）
+
+    优化（2026-09-07）：限制召回条数与每条文本长度，减少 prompt token 消耗。
+    默认最多 3 条、每条文本截断到 120 字符，可在调用方按需放宽。
 
     Args:
         chunks: ``agent.core.rag.Chunk`` 列表（或具 source/chapter_num/kind/text 属性的对象）
+        max_chunks: 最大返回条数（默认 3）
+        max_text_len: 每条文本最大字符数（默认 120）
 
     Returns:
         多行文本；空列表返回提示语。
@@ -24,45 +29,54 @@ def format_rag_context(chunks: list) -> str:
     if not chunks:
         return "（无语义召回结果）"
     lines: list[str] = []
-    for c in chunks:
+    for c in chunks[:max_chunks]:
         label = c.source
         if getattr(c, "chapter_num", 0):
             label = f"{c.source} · 第{c.chapter_num}章"
         kind = getattr(c, "kind", "") or "ref"
-        lines.append(f"- [{label}｜{kind}] {c.text}")
+        text = str(getattr(c, "text", "") or "")
+        if len(text) > max_text_len:
+            text = text[:max_text_len] + "…"
+        lines.append(f"- [{label}｜{kind}] {text}")
     return "\n".join(lines)
 
 
-def format_open_debts(debts: list) -> str:
-    """把「未收回的钩子债 / 伏笔债」渲染为可读文本块（供 M5 生成提示注入）
+def format_open_debts(debts: list, max_debts: int = 5, max_desc_len: int = 60) -> str:
+        """把「未收回的钩子债 / 伏笔债」渲染为可读文本块（供 M5 生成提示注入）
 
-    入参 ``debts`` 支持两种形态（与 ``PacingStore.get_open_debts`` 对齐，互不冲突）：
-      - ``Debt`` 对象列表（含 id/desc/kind/planted_ch 属性）
-      - ``dict`` 列表（含 id/desc/kind/planted_ch 键，由 M5 ``_load_context`` 转换）
+        优化（2026-09-07）：限制返回条数与描述长度，减少 prompt token 消耗。
 
-    Args:
-        debts: 开放债务列表（``Debt`` 或 dict）
+        入参 ``debts`` 支持两种形态（与 ``PacingStore.get_open_debts`` 对齐，互不冲突）：
+          - ``Debt`` 对象列表（含 id/desc/kind/planted_ch 属性）
+          - ``dict`` 列表（含 id/desc/kind/planted_ch 键，由 M5 ``_load_context`` 转换）
 
-    Returns:
-        多行文本；空列表返回提示语。
-    """
-    if not debts:
-        return "（当前无未收回的钩子债 / 伏笔债）"
-    lines: list[str] = []
-    for d in debts:
-        if isinstance(d, dict):
-            _id = d.get("id", "")
-            desc = d.get("desc", "")
-            kind = d.get("kind", "general")
-            planted = d.get("planted_ch", 0)
-        else:
-            _id = getattr(d, "id", "")
-            desc = getattr(d, "desc", "")
-            kind = getattr(d, "kind", "general")
-            planted = getattr(d, "planted_ch", 0)
-        planted_str = f"（埋设于第 {planted} 章）" if planted else ""
-        lines.append(f"- [{kind}] {_id}：{desc}{planted_str}")
-    return "\n".join(lines)
+        Args:
+            debts: 开放债务列表（``Debt`` 或 dict）
+            max_debts: 最大返回条数（默认 5）
+            max_desc_len: 每条描述最大字符数（默认 60）
+
+        Returns:
+            多行文本；空列表返回提示语。
+        """
+        if not debts:
+            return "（当前无未收回的钩子债 / 伏笔债）"
+        lines: list[str] = []
+        for d in debts[:max_debts]:
+            if isinstance(d, dict):
+                _id = d.get("id", "")
+                desc = d.get("desc", "")
+                kind = d.get("kind", "general")
+                planted = d.get("planted_ch", 0)
+            else:
+                _id = getattr(d, "id", "")
+                desc = getattr(d, "desc", "")
+                kind = getattr(d, "kind", "general")
+                planted = getattr(d, "planted_ch", 0)
+            if len(desc) > max_desc_len:
+                desc = desc[:max_desc_len] + "…"
+            planted_str = f"（埋设于第 {planted} 章）" if planted else ""
+            lines.append(f"- [{kind}] {_id}：{desc}{planted_str}")
+        return "\n".join(lines)
 
 
 def format_learnings(learnings: list) -> str:

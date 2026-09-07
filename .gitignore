@@ -78,3 +78,7 @@ err.log
 
 # 章节恢复数据（debug 产物，不入库）
 _recovered/
+
+# 仓库内误建的运行目录（不入库）
+novels/
+.tmp-*/

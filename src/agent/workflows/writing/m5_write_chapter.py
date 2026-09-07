@@ -530,8 +530,8 @@ class M5WriteChapterWorkflow(
         wi = ctx["world_info"]
         from agent.core.infra.prompt_helpers import format_open_debts, format_rag_context
 
-        rag_context_text = format_rag_context(ctx.get("rag_context", []))
-        open_debts_text = format_open_debts(ctx.get("open_debts", []))
+        rag_context_text = format_rag_context(ctx.get("rag_context", []), max_chunks=3, max_text_len=120)
+        open_debts_text = format_open_debts(ctx.get("open_debts", []), max_debts=5, max_desc_len=60)
         user_prompt = pm.get("m5.generate").render_user(
             title=wi["title"],
             tone=wi["tone"],
