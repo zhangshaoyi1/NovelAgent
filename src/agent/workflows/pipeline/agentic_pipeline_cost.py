@@ -13,6 +13,22 @@ from agent.workflows.pipeline.agentic_pipeline_types import _DOWNGRADE_ORDER
 
 class _PipelineCostMixin:
     # ---------------------------------------------------------------- P1-2 成本可观测 + 单步超时
+    def _used_tokens(self) -> float:
+        """F-8（2026-09-07）：本轮窗口 token 用量 = totals() - _usage_baseline。
+
+        TraceStore 持久化到 <project>/.state/llmops/trace.jsonl 并跨轮累计，
+        直接用 totals() 会把历史轮次消耗计入本轮预算（旧项目开局即"超预算"，
+        五灵破 ch13 实证）。基线在 run() 开头快照；异常时退化为 0（判定放行）。
+        """
+        try:
+            from agent.core.llmops.trace import get_tracer
+
+            total = float(get_tracer().totals().get("tokens_total", 0) or 0)
+        except Exception:  # noqa: BLE001 - 取不到用量按 0 处理（预算判定放行）
+            return 0.0
+        baseline = float(getattr(self, "_usage_baseline", 0.0) or 0.0)
+        return max(0.0, total - baseline)
+
     def _traced_llm(self) -> Any:
         """返回包着 ``self.llm`` 的 ``TracedLLMClient``（注入同 tracer，供 M1~M4 调用）。"""
         if self._traced_llm_cache is None:
@@ -29,11 +45,8 @@ class _PipelineCostMixin:
         """成本告警（仅提示不拦截，拍板 #3；硬熔断归 G4）。"""
         try:
             from agent.core.llmops.cost import CostModel
-            from agent.core.llmops.trace import get_tracer
 
-            tracer = get_tracer()
-            totals = tracer.totals()
-            used = totals.get("tokens_total", 0)
+            used = self._used_tokens()  # F-8：本轮窗口用量
             model = CostModel()
             msg = model.alert_if_over(used, "balanced", self._resolve_target())
             if msg:
@@ -56,11 +69,9 @@ class _PipelineCostMixin:
 
         try:
             from agent.core.llmops.cost import CostModel
-            from agent.core.llmops.trace import get_tracer
 
-            tracer = get_tracer()
-            totals = tracer.totals()
-            used_tokens = totals.get("tokens_total", 0)
+            # F-8：本轮窗口用量（历史轮次已由 _usage_baseline 剔除）
+            used_tokens = self._used_tokens()
 
             # 1) Token 检查
             model = CostModel()
@@ -103,10 +114,8 @@ class _PipelineCostMixin:
         """
         try:
             from agent.core.llmops.cost import CostModel
-            from agent.core.llmops.trace import get_tracer
 
-            tracer = get_tracer()
-            used = float((tracer.totals().get("tokens_total", 0) or 0))
+            used = self._used_tokens()  # F-8：本轮窗口用量（成本视图与判定同源）
             model = CostModel()
             _, token_limit = model.baseline_tokens(self._cost_tier, self._resolve_target())
             budget = token_limit * self._budget_margin

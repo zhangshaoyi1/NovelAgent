@@ -131,22 +131,76 @@ class AgenticWriteWorkflow:
     def _run_deslop(self, text: str, ctx: dict[str, Any]) -> str:
         """P0 去AI味：质量门禁通过后、落盘前执行（轻度规则/中重 LLM）。
 
-        与 M5 ``_maybe_deslop`` 共用策略：轻度走规则后处理（零 LLM），中/重度走 LLM
-        改写（6 Gate + 三遍法）。任何失败降级返回原文，绝不阻断写章（G3 哲学）。
+        优化（2026-09-07）：中度/重度去AI味改为**合并修订+去AI味单次 LLM 调用**，
+        替代原来的「revise（WriterAgent 内部）+ deslop（DeslopRewriter）」两次调用。
+        轻度仍走规则后处理（零 LLM），与 M5 ``_maybe_deslop`` 共用策略。
+        任何失败降级返回原文，绝不阻断写章（G3 哲学）。
         标题已由调用方在 deslop 前提取，故此处可安全改写正文。
         """
         if not self.deslop_enabled:
             return text
         try:
+            from agent.core.anti_ai.detector import AIFlavorScanner
             from agent.core.anti_ai.rewriter import DeslopRewriter
+            from agent.client.gateway_adapter import chat_creative
 
             # 先做与落盘一致的清理，避免把标题行/元信息交给 LLM 改写
             body = M5WriteChapterWorkflow._clean_chapter_body(text)
+
+            # 轻度：规则后处理（零 LLM）
+            scanner = AIFlavorScanner(self.project_dir)
+            report = scanner.scan(body)
+            if report.level == "light":
+                rewriter = DeslopRewriter(
+                    self.llm, project_dir=self.project_dir, console=self.console
+                )
+                result = rewriter.rewrite(body, level="light")
+                self._emit_substage(f"deslop:{result.level}", ctx["chapter_num"])
+                if result.changed and result.text.strip():
+                    return result.text
+                return text
+
+            # 中度/重度：合并修订+去AI味单次 LLM 调用（替代 revise + deslop 两次调用）
+            self._emit_substage(f"deslop:{report.level}", ctx["chapter_num"])
+            level_label = {"medium": "中度", "heavy": "重度"}.get(report.level, report.level)
+
+            # 构建合并审稿意见：包含质量门禁建议 + AI 味检测结果
+            quality_suggestions = ""
+            if isinstance(ctx.get("_last_quality_report"), dict):
+                quality_suggestions = ctx["_last_quality_report"].get("suggestions", "")
+
+            prompt = pm.get("m5.revise_deslop")
+            resp = chat_creative(
+                self.llm,
+                messages=[
+                    {"role": "system", "content": prompt.system},
+                    {
+                        "role": "user",
+                        "content": prompt.render_user(
+                            quality_report=quality_suggestions,
+                            ai_level=report.level,
+                            level_label=level_label,
+                            chapter_text=body,
+                        ),
+                    },
+                ],
+                temperature=0.6,
+                max_tokens=8192,
+                enable_thinking=False,
+            )
+            revised = (resp or "").strip()
+            if revised and len(revised) >= max(200, len(body) // 2):
+                if self.console is not None:
+                    self.console.print(
+                        f"[dim]  合并修订+去AI味（{level_label}）完成："
+                        f"{len(body)} → {len(revised)} 字[/dim]"
+                    )
+                return revised
+            # 合并改写失败 → 降级到原 DeslopRewriter 流程
             rewriter = DeslopRewriter(
                 self.llm, project_dir=self.project_dir, console=self.console
             )
-            result = rewriter.rewrite(body, level="auto")
-            self._emit_substage(f"deslop:{result.level}", ctx["chapter_num"])
+            result = rewriter.rewrite(body, level=report.level)
             if result.changed and result.text.strip():
                 return result.text
             return text
@@ -226,8 +280,8 @@ class AgenticWriteWorkflow:
 
     def _build_task(self, ctx: dict[str, Any]) -> str:
         wi = ctx["world_info"]
-        rag_context_text = format_rag_context(ctx.get("rag_context", []))
-        open_debts_text = format_open_debts(ctx.get("open_debts", []))
+        rag_context_text = format_rag_context(ctx.get("rag_context", []), max_chunks=3, max_text_len=120)
+        open_debts_text = format_open_debts(ctx.get("open_debts", []), max_debts=5, max_desc_len=60)
         task = pm.get("m5.generate").render_user(
             title=wi["title"],
             tone=wi["tone"],
@@ -395,7 +449,21 @@ class AgenticWriteWorkflow:
     # ------------------------------------------------------------------
     # 主入口
     # ------------------------------------------------------------------
-    def run(self, rewrite_hint: str | None = None) -> AgenticWriteResult:
+    def run(
+        self,
+        rewrite_hint: str | None = None,
+        chapter_num: int | None = None,
+    ) -> AgenticWriteResult:
+        """写一章。
+
+        Args:
+            rewrite_hint: 针对性修正要求（评测回溯/门禁打回时传入）。
+            chapter_num: 章号锚定（F-8，2026-09-07）。门禁打回重写时必须传
+                原章号：默认 ``_load_context`` 按 ``total_written + 1`` 取新章号，
+                而打回时上一章刚落盘 → 重写会溢出成"下一章"（五灵破
+                ch9/ch11/ch13 实证：门禁每打回一次就多写一章）。评测回溯路径
+                无需传（m10 回滚已先回退 total_written）。
+        """
         self._guard()
 
         # ---- 主线推进：写章前先裁决是否切支线（必须在 _load_context 之前，分支线生效）----
@@ -420,6 +488,15 @@ class AgenticWriteWorkflow:
         # 否则 _load_context 里 progress 恒空 → chapter_num 恒为 1、支线恒取第一条。
         m5.state_machine.load()
         ctx = m5._load_context()
+
+        # F-8：章号锚定（见 run() docstring）。覆盖 ctx 后同步重取前情
+        # （_load_prev_summary 按 chapter_num-1 取上一章，重写同一章时前情不变）。
+        if chapter_num is not None and int(chapter_num) > 0:
+            ctx["chapter_num"] = int(chapter_num)
+            try:
+                ctx["prev_chapter_summary"] = m5._load_prev_summary(ctx["chapter_num"])
+            except Exception:  # noqa: BLE001 - 前情重取失败保留原值，不阻断
+                pass  # noqa: SILENT_DEGRADE
 
         task = self._build_task(ctx)
 

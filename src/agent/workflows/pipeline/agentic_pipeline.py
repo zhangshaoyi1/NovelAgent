@@ -149,6 +149,11 @@ class AgenticPipelineWorkflow(
         self.budget_plan = budget_plan or {}  # G10（拍板 6）：预算计划配置（仅回显/键覆盖，hard_limit_tokens 不参与判定）
         self._llm_timeout = llm_timeout  # 单调用超时（覆盖 .env）
         self._start_time: float = 0.0  # 起始时间（墙钟计时）
+        # F-8（2026-09-07）：token 用量基线（本轮窗口起点快照）。
+        # TraceStore 落盘跨轮累计历史 span，直接用 totals() 会把历史消耗计入
+        # "本轮预算" → 旧项目开局即误判超预算（降档/熔断）（五灵破 ch13 实证）。
+        # 预算判定一律用 _used_tokens() = totals() - _usage_baseline。
+        self._usage_baseline: float = 0.0
         self._schema_degraded: bool = False  # Schema 降级标志（从 Planner 读取）
         self.on_progress = on_progress  # 进度回调（T4 CLI 订阅）
 
@@ -238,6 +243,16 @@ class AgenticPipelineWorkflow(
 
         # G4 记录起始时间（墙钟计时）
         self._start_time = time.monotonic()
+
+        # F-8：记录本轮 token 用量基线（窗口差值口径，见 __init__ 注释）
+        try:
+            from agent.core.llmops.trace import get_tracer as _get_tracer
+
+            self._usage_baseline = float(
+                _get_tracer().totals().get("tokens_total", 0) or 0
+            )
+        except Exception:  # noqa: BLE001 - 基线快照失败退化为 0（等同旧行为）
+            self._usage_baseline = 0.0
 
         # ---- 规划一致性守护（缺口 A/C，2026-09-06）：写前对账 + 不变量 fail-fast ----
         # 覆盖直接调用 pipeline 的入口（Web / 测试）；CLI autowrite 已另行前置校验。
@@ -401,7 +416,8 @@ class AgenticPipelineWorkflow(
                         f"（{len(block_conflicts)} 项阻断）：自动打回 Writer 重写 1 次[/yellow]"
                     )
                     try:
-                        wf_result = writer.run(rewrite_hint=critique)
+                        # F-8：章号锚定——重写必须是"同一章"（否则溢出成下一章）
+                        wf_result = writer.run(rewrite_hint=critique, chapter_num=ch_num)
                         ch_text = str(getattr(wf_result, "chapter_text", ""))
                         ch_title = str(getattr(wf_result, "chapter_title", ""))
                         ch_num = int(getattr(wf_result, "chapter_num", ch_num))
@@ -453,7 +469,8 @@ class AgenticPipelineWorkflow(
                                 f"自动打回 Writer 重写 1 次[/yellow]"
                             )
                             try:
-                                wf_result = writer.run(rewrite_hint=critique)
+                                # F-8：章号锚定——重写必须是"同一章"（否则溢出成下一章）
+                                wf_result = writer.run(rewrite_hint=critique, chapter_num=ch_num)
                                 ch_text = str(getattr(wf_result, "chapter_text", ""))
                                 ch_title = str(getattr(wf_result, "chapter_title", ""))
                                 ch_num = int(getattr(wf_result, "chapter_num", ch_num))
