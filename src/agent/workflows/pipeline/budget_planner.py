@@ -21,9 +21,11 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ValidationError
 
 from rich.console import Console
+
+from agent.base.structured_output import StructuredOutputError
 
 
 # ---------------------------------------------------------------------------
@@ -151,7 +153,13 @@ class BudgetPlanner:
     def _ask_llm(
         self, sublines: list[str], horizon: int, plan: dict[str, Any]
     ) -> _BudgetSchema:
-        """调用统一 chat_structured 产出主编预算。"""
+        """调用统一 chat_structured 产出主编预算。
+
+        校验/解析失败时附真实错误详情重试一次（与 Writer 同模式）：
+        chat_structured 仅以提示词嵌入 Schema（无原生 response_format 硬约束），
+        弱遵从度 provider 常漏必填字段（horizon_chapters/subline_budget）；
+        首败直接降级会让本支线周期静默走均衡分账，重试可救回大部分。
+        """
         if self._llm is None:
             from agent.client.gateway_adapter import create_gateway
             self._llm = create_gateway()
@@ -159,22 +167,46 @@ class BudgetPlanner:
         from agent.client.gateway_adapter import chat_structured
 
         user_msg = self._build_user_prompt(sublines, horizon, plan)
-        data = chat_structured(
-            self._llm,
-            messages=[
-                {"role": "system", "content": pm.get("budget.branch").system},
-                {"role": "user", "content": user_msg},
-            ],
-            schema=_BudgetSchema,
-            use="creative",
-            temperature=0.5,
-            # 高 max_tokens：V4 Flash 常在 JSON 前先输出较长前言，2048 会被前言吃光、
-            # 截断到 JSON 之前的纯散文（见 .agents/notes/implemented/architecture/
-            # 2026-08-31-dynamic-subline-budget.md），导致 extract 失败并静默降级。
-            max_tokens=8192,
-            enable_thinking=False,
-        )
-        return data
+        base_messages = [
+            {"role": "system", "content": pm.get("budget.branch").system},
+            {"role": "user", "content": user_msg},
+        ]
+        retry_messages: list[dict[str, str]] | None = None
+        last_error: Exception | None = None
+        for attempt in (0, 1):
+            try:
+                data = chat_structured(
+                    self._llm,
+                    retry_messages or base_messages,
+                    schema=_BudgetSchema,
+                    use="creative",
+                    temperature=0.5,
+                    # 高 max_tokens：V4 Flash 常在 JSON 前先输出较长前言，2048 会被前言吃光、
+                    # 截断到 JSON 之前的纯散文（见 .agents/notes/implemented/architecture/
+                    # 2026-08-31-dynamic-subline-budget.md），导致 extract 失败并静默降级。
+                    max_tokens=8192,
+                    enable_thinking=False,
+                )
+                return data
+            except (ValidationError, StructuredOutputError) as ve:  # noqa: BLE001 - G4 精确捕获
+                last_error = ve
+                if attempt == 1:
+                    raise
+                retry_messages = list(base_messages) + [
+                    {
+                        "role": "user",
+                        "content": (
+                            "【输出格式硬约束】上一次输出不满足 JSON Schema 校验"
+                            "（可能是无法解析，或解析成功但缺必填字段）。"
+                            "此条必须只输出一个合法 JSON 对象，必填字段一个都不能少：\n"
+                            '{"horizon_chapters": 总章数, '
+                            '"subline_budget": [{"subline_id": "S01", "chapters": N}, ...], '
+                            '"notes": "分配思路"}\n'
+                            f"【上一次的具体错误】{ve}"
+                        ),
+                    }
+                ]  # noqa: SILENT_DEGRADE - 重试路径仍可能失败，由 plan() 的 G3 降级兜底
+        raise last_error or RuntimeError("预算规划重试耗尽")
 
     def _build_user_prompt(
         self, sublines: list[str], horizon: int, plan: dict[str, Any]
