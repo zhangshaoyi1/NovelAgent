@@ -13,6 +13,35 @@
   </p>
 </section>
 
+<section class="card">
+  <h2>激活总览 <span class="muted small">· core 核心线（每章必跑）/ boost 增强层（按质量档位裁剪）/ review 成书层（评测·手动）</span></h2>
+  <div id="act-summary">
+    <p class="muted small">当前档位：<span id="act-profile">-</span></p>
+    <div id="act-layers"></div>
+  </div>
+</section>
+
+<script>
+(async function () {
+  try {
+    const r = await fetch('/api/quality/activation?project=' + encodeURIComponent('{{ name }}'));
+    const d = await r.json();
+    if (!d.ok) { document.getElementById('act-summary').innerHTML = '<p class="muted small">' + (d.message || '激活总览不可用') + '</p>'; return; }
+    document.getElementById('act-profile').textContent = d.profile;
+    const layerNames = {core: 'core 核心线（每章必跑）', boost: 'boost 增强层（按档位裁剪）', review: 'review 成书层（评测/手动）'};
+    document.getElementById('act-layers').innerHTML = Object.entries(d.layers).map(([k, items]) => {
+      const rows = items.map(it =>
+        '<tr><td>' + it.name + '</td><td class="muted small">' + it.note + '</td>' +
+        '<td><b>' + (it.active === true ? '✅ 激活' : it.active === false ? '⭕ 关闭' : it.active) + '</b></td></tr>'
+      ).join('');
+      return '<h3 style="margin:12px 0 4px">' + (layerNames[k] || k) + '</h3><table class="plain"><tbody>' + rows + '</tbody></table>';
+    }).join('');
+  } catch (e) {
+    document.getElementById('act-summary').innerHTML = '<p class="muted small">激活总览加载失败</p>';
+  }
+})();
+</script>
+
 {% set cat_color = {
   "世界构建": "#2e7d32",
   "情节叙事": "#f9a825",

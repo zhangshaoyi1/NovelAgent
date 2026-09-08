@@ -1,0 +1,173 @@
+{% extends "base.html" %}
+{% block title %}质量策略 · NovelAgent Web{% endblock %}
+{% block content %}
+<div class="page-head">
+  <h1>质量策略</h1>
+  <p class="muted">配置当前项目的专家激活策略（保存到 <code>.state/quality_policy.json</code>）。<b>core 核心线</b>（Writer/Editor/九项质检/护栏）永不裁剪；<b>boost 增强层</b>按质量档位裁剪（light 档关 D 多维审查 → 每章省 1 次 LLM 调用）；<b>review 成书层</b>由评测/手动触发。</p>
+</div>
+
+<section class="card">
+  <h2>目标项目</h2>
+  <label>选择项目
+    <select id="f-project" onchange="loadPolicy()">
+      <option value="">— 选择项目 —</option>
+      {% for p in projects %}
+      <option value="{{ p }}">{{ p }}</option>
+      {% endfor %}
+    </select>
+    <span class="muted small">保存后本项目后续写作（autowrite/write）默认按此策略执行；CLI 显式参数优先。</span>
+  </label>
+</section>
+
+<section class="card" id="policy-card" hidden>
+  <h2>质量档位与增强层</h2>
+  <form class="form-grid" onsubmit="return savePolicy(event)">
+    <label>质量档位（profile，作用于 boost 层）
+      <select id="f-profile">
+        <option value="light">light — 关 D 多维审查（省 token，核心线不变）</option>
+        <option value="standard">standard — 全开（默认）</option>
+        <option value="strict">strict — 全开（评测必跑建议）</option>
+      </select>
+      <span class="muted small">档位只裁剪 boost 层，核心质量线永不裁剪。</span>
+    </label>
+    <label>D 多维审查（爽点/OOC/连贯/追读力）
+      <select id="f-strict">
+        <option value="true">开启（每章 LLM 评审，BLOCK 触发修订）</option>
+        <option value="false">关闭（每章省 1 次 LLM 调用）</option>
+      </select>
+    </label>
+    <label>AI味/注水门禁模式（guardrails.gate_mode）
+      <select id="f-gate-mode">
+        <option value="block">block — 命中拒落盘（默认）</option>
+        <option value="advisory">advisory — 标红不阻断</option>
+      </select>
+    </label>
+    <label>AI 味词 severity（guardrails.ai_flavor_severity）
+      <select id="f-ai-sev">
+        <option value="warn">warn — 标红提示</option>
+        <option value="error">error — 阻断</option>
+      </select>
+    </label>
+    <label>黄金三章门禁（golden_three.gate）
+      <select id="f-golden-gate">
+        <option value="true">开启</option>
+        <option value="false">关闭</option>
+      </select>
+    </label>
+    <label>黄金三章合格线（golden_three.threshold）
+      <input id="f-golden-th" type="number" min="1" max="100" />
+    </label>
+    <label>黄金三章单维触底线（golden_three.floor）
+      <input id="f-golden-floor" type="number" min="1" max="100" />
+    </label>
+    <label>去AI味改写（deslop.enabled）
+      <select id="f-deslop">
+        <option value="true">开启</option>
+        <option value="false">关闭</option>
+      </select>
+    </label>
+    <label>预算档位（cost.tier）
+      <select id="f-cost-tier">
+        <option value="economy">economy — 经济档</option>
+        <option value="balanced">balanced — 均衡档（默认）</option>
+        <option value="quality">quality — 质量档</option>
+      </select>
+    </label>
+    <label>自动降档（cost.auto_downgrade）
+      <select id="f-auto-dg">
+        <option value="true">开启（超预算自动降档续跑）</option>
+        <option value="false">关闭（超限直接熔断）</option>
+      </select>
+    </label>
+    <label>预算安全系数（cost.budget_margin）
+      <input id="f-margin" type="number" step="0.1" min="0.5" max="3" />
+    </label>
+    <div class="full" style="display:flex; gap:8px; align-items:center; flex-wrap:wrap;">
+      <button type="submit" class="btn primary">保存策略</button>
+      <button type="button" class="btn" onclick="loadPolicy()">重新加载</button>
+      <span id="tip" class="muted small"></span>
+    </div>
+  </form>
+</section>
+
+<section class="card" id="act-card" hidden>
+  <h2>激活总览（当前档位：<span id="act-profile" class="badge">-</span>）</h2>
+  <div id="act-layers"></div>
+</section>
+
+<script>
+async function loadPolicy() {
+  const name = document.getElementById('f-project').value;
+  const tip = document.getElementById('tip');
+  if (!name) { return; }
+  const r = await fetch('/api/quality?project=' + encodeURIComponent(name));
+  const d = await r.json();
+  if (!d.ok) { tip.textContent = d.message || '加载失败'; return; }
+  const p = d.policy;
+  document.getElementById('f-profile').value = p.quality_profile;
+  document.getElementById('f-strict').value = String(p.strict_review);
+  document.getElementById('f-gate-mode').value = p.guardrails.gate_mode;
+  document.getElementById('f-ai-sev').value = p.guardrails.ai_flavor_severity;
+  document.getElementById('f-golden-gate').value = String(p.golden_three.gate);
+  document.getElementById('f-golden-th').value = p.golden_three.threshold;
+  document.getElementById('f-golden-floor').value = p.golden_three.floor;
+  document.getElementById('f-deslop').value = String(p.deslop.enabled);
+  document.getElementById('f-cost-tier').value = p.cost.tier;
+  document.getElementById('f-auto-dg').value = String(p.cost.auto_downgrade);
+  document.getElementById('f-margin').value = p.cost.budget_margin;
+  document.getElementById('policy-card').hidden = false;
+  document.getElementById('tip').textContent = '已加载 ' + d.project;
+  await loadActivation(name);
+}
+
+async function savePolicy(ev) {
+  ev.preventDefault();
+  const name = document.getElementById('f-project').value;
+  if (!name) { return false; }
+  const policy = {
+    quality_profile: document.getElementById('f-profile').value,
+    strict_review: document.getElementById('f-strict').value === 'true',
+    guardrails: {
+      gate_mode: document.getElementById('f-gate-mode').value,
+      ai_flavor_severity: document.getElementById('f-ai-sev').value,
+    },
+    golden_three: {
+      gate: document.getElementById('f-golden-gate').value === 'true',
+      threshold: parseInt(document.getElementById('f-golden-th').value, 10) || 60,
+      floor: parseInt(document.getElementById('f-golden-floor').value, 10) || 40,
+    },
+    deslop: { enabled: document.getElementById('f-deslop').value === 'true' },
+    cost: {
+      tier: document.getElementById('f-cost-tier').value,
+      auto_downgrade: document.getElementById('f-auto-dg').value === 'true',
+      budget_margin: parseFloat(document.getElementById('f-margin').value) || 1.0,
+    },
+  };
+  const r = await fetch('/api/quality', {
+    method: 'POST',
+    headers: {'Content-Type': 'application/json'},
+    body: JSON.stringify({project: name, policy}),
+  });
+  const d = await r.json();
+  document.getElementById('tip').textContent = d.ok ? '已保存到 ' + d.project : (d.message || '保存失败');
+  if (d.ok) { await loadActivation(name); }
+  return false;
+}
+
+async function loadActivation(name) {
+  const r = await fetch('/api/quality/activation?project=' + encodeURIComponent(name));
+  const d = await r.json();
+  if (!d.ok) { return; }
+  document.getElementById('act-profile').textContent = d.profile;
+  const box = document.getElementById('act-layers');
+  const layerNames = {core: 'core 核心线（每章必跑）', boost: 'boost 增强层（按档位裁剪）', review: 'review 成书层（评测/手动）'};
+  box.innerHTML = Object.entries(d.layers).map(([k, items]) => {
+    const rows = items.map(it =>
+      `<tr><td>${it.name}</td><td class="muted small">${it.note}</td><td><b>${it.active === true ? '✅ 激活' : it.active === false ? '⭕ 关闭' : it.active}</b></td></tr>`
+    ).join('');
+    return `<h3 style="margin:14px 0 6px">${layerNames[k] || k}</h3><table class="plain"><tbody>${rows}</tbody></table>`;
+  }).join('');
+  document.getElementById('act-card').hidden = false;
+}
+</script>
+{% endblock %}

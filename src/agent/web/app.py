@@ -192,6 +192,50 @@ def api_rag_job(job_id: str) -> JSONResponse:
 
 
 # ============================================================
+# 质量策略页 /quality + /api/quality*（F-11：专家激活统一管理）
+# ============================================================
+@app.get("/quality", response_class=HTMLResponse)
+def quality_page(request: Request) -> HTMLResponse:
+    from agent.web import quality_admin
+    from agent.web import state
+
+    return templates.TemplateResponse(
+        request,
+        "quality.html",
+        {
+            "request": request,
+            "active": "quality",
+            "default": quality_admin.DEFAULT_QUALITY_POLICY,
+            "presets": quality_admin.PROFILE_PRESETS,
+            "projects": state.list_projects(),
+            **_workspace_ctx(),
+        },
+    )
+
+
+@app.get("/api/quality")
+def api_quality_get(project: str = "") -> JSONResponse:
+    from agent.web import quality_admin
+
+    return JSONResponse(quality_admin.get_policy(project))
+
+
+@app.post("/api/quality")
+async def api_quality_save(request: Request) -> JSONResponse:
+    from agent.web import quality_admin
+
+    body = await request.json()
+    return JSONResponse(quality_admin.save_policy(body.get("project", ""), body.get("policy") or {}))
+
+
+@app.get("/api/quality/activation")
+def api_quality_activation(project: str = "") -> JSONResponse:
+    from agent.web import quality_admin
+
+    return JSONResponse(quality_admin.activation_summary(project))
+
+
+# ============================================================
 # 页面路由
 # ============================================================
 @app.get("/", response_class=HTMLResponse)
