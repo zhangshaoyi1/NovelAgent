@@ -102,11 +102,44 @@ _EVENTS = [
 ]
 
 
+def _dim_issue_lines(dim: Any, max_issues: int = 8, max_desc: int = 200) -> list[str]:
+    """从失败维度的评分证据中提取逐条问题明细（HA-Eval 修复 2026-09-08）。
+
+    ``EvalEvidence.issues`` 是评审 LLM 列举的 ``[{type, severity, desc}]``——
+    哪个角色崩了人设、哪处设定矛盾、哪条逻辑断了，都在这里。此前这些明细
+    评完即丢，hint 只带维度级数字汇总，Writer 只能盲猜重犯。
+    证据不可信（confidence=0，如缓存串值）时不输出，避免误导重写。
+    """
+    ev = getattr(dim, "evidence", None)
+    if ev is None:
+        return []
+    if float(getattr(ev, "confidence", 1.0)) <= 0.0:
+        return []
+    lines: list[str] = []
+    rationale = str(getattr(ev, "rationale", "") or "").strip()
+    if rationale:
+        lines.append(f"  · 评审理由：{rationale[:max_desc]}")
+    for it in (getattr(ev, "issues", None) or [])[:max_issues]:
+        if not isinstance(it, dict):
+            continue
+        desc = str(it.get("desc", "") or "").strip()
+        if not desc:
+            continue
+        sev = str(it.get("severity", "") or "").strip()
+        typ = str(it.get("type", "") or "").strip()
+        tag = f"[{sev}] " if sev else ""
+        prefix = f"{typ}：" if typ else ""
+        lines.append(f"  · {tag}{prefix}{desc[:max_desc]}")
+    return lines
+
+
 def build_rewrite_hint(report: Any, chapter_nums: list[int]) -> str:
     """把上一轮全书体检的失败项编译成写给 Writer 的针对性修正提示。
 
     回溯重写若不带反馈，Writer 只会盲目重生成、极易再次不达标而触发无谓上报。
     这里把未达标维度、回溯原因与重写章节区间浓缩为可读指令，让重写「对症」。
+    修复（2026-09-08）：附带评审 LLM 的逐条问题明细（来自 EvalEvidence.issues），
+    让 Writer 精确避开上一版的具体错误点，而不是只知道"这个维度不达标"。
     """
     if report is None:
         return ""
@@ -124,6 +157,7 @@ def build_rewrite_hint(report: Any, chapter_nums: list[int]) -> str:
             lines.append(
                 f"- {d.label}（{d.name}）：实测 {d.value} {arrow} 合格线 {d.threshold}"
             )
+            lines.extend(_dim_issue_lines(d))
     reason = getattr(report, "escalated_reason", "") or ""
     if reason:
         lines.append(f"上下文：{reason}")
@@ -132,6 +166,10 @@ def build_rewrite_hint(report: Any, chapter_nums: list[int]) -> str:
         r = getattr(plan, "reason", "") or ""
         if r:
             lines.append(f"回溯原因：{r}")
+    appeal = getattr(report, "appeal", None) or {}
+    for s in (appeal.get("suggestions") or [])[:3]:
+        if isinstance(s, str) and s.strip():
+            lines.append(f"- 读者吸引力建议：{s.strip()[:200]}")
     lines.append(
         "请在重写时针对以上维度改善（如补全伏笔回收、修复人设/设定冲突、"
         "提升连贯与追读节奏、控制注水），并保持与世界观/角色档案一致。"

@@ -644,6 +644,14 @@ class AgenticPipelineWorkflow(
                         "count": len(ai_flavor_hits),
                     }
                 result.health_report = report.to_dict()
+                # 体检教训落盘（反馈闭环·缺口2修复 2026-09-08）：失败明细持久化，
+                # 供下一轮**新章**写作注入「上轮教训」；体检通过时写空 failures 清零。
+                try:
+                    from agent.core.quality.eval_lessons import save_eval_lessons
+
+                    save_eval_lessons(self.project_dir, report)
+                except Exception:  # noqa: BLE001 - 教训落盘失败不阻断
+                    pass  # noqa: SILENT_DEGRADE
                 result.escalated = report.escalated
                 result.escalated_reason = report.escalated_reason
                 # ---- G9：failure 事件（上报人工，warn）----

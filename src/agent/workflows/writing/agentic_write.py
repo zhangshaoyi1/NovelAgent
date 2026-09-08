@@ -542,6 +542,22 @@ class AgenticWriteWorkflow:
                 + rewrite_hint
                 + "\n请在上文各项设定/风格要求不变的前提下，优先消除上述未达标项后重新提交。"
             )
+        else:
+            # 非重写路径：注入上一轮体检教训（反馈闭环·缺口2修复 2026-09-08）。
+            # 重写路径已有 build_rewrite_hint 覆盖同一信息，不重复注入。
+            try:
+                from agent.core.quality.eval_lessons import load_eval_lessons_text
+
+                _lessons = load_eval_lessons_text(self.project_dir)
+            except Exception:  # noqa: BLE001 - 教训读取失败不影响写作
+                _lessons = ""  # noqa: SILENT_DEGRADE
+            if _lessons:
+                task = (
+                    task
+                    + "\n\n# 上轮体检教训（避免重犯）\n"
+                    + _lessons
+                    + "\n请在上文各项设定/风格要求不变的前提下，规避上述问题后提交。"
+                )
 
         # WriterAgent（默认门禁注入 LLM 九项审稿，使质量不低于 M5）
         writer = WriterAgent(
