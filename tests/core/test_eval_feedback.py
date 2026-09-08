@@ -95,6 +95,39 @@ def test_rewrite_hint_includes_appeal_suggestions():
     assert "第四条不出现" not in hint
 
 
+def test_rewrite_hint_includes_computed_dim_details():
+    """计算型维度（伏笔/节奏）的确定性 evidence 明细同样进入 hint。"""
+    from agent.core.quality.eval_evidence import build_evidence as _be
+
+    ev = _be(issues=[
+        {"type": "伏笔", "severity": "mid", "desc": "伏笔 F-01「五行吞噬诀」预期回收 S03/E01/ch401 已到期未回收"},
+    ], rationale="到期伏笔回收率 0.50")
+    dim = _dim("foreshadow_recycle_rate", "伏笔闭环", 0.5, 0.9, direction=">=", evidence=ev)
+    report = NovelHealthReport(overall_pass=False, score=40.0, dimensions=[dim])
+
+    hint = build_rewrite_hint(report, [37])
+
+    assert "伏笔 F-01「五行吞噬诀」" in hint
+    assert "已到期未回收" in hint
+
+
+def test_lessons_include_appeal_suggestions(tmp_path):
+    """迷爱看/黄金三章建议落入教训文件并在加载时输出。"""
+    dims = [_dim("appeal_total", "迷·综合", 55.0, 60.0, direction=">=")]
+    report = NovelHealthReport(overall_pass=False, score=55.0, dimensions=dims)
+    report.appeal = {
+        "source": "llm", "total_score": 55, "threshold": 60,
+        "suggestions": ["加强章末钩子", "提升爽点密度"],
+    }
+    report.golden_three = None
+
+    save_eval_lessons(tmp_path, report)
+
+    text = load_eval_lessons_text(tmp_path)
+    assert "加强章末钩子" in text
+    assert "评审建议" in text
+
+
 # ---------------------------------------------------------------- 缺口 2
 
 def test_lessons_roundtrip_fail(tmp_path):

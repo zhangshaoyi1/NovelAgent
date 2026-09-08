@@ -75,6 +75,22 @@ def _scope_allows(name: str, in_book_ending_window: bool) -> bool:
 
 
 class _EvaluatorDimensionsMixin:
+    @staticmethod
+    def _computed_evidence(typ: str, descs: list[str], rationale: str = "") -> Any:
+        """确定性维度的评分证据（反馈闭环 2026-09-08）。
+
+        把计算型指标的具体明细（到期未回收的伏笔 ID、异常章号、重复句分布）
+        组装成 EvalEvidence.issues，走与 LLM 评审维相同的明细通道——
+        ``build_rewrite_hint`` / ``eval_lessons`` 无需区分来源即可提取。
+        RATIO 维非 counted_by_issues，issues 条数不参与一致性校验，无降级风险。
+        """
+        from agent.core.quality.eval_evidence import build_evidence
+
+        issues = [
+            {"type": typ, "severity": "mid", "desc": d} for d in descs if d
+        ]
+        return build_evidence(issues=issues, rationale=rationale)
+
     def _evaluate_once(self) -> NovelHealthReport:
         recycle, fstat = self._metric_foreshadow_recycle()
         pacing, pstat = self._metric_pacing()
@@ -102,6 +118,16 @@ class _EvaluatorDimensionsMixin:
                 "foreshadow_recycle_rate", "伏笔闭环", recycle,
                 self.qt["foreshadow_recycle_rate"], ">=", False, "computed",
                 soft_margin=_SOFT_MARGIN.get("foreshadow_recycle_rate", 0.0),
+                evidence=self._computed_evidence(
+                    "伏笔",
+                    [
+                        f"伏笔 {it.get('id', '?')}「{it.get('content', '')}」"
+                        f"预期回收 {it.get('recycle_point') or '?'} 已到期未回收"
+                        for it in (fstat.get("due_open") or [])[:6]
+                    ],
+                    rationale=f"到期伏笔回收率 {recycle:.2f}，"
+                              f"到期未回收 {fstat.get('overdue', 0)} 项",
+                ),
             ),
             DimensionResult(
                 "coherence", "连贯性", coherence,
@@ -119,6 +145,15 @@ class _EvaluatorDimensionsMixin:
                 "pacing_abnormal", "节奏异常", pacing,
                 self.qt["pacing_abnormal"], "<=", False, "computed",
                 soft_margin=_SOFT_MARGIN.get("pacing_abnormal", 0.0),
+                evidence=self._computed_evidence(
+                    "节奏",
+                    [
+                        f"{it.get('chapter', '?')} 篇幅 {it.get('length', 0)} 字"
+                        f"偏离中位数 {pstat.get('median', 0)}（疑似注水/赶进度）"
+                        for it in (pstat.get("abnormal_chapters") or [])[:6]
+                    ],
+                    rationale=f"异常章节 {pstat.get('abnormal', 0)}/{pstat.get('chapters', 0)} 章",
+                ),
             ),
             DimensionResult(
                 "logic_holes", "逻辑漏洞", logic,
@@ -144,10 +179,23 @@ class _EvaluatorDimensionsMixin:
                     "info_density_stat": dens_stat,
                 }
                 # 硬闸：重复句占比 ≤ 阈值 才通过（direction="<="，0-1 量纲）
+                _pad_worst = sorted(
+                    rep_stat.get("by_chapter", []),
+                    key=lambda x: -(x.get("repeated", 0) or 0),
+                )[:3]
                 dims.append(DimensionResult(
                     "padding_repetition_abnormal", "注水·重复句占比",
                     rep_ratio, self.padding_threshold, "<=", True, "computed",
                     soft_margin=0.0,
+                    evidence=self._computed_evidence(
+                        "注水",
+                        [
+                            f"{c.get('chapter', '?')} 重复句 "
+                            f"{c.get('repeated', 0)}/{c.get('total', 0)} 句，建议删减车轱辘话"
+                            for c in _pad_worst if c.get("repeated")
+                        ],
+                        rationale=f"全书重复句占比 {rep_ratio:.4f}",
+                    ),
                 ))
                 # 软标红：info_density_abnormal 不建 DimensionResult（不进 overall_pass），
                 # 仅由 padding 子块报告标注（拍板 #5）

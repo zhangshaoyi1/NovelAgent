@@ -81,7 +81,7 @@ class _EvaluatorMetricsMixin:
         except Exception:  # noqa: BLE001 - 取证据失败不影响评分本身
             return None  # noqa: SILENT_DEGRADE
 
-    def _metric_foreshadow_recycle(self) -> tuple[float, dict[str, int]]:
+    def _metric_foreshadow_recycle(self) -> tuple[float, dict[str, int | list[dict[str, str]]]]:
         """确定性：伏笔回收率（到期口径）。
 
         2026-09-07 根治（五灵破归档 20:58 轮假失败同族问题之三）：旧实现统计
@@ -92,12 +92,16 @@ class _EvaluatorMetricsMixin:
         - 回收点无法解析（如「全书末段」）视为未到期；已废弃不参与。
         兼容键：resolved/unresolved/total 仍统计全书口径供报告展示；
         新增 due/due_resolved/overdue 供明细。
+        反馈闭环（2026-09-08）：新增 ``due_open``（到期未回收的逐条明细：
+        id/内容/回收点），经 evidence 编入 rewrite hint / 教训，让 Writer
+        精确知道该回收哪几条伏笔，而不是只知道"回收率不达标"。
         """
         f_file = self.project_dir / "foreshadows.md"
         resolved = 0
         unresolved = 0
         due_total = 0
         due_resolved = 0
+        due_open: list[dict[str, str]] = []
         if f_file.exists():
             current = self._current_chapter_for_due()
             for line in f_file.read_text(encoding="utf-8").splitlines():
@@ -122,6 +126,12 @@ class _EvaluatorMetricsMixin:
                     due_total += 1
                     if state == "已回收":
                         due_resolved += 1
+                    else:
+                        due_open.append({
+                            "id": cells[0],
+                            "content": (cells[1] or "")[:40],
+                            "recycle_point": cells[3] if len(cells) > 3 else "",
+                        })
         rate = (due_resolved / due_total) if due_total > 0 else 1.0
         return rate, {
             "resolved": resolved,
@@ -130,6 +140,7 @@ class _EvaluatorMetricsMixin:
             "due": due_total,
             "due_resolved": due_resolved,
             "overdue": due_total - due_resolved,
+            "due_open": due_open,
         }
 
     def _current_chapter_for_due(self) -> int:
@@ -155,20 +166,30 @@ class _EvaluatorMetricsMixin:
         return int(m.group(1))
 
     def _metric_pacing(self) -> tuple[float, dict[str, Any]]:
-        """确定性：异常章节比例（注水/赶进度）。G6：读取改走公共 helper（行为零变化）。"""
-        counts: list[int] = []
-        for _, text in iter_chapter_texts(self.project_dir):
-            counts.append(len(re.sub(r"\s", "", text)))
+        """确定性：异常章节比例（注水/赶进度）。G6：读取改走公共 helper（行为零变化）。
+
+        反馈闭环（2026-09-08）：新增 ``abnormal_chapters``（异常章号+篇幅明细），
+        供 evidence 编入 rewrite hint / 教训，让 Writer 知道具体哪些章失衡。
+        """
+        counts: list[tuple[str, int]] = []
+        for f, text in iter_chapter_texts(self.project_dir):
+            counts.append((f.stem, len(re.sub(r"\s", "", text))))
         if not counts:
-            return 0.0, {"chapters": 0, "abnormal": 0}
-        median = statistics.median(counts)
+            return 0.0, {"chapters": 0, "abnormal": 0, "abnormal_chapters": []}
+        lengths = [c for _, c in counts]
+        median = statistics.median(lengths)
         if median <= 0:
-            return 0.0, {"chapters": len(counts), "abnormal": 0}
-        abnormal = sum(1 for c in counts if c < 0.5 * median or c > 2.0 * median)
-        return abnormal / len(counts), {
+            return 0.0, {"chapters": len(counts), "abnormal": 0, "abnormal_chapters": []}
+        abnormal_items = [
+            {"chapter": stem, "length": c}
+            for stem, c in counts
+            if c < 0.5 * median or c > 2.0 * median
+        ]
+        return len(abnormal_items) / len(counts), {
             "chapters": len(counts),
-            "abnormal": abnormal,
+            "abnormal": len(abnormal_items),
             "median": median,
+            "abnormal_chapters": abnormal_items,
         }
 
     # ---- G6：B6 防注水确定性指标（拍板 #5：重复度硬闸 + 信息密度软标红）----

@@ -74,11 +74,20 @@ def save_eval_lessons(project_dir: str | Path, report: Any) -> None:
                 "direction": d.direction,
                 "issues": _issue_lines(getattr(d, "evidence", None), d.label),
             })
+        # 评审建议（迷爱看/黄金三章子块的 suggestions）一并落盘——
+        # 这两类维度失败时 failures 里只有数字行，建议才是可操作内容。
+        suggestions: list[str] = []
+        for sub in (getattr(report, "appeal", None), getattr(report, "golden_three", None)):
+            if isinstance(sub, dict):
+                for s in (sub.get("suggestions") or [])[:3]:
+                    if isinstance(s, str) and s.strip():
+                        suggestions.append(s.strip()[:_MAX_DESC_CHARS])
         payload = {
             "at": time.time(),
             "overall_pass": bool(getattr(report, "overall_pass", False)),
             "score": round(float(getattr(report, "score", 0.0)), 2),
             "failures": failures,
+            "suggestions": suggestions,
         }
         path = _lessons_path(project_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -121,6 +130,8 @@ def load_eval_lessons_text(
                 lines.append(
                     f"【{label}】实测 {f.get('value')} {arrow} 合格线 {f.get('threshold')}（无逐条明细，请整体自查该维度）"
                 )
+        for s in (data.get("suggestions") or [])[:4]:
+            lines.append(f"- 评审建议：{s}")
         text = "\n".join(lines)
         return text[:max_chars]
     except Exception:
