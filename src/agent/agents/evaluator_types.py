@@ -24,6 +24,9 @@ class DimensionResult:
     source: str = ""  # computed | llm | default
     # G2 容差带：硬门禁恒 0；仅 coherence（0-100 量纲）用 5 吸收 LLM 噪声，其余保持严格。
     soft_margin: float = 0.0
+    # 作用域声明（2026-09-08 架构化）：window=每轮窗口均评（默认）；
+    # book_ending=全书收尾验收维，仅结局窗口内启用。登记表见 evaluator_dims._DIM_SCOPE。
+    scope: str = "window"
 
     @property
     def passed(self) -> bool:
@@ -42,6 +45,7 @@ class DimensionResult:
             "required": self.required,
             "source": self.source,
             "soft_margin": self.soft_margin,
+            "scope": self.scope,
             "passed": self.passed,
         }
 

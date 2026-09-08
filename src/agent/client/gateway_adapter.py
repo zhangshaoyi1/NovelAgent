@@ -24,6 +24,47 @@ from agent.base.structured_output import (
 from agent.client.llm_usage import notify_llm_usage
 
 
+# ===== 网络级瞬时故障统一退避（LLM 调用唯一收口点）=====
+# 背景（2026-09-08）：此前 complete() 失败即抛，上层各调用点"立即重试一次"——
+# 网关故障窗口内（实测单次失败延迟可达 34s）立即重试必然再失败，
+# 纯烧墙钟与配额。收口点统一指数退避：2s → 4s → 8s（上限 30s）；
+# 致命错误（配额/鉴权，is_fatal_provider_error）不重试立即熔断。
+_TRANSIENT_PATTERNS: tuple[str, ...] = (
+    "timed out", "timeout", "connection", "temporarily", "unavailable",
+    "429", "502", "503", "504", "rate limit", "overloaded", "overload",
+    "econnreset", "remote disconnected", "broken pipe", "eof occurred",
+)
+
+
+def _is_transient_provider_error(exc: BaseException) -> bool:
+    """判断是否网络/网关级瞬时故障（值得退避后重试）。"""
+    if isinstance(exc, (TimeoutError, ConnectionError)):
+        return True
+    lowered = str(exc).lower()
+    return any(p in lowered for p in _TRANSIENT_PATTERNS)
+
+
+def _env_int(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+def _env_float(name: str, default: float) -> float:
+    try:
+        return float(os.environ.get(name, "") or default)
+    except ValueError:
+        return default
+
+
+# 总尝试次数（含首次；1=不重试）。可用环境变量 LLM_TRANSIENT_RETRIES 调整。
+_TRANSIENT_MAX_ATTEMPTS: int = max(1, _env_int("LLM_TRANSIENT_RETRIES", 3))
+# 退避基数（秒）：第 n 次重试等待 base * 2^(n-1)，上限 30s。LLM_RETRY_BACKOFF_S 可调。
+_TRANSIENT_BACKOFF_BASE_S: float = max(0.0, _env_float("LLM_RETRY_BACKOFF_S", 2.0))
+_TRANSIENT_BACKOFF_CAP_S: float = 30.0
+
+
 # ===== 将 agent LLMProvider 包装为 Gateway ModelProvider =====
 
 
@@ -57,11 +98,10 @@ class _GatewayModelProvider:
         timeout = int(getattr(self._provider.config, "timeout", 0) or 120)
 
         try:
-            resp = self._provider.chat(
+            resp = self._chat_with_backoff(
                 messages=messages,
                 model=route.model,
                 temperature=temperature,
-                max_tokens=None,
                 enable_thinking=enable_thinking,
                 timeout=timeout,
             )
@@ -127,6 +167,66 @@ class _GatewayModelProvider:
 
     def count_tokens(self, text: str) -> int:
         return len(text) // 4  # 简单估算
+
+    # ---------------------------------------------------------------- 网络级瞬时故障退避
+    def _chat_with_backoff(
+        self,
+        *,
+        messages: Any,
+        model: str,
+        temperature: float,
+        enable_thinking: Any,
+        timeout: int,
+    ) -> Any:
+        """带指数退避的底层调用：瞬时故障重试，致命错误立即熔断。
+
+        每次失败均发埋点（attempt/transient 字段），可观测重试开销；
+        语义层校验失败的重试（附 hint）仍由各调用点负责，与本层正交。
+        """
+        last_exc: Exception | None = None
+        for attempt in range(1, _TRANSIENT_MAX_ATTEMPTS + 1):
+            t0 = time.monotonic()
+            try:
+                return self._provider.chat(
+                    messages=messages,
+                    model=model,
+                    temperature=temperature,
+                    max_tokens=None,
+                    enable_thinking=enable_thinking,
+                    timeout=timeout,
+                )
+            except Exception as e:  # noqa: BLE001 - 统一分类后决定熔断/退避/上抛
+                last_exc = e
+                elapsed = (time.monotonic() - t0) * 1000.0
+                fatal = is_fatal_provider_error(e)
+                transient = (not fatal) and _is_transient_provider_error(e)
+                notify_llm_usage({
+                    "type": "llm.usage",
+                    "ok": False,
+                    "provider": self.name,
+                    "model": model,
+                    "tokens_in": 0,
+                    "tokens_out": 0,
+                    "latency_ms": round(elapsed, 2),
+                    "error": str(e)[:300],
+                    "attempt": attempt,
+                    "transient": transient,
+                })
+                if fatal:
+                    # 配额耗尽/欠费/鉴权失败 → 立即熔断（重试必然再失败）
+                    raise FatalProviderError(
+                        f"Provider {self.name} 调用失败: {e}"
+                    ) from e
+                if transient and attempt < _TRANSIENT_MAX_ATTEMPTS:
+                    wait = min(
+                        _TRANSIENT_BACKOFF_BASE_S * (2 ** (attempt - 1)),
+                        _TRANSIENT_BACKOFF_CAP_S,
+                    )
+                    if wait > 0:
+                        time.sleep(wait)
+                    continue
+                raise RuntimeError(f"Provider {self.name} 调用失败: {e}") from e
+        raise RuntimeError(f"Provider {self.name} 调用失败: {last_exc}")
 
     def model_card(self) -> Any:
         from llmagent.gateway.models import ModelCard

@@ -53,6 +53,27 @@ from agent.agents.evaluator_types import (  # noqa: F401
     RepairPlan,
 )
 
+
+# ============================================================
+# 评估维度作用域声明（2026-09-08 架构化，替代 G8 硬编码特判）
+# ============================================================
+# 每个全书级评估维度必须在此登记作用域，未登记默认 "window"（每轮窗口均评）。
+#   - window:      窗口级维度，每次 autowrite 结尾评估都适用；
+#   - book_ending: 全书收尾验收维，仅当进度进入结局窗口才启用——中途窗口
+#     被完结标准审判必然假失败（2026-09-07 五灵破归档事故：1200 章书写到
+#     16 章，支线 1/5 需≥3、结局段自 ch901 未开始、回收率 0 全为假失败）。
+# 新增全书级维度（如"多线收束""悬念总密度"）必须在此登记。
+_DIM_SCOPE: dict[str, str] = {
+    "mainline_progress": "book_ending",
+    "ending_convergence": "book_ending",
+}
+
+
+def _scope_allows(name: str, in_book_ending_window: bool) -> bool:
+    """维度作用域裁决：window 恒启用；book_ending 仅结局窗口内启用。"""
+    return _DIM_SCOPE.get(name, "window") != "book_ending" or in_book_ending_window
+
+
 class _EvaluatorDimensionsMixin:
     def _evaluate_once(self) -> NovelHealthReport:
         recycle, fstat = self._metric_foreshadow_recycle()
@@ -209,16 +230,16 @@ class _EvaluatorDimensionsMixin:
                     self.console.print(f"[yellow]⚠ 黄金三章门禁评分失败，跳过：{e}[/yellow]")  # noqa: SILENT_DEGRADE
 
         # ---- G8（拍板 3）：主线推进 + 结局收敛验收维度（确定性 computed，并入 overall_pass）----
-        # 两维是全书收尾验收，只在结局窗口内生效；中途续写窗口不具备评估前提
-        # （1200 章书写到 16 章必然假失败：支线 1/5、结局段在第 901 章根本未开始）。
+        # 作用域由 _DIM_SCOPE 声明式裁决（book_ending 维仅结局窗口内启用）；
+        # 中途续写窗口不具备评估前提（1200 章书写到 16 章必然假失败）。
         g8_final_phase = self._in_book_final_phase()
-        if self.mainline_gate and g8_final_phase:
+        if self.mainline_gate and _scope_allows("mainline_progress", g8_final_phase):
             try:
                 dims.append(self._dim_mainline_progress())
             except Exception as e:  # noqa: BLE001 - 降级不阻断（G3 哲学）
                 if self.console is not None:
                     self.console.print(f"[yellow]⚠ mainline_progress 计算失败，跳过：{e}[/yellow]")  # noqa: SILENT_DEGRADE
-        if self.ending_gate and g8_final_phase:
+        if self.ending_gate and _scope_allows("ending_convergence", g8_final_phase):
             try:
                 dims.append(self._dim_ending_convergence())
             except Exception as e:  # noqa: BLE001
@@ -373,6 +394,7 @@ class _EvaluatorDimensionsMixin:
             "mainline_progress", "主线推进", float(len(visited)),
             threshold, ">=", False, "computed",
             soft_margin=_SOFT_MARGIN.get("mainline_progress", 0.0),
+            scope=_DIM_SCOPE["mainline_progress"],
         )
 
     def _mainline_stats(self) -> tuple[set[str], int]:
@@ -422,6 +444,7 @@ class _EvaluatorDimensionsMixin:
             "ending_convergence", "结局收敛", value,
             0.90, ">=", False, "computed",
             soft_margin=_SOFT_MARGIN.get("ending_convergence", 0.0),
+            scope=_DIM_SCOPE["ending_convergence"],
         )
 
     def _ending_mode_active(self) -> bool:
