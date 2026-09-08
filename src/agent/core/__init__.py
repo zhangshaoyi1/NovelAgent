@@ -14,7 +14,6 @@
 - **llmops/** — LLM 运营：成本统计、追踪、评测
 - **anti_ai/** — AI 味检测与压制
 - **supervisor/** — 长小说监督体系
-- **auto_orchestrator/** — 一键自动编排
 - **tools/** — 工具框架：工具注册、调用、MCP 桥接
 
 依赖规则：单向依赖，下层不依赖上层，禁止循环依赖。
@@ -220,10 +219,6 @@ def _lazy_import_supervisor():
     from agent.core.supervisor import SupervisorEngine, SupervisionReport
     return SupervisorEngine, SupervisionReport
 
-def _lazy_import_orchestrator():
-    from agent.core.auto_orchestrator import AutoPlanner, Decider, Executor, PlanAdjuster
-    return AutoPlanner, Decider, Executor, PlanAdjuster
-
 def _lazy_import_tools():
     from agent.core.engine.tool_contracts import Tool, ToolRegistry, ToolResult
     from agent.core.tools.builtins import set_project_context
@@ -300,7 +295,6 @@ __all__ = [
     "AILikenessDetector", "PostProcessor",
     "AIFlavorScanner", "AIFlavorReport", "DeslopRewriter", "DeslopResult",
     "SupervisorEngine", "SupervisionReport",
-    "AutoPlanner", "Decider", "Executor", "PlanAdjuster",
     "Tool", "ToolRegistry", "ToolResult", "set_project_context",
 ]
 
@@ -310,5 +304,4 @@ Chunk, Hit, Indexer, Retriever, VectorStore, LocalVectorStore, BM25Index = _lazy
 CostModel, EvalHarness, PromptRegistry, TraceStore, TracedLLMClient, get_tracer, set_tracer, build_cost_summary = _lazy_import_llmops()
 AILikenessDetector, PostProcessor, AIFlavorScanner, AIFlavorReport, DeslopRewriter, DeslopResult = _lazy_import_anti_ai()
 SupervisorEngine, SupervisionReport = _lazy_import_supervisor()
-AutoPlanner, Decider, Executor, PlanAdjuster = _lazy_import_orchestrator()
 Tool, ToolRegistry, ToolResult, set_project_context = _lazy_import_tools()
