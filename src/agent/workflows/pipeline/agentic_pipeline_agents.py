@@ -35,6 +35,8 @@ class _PipelineAgentsMixin:
                 style_file=self.style_file,
                 # ---- G12：爽点剧本/情绪目标透传（.state/payoff_script.json 存在即注入）----
                 payoff_enabled=self.payoff_enabled,
+                # ---- F-11：D 多维审查透传（None → writer 默认 True）----
+                strict_review=self.strict_review,
             )
         return self.writer_workflow
 

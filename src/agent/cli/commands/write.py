@@ -71,10 +71,10 @@ def write(
         None, "--env",
         help="指定 .env 文件（仅本次命令生效，透传给下游 GatewayAdapter）",
     ),
-    strict_review: bool = typer.Option(
-        True, "--strict-review", "--no-strict-review",
+    strict_review: bool | None = typer.Option(
+        None, "--strict-review", "--no-strict-review",
         help="开启 D 多维 LLM 质量审查（爽点/OOC/连贯性/追读力），"
-             "维度 blocking 会触发重写；默认开启（每章默认审查）。"
+             "维度 blocking 会触发重写；未指定取质量策略 strict_review（默认开启）。"
              "如需跳过审查可加 --no-strict-review",
     ),
     mode: str = typer.Option(
@@ -153,7 +153,17 @@ def write(
                 console.print(f"[bold red]✗[/bold red] {_msg}")
             raise typer.Exit(code=2)
         try:
-            workflow = build_write_workflow(project_path, tier=mode, console=workflow_console)
+            # F-11：strict_review 三态——CLI 未显式时取质量策略（全局默认 True，与 autowrite 统一）
+            if strict_review is None:
+                try:
+                    from agent.core.quality.policy import apply_profile, load_quality_policy
+
+                    strict_review = bool(apply_profile(load_quality_policy(project_path)).get("strict_review", True))
+                except Exception:  # noqa: BLE001 - 策略读取失败回退默认开
+                    strict_review = True  # noqa: SILENT_DEGRADE
+            workflow = build_write_workflow(
+                project_path, tier=mode, console=workflow_console, strict_review=strict_review
+            )
         except ProjectLockBusy as _lock_err:
             if json_output:
                 emit_result(

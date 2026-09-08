@@ -98,6 +98,8 @@ class AgenticWriteWorkflow:
         payoff_enabled: bool = True,
         # ---- P0 新增参数：去AI味（默认开；--no-deslop 关闭）----
         deslop_enabled: bool = True,
+        # ---- F-11 新增参数：D 多维审查（爽点/OOC/连贯/追读力；默认开，统一 write/autowrite）----
+        strict_review: bool = True,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client or create_gateway()
@@ -113,6 +115,8 @@ class AgenticWriteWorkflow:
         self.payoff_enabled = payoff_enabled
         # P0：去AI味开关（质量门禁通过后、落盘前执行；--no-deslop 关闭）
         self.deslop_enabled = deslop_enabled
+        # F-11：D 多维审查开关（爽点/OOC/连贯/追读力；默认开，与 write 命令统一）
+        self.strict_review = strict_review
         # G9：章内子阶段事件发射器（pipeline 注入；None 时零开销）
         self.event_emitter = event_emitter
 
@@ -446,6 +450,33 @@ class AgenticWriteWorkflow:
             degrade("agentic_write.quality_gate", "LLM 质检失败，降级为通过（本章未经质量门禁）", e)
             report = {"overall_pass": True, "rules": [], "suggestions": "门禁解析失败，默认通过"}
             passed = True
+
+        # F-11：D 多维审查（爽点/OOC/连贯/追读力，strict_review 开启时执行；
+        # BLOCK 级视为未通过触发修订——与 M5 语义一致；失败降级不阻断九项质检）
+        if self.strict_review:
+            try:
+                from agent.core.quality.scoring import LLMBackedChecker, QualityChecker, Severity
+
+                _qc = QualityChecker(self.project_dir, self.llm)
+                _checker = LLMBackedChecker(self.llm)
+                _issues = _checker.run_rules(_qc.llm_rules, cleaned, ctx)
+                _d = [
+                    {
+                        "rule_id": i.rule_id,
+                        "severity": i.severity.value,
+                        "description": i.description,
+                    }
+                    for i in _issues
+                ]
+                report["d_issues"] = _d
+                report["d_blocking"] = any(
+                    i.get("severity") == Severity.BLOCK.value for i in _d
+                )
+                if report["d_blocking"]:
+                    passed = False
+                    report["overall_pass"] = False
+            except Exception as e:  # noqa: BLE001 - D 审查失败降级为空，不影响九项质检
+                degrade("agentic_write.d_review", "D 多维审查失败，降级为空", e)
         return passed, report
 
     # ------------------------------------------------------------------

@@ -89,6 +89,8 @@ class AgenticPipelineWorkflow(
         memory: Any = None,
         guardrails: Any = None,
         gate_mode: str = "block",  # G10（拍板 5）：默认 block（AI 味命中拒落盘；--ai-gate-mode advisory 显式放宽）
+        # F-11：D 多维审查透传（None → writer 默认 True；autowire/write 按 quality_policy 注入）
+        strict_review: bool | None = None,
         console: Console | None = None,
         # G4 新增参数（T4 CLI 透传）
         max_time: int | None = None,
@@ -138,6 +140,7 @@ class AgenticPipelineWorkflow(
         self.max_rollback_attempts = max_rollback_attempts
         self.guardrails = guardrails
         self.gate_mode = gate_mode
+        self.strict_review = strict_review
         self.console = console or Console()
 
         # G4 新增字段：熔断相关（T1 + T4 CLI 透传）

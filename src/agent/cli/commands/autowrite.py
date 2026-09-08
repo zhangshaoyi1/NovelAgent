@@ -169,10 +169,15 @@ def autowrite(
         None, "--max-time", help="整轮墙钟上限（秒，0=不限制）"
     ),
     cost_tier: str = typer.Option(
-        "balanced", "--cost-tier", help="预算档位：economy / balanced / quality"
+        None, "--cost-tier", help="预算档位：economy / balanced / quality（未指定取质量策略 cost.tier）"
     ),
     budget_margin: float = typer.Option(
-        1.0, "--budget-margin", help="预算安全系数（默认 1.0）"
+        None, "--budget-margin", help="预算安全系数（默认 1.0；未指定取质量策略 cost.budget_margin）"
+    ),
+    # ---- F-11：D 多维审查（爽点/OOC/连贯/追读力）三态：未指定取质量策略 strict_review（默认开）----
+    strict_review: bool | None = typer.Option(
+        None, "--strict-review/--no-strict-review",
+        help="开启/关闭 D 多维审查（爽点/OOC/连贯/追读力；未指定取质量策略 strict_review）",
     ),
     llm_timeout: int = typer.Option(
         None, "--llm-timeout", help="单调用超时（秒，覆盖 .env 的 LLM_TIMEOUT）"
@@ -370,16 +375,31 @@ def autowrite(
     )
     bp = load_budget_plan(_bp_path)
     _bp_exists = _bp_path.exists()  # 无 budget.json 时 bp 为默认值，不得覆盖 CLI 显式参数（G4 兼容）
+    # F-11：质量策略作 CLI 未显式时的默认（优先级：CLI 显式 > budget.json > 项目策略 > 全局默认）
+    try:
+        from agent.core.quality.policy import apply_profile, load_quality_policy
+
+        _qpolicy = apply_profile(load_quality_policy(project_path))
+    except Exception:  # noqa: BLE001 - 策略加载失败回退代码默认
+        _qpolicy = {}  # noqa: SILENT_DEGRADE
     _auto_downgrade = not bool(_cli_value(no_auto_downgrade, False))
     if _bp_exists and bp.get("auto_downgrade") is False:
         _auto_downgrade = False  # budget.json 显式关（--no-auto-downgrade 同级优先）
     _cost_tier_final = (
-        str(bp.get("tier")) if _bp_exists and bp.get("tier") else _cli_value(cost_tier, "balanced")
+        str(bp.get("tier")) if _bp_exists and bp.get("tier")
+        else str(_cli_value(cost_tier, None) or _qpolicy.get("cost", {}).get("tier", "balanced"))
     )
     _budget_margin_final = float(
         bp.get("budget_margin")
         if _bp_exists and bp.get("budget_margin")
-        else _cli_value(budget_margin, 1.0)
+        else (_cli_value(budget_margin, None)
+              or float(_qpolicy.get("cost", {}).get("budget_margin", 1.0)))
+    )
+    # F-11：strict_review 三态（CLI 显式 > 策略 > 默认 True）
+    _strict_review = (
+        bool(_cli_value(strict_review, None))
+        if _cli_value(strict_review, None) is not None
+        else bool(_qpolicy.get("strict_review", True))
     )
 
     # ---- G10（拍板 1）：开写前成本预估引导（非 JSON 一行 + 可复制命令；JSON 模式静默）----
@@ -456,6 +476,7 @@ def autowrite(
         cost_tier=_cost_tier_final,  # G10：预算计划键覆盖 CLI 默认（拍板 6）
         budget_margin=_budget_margin_final,  # G10：同上
         auto_downgrade=_auto_downgrade,  # G10（拍板 6）：CLI 默认 True；--no-auto-downgrade/budget.json 可关
+        strict_review=_strict_review,  # F-11：D 多维审查（CLI/策略 → writer）
         budget_plan=bp,  # G10（拍板 6）：预算计划配置（hard_limit_tokens 仅回显不参与判定）
         llm_timeout=llm_timeout,
         on_progress=on_progress,

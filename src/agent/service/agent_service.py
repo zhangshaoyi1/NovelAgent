@@ -40,6 +40,7 @@ def build_write_workflow(
     project_dir: str | Path,
     tier: str = "auto",
     console: Console | None = None,
+    strict_review: bool | None = None,
     **wf_kwargs: Any,
 ) -> Any:
     """写章唯一业务构造入口（R2-B：service 层收敛）。
@@ -54,6 +55,7 @@ def build_write_workflow(
         project_dir: 小说项目目录。
         tier: 写章引擎档位（auto/heavy/light）。
         console: rich 控制台（None 时静默）。
+        strict_review: D 多维审查开关（None 取质量策略，见 F-11）。
         **wf_kwargs: 透传给 AgenticWriteWorkflow 的其余构造参数。
 
     Returns:
@@ -65,9 +67,20 @@ def build_write_workflow(
 
     from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
 
+    if strict_review is None:
+        try:
+            from agent.core.quality.policy import apply_profile, load_quality_policy
+
+            strict_review = bool(
+                apply_profile(load_quality_policy(project_dir)).get("strict_review", True)
+            )
+        except Exception:  # noqa: BLE001 - 策略读取失败回退默认开
+            strict_review = True  # noqa: SILENT_DEGRADE
+
     wf_kwargs.setdefault("project_dir", Path(project_dir))
     wf_kwargs.setdefault("tier", tier)
     wf_kwargs.setdefault("console", console)
+    wf_kwargs.setdefault("strict_review", strict_review)
     return AgenticWriteWorkflow(**wf_kwargs)
 
 
