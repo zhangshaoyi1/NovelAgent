@@ -205,7 +205,7 @@ class PlanStore:
                 if isinstance(loaded, list):
                     history = loaded
         except Exception:  # noqa: BLE001 - 历史损坏视为空，重建
-            history = []
+            history = []  # noqa: SILENT_DEGRADE
         history.append(entry)
         history = history[-HISTORY_LIMIT:]
         try:
@@ -218,10 +218,8 @@ class PlanStore:
     def _recalc_derived(self, console: Any = None) -> None:
         """total_chapters 变化后重算派生物（mainline horizon/share 对齐）。"""
         try:
-            # 延迟导入：core 不反向依赖 workflows（架构不变性）
-            from agent.workflows.pipeline.plan_consistency import (
-                align_mainline_to_plan,
-            )
+            # 延迟导入：core 内部依赖（R6 分层，align 已下沉 core/story/mainline_align）
+            from agent.core.story.mainline_align import align_mainline_to_plan
 
             align_mainline_to_plan(self.project_dir, console=console)
         except Exception:  # noqa: BLE001 - 派生重算失败不阻断主写（写前对账兜底）

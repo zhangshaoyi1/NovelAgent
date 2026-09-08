@@ -255,7 +255,7 @@ class AgenticPipelineWorkflow(
                 _get_tracer().totals().get("tokens_total", 0) or 0
             )
         except Exception:  # noqa: BLE001 - 基线快照失败退化为 0（等同旧行为）
-            self._usage_baseline = 0.0
+            self._usage_baseline = 0.0  # noqa: SILENT_DEGRADE
 
         # ---- 规划一致性守护（缺口 A/C，2026-09-06）：写前对账 + 不变量 fail-fast ----
         # 覆盖直接调用 pipeline 的入口（Web / 测试）；CLI autowrite 已另行前置校验。

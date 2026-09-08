@@ -52,7 +52,7 @@ def detach_console_if_present() -> None:
             sys.stdout = devnull  # type: ignore[assignment]
             sys.stderr = devnull  # type: ignore[assignment]
         except Exception:  # noqa: BLE001
-            pass
+            pass  # noqa: SILENT_DEGRADE - 输出重定向失败不影响守护进程主体
 
 
 def default_root() -> Path:
