@@ -68,12 +68,10 @@ class Gateway:
 
     def chat(self, req: ChatRequest) -> ChatResponse:
         """七段门禁全流程"""
-        # ① RequestGate：预算预扣 + 缓存
+        # ① RequestGate：预算预扣（缓存已统一由 SemanticCache 负责）
         decision = self._request_gate.admit(req)
         if not decision.ok:
             raise GatewayError(ErrorClass.BUDGET, decision.reject_reason)
-        if decision.cache_hit is not None:
-            return decision.cache_hit
 
         # 限流（非 quality_critical 任务）
         if not req.hint.quality_critical:
@@ -83,7 +81,7 @@ class Gateway:
                     f"限流中，预估等待 {self._rate_limiter.wait_time():.1f}s",
                 )
 
-        # 语义缓存查找
+        # 语义缓存查找（裁决走 cache_policy.decide：默认拒绝，仅 DETERMINISTIC 可复用）
         cached = self._semantic_cache.lookup(req)
         if cached is not None:
             return cached

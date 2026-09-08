@@ -70,6 +70,12 @@ from agent.agents.evaluator_types import (  # noqa: F401
 )
 from agent.agents.evaluator_dims import _EvaluatorDimensionsMixin
 from agent.agents.evaluator_metrics import _EvaluatorMetricsMixin
+from agent.core.quality.disposition import (
+    Action,
+    DispositionGate,
+    DispositionPlan,
+    DispositionPolicy,
+)
 class EvaluatorAgent(
     _EvaluatorMetricsMixin,
     _EvaluatorDimensionsMixin,
@@ -118,6 +124,11 @@ class EvaluatorAgent(
         ending_gate: bool = True,
         mainline_window: int = 5,
         ending_ratio: float = 0.25,
+        # ---- HA-Eval L4 新增：处置策略与守门器 ----
+        disposition_policy: "DispositionPolicy | None" = None,
+        disposition_gate: "DispositionGate | None" = None,
+        disposition_dry_run: bool = False,
+        budget_remaining_tokens: "int | None" = None,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.console = console or Console()
@@ -167,6 +178,11 @@ class EvaluatorAgent(
         self.ending_gate = bool(ending_gate)
         self.mainline_window = max(1, int(mainline_window))
         self.ending_ratio = max(0.0, min(0.5, float(ending_ratio)))
+        # ---- HA-Eval L4：处置策略（声明式规则表）+ 守门器 ----
+        self._disposition = disposition_policy or DispositionPolicy()
+        self._gate = disposition_gate or DispositionGate()
+        self.disposition_dry_run = bool(disposition_dry_run)
+        self.budget_remaining_tokens = budget_remaining_tokens
 
     # ---------------------------------------------------------------- G7 人话总结层
     # 主理人拍板 1/2 + 补充边界 4：确定性模板拼装、零 LLM、措辞保守。
@@ -344,50 +360,49 @@ class EvaluatorAgent(
         return report
 
     def evaluate_with_repair(self, rewriter: RewriterFn) -> NovelHealthReport:
-        """闭环：体检 →（不达标）回退 → 针对性重写 → 重评，直至通过或上报人工。
+        """闭环：体检 →（不达标）按处置策略修复 → 重评，直至通过或上报人工。
 
         每轮不达标都会把 ``last_failed_report`` 暴露给上层，使 Pipeline 的
         ``rewriter`` 能据此把失败维度编译成针对性提示传给 Writer，而不是盲目重写。
 
-        G6 拍板 2 例外：**golden_* 失败维存在时禁止触发 G1 末窗回退**（根因 B4-3：
-        回溯窗口 ``[-rollback_window:]`` 只覆盖末 N 章，修不到开头），直接 escalated 附前三章明细。
-        七维/六维失败维照旧走原回溯闭环（G1 语义不破坏）。
+        HA-Eval L4（2026-09-08）：「失败 → 做什么」由 :class:`DispositionPolicy`
+        的**声明式规则表**决定，替代原先按 name prefix 硬编码的三处特判
+        （golden_* / mainline_* / ending_*）。规则按维度属性匹配，新增维度只要
+        在 dimension_registry 登记了 scope / required / unit，处置行为即自动正确。
+
+        不变式：**证据不可信（confidence=0）⇒ 只复评，不做任何处置**。
+        这是本次事故的直接护栏——单条可疑分数不再能触发删章重写。
         """
         attempts = 0
+        retry_used = False
         report = self._evaluate_once()
         while not report.overall_pass:
             # 暴露当前失败报告，供 rewriter 编译针对性修正提示
             self.last_failed_report = report
-            # ---- G6 拍板 2：黄金三章失败 → 直接 escalated，跳过 trigger_rollback（不消耗回溯预算）----
-            golden_failed = [
-                d for d in report.dimensions
-                if d.name.startswith(GOLDEN_GATE_PREFIX) and not d.passed
-            ]
-            if golden_failed:
+            failed = [d for d in report.dimensions if not d.passed]
+            plan = self._disposition.plan(failed)
+
+            # ---- 规则 ①：证据不可信 → 只复评，禁止处置（最多复评一次）----
+            if plan.action is Action.RETRY_EVAL:
+                if retry_used:
+                    report.escalated = True
+                    report.rollback_attempts = attempts
+                    report.escalated_reason = (
+                        "判定证据不可信（复评后仍未恢复可信），已停止自动处置，请人工核查。"
+                        "原因：" + plan.reason
+                    )
+                    return report
+                retry_used = True
+                report = self._evaluate_once()
+                continue
+
+            # ---- 规则 ②③：开头 / 全局结构问题 → 上报人工（末窗回滚修不到）----
+            if plan.action is Action.ESCALATE:
                 report.escalated = True
                 report.rollback_attempts = attempts
-                detail = self._golden_escalation_detail(report)
-                report.escalated_reason = (
-                    "黄金三章门禁失败（" + "、".join(d.label for d in golden_failed) + "）。"
-                    "回溯窗口只覆盖末 N 章、无法修复开头，已禁止无效回退；"
-                    "请人工重写第 1-3 章。明细：\n" + detail
-                )
+                report.escalated_reason = plan.reason + "。明细：\n" + self._escalation_detail(plan)
                 return report
-            # ---- G8（拍板 3）：mainline_*/ending_* 失败直通 escalated（仿 G6 golden，禁止末窗回退）----
-            g8_failed = [
-                d for d in report.dimensions
-                if d.name.startswith(("mainline_", "ending_")) and not d.passed
-            ]
-            if g8_failed:
-                report.escalated = True
-                report.rollback_attempts = attempts
-                detail = self._g8_structural_escalation_detail(report)
-                report.escalated_reason = (
-                    "全局结构门禁失败（" + "、".join(d.label for d in g8_failed) + "）："
-                    "支线推进不足或结局收敛不达标是全局结构问题，末窗回退窗口修不到，"
-                    "已禁止无效回退并上报人工。明细：\n" + detail
-                )
-                return report
+
             if attempts >= self.max_rollback_attempts:
                 report.escalated = True
                 report.rollback_attempts = attempts
@@ -396,15 +411,43 @@ class EvaluatorAgent(
                     f"{self.max_rollback_attempts}，需人工介入。"
                 )
                 return report
-            plan = self.trigger_rollback()
-            if plan is None or not plan.rolled_back:
+
+            # ---- 规则 ④⑤：硬指标回滚 / 软指标定向修复 —— 过守门器 ----
+            if plan.action is Action.LOCAL_REPAIR:
+                # 可逆路径：只重写末章，不销毁窗口
+                last = self._last_written()
+                try:
+                    rewriter([last] if last > 0 else [])
+                except Exception as e:  # noqa: BLE001
+                    report.escalated = True
+                    report.escalated_reason = f"定向修复失败：{e}"
+                    return report
+                attempts += 1
+                report = self._evaluate_once()
+                continue
+
+            auth = self._gate.authorize(
+                plan,
+                chapters=self.rollback_window,
+                budget_remaining=self.budget_remaining_tokens,
+                double_evidence=retry_used,
+                dry_run=self.disposition_dry_run,
+            )
+            if not auth.ok:
+                report.escalated = True
+                report.rollback_attempts = attempts
+                report.escalated_reason = f"处置被守门器拒绝：{auth.reason}"
+                return report
+
+            plan_rollback = self.trigger_rollback()
+            if plan_rollback is None or not plan_rollback.rolled_back:
                 report.escalated = True
                 report.escalated_reason = "无可回退章节，请人工检查设定/规划。"
                 return report
             report.rolled_back = True
             report.rollback_attempts = attempts + 1
             try:
-                rewriter(plan.chapters_to_rewrite)
+                rewriter(plan_rollback.chapters_to_rewrite)
             except Exception as e:  # noqa: BLE001
                 report.escalated = True
                 report.escalated_reason = f"重写失败：{e}"
@@ -415,4 +458,23 @@ class EvaluatorAgent(
         report.rollback_attempts = attempts
         report.rolled_back = attempts > 0
         return report
+
+    def _escalation_detail(self, plan: "DispositionPlan") -> str:
+        """按失败维度的作用域给出人工可操作的明细。"""
+        if any(
+            getattr(getattr(d, "spec", None), "scope", None) is not None
+            and getattr(d.spec, "scope").value == "first_chapters"
+            for d in plan.dims
+        ):
+            return self._golden_escalation_detail(self.last_failed_report)
+        if any(
+            getattr(getattr(d, "spec", None), "scope", None) is not None
+            and getattr(d.spec, "scope").value == "book_ending"
+            for d in plan.dims
+        ):
+            return self._g8_structural_escalation_detail(self.last_failed_report)
+        return "\n".join(
+            f"- {d.label}：实测 {d.value} {d.direction} 合格线 {d.threshold}"
+            for d in plan.dims
+        )
 

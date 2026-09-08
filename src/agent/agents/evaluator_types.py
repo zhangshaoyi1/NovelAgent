@@ -11,9 +11,25 @@ from agent.core.quality.scoring.reader_appeal import (  # to_markdown 子块渲�
 )
 
 
+from agent.core.quality.dimension_registry import (  # HA-Eval L2：量纲契约 SSOT
+    DimensionSpec,
+    enforce_contract,
+    get_spec,
+)
+
+
 @dataclass
 class DimensionResult:
-    """单维结果。"""
+    """单维结果。
+
+    HA-Eval L2（2026-09-08）：新增 ``spec`` 字段，把维度的量纲/值域/作用域声明
+    绑定到结果上，构造时即执行契约校验——把「3 条缺陷」喂给 0-100 评分维这类
+    量纲错配在**构造期**暴露，而不是等到回滚删完章才发现。
+
+    向后兼容：``spec`` / ``evidence`` 均为可选参数且置于末尾，
+    既有位置参数调用（``DimensionResult(name, label, value, threshold, direction,
+    required, source, soft_margin=, scope=)``）零改动；``to_dict()`` 输出字段不变。
+    """
 
     name: str
     label: str
@@ -24,9 +40,35 @@ class DimensionResult:
     source: str = ""  # computed | llm | default
     # G2 容差带：硬门禁恒 0；仅 coherence（0-100 量纲）用 5 吸收 LLM 噪声，其余保持严格。
     soft_margin: float = 0.0
-    # 作用域声明（2026-09-08 架构化）：window=每轮窗口均评（默认）；
-    # book_ending=全书收尾验收维，仅结局窗口内启用。登记表见 evaluator_dims._DIM_SCOPE。
+    # 作用域声明：window=每轮窗口均评（默认）；
+    # book_ending=全书收尾验收维，仅结局窗口内启用。
+    # first_chapters=开头若干章（末窗回滚修不到）。登记表见 dimension_registry。
     scope: str = "window"
+    # ---- HA-Eval L2：量纲契约（None → 由 registry 按 name 自动绑定）----
+    spec: DimensionSpec | None = None
+    # ---- HA-Eval L3：评分证据（prompt_hash / cache_hit / confidence…）----
+    evidence: Any | None = None
+
+    def __post_init__(self) -> None:
+        if self.spec is None:
+            self.spec = get_spec(self.name)
+        if self.spec is not None:
+            enforce_contract(self.spec, self.value)
+
+    @property
+    def unit(self) -> str:
+        """量纲（未登记维度返回空串）。"""
+        return self.spec.unit.value if self.spec is not None else ""
+
+    @property
+    def confidence(self) -> float:
+        """证据置信度；0.0 表示不可信，**禁止触发任何处置动作**（L4 守门依据）。
+
+        无证据（确定性计算维）恒为 1.0——computed 维度不依赖 LLM，天然可信。
+        """
+        if self.evidence is None:
+            return 1.0
+        return float(getattr(self.evidence, "confidence", 1.0))
 
     @property
     def passed(self) -> bool:
@@ -50,21 +92,12 @@ class DimensionResult:
         }
 
 
-# G2 soft_margin 注入映射：构造 DimensionResult 时按维度名查表注入容差带。
-# 主理人拍板：仅 coherence（0-100 量纲）用 5.0 吸收 LLM 噪声；
-# readability 与确定性维度（[0,1] 量纲）、三硬门禁一律 0.0，避免门禁被静默关闭。
-_SOFT_MARGIN = {
-    "character_stability_high": 0.0,  # 硬门禁（不可放宽）
-    "setting_consistency_high": 0.0,  # 硬门禁
-    "logic_holes": 0.0,  # 硬门禁
-    "coherence": 5.0,  # 0-100 评分维（吸收 LLM 噪声）
-    "readability": 0.0,  # 0-100 评分维（主理人拍板：保持严格）
-    "foreshadow_recycle_rate": 0.0,  # 确定性 0-1 维（保持严格）
-    "pacing_abnormal": 0.0,  # 确定性 0-1 维
-    # ---- G8：确定性计数/收敛维（保持严格，不吸收容差）----
-    "mainline_progress": 0.0,  # G8 确定性计数维（保持严格，不吸收容差）
-    "ending_convergence": 0.0,  # G8 确定性收敛维（保持严格）
-}
+# G2 soft_margin 注入映射。
+# HA-Eval L2（2026-09-08）：原为硬编码字典，现由 dimension_registry 登记表**派生**，
+# 保证与 DimensionSpec.soft_margin 单一事实来源。保留名称以兼容既有 import。
+from agent.core.quality.dimension_registry import (  # noqa: F401
+    _SOFT_MARGIN,
+)
 
 
 @dataclass

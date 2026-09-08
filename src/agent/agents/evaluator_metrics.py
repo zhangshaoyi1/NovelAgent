@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.agents.evaluator_types import DimensionResult, NovelHealthReport
+from agent.core.quality.dimension_registry import safe_default_for
 
 
 import json
@@ -61,11 +62,24 @@ class _EvaluatorMetricsMixin:
             except Exception:  # noqa: BLE001
                 pass  # noqa: SILENT_DEGRADE
         # 安全默认（无 LLM）：硬指标 0 通过，评分维度给满分。
-        if name in ("character_stability_high", "setting_consistency_high", "logic_holes"):
-            return 0.0
-        if name in ("coherence", "readability"):
-            return 100.0
-        return 0.0
+        # HA-Eval L2：由 dimension_registry 登记表派生（SSOT）。
+        return safe_default_for(name)
+
+    def _evidence_for(self, name: str) -> Any | None:
+        """取该维度的评分证据（HA-Eval L3）。
+
+        ``score_fn`` 协议是 ``(name, project_dir) -> float``，无法回传证据对象，
+        故经其绑定对象（``ReaderAppealScorer``）的 ``get_evidence()`` 旁路获取。
+        ``score_fn`` 非绑定方法 / 无该能力时返回 ``None``（置信度按 1.0 处理）。
+        """
+        provider = getattr(self.score_fn, "__self__", None)
+        getter = getattr(provider, "get_evidence", None)
+        if not callable(getter):
+            return None
+        try:
+            return getter(name)
+        except Exception:  # noqa: BLE001 - 取证据失败不影响评分本身
+            return None  # noqa: SILENT_DEGRADE
 
     def _metric_foreshadow_recycle(self) -> tuple[float, dict[str, int]]:
         """确定性：伏笔回收率（到期口径）。

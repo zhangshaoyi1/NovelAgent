@@ -359,19 +359,15 @@ def chat_creative(
     return resp.text
 
 
-def chat_utility(
-    gateway: Any,
+def _build_utility_request(
     messages: list[dict[str, str]],
     *,
-    temperature: float = 0.3,
-    max_tokens: int | None = None,
-    model: str | None = None,
-    enable_thinking: bool | None = None,
-) -> str:
-    """使用原生 Gateway 执行实用型 LLM 调用
-
-    返回纯文本响应。
-    """
+    temperature: float,
+    max_tokens: int | None,
+    model: str | None,
+    enable_thinking: bool | None,
+    cache_class: Any | None,
+) -> Any:
     from llmagent.gateway.models import ChatRequest, HintComplexity, TaskHint
 
     hint = TaskHint(
@@ -385,8 +381,68 @@ def chat_utility(
         extra["model"] = model
     if enable_thinking is not None:
         extra["enable_thinking"] = enable_thinking
-    req = ChatRequest(messages=messages, hint=hint, extra=extra or {})
-    resp = gateway.chat(req)
+    if cache_class is not None:
+        extra["cache_class"] = getattr(cache_class, "value", cache_class)
+    return ChatRequest(messages=messages, hint=hint, extra=extra or {})
+
+
+def chat_utility_response(
+    gateway: Any,
+    messages: list[dict[str, str]],
+    *,
+    temperature: float = 0.3,
+    max_tokens: int | None = None,
+    model: str | None = None,
+    enable_thinking: bool | None = None,
+    cache_class: "Any | None" = None,
+) -> Any:
+    """同 :func:`chat_utility`，但返回完整 ``ChatResponse``。
+
+    供需要**证据**的判定类场景使用（HA-Eval L3）：响应对象携带 ``cache_hit`` /
+    ``cache_key`` / ``usage_*`` / ``elapsed_ms``，是判断"这个分数是否可信"的原料。
+    评分器据此构造 :class:`~agent.core.quality.eval_evidence.EvalEvidence`。
+    """
+    req = _build_utility_request(
+        messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        model=model,
+        enable_thinking=enable_thinking,
+        cache_class=cache_class,
+    )
+    return gateway.chat(req)
+
+
+def chat_utility(
+    gateway: Any,
+    messages: list[dict[str, str]],
+    *,
+    temperature: float = 0.3,
+    max_tokens: int | None = None,
+    model: str | None = None,
+    enable_thinking: bool | None = None,
+    cache_class: "Any | None" = None,
+) -> str:
+    """使用原生 Gateway 执行实用型 LLM 调用
+
+    返回纯文本响应。
+
+    Args:
+        cache_class: 调用语义分类（``llmagent.gateway.cache_policy.CacheClass``）。
+            **默认（None）不缓存**——实用型调用多为评分/判定/审查，复用上一次的
+            判定结果会导致"多维度共用同一份响应"的串值事故（2026-09-08 五灵破归档）。
+            确属确定性转换（格式转换 / 确定性抽取）时显式传
+            ``CacheClass.DETERMINISTIC`` 才启用缓存。
+    """
+    resp = chat_utility_response(
+        gateway,
+        messages,
+        temperature=temperature,
+        max_tokens=max_tokens,
+        model=model,
+        enable_thinking=enable_thinking,
+        cache_class=cache_class,
+    )
     return resp.text
 
 

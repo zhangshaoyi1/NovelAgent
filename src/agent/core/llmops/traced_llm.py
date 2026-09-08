@@ -73,10 +73,17 @@ class TracedLLMClient:
         ok = True
         err = ""
         resp = None
+        # ---- HA-Eval L1：缓存命中留痕 ----
+        # 旧实现中"缓存命中"与"真实调用"在 trace 里完全同形（latency≈0 且 token 数相同），
+        # 只能靠人工比对推断。这里把 cache_hit / cache_key 写进 meta，使串值事故可被直接观测。
+        cache_hit = False
+        cache_key = ""
         try:
             if self._llm is None:
                 raise RuntimeError("TracedLLMClient: 底层 LLM (Gateway) 未初始化")
             resp = self._llm.chat(req)
+            cache_hit = bool(getattr(resp, "cache_hit", False))
+            cache_key = str(getattr(resp, "cache_key", "") or "")
         except Exception as e:  # noqa: BLE001
             ok = False
             err = str(e)
@@ -91,6 +98,7 @@ class TracedLLMClient:
                     cost=self.cost_per_call,
                     ok=ok,
                     error=err,
+                    meta={"cache_hit": cache_hit, "cache_key": cache_key},
                 )
             )
             raise
@@ -108,6 +116,7 @@ class TracedLLMClient:
                 cost=self.cost_per_call,
                 ok=ok,
                 error=err,
+                meta={"cache_hit": cache_hit, "cache_key": cache_key},
             )
         )
         return resp

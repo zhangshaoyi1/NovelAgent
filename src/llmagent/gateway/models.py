@@ -102,6 +102,12 @@ class ChatResponse:
     usage_output: int = 0
     elapsed_ms: float = 0.0
     warnings: list[str] = field(default_factory=list)
+    # ---- HA-Eval L1（2026-09-08）：缓存命中留痕 ----
+    # 语义缓存命中时由 SemanticCache.lookup 置 True，使 trace / 审计可区分
+    # 「真实 provider 调用」与「复用上次响应」（旧实现两者在 trace 里完全同形，
+    # 只能靠人工比对 latency=0 + token 数相同来推断）。
+    cache_hit: bool = False
+    cache_key: str = ""
 
 
 @dataclass

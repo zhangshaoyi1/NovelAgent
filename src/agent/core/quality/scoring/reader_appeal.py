@@ -33,21 +33,22 @@ from agent.core.story.chapters import (  # G6：公共章节读取 helper（消�
     take_chapter_files,
 )
 from agent.utils import parse_llm_json
-from agent.client.gateway_adapter import chat_utility, create_gateway
+from agent.client.gateway_adapter import (
+    chat_utility,
+    chat_utility_response,
+    create_gateway,
+)
 from agent.core.infra.prompt_manager import pm
+from agent.core.quality.dimension_registry import clamp_value, safe_default_for
+from agent.core.quality.eval_evidence import EvalEvidence, build_evidence
 
 
 # ============================================================
 # 提示词
 # ============================================================
 # Evaluator 维度评分（单维，要求 LLM 给一个数值）
-_EVAL_DIM_LABELS = {
-    "character_stability_high": "人设稳定性（角色言行/动机是否前后矛盾，逐项列举崩坏处数量）",
-    "setting_consistency_high": "设定一致性（境界/金手指/世界观规则是否被打破，逐项列举冲突数量）",
-    "logic_holes": "逻辑漏洞（情节硬伤/因果不成立，逐项列举漏洞数量）",
-    "coherence": "连贯性（章节衔接/叙事流畅度，0-100 评分）",
-    "readability": "追读力/可读性（让人想继续读的欲望，0-100 评分）",
-}
+# HA-Eval L2：改由 dimension_registry 登记表派生（SSOT），新增维度只需登记一次。
+from agent.core.quality.dimension_registry import _EVAL_DIM_LABELS  # noqa: F401
 
 # 迷爱看 6 维（作者侧独立评分）
 APPEAL_DIMENSIONS = {
@@ -87,8 +88,9 @@ GOLDEN_DIM_FLOOR: int = 40          # 单维触底线（--golden-three-floor 覆
 GOLDEN_GATE_PREFIX: str = "golden_" # golden_* DimensionResult 名前缀
 GOLDEN_JOIN_CHAR_LIMIT: int = 10000 # 与 score_chapter 截断（行 315）对齐；超长 fallback 每章独立评分
 
-# G2 计数类维度集合（以 issues 重算 value）；评分类维度用自报 value。
-COUNT_DIMS = {"character_stability_high", "setting_consistency_high", "logic_holes"}
+# ---- HA-Eval L2（2026-09-08）：以下两块语义已上收至 dimension_registry（SSOT）----
+# 计数类维度集合（以 issues 重算 value）；评分类维度用自报 value。
+from agent.core.quality.dimension_registry import COUNT_DIMS  # noqa: F401
 # 计入硬门禁的 severity 集合（high 必计、mid 计入以收紧；low 仅上报，不计入门禁）。
 SEVERITY_GATE = {"high", "mid"}
 
@@ -289,19 +291,23 @@ class ReaderAppealScorer:
                 f"请评估以下小说片段在「{_EVAL_DIM_LABELS.get(dimension, dimension)}」"
                 f"维度上的表现。\n\n{text[:8000]}"
             )
+            _messages = [
+                {"role": "system", "content": pm.get("quality.reader_appeal_eval").system},
+                {"role": "user", "content": prompt},
+            ]
             # 思考型模型（如 dots3-note-prev）即便 enable_thinking=False 也会产思考，
             # 预算过小会被思考占满 → content 为空或 JSON 被截断、解析失败。
             # 真实小说实测：评分/计数维均须 ≥8192 才稳定出完整 JSON。
-            resp = chat_utility(self.llm,
-                messages=[
-                    {"role": "system", "content": pm.get("quality.reader_appeal_eval").system},
-                    {"role": "user", "content": prompt},
-                ],
+            # HA-Eval L3：改用 chat_utility_response 取完整响应对象，
+            # 以便把 cache_hit / prompt_hash / response_hash 记入证据。
+            resp = chat_utility_response(self.llm,
+                messages=_messages,
                 temperature=0.2,
                 max_tokens=8192,
                 enable_thinking=False,
             )
-            data = parse_llm_json(resp)
+            raw = getattr(resp, "text", "") or ""
+            data = parse_llm_json(raw)
             issues = data.get("issues") or []
             if dimension in COUNT_DIMS and issues:
                 # 以 issues 为准重算：仅计入 severity ∈ SEVERITY_GATE 的条数，忽略 LLM 自报 value。
@@ -318,26 +324,43 @@ class ReaderAppealScorer:
             return self._default_for(dimension)
         value = self._clamp(dimension, val)
         # G2：结构化结果落 _last_eval（issues/rationale），不扩展 score_fn 返回协议。
+        # HA-Eval L3：附带 EvalEvidence，供 L4 处置层判断"这个分数能不能信"。
         self._last_eval[dimension] = {
             "value": value,
             "rationale": data.get("rationale", ""),
             "issues": issues,
+            "evidence": build_evidence(
+                messages=_messages,
+                raw_response=raw,
+                cache_hit=bool(getattr(resp, "cache_hit", False)),
+                model=str(getattr(resp, "model", "") or ""),
+                latency_ms=float(getattr(resp, "elapsed_ms", 0.0) or 0.0),
+                issues=issues,
+                rationale=str(data.get("rationale", "") or ""),
+            ),
         }
         return value
 
+    def get_evidence(self, dimension: str) -> "EvalEvidence | None":
+        """取该维度最近一次评分的证据（HA-Eval L3）。
+
+        ``score_fn`` 协议只能返回 float，证据经本方法旁路提供给 EvaluatorAgent。
+        未评分 / 降级路径返回 ``None``。
+        """
+        entry = self._last_eval.get(dimension)
+        if not isinstance(entry, dict):
+            return None
+        return entry.get("evidence")
+
+    # ---- HA-Eval L2：降级值与值域钳制改由 dimension_registry 派生（SSOT）----
     @staticmethod
     def _default_for(dimension: str) -> float:
         # 与 EvaluatorAgent._score 安全默认保持一致
-        if dimension in ("coherence", "readability"):
-            return 100.0
-        return 0.0
+        return safe_default_for(dimension)
 
     @staticmethod
     def _clamp(dimension: str, val: float) -> float:
-        if dimension in ("coherence", "readability"):
-            return max(0.0, min(100.0, val))
-        # G2：计数类维非负整数化（float(int(max(0, val)))），吸收 LLM 噪声与小数。
-        return float(int(max(0, val)))
+        return clamp_value(dimension, val)
 
     def _gather_for_eval(self, dimension: str, project_dir: str) -> str:
         """收集评分所需文本（最新 1-3 章正文 + 世界观简介）。"""

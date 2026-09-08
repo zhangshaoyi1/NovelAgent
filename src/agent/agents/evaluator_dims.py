@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from agent.agents.evaluator_types import DimensionResult, NovelHealthReport
+from agent.core.quality.validators import DimensionValidator  # HA-Eval L3
 
 
 import json
@@ -57,16 +58,15 @@ from agent.agents.evaluator_types import (  # noqa: F401
 # ============================================================
 # 评估维度作用域声明（2026-09-08 架构化，替代 G8 硬编码特判）
 # ============================================================
-# 每个全书级评估维度必须在此登记作用域，未登记默认 "window"（每轮窗口均评）。
+# Evaluator 维度评分作用域声明
+# HA-Eval L2（2026-09-08）：由 dimension_registry 登记表派生（SSOT）。
 #   - window:      窗口级维度，每次 autowrite 结尾评估都适用；
 #   - book_ending: 全书收尾验收维，仅当进度进入结局窗口才启用——中途窗口
 #     被完结标准审判必然假失败（2026-09-07 五灵破归档事故：1200 章书写到
 #     16 章，支线 1/5 需≥3、结局段自 ch901 未开始、回收率 0 全为假失败）。
-# 新增全书级维度（如"多线收束""悬念总密度"）必须在此登记。
-_DIM_SCOPE: dict[str, str] = {
-    "mainline_progress": "book_ending",
-    "ending_convergence": "book_ending",
-}
+#   - first_chapters: 开头若干章（末窗回滚修不到）。
+# 新增全书级维度必须先在 dimension_registry.DIMENSIONS 登记。
+from agent.core.quality.dimension_registry import _DIM_SCOPE  # noqa: F401
 
 
 def _scope_allows(name: str, in_book_ending_window: bool) -> bool:
@@ -84,16 +84,19 @@ class _EvaluatorDimensionsMixin:
         coherence = self._score("coherence")
         readability = self._score("readability")
 
+        # HA-Eval L3：评分证据随维度一并构造，供门禁前的坏数据校验使用。
         dims = [
             DimensionResult(
                 "character_stability_high", "人设稳定", char_high,
                 self.qt["character_stability_high"], "<=", True, "llm/default",
                 soft_margin=_SOFT_MARGIN.get("character_stability_high", 0.0),
+                evidence=self._evidence_for("character_stability_high"),
             ),
             DimensionResult(
                 "setting_consistency_high", "设定一致", setting_high,
                 self.qt["setting_consistency_high"], "<=", True, "llm/default",
                 soft_margin=_SOFT_MARGIN.get("setting_consistency_high", 0.0),
+                evidence=self._evidence_for("setting_consistency_high"),
             ),
             DimensionResult(
                 "foreshadow_recycle_rate", "伏笔闭环", recycle,
@@ -104,11 +107,13 @@ class _EvaluatorDimensionsMixin:
                 "coherence", "连贯性", coherence,
                 self.qt["coherence"], ">=", False, "llm/default",
                 soft_margin=_SOFT_MARGIN.get("coherence", 0.0),
+                evidence=self._evidence_for("coherence"),
             ),
             DimensionResult(
                 "readability", "追读力", readability,
                 self.qt["readability"], ">=", False, "llm/default",
                 soft_margin=_SOFT_MARGIN.get("readability", 0.0),
+                evidence=self._evidence_for("readability"),
             ),
             DimensionResult(
                 "pacing_abnormal", "节奏异常", pacing,
@@ -119,6 +124,7 @@ class _EvaluatorDimensionsMixin:
                 "logic_holes", "逻辑漏洞", logic,
                 self.qt["logic_holes"], "<=", True, "llm/default",
                 soft_margin=_SOFT_MARGIN.get("logic_holes", 0.0),
+                evidence=self._evidence_for("logic_holes"),
             ),
         ]
         for d in dims:
@@ -246,6 +252,15 @@ class _EvaluatorDimensionsMixin:
                 if self.console is not None:
                     self.console.print(f"[yellow]⚠ ending_convergence 计算失败，跳过：{e}[/yellow]")  # noqa: SILENT_DEGRADE
 
+        # ---- HA-Eval L3：坏数据校验（进入硬门禁前的最后一道）----
+        # 原实现只防「LLM 没输出」（给安全默认值），不防「LLM 输出了坏值」（直接采信）。
+        # 这里把可疑分数降级为 confidence=0，由 L4 处置层保证"不可信即不处置"。
+        try:
+            DimensionValidator().validate_batch(dims)
+        except Exception as e:  # noqa: BLE001 - 校验本身异常不得阻断体检（G3 哲学）
+            if self.console is not None:
+                self.console.print(f"[yellow]⚠ 维度证据校验失败，按原值判定：{e}[/yellow]")  # noqa: SILENT_DEGRADE
+
         failed = [d for d in dims if not d.passed]
         hard_failed = [d for d in failed if d.required]
         overall = len(failed) == 0
@@ -269,6 +284,13 @@ class _EvaluatorDimensionsMixin:
         score = (sum(norm) / len(norm)) * 100 if norm else 100.0
 
         report = NovelHealthReport(overall_pass=overall, score=score, dimensions=dims)
+        # ---- HA-Eval L5：维度级审计落盘（只追加、不阻断；失败静默降级）----
+        try:
+            from agent.core.quality.audit import QualityAuditStore, record_from_report
+
+            QualityAuditStore(self.project_dir).append(record_from_report(report))
+        except Exception:  # noqa: BLE001 - 审计写失败不得阻断体检
+            pass  # noqa: SILENT_DEGRADE
         # ---- G5：填充迷爱看子块（修正点 B：六维详情从 self._last_appeal_report 取，
         #      绝不可误用 NovelHealthReport 的 report 本身不具备的字段）----
         if getattr(self, "_last_appeal_report", None) is not None:

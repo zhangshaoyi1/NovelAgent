@@ -324,11 +324,13 @@ def test_evaluator_auto_rollback_on_failure(tmp_path):
 def test_evaluator_escalates_when_repair_fails(tmp_path):
     proj = _make_project(tmp_path, n_chapters=8)
     # score_fn 永远让硬指标失败 → 重写也无法通过 → 超限上报
+    # 注：评分维返回合法但低于阈值的值（如 70），不可返回 0——0 分会被 L3 校验器
+    # 判为「坏数据」降级为不可信，走 RETRY_EVAL 而非回溯超限路径。
     def bad_score(name, project):
         if name == "character_stability_high":
-            return 1  # 永远不达标
+            return 1  # 永远不达标（硬指标，count 维）
         if name in ("coherence", "readability"):
-            return 0.0
+            return 70.0  # 合法但低于 85/80 合格线
         return 0.0
 
     # G8（拍板 6）：本测试仅测 G1 回溯超限 escalated；G8 验收维度默认开 → 关闭

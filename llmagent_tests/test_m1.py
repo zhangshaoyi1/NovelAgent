@@ -21,6 +21,7 @@ from llmagent.gateway.models import (
     TaskHint,
 )
 from llmagent.gateway.providers.registry import ModelProvider, ProviderRegistry
+from llmagent.gateway.cache_policy import CacheClass
 from llmagent.gateway.rate_limiter import RateLimiter, SemanticCache
 from llmagent.gateway.response_gate import MetricsSink, ResponseGate
 from llmagent.kernel.artifact import ArtifactRef, ArtifactStore, RetentionPolicy
@@ -306,13 +307,30 @@ class TestRateLimiter:
 
 class TestSemanticCache:
     def test_store_and_lookup(self):
+        """2026-09-08（HA-Eval L1）：缓存改为**默认拒绝**，需显式声明 DETERMINISTIC。
+
+        背景：旧实现"未声明即可缓存"，导致评估类 prompt（差异在开头、正文相同）
+        算出同一个键 → 五维共用同一份响应 → 量纲串用 → 误触发回滚重写。
+        """
         cache = SemanticCache(max_size=10, ttl_s=60.0)
-        req = ChatRequest(messages=[{"role": "user", "content": "hello"}], hint=TaskHint(complexity=HintComplexity.simple, quality_critical=False))
+        req = ChatRequest(
+            messages=[{"role": "user", "content": "hello"}],
+            hint=TaskHint(complexity=HintComplexity.simple, quality_critical=False),
+            extra={"cache_class": CacheClass.DETERMINISTIC.value},
+        )
         resp = ChatResponse(text="world")
         cache.store(req, resp)
         cached = cache.lookup(req)
         assert cached is not None
         assert cached.text == "world"
+        assert cached.cache_hit is True
+
+    def test_undeclared_judgment_not_cached(self):
+        """未声明 cache_class（= JUDGMENT 判定类）→ 不缓存。"""
+        cache = SemanticCache(max_size=10, ttl_s=60.0)
+        req = ChatRequest(messages=[{"role": "user", "content": "hello"}], hint=TaskHint(complexity=HintComplexity.simple, quality_critical=False))
+        cache.store(req, ChatResponse(text="world"))
+        assert cache.lookup(req) is None
 
     def test_quality_critical_skips_cache(self):
         cache = SemanticCache(max_size=10, ttl_s=60.0)
