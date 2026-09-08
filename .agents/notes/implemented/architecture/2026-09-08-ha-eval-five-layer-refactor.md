@@ -72,6 +72,41 @@ ROLLBACK_REWRITE 过守门器）。
 （`CachePolicy`）、可观测（`cache_hit` 埋点）」的属性。默认拒绝 + 显式 opt-in 是
 fail-safe 的默认值。
 
+## Implementation manifest（2026-09-08 交付）
+
+Commit: `3fb22d8`（refactor(quality): HA-Eval 五层高可用评估架构重构 M1-M5）
+
+新增模块（7）：
+
+| 文件 | 层 |
+|---|---|
+| `llmagent/gateway/cache_policy.py` | L1（`CacheClass` / `decide` / `_full_key` 全量哈希） |
+| `agent/core/quality/dimension_registry.py` | L2（`DimensionSpec` SSOT，24 维登记） |
+| `agent/core/quality/eval_evidence.py` | L3（`EvalEvidence` / `build_evidence`） |
+| `agent/core/quality/validators.py` | L3（`DimensionValidator` 四类检测） |
+| `agent/core/quality/disposition.py` | L4（`DispositionRule` / `DispositionGate` / `Action`） |
+| `agent/core/quality/audit.py` | L5（`QualityAuditStore` / `detect_anomalies`） |
+| `agent/cli/commands/eval_audit.py` | L5（`eval_audit` 回放命令，自动发现注册） |
+
+修改模块（13）：`gateway/{chat,models,rate_limiter,request_gate}.py`、
+`gateway_adapter.py`（新增 `chat_utility_response` + `cache_class` 参数）、
+`traced_llm.py`（trace meta 埋点 `cache_hit`）、`evaluator{,_types,_dims,_metrics}.py`、
+`reader_appeal.py`、`llmagent_tests/test_m1.py`、`tests/phase2/test_phase2.py`。
+
+新增测试（5 文件 30 用例）：`tests/core/test_{cache_policy,dimension_registry,
+eval_validators,disposition,quality_audit}.py`。回归：核心 401 passed；架构红线
+（层依赖矩阵 / SILENT_DEGRADE 降级可见化）通过。已知既有失败（与本重构无关，
+git stash 验证）：`test_g4_breaker.py::test_breaker_tripped_flag_set_on_token_exceed`。
+
+实施要点（踩坑记录）：
+
+- 兜底规则 `lambda d: True` 会在 `match_rules` 抢走高优先级的 LOCAL_REPAIR——
+  兜底必须声明 `is_fallback=True`，且「无其它命中才生效」在匹配逻辑里保证；
+- 架构测试 `test_degrade_visibility` 检查的是 except 块**最后一行**（`end_lineno`），
+  `SILENT_DEGRADE` 标记不能写在 except 声明行上；
+- 事故数据修复（M0）：ch025/ch026 原稿已从
+  `novels/五灵破归档/chapters/_archived/rollback_to_22_20260908_113542/` 恢复，进度回到 26 章。
+
 ## Consequences
 
 ### 收益
