@@ -42,6 +42,12 @@ class MainlineOrchestrator:
 
     PLAN_FILE = ".state" / Path("mainline.json")
     _DEFAULT_PHASE_RATIO: dict[str, int] = {}  # 缺省不擅自填用户比例；由 --ratio 明确写入
+    # 2026-09-08：重规划窗口与推进窗口解耦（原默认 = 推进窗口 5 章）。
+    # 5 章重规划一次意味着：S01 还剩 254 章时也要重规划，而此时「已写 45 章」
+    # 完全不足以判断后续节奏，输出只能在原数上凑整（五灵破实证：数字全为 10 的
+    # 整数倍、S01 一动不动）。1200 章的书将重规划 240 次，是纯抖动源。
+    # 取 25 章：约为推进窗口的 5 倍，仍能在一卷内多次纠偏，但不至于逐窗口摇摆。
+    DEFAULT_REPLAN_WINDOW = 25
 
     def __init__(
         self,
@@ -57,8 +63,8 @@ class MainlineOrchestrator:
         self.mainline_window = max(1, int(mainline_window))
         self.console = console or Console()
         self.budget_planner = budget_planner
-        # 预算重规划窗口：默认与推进窗口一致（每 N 章重规划一次分线预算）
-        self.replan_window = max(1, int(replan_window or mainline_window))
+        # 预算重规划窗口：默认 25 章（与推进窗口解耦，见 DEFAULT_REPLAN_WINDOW 说明）
+        self.replan_window = max(1, int(replan_window or self.DEFAULT_REPLAN_WINDOW))
         self._plan_file = self.project_dir / ".state" / "mainline.json"
 
     # ------------------------------------------------------------------

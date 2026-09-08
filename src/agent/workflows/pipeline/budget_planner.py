@@ -12,6 +12,15 @@
   预算规划阻塞（G3 哲学）。
 - ``phase_ratio``（--ratio 软意图）仅作为 LLM 的参考输入提示，不直接当硬预算
   （用户拍板 3：保留为软意图）。
+
+2026-09-08 补记（五灵破归档实证，三项修正）：
+- 输入侧：prompt 注入 ``plan.json`` 的**主角路线节点区间**作锚。此前只喂「支线名 +
+  总章数」，LLM 只能凭名字直觉分配（热闹的「万魔殿」+120、抽象的「过客观察」-50），
+  导致支线边界与主线节奏骨架错位 500 章。
+- 输出侧：预算落盘后同步重写各支线的压力曲线区间（``core/story/subline_curve``）。
+  推进裁决取 ``min(曲线上界, cap)``，曲线静态 → 削减生效、扩张永不生效（棘轮效应）。
+- 安全侧：新增不可逆保护，新预算不得把「已写/正在写的支线」压到当前章号以下，
+  否则支线会在没走完高潮时被整体切走（且无法回退）。
 """
 
 from __future__ import annotations
@@ -120,9 +129,12 @@ class BudgetPlanner:
             if not new_share:
                 reason_ok = False
             else:
+                new_share = self._protect_irreversible(new_share, sublines)
                 plan["subline_share"] = new_share
                 plan["horizon_chapters"] = int(budget.horizon_chapters) or horizon
                 self._write_plan(plan)
+                # 曲线同步：解除 min(曲线上界, cap) 的单向钳制（扩张不再被吞）
+                self._sync_curves(new_share, sublines)
                 self.console.print(
                     "[green]✓ LLM 主编已重规划分线预算："
                     + ", ".join(f"{k}={v}" for k, v in new_share.items())
@@ -148,6 +160,94 @@ class BudgetPlanner:
                 "[dim]分线预算缺省：按体量均衡分账落盘兜底[/dim]"
             )
         return reason_ok
+
+    # ------------------------------------------------- 不可逆保护 + 曲线同步
+    def _protect_irreversible(self, share: dict[str, int], sublines: list[str]) -> dict[str, int]:
+        """保证「已写/正在写」的支线累计预算不低于当前章号（防半路被切）。
+
+        ``decide_mainline_advance`` 的切换条件是 ``chapter > upper``，其中 upper 为
+        **累计口径**。若重规划把某支线的累计 cap 压到当前章号以下，下一裁决点会立刻
+        切到下一条支线——该支线的冲突/高潮/舒缓段被整体跳过，且 ``mainline_visited``
+        无回退机制，剧情永久断在半路（S01 高潮「宗门大比」被吞即此类）。
+
+        补偿策略：先抬升当前支线到 ``written + 1``，再从**后续**支线依次扣回以维持总和；
+        后续不足扣时允许总和超出 horizon（宁可超支，不可断线），并打印告警。
+
+        Args:
+            share: LLM 产出的单支线份额（支线 ID → 章数）。
+            sublines: 支线有序列表（S01→S0n）。
+
+        Returns:
+            修正后的份额；无需修正时原样返回。
+        """
+        if not sublines:
+            return share
+        progress = self._read_progress()
+        try:
+            written = int(progress.get("total_written") or 0)
+        except (TypeError, ValueError):
+            written = 0
+        if written <= 0:
+            return share
+
+        caps: list[int] = []
+        acc = 0
+        for sid in sublines:
+            acc += int(share.get(sid) or 0)
+            caps.append(acc)
+
+        # 兜底定位：第一个累计 cap 越过已写章号的；全未越过则取最后一条
+        idx = next((i for i, c in enumerate(caps) if c > written), len(sublines) - 1)
+        current = str(progress.get("current_subline") or "")
+        if current in sublines:
+            # 状态机的真实写章点优先：正在写的支线被压到已写章号以下，才会触发
+            # 「下一裁决点立刻切线」。注意取**当前支线索引本身**，不能与其后的
+            # 兜底索引取 max——那是越过已写章号的下一条支线，抬它无效。
+            idx = sublines.index(current)
+
+        deficit = written + 1 - caps[idx]
+        if deficit <= 0:
+            return share
+
+        out = dict(share)
+        hold = sublines[idx]
+        out[hold] = int(out.get(hold) or 0) + deficit
+        rest = deficit
+        for j in range(len(sublines) - 1, idx, -1):  # 从末条往前扣，优先保中段完整
+            if rest <= 0:
+                break
+            sid = sublines[j]
+            take = min(int(out.get(sid) or 0) - 1, rest)
+            if take > 0:
+                out[sid] = int(out[sid]) - take
+                rest -= take
+        self.console.print(
+            f"[yellow]⚠ 预算不可逆保护：{hold} 已写至第 {written} 章，"
+            f"累计预算 {caps[idx]} 不足，已抬升至 {caps[idx] + deficit}"
+            + (f"（后续支线仅扣回 {deficit - rest} 章，总章数将超出 horizon）" if rest > 0 else "")
+            + "[/yellow]"
+        )
+        return out
+
+    def _sync_curves(self, share: dict[str, int], sublines: list[str]) -> None:
+        """把新预算换算成累计区间并同步压力曲线（失败只告警，G3 不阻断）。"""
+        try:
+            from agent.core.story.subline_curve import sync_pressure_curves
+
+            notes = sync_pressure_curves(self.project_dir, share, sublines)
+        except Exception as e:  # noqa: BLE001 - 曲线同步失败不影响预算与写章
+            try:
+                from agent.core.infra.degrade import degrade
+
+                degrade("budget_planner.curve_sync", "压力曲线同步失败，沿用旧曲线", e)
+            except Exception:  # noqa: BLE001
+                pass  # noqa: SILENT_DEGRADE
+            self.console.print(f"[yellow]⚠ 压力曲线同步失败（不影响写章）：{e}[/yellow]")
+            return
+        if notes:
+            self.console.print(
+                "[dim]压力曲线已随预算同步：" + "；".join(notes) + "[/dim]"
+            )
 
     # ------------------------------------------------------------------ LLM
     def _ask_llm(
@@ -220,6 +320,16 @@ class BudgetPlanner:
         for sid in sublines:
             title = self._subline_title(sid, sm)
             parts.append(f"  - {sid}：{title}")
+        # 主角路线节点：全书节奏骨架，支线边界的对齐锚（2026-09-08 新增）
+        anchors = self._route_anchor_lines()
+        if anchors:
+            parts.append("- 主角路线节点（全书节奏骨架，权威）：")
+            parts.extend(anchors)
+            parts.append(
+                "  - 要求：各支线的章节区间边界尽量与上述节点边界对齐。"
+                "每个节点覆盖的章段内，必须有支线承载该节点的里程碑事件——"
+                "不允许出现「某节点里程碑在全书中无支线负责」的空档。"
+            )
         # 当前进度
         progress = self._read_progress()
         if progress:
@@ -227,6 +337,10 @@ class BudgetPlanner:
                 f"- 当前进度：位于支线 {progress.get('current_subline', '（未定）')}，"
                 f"已写 {progress.get('total_written', 0)} 章，"
                 f"已访问支线 {progress.get('mainline_visited', [])}"
+            )
+            parts.append(
+                "  - 已写过的章数不可回收：不要把已写支线的预算压到已写章数以下"
+                "（会导致该支线未走完高潮就被切走）。"
             )
         # 软意图（phase_ratio）
         ratio = plan.get("phase_ratio") or {}
@@ -241,6 +355,38 @@ class BudgetPlanner:
         return "\n".join(parts)
 
     # ------------------------------------------------------------ 数据来源
+    def _route_anchor_lines(self) -> list[str]:
+        """读 plan.json 的主角路线节点（章节区间 + 里程碑），作为预算对齐锚。
+
+        plan.json 是全书节奏的权威（``plan_consistency`` 确立）。缺文件/无节点/解析
+        失败返回空列表——prompt 少一段锚点只会让 LLM 少些依据，不该阻断规划（G3）。
+        """
+        try:
+            pf = self.project_dir / ".state" / "plan.json"
+            if not pf.exists():
+                return []
+            data = json.loads(pf.read_text(encoding="utf-8"))
+            nodes = ((data.get("route") or {}).get("nodes")) or []
+            lines: list[str] = []
+            for n in nodes:
+                rng = str(n.get("chapter_range") or "").strip()
+                if not rng:
+                    continue
+                milestone = str(n.get("milestone") or "").strip()
+                lines.append(
+                    f"  - {n.get('id', 'N??')} {rng}：{milestone}" if milestone
+                    else f"  - {n.get('id', 'N??')} {rng}"
+                )
+            return lines
+        except Exception as e:  # noqa: BLE001 - 锚点缺失降级为空，不阻断规划
+            try:
+                from agent.core.infra.degrade import degrade
+
+                degrade("budget_planner.route_anchor", "主角路线锚点读取失败，跳过", e)
+            except Exception:  # noqa: BLE001
+                pass  # noqa: SILENT_DEGRADE
+            return []
+
     def _setting_mgr(self) -> Any:
         from agent.core.story.setting_manager import SettingManager
 
