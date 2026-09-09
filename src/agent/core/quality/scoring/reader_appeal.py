@@ -317,6 +317,13 @@ class ReaderAppealScorer:
                 ))
             else:
                 # 评分维或无 issues：回退 LLM 自报 value（向后兼容、行为不变）。
+                # 2026-09-09：评分维 value 键缺失 = 形状异常（非真实 0 分），按解析失败
+                # 走降级默认（评分维满分），避免伪 0 分 → SCORE_TOO_LOW → 批不可信
+                # → L4 升级人工打断写作（五灵破两次批末误升级根因之一）。
+                if "value" not in data and dimension not in COUNT_DIMS:
+                    raise ValueError(
+                        f"评分维 {dimension} 输出缺少 value 键（形状异常）"
+                    )
                 val = float(data.get("value", 0))
         except Exception as e:  # noqa: BLE001 - LLM 不可达/解析失败：降级默认
             if self.console is not None:
@@ -437,6 +444,25 @@ class ReaderAppealScorer:
             except (TypeError, ValueError):
                 v = 0  # noqa: SILENT_DEGRADE
             dims[k] = max(0, min(100, v))
+        # 2026-09-09（五灵破归档两次批末误升级复盘）：解析"成功"但六维全 0 =
+        # 输出形状异常（dimensions 键缺失/模型漏答），真实文本六维同时 0 分不可能。
+        # 若照常返回 llm_used=True 全 0 报告 → L3 SCORE_TOO_LOW 降级 → L4 拒绝处置
+        # → 升级人工打断写作。此处改为走 LLM 不可达同路径（离线占位，G3 降级不阻断），
+        # 由调用方（evaluator_dims）短路为通过。
+        if all(v == 0 for v in dims.values()):
+            if self.console is not None:
+                self.console.print(
+                    "[yellow]⚠ 迷爱看评分解析为全 0（疑似输出形状异常），按离线短路处理[/yellow]"
+                )
+            return ReaderAppealReport(
+                dimensions=dims,
+                total_score=0,
+                one_liner="评分输出形状异常（全 0），已按离线短路处理",
+                suggestions=[],
+                llm_used=False,
+                error="all-zero dimensions",
+                source="offline",
+            )
         total = ReaderAppealReport._compute_total(dims)
         suggestions = [str(s) for s in (data.get("suggestions", []) or [])][:5]
         one_liner = str(data.get("one_liner", ""))[:60]
