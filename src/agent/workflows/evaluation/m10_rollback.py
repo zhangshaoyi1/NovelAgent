@@ -151,6 +151,11 @@ class M10RollbackWorkflow:
         self.state_machine.progress = progress
         self.state_machine.save()
 
+        # ---- 2026-09-09：回滚同步 RAG 索引 ----
+        # 被归档章节的切片必须从索引中清除，否则重写时会召回已判废的旧版正文
+        # （幽灵召回），且 source 指向已不存在的文件。无索引时 no-op（自举由写章侧负责）。
+        self._sync_rag_index(archived)
+
         return RollbackResult(
             success=True,
             target_chapter=target_chapter,
@@ -170,6 +175,31 @@ class M10RollbackWorkflow:
         if m:
             return int(m.group(1))
         return None
+
+    def _sync_rag_index(self, archived: list[str]) -> None:
+        """回滚后清除被归档章节的 RAG 切片（失败只告警，绝不阻断回滚）
+
+        Args:
+            archived: 已归档的章节文件名列表（chNNN.md）
+        """
+        rag_dir = self.project_dir / ".state" / "rag"
+        if not rag_dir.exists():
+            return
+        nums = [n for n in (self._parse_chapter_num(f) for f in archived) if n]
+        if not nums:
+            return
+        try:
+            from agent.core.rag.indexer import Indexer
+
+            removed = Indexer(self.project_dir).drop_chapters(nums)
+            if removed:
+                self.console.print(
+                    f"[dim]· RAG 索引已同步：清除 {len(nums)} 章 / {removed} 切片[/dim]"
+                )
+        except Exception as e:  # noqa: BLE001 - 索引同步失败不影响回滚本身
+            self.console.print(
+                f"[yellow]⚠ RAG 索引同步失败（不影响回滚）：{e}[/yellow]"
+            )  # noqa: SILENT_DEGRADE
 
     def list_archived(self) -> list[Path]:
         """列出所有归档目录"""

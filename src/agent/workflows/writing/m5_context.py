@@ -83,10 +83,12 @@ class M5ContextMixin:
             subline_data, chapter_num, default_hi=world_info.get("expected_chapters", 200)
         )
 
-        # A：RAG 语义召回（仅当 .state/rag/ 已建立；否则空，绝不阻断写章）
-        rag_dir = self.project_dir / ".state" / "rag"
+        # A：RAG 语义召回（仅当索引文件已建立；否则空，绝不阻断写章）
+        # 2026-09-09：判据由「目录存在」收紧为「index.json 存在」——目录可能被
+        # 自举流程创建但索引为空，此时召回无意义。写章侧负责自举，读侧不触发重建。
+        index_file = self.project_dir / ".state" / "rag" / "index.json"
         rag_context: list = []
-        if rag_dir.exists():
+        if index_file.exists():
             try:
                 from agent.core.rag.retriever import Retriever
 

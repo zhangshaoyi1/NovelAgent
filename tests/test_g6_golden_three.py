@@ -152,8 +152,8 @@ def test_g6_golden_low_floor_escalates_no_rollback(tmp_path: Path) -> None:
     result = ev.evaluate_with_repair(lambda chapters: None)
     assert result.escalated is True, "golden 失败应直接 escalated"
     assert calls == [], "golden 失败绝不允许触发 trigger_rollback（无效回退）"
-    assert "请人工重写第 1-3 章" in result.escalated_reason
-    assert "金三·钩子强度" in result.escalated_reason
+    assert "开头若干章不达标" in result.escalated_reason
+    assert "钩子强度：30/100" in result.escalated_reason
     assert result.rollback_attempts == 0, "不消耗回溯预算"
 
 
@@ -168,8 +168,8 @@ def test_g6_golden_low_total_escalates(tmp_path: Path) -> None:
     total = result.dimension("golden_total")
     assert total is not None and total.passed is False
     assert result.escalated is True
-    assert "请人工重写第 1-3 章" in result.escalated_reason
-    assert "金三·综合" in result.escalated_reason
+    assert "开头若干章不达标" in result.escalated_reason
+    assert "综合分：30/60" in result.escalated_reason
     # 明细含前三章各维得分与综合分
     assert "综合分" in result.escalated_reason
 

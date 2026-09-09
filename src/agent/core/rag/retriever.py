@@ -56,6 +56,32 @@ class Retriever:
             self.bm25.index(self.store.chunks)
         self._loaded = True
 
+    def index_chapter(self, file: Path, text: str | None = None) -> None:
+        """索引单章（写侧委托）
+
+        2026-09-09：``agentic_write._maybe_index`` 原本用
+        ``hasattr(retriever, "index_chapter")`` 判断，而本类从未定义该方法 ——
+        死分支导致 agentic 写章路径**从不建索引**。此处补上薄委托到
+        :class:`~agent.core.rag.indexer.Indexer`，使两条写章路径行为一致。
+
+        Args:
+            file: 章节文件路径（chNNN.md）
+            text: 章节正文；为 None 时从文件读取（并剥离 frontmatter）
+        """
+        from agent.core.rag.indexer import Indexer
+
+        if text is None:
+            text = Indexer._read_file_text(Path(file))
+        Indexer(self.project_dir, embedder=self.embedder).index_chapter(file, text)
+
+    def ensure_index(self, auto_bootstrap: bool = True) -> dict[str, Any]:
+        """确保索引可用（索引为空时全量自举一次），返回 Indexer.ensure 结果"""
+        from agent.core.rag.indexer import Indexer
+
+        return Indexer(self.project_dir, embedder=self.embedder).ensure(
+            auto_bootstrap=auto_bootstrap
+        )
+
     def retrieve(self, query: str, top_k: int = 5) -> list[Chunk]:
         """语义召回：向量 + BM25 融合
 

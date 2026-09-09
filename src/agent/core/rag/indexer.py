@@ -17,8 +17,9 @@ from __future__ import annotations
 
 import re
 import time
+from datetime import datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, Iterable
 
 from agent.core.rag._events import notify_rag_event
 from agent.core.rag._types import Chunk
@@ -118,6 +119,9 @@ class Indexer:
     def index_chapter(self, file: Path, text: str) -> None:
         """增量索引单章（M5 章节持久化后调用）
 
+        幂等（2026-09-09）：写入前先清除该章的旧切片，避免重写/回滚后
+        新旧两版正文同时留在索引里被召回（幽灵召回）。
+
         Args:
             file: 章节文件路径（chNNN.md）
             text: 章节正文
@@ -129,6 +133,8 @@ class Indexer:
             source = str(f.relative_to(self.project_dir))
         except ValueError:
             source = f.name  # noqa: SILENT_DEGRADE
+        if chapter_num > 0:
+            self.drop_chapters([chapter_num], emit=False)
         chunks = self._chunk(text, source, chapter_num, "chapter")
         t0 = time.monotonic()
         failed = self._embed_and_add(chunks)
@@ -210,4 +216,111 @@ class Indexer:
             "indexed_chunks": len(all_chunks),
             "embedding_failed": failed,
             "chapters": chapter_count,
+        }
+
+    # ============================================================
+    # 删除 / 自举 / 统计（2026-09-09）
+    # ============================================================
+    def drop_chapters(
+        self, chapter_nums: Iterable[int], *, emit: bool = True
+    ) -> int:
+        """删除指定章节的正文切片并落盘
+
+        供两处使用：
+        - 回滚后同步（``m10_rollback``）：被归档章节的切片必须清除，否则
+          会召回已被判废的旧版正文；
+        - ``index_chapter`` 内部：写入前先清同章，保证幂等。
+
+        Args:
+            chapter_nums: 要清除的章节号
+            emit: 是否发 rag.index 事件（index_chapter 内部调用时关掉，避免噪声）
+
+        Returns:
+            删除的切片数
+        """
+        nums = [int(n) for n in chapter_nums]
+        removed = self.store.drop_chapters(nums)
+        if removed:
+            # BM25 是增量结构，删除后必须整体重建（reset + 重灌）
+            self.bm25.reindex_all(self.store.chunks)
+            self.store.save()
+        if emit:
+            notify_rag_event({
+                "type": "rag.index",
+                "ok": True,
+                "op": "drop_chapters",
+                "chapters": nums,
+                "removed": removed,
+                "total_chunks": len(self.store.chunks),
+                "latency_ms": 0.0,
+            })
+        return removed
+
+    def ensure(self, auto_bootstrap: bool = True) -> dict[str, Any]:
+        """确保索引可用；索引缺失/为空时全量自举一次
+
+        修复「鸡生蛋」死锁（2026-09-09）：此前写章侧与召回侧都以
+        ``.state/rag 目录是否存在`` 为开关，而建目录的唯一途径是手动跑
+        ``reindex`` 命令 —— 从未执行过的项目（如五灵破归档 70 章）永远
+        零召回、零索引。此处让写章落盘后自动自举一次。
+
+        自举只尝试一次（落 marker），失败不阻断写章。
+
+        Returns:
+            ``{"bootstrapped": bool, ...}``；bootstrapped=True 时含 reindex 统计。
+        """
+        if self.store.chunks:
+            return {"bootstrapped": False, "chunks": len(self.store.chunks)}
+        if not auto_bootstrap:
+            return {"bootstrapped": False, "chunks": 0, "skipped": "disabled"}
+        marker = self.rag_dir / ".bootstrapped"
+        if marker.exists():
+            # 已自举过但索引仍为空（embed 全失败 / 空项目）→ 不再每章重试
+            return {"bootstrapped": False, "chunks": 0, "skipped": "already_attempted"}
+        self.rag_dir.mkdir(parents=True, exist_ok=True)
+        # 先落 marker 再重建：即使本次失败也不在后续每章重复付出全量 embed 成本
+        marker.write_text(
+            datetime.now().isoformat(timespec="seconds"), encoding="utf-8"
+        )
+        try:
+            stats = self.reindex()
+        except Exception as e:  # noqa: BLE001 - 自举失败不阻断写章
+            notify_rag_event({
+                "type": "rag.index",
+                "ok": False,
+                "op": "bootstrap",
+                "error": str(e),
+                "latency_ms": 0.0,
+            })
+            return {"bootstrapped": False, "chunks": 0, "skipped": f"reindex_failed: {e}"}
+        return {"bootstrapped": True, **stats}
+
+    def stats(self) -> dict[str, Any]:
+        """索引健康统计（供 doctor 判定陈旧度）
+
+        Returns:
+            chunks / chapters_on_disk / chapters_indexed / missing_chapters /
+            stale_sources / updated_at
+        """
+        chapters_dir = self.project_dir / "chapters"
+        on_disk: set[int] = set()
+        if chapters_dir.exists():
+            for f in chapters_dir.glob("ch*.md"):
+                m = re.search(r"ch(\d+)", f.stem)
+                if m:
+                    on_disk.add(int(m.group(1)))
+        indexed = {
+            c.chapter_num for c in self.store.chunks if c.kind == "chapter"
+        }
+        stale = 0
+        for c in self.store.chunks:
+            if c.source and not (self.project_dir / c.source).exists():
+                stale += 1
+        return {
+            "chunks": len(self.store.chunks),
+            "chapters_on_disk": len(on_disk),
+            "chapters_indexed": len(indexed),
+            "missing_chapters": sorted(on_disk - indexed),
+            "stale_sources": stale,
+            "updated_at": self.store.updated_at,
         }

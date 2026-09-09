@@ -430,18 +430,26 @@ class M5WriteChapterWorkflow(
         except Exception:  # noqa: BLE001 - 对账失败不阻断写章
             pass  # noqa: SILENT_DEGRADE
 
-        # A：增量索引（仅当 .state/rag/ 已建立；否则跳过，绝不阻断写章）
+        # A：增量索引（2026-09-09：索引缺失时自动自举一次）
+        # 此前此处以「.state/rag 目录是否存在」为开关，而建目录的唯一途径是手动
+        # reindex 命令 → 从未执行过的项目（如五灵破归档）永远零召回、零索引。
+        # 现改为无条件 ensure()：空索引则全量自举一次（仅一次，落 marker）。
         rag_context_len = len(ctx.get("rag_context", []))
-        rag_dir = self.project_dir / ".state" / "rag"
-        if rag_dir.exists():
-            try:
-                from agent.core.rag.indexer import Indexer
+        try:
+            from agent.core.rag.indexer import Indexer
 
-                Indexer(self.project_dir).index_chapter(chapter_file, final_text)
-            except Exception:  # noqa: BLE001 - 索引失败不影响章节产出
+            idx = Indexer(self.project_dir)
+            boot = idx.ensure()
+            if boot.get("bootstrapped"):
                 self.console.print(
-                    "[yellow]⚠ RAG 增量索引失败，已跳过（不影响本章产出）[/yellow]"
-                )  # noqa: SILENT_DEGRADE
+                    f"[dim]· RAG 索引已自举：{boot.get('indexed_chunks', 0)} 切片 / "
+                    f"{boot.get('chapters', 0)} 章[/dim]"
+                )
+            idx.index_chapter(chapter_file, final_text)
+        except Exception:  # noqa: BLE001 - 索引失败不影响章节产出
+            self.console.print(
+                "[yellow]⚠ RAG 增量索引失败，已跳过（不影响本章产出）[/yellow]"
+            )  # noqa: SILENT_DEGRADE
 
         # ------ 6.5 M18 清除草稿（F18.4）------
         # 章节已成功持久化，清除草稿

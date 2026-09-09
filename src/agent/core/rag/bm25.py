@@ -36,6 +36,20 @@ class BM25Index:
     def _tokenize(text: str) -> list[str]:
         return _TOKEN_RE.findall(text.lower())
 
+    def reset(self) -> None:
+        """清空全部文档与统计（2026-09-09：删除切片后需整体重建时使用）"""
+        self._chunks = []
+        self._tokenized = []
+        self._df = {}
+        self._idf = {}
+        self._avgdl = 0.0
+        self._built = False
+
+    def reindex_all(self, docs: list[Chunk]) -> None:
+        """以给定文档集整体替换（reset + index）"""
+        self.reset()
+        self.index(docs)
+
     def index(self, docs: list[Chunk]) -> None:
         """增量追加并建立/刷新 BM25 统计（idf/avgdl）"""
         for doc in docs:

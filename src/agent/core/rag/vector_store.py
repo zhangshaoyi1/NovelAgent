@@ -10,8 +10,9 @@ from __future__ import annotations
 
 import json
 from abc import ABC, abstractmethod
+from datetime import datetime
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Iterable, Optional
 
 from agent.core.rag._types import Chunk, Hit
 
@@ -60,6 +61,7 @@ class LocalVectorStore(VectorStore):
         self.file = Path(file)
         self.dim: int = 0
         self.chunks: list[Chunk] = []
+        self.updated_at: str = ""  # 索引落盘时间（ISO），空串表示无索引
         self._use_numpy = _numpy_available()
         self._matrix: "Any" = None  # numpy 数组缓存（懒构建）
 
@@ -73,6 +75,33 @@ class LocalVectorStore(VectorStore):
                 self.dim = max(self.dim, len(c.embedding))
         # 维度变化，使 numpy 矩阵缓存失效
         self._matrix = None
+
+    # ============================================================
+    # 删除（2026-09-09：回滚/重写需清除旧切片，否则幽灵召回）
+    # ============================================================
+    def remove_where(self, predicate: "Callable[[Chunk], bool]") -> int:
+        """按谓词删除切片，返回删除条数
+
+        删除后 numpy 矩阵缓存失效（下次 search 懒重建）。
+        """
+        keep = [c for c in self.chunks if not predicate(c)]
+        removed = len(self.chunks) - len(keep)
+        if removed:
+            self.chunks = keep
+            self._matrix = None
+        return removed
+
+    def drop_chapters(self, chapter_nums: "Iterable[int]") -> int:
+        """删除指定章节号的正文切片（kind=chapter），返回删除条数
+
+        设定类切片（kind=setting/subline/...）不受影响。
+        """
+        nums = {int(n) for n in chapter_nums}
+        if not nums:
+            return 0
+        return self.remove_where(
+            lambda c: c.kind == "chapter" and c.chapter_num in nums
+        )
 
     # ============================================================
     # 查询
@@ -130,6 +159,8 @@ class LocalVectorStore(VectorStore):
         self.file.parent.mkdir(parents=True, exist_ok=True)
         data = {
             "dim": self.dim,
+            # 2026-09-09：索引时间戳，供 doctor 判定陈旧度（覆盖章数 / 失效 source）
+            "updated_at": datetime.now().isoformat(timespec="seconds"),
             "chunks": [
                 {
                     "text": c.text,
@@ -173,6 +204,7 @@ class LocalVectorStore(VectorStore):
             self._matrix = None
             return
         self.dim = int(data.get("dim", 0))
+        self.updated_at = str(data.get("updated_at", "") or "")
         raw_chunks = data.get("chunks", []) or []
         self.chunks = [
             Chunk(

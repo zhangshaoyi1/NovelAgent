@@ -379,6 +379,36 @@ class Doctor:
         index_file = rag_dir / "index.json"
         if index_file.exists():
             detail = "RAG 语义索引就绪（.state/rag/index.json 存在）"
+            # 2026-09-09：陈旧度检查——此前只要文件存在即判定 ok，导致索引长期
+            # 落后于正文（无灵 61/350 章、苟道 20/247 章）却无人告警。
+            try:
+                from agent.core.rag.indexer import Indexer
+
+                st = Indexer(self.project_dir).stats()
+                parts = [f"{st['chunks']} 切片 / 覆盖 {st['chapters_indexed']} 章"]
+                if st["updated_at"]:
+                    parts.append(f"更新于 {st['updated_at']}")
+                detail = "RAG 语义索引就绪（" + "，".join(parts) + "）"
+                problems: list[str] = []
+                if st["missing_chapters"]:
+                    problems.append(f"{len(st['missing_chapters'])} 章未索引")
+                if st["stale_sources"]:
+                    problems.append(f"{st['stale_sources']} 切片指向已失效文件")
+                if problems:
+                    return [
+                        CheckItem(
+                            module="rag",
+                            status="warn",
+                            detail=(
+                                f"RAG 索引陈旧：{'、'.join(problems)}"
+                                f"（磁盘 {st['chapters_on_disk']} 章，"
+                                f"索引覆盖 {st['chapters_indexed']} 章）"
+                            ),
+                            fix_command=f"novel-agent reindex -d {self.project_dir}",
+                        )
+                    ]
+            except Exception:  # noqa: BLE001 - 统计失败不影响其余体检项
+                pass  # noqa: SILENT_DEGRADE
             if ping:
                 probe = self._probe_embed()
                 if probe is False:

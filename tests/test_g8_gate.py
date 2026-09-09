@@ -173,7 +173,7 @@ def test_g8_failure_escalates_without_rollback(tmp_path: Path) -> None:
     report = ev.evaluate_with_repair(lambda nums: None)
     assert report.escalated is True, "mainline/ending 失败应直通 escalated"
     assert rollback_calls == [], "mainline/ending 失败禁止触发 trigger_rollback（红线）"
-    assert "全局结构门禁失败" in report.escalated_reason
+    assert "全局结构门禁不达标" in report.escalated_reason
     assert "主线推进" in report.escalated_reason, "明细应含主线推进统计"
     assert "结局收敛" in report.escalated_reason, "明细应含结局收敛统计"
     assert "已访问 1/5" in report.escalated_reason

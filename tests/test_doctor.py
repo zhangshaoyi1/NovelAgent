@@ -134,7 +134,22 @@ class TestDoctorRag:
         assert "reindex" in item.fix_command
 
     def test_rag_index_present_ok(self, tmp_path: Path, monkeypatch) -> None:
-        """存在 .state/rag/index.json：rag 模块 ok（不触发 --ping 也不联网）"""
+        """存在已建索引（.state/rag/index.json 且覆盖全部章节）：rag 模块 ok"""
+        _set_api_key(monkeypatch)
+        d = make_project(tmp_path, n_chapters=12, state=State.WRITING)
+
+        from agent.core.rag.indexer import Indexer
+
+        from tests.conftest import FakeEmbedder
+
+        Indexer(d, embedder=FakeEmbedder()).reindex()
+
+        checks = Doctor(d).check()
+        rag_check = [c for c in checks if c.module == "rag"]
+        assert rag_check and rag_check[0].status == "ok"
+
+    def test_rag_index_empty_warns(self, tmp_path: Path, monkeypatch) -> None:
+        """索引文件存在但为空（{}）：0 章覆盖 → rag 模块 warn（空索引无召回价值）"""
         _set_api_key(monkeypatch)
         d = make_project(tmp_path, n_chapters=12, state=State.WRITING)
         rag_dir = d / ".state" / "rag"
@@ -143,7 +158,8 @@ class TestDoctorRag:
 
         checks = Doctor(d).check()
         rag_check = [c for c in checks if c.module == "rag"]
-        assert rag_check and rag_check[0].status == "ok"
+        assert rag_check and rag_check[0].status == "warn"
+        assert "reindex" in rag_check[0].fix_command
 
 
 # ============================================================
