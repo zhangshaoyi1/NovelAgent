@@ -202,3 +202,99 @@ def test_web_writer_commands_unchanged_by_daemon() -> None:
 
     names = runner.writer_commands()
     assert "autowrite" in names and "write" in names
+
+
+# ------------------------------------------- 停止标志毒性（2026-09-10 事故回归）
+# 事故：`daemon stop` 在无 daemon 时也落盘 stop.flag → 标志残留 → Web 点
+# 「一键续写」拉起的新 daemon 误吞标志，启动即静默优雅退出 → 任务永远卡在
+# queued、页面「实时任务」为空。以下四条锁死该族语义。
+def test_heartbeat_alive_true_but_daemon_alive_false_for_dead_pid(project: Path) -> None:
+    """心跳新鲜 ≠ daemon 存活：崩溃残留的心跳不得骗过 daemon_alive。"""
+    import os
+
+    from agent.daemon import task_queue as tq
+
+    tq.write_heartbeat(project, pid=999_999_999)  # 几乎必然不存在的 pid
+    assert tq.heartbeat_alive(project) is True, "前提：陈旧心跳仍算「新鲜」"
+    assert tq.daemon_alive(project) is False, "pid 已死 → 不得判为存活"
+
+    tq.write_heartbeat(project, pid=os.getpid())  # 本进程冒充存活 daemon
+    assert tq.daemon_alive(project) is True
+
+
+def test_daemon_startup_ignores_stale_stop_flag(project: Path) -> None:
+    """陈旧停止标志必须被启动清除，且不影响「启动后新下发的停止」."""
+    import threading
+
+    from agent.daemon import task_queue as tq
+    from agent.daemon.core import WriterDaemon
+
+    root = project.parent
+    tq.request_daemon_stop(root)  # 先于启动的标志 = 陈旧残留
+    assert tq.daemon_stop_flag(root).exists()
+
+    d = WriterDaemon([root], poll_interval=0.05)
+    th = threading.Thread(target=d.run_forever, daemon=True)
+    th.start()
+    try:
+        time.sleep(1.0)
+        assert th.is_alive(), "daemon 被陈旧停止标志秒退（事故复现）"
+        assert not tq.daemon_stop_flag(root).exists(), "陈旧标志应已被清除"
+
+        # 启动之后新写的停止标志仍然生效（不能矫枉过正）
+        tq.request_daemon_stop(root)
+        th.join(timeout=5)
+        assert not th.is_alive(), "启动后的停止请求必须被响应"
+    finally:
+        tq.clear_daemon_stop_flag(root)
+        if th.is_alive():  # pragma: no cover - 兜底，避免测试线程悬挂
+            tq.request_daemon_stop(root)
+            th.join(timeout=5)
+
+
+def test_daemon_stop_does_not_poison_next_start(project: Path) -> None:
+    """无存活 daemon 时 `daemon stop` 不得落盘标志（否则毒化下次拉起）。"""
+    from agent.cli.commands.daemon import daemon_stop
+    from agent.daemon import task_queue as tq
+
+    root = project.parent
+    assert tq.daemon_alive(root) is False
+
+    daemon_stop(root=str(root))
+
+    assert not tq.daemon_stop_flag(root).exists(), "无 daemon 时不应留下停止标志"
+
+
+def test_daemon_stop_writes_flag_when_daemon_alive(project: Path) -> None:
+    """有存活 daemon 时 `daemon stop` 照常落盘标志（正常停止语义不回归）。"""
+    import os
+
+    from agent.cli.commands.daemon import daemon_stop
+    from agent.daemon import task_queue as tq
+
+    root = project.parent
+    tq.write_heartbeat(root, pid=os.getpid())  # 本进程冒充存活 daemon
+    assert tq.daemon_alive(root) is True
+
+    daemon_stop(root=str(root))
+
+    assert tq.daemon_stop_flag(root).exists()
+
+
+def test_ensure_daemon_rejects_heartbeat_that_never_advances(
+    project: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """只写一次心跳便退出的 daemon 不得被判为拉起成功（旧判据假 True）。"""
+    import time as _time
+
+    from agent.daemon import core as dcore
+    from agent.daemon import task_queue as tq
+
+    root = project.parent
+    fixed = {"pid": 999_999_999, "ts": _time.time(), "updated_at": "x"}
+    monkeypatch.setattr(tq, "read_heartbeat", lambda r: dict(fixed))
+    monkeypatch.setattr(tq, "heartbeat_alive", lambda r, max_age=20: True)
+    monkeypatch.setattr(dcore.subprocess, "Popen", lambda *a, **k: None)
+    monkeypatch.setattr(_time, "sleep", lambda *_: None)
+
+    assert dcore.ensure_daemon([root]) is False, "心跳不推进 → 必须判为拉起失败"

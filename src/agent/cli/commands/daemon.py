@@ -20,7 +20,7 @@ def daemon_start(
         console.print(f"[bold green]writer daemon 前台启动[/bold green] root={data_root}")
         WriterDaemon([data_root]).run_forever()
         return
-    if tq.heartbeat_alive(data_root):
+    if tq.daemon_alive(data_root):
         info = tq.read_heartbeat(data_root) or {}
         console.print(f"[dim]daemon 已在运行（pid={info.get('pid')}）[/dim]")
         return
@@ -47,11 +47,15 @@ def daemon_status(
         console.print(f"[yellow]daemon 未运行[/yellow]（root={data_root}）")
         return
     age = time.time() - float(info.get("ts") or 0)
-    alive = age < tq.HEARTBEAT_MAX_AGE
+    alive = age < tq.HEARTBEAT_MAX_AGE and tq.daemon_alive(data_root)
+    if alive:
+        state = "[bold green]运行中[/bold green]"
+    elif age < tq.HEARTBEAT_MAX_AGE:
+        state = "[bold red]已失联[/bold red]（心跳尚新但进程已退出，重启 Web/续写会自动重新拉起）"
+    else:
+        state = "[bold red]已失联[/bold red]"
     console.print(
-        f"daemon pid={info.get('pid')} 心跳 {age:.0f}s 前 "
-        f"→ {'[bold green]运行中[/bold green]' if alive else '[bold red]已失联[/bold red]'}"
-        f"（root={data_root}）"
+        f"daemon pid={info.get('pid')} 心跳 {age:.0f}s 前 → {state}（root={data_root}）"
     )
 
 
@@ -63,5 +67,11 @@ def daemon_stop(
     from agent.daemon.core import default_root
 
     data_root = root or str(default_root())
+    if not tq.daemon_alive(data_root):
+        # 无存活 daemon 时不落盘停止标志：否则标志会残留，毒化下一次拉起
+        # （新 daemon 启动即静默退出、队列任务永不被认领）。顺手清掉残留。
+        tq.clear_daemon_stop_flag(data_root)
+        console.print("[yellow]daemon 未运行，无需停止[/yellow]")
+        return
     tq.request_daemon_stop(data_root)
     console.print("[bold green]✓[/bold green] 已置停止标志；daemon 将在当前任务完成后退出")

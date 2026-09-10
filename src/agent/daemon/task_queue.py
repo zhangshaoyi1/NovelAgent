@@ -312,6 +312,26 @@ def heartbeat_alive(root: Path | str, max_age: int = HEARTBEAT_MAX_AGE) -> bool:
         return False
 
 
+def daemon_alive(root: Path | str, max_age: int = HEARTBEAT_MAX_AGE) -> bool:
+    """心跳新鲜 **且** 心跳里的 pid 确实存活 → daemon 真在运行。
+
+    比 ``heartbeat_alive`` 强一档：daemon 崩溃后心跳文件仍在、时间戳也可能
+    还在 20s 窗口内，只按时间戳判定会得出「daemon 已运行」的错误结论。
+    后果是 ``ensure_daemon`` 不再重新拉起 → 队列任务长时间无人认领
+    （2026-09-10 事故的同族隐患）。判定失败（pid 不可解析）一律当作不存活。
+    """
+    data = read_heartbeat(root)
+    if not data or not heartbeat_alive(root, max_age=max_age):
+        return False
+    try:
+        pid = int(data.get("pid") or 0)
+    except (TypeError, ValueError):
+        return False
+    from agent.core.project_lock import _pid_alive  # 延迟导入：避免 core/daemon 环
+
+    return _pid_alive(pid)
+
+
 def daemon_stop_flag(root: Path | str) -> Path:
     return Path(root) / ".daemon" / "stop.flag"
 

@@ -103,6 +103,7 @@ class WriterDaemon:
 
     # ---------------- 主循环 ----------------
     def run_forever(self) -> None:
+        self._clear_stale_stop_flags()
         self._recover_orphans()
         while True:
             for root in self.roots:
@@ -130,6 +131,22 @@ class WriterDaemon:
                 time.sleep(self.poll_interval)
         for root in self.roots:
             tq.clear_daemon_stop_flag(root)
+
+    def _clear_stale_stop_flags(self) -> None:
+        """启动时清除「早于本次启动」的停止标志。
+
+        ``daemon stop`` 只表示「让正在运行的 daemon 退出」；若在无 daemon 时
+        被调用，标志会残留落盘，毒化下一次拉起——新 daemon 把它误读为对自己
+        的停止请求，启动即静默优雅退出，队列任务永远不被认领。
+        2026-09-10 事故：Web 点「一键续写」→ 任务卡在 queued、实时任务为空。
+        判据：本进程启动前就存在的标志必然是陈旧残留（停止请求不可能指向
+        一个尚未启动的进程），启动即清除。
+        """
+        for root in self.roots:
+            flag = tq.daemon_stop_flag(root)
+            if flag.exists():
+                tq.clear_daemon_stop_flag(root)
+                print(f"[daemon] 清除陈旧停止标志（先于本次启动，已忽略）：{flag}")
 
     def _recover_orphans(self) -> None:
         """启动时把遗留 running 任务标记 failed（上一次 daemon 崩溃的残留）。"""
@@ -250,7 +267,7 @@ def ensure_daemon(roots: list[Path | str]) -> bool:
         True 表示 daemon 已在运行或成功拉起。
     """
     roots = [Path(r) for r in roots]
-    if any(tq.heartbeat_alive(r) for r in roots):
+    if any(tq.daemon_alive(r) for r in roots):
         return True
     args = [sys.executable, "-m", "agent.daemon"]
     for r in roots:
@@ -274,9 +291,18 @@ def ensure_daemon(roots: list[Path | str]) -> bool:
         subprocess.Popen(args, **kwargs)
     except Exception:  # noqa: BLE001
         return False
-    # 给 daemon 一点启动时间，再查一次心跳（不阻塞太久）
-    for _ in range(10):
+    # 启动探针：心跳不仅要「出现」，还必须在窗口内「推进」≥1 次。
+    # 只写一次心跳便退出的 daemon（历史事故：误吞陈旧 stop.flag 后静默优雅
+    # 退出）也是心跳文件存在且新鲜，旧判据会误报 True，掩盖拉起失败。
+    # 健康 daemon 每 poll_interval 秒刷新心跳，约 1.3s 内即可见推进。
+    first_ts: dict[Path, float] = {}
+    for _ in range(20):  # 约 6s
         time.sleep(0.3)
-        if any(tq.heartbeat_alive(r) for r in roots):
-            return True
+        for r in roots:
+            if not tq.heartbeat_alive(r):
+                continue
+            ts = float((tq.read_heartbeat(r) or {}).get("ts") or 0)
+            prev = first_ts.setdefault(r, ts)
+            if ts > prev:  # 心跳推进 → 消费循环确实在跑
+                return True
     return False
