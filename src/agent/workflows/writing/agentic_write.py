@@ -286,7 +286,9 @@ class AgenticWriteWorkflow:
 
     def _build_task(self, ctx: dict[str, Any]) -> str:
         wi = ctx["world_info"]
-        rag_context_text = format_rag_context(ctx.get("rag_context", []), max_chunks=3, max_text_len=120)
+        # RAG 渲染放宽（2026-09-10）：此前 3 片×120 字≈360 字，12 片召回 97% 被丢弃，
+        # 模板"不得与之矛盾"形同虚设——设定一致/人设稳定 4 次回滚的帮凶。8×300≈2400 字。
+        rag_context_text = format_rag_context(ctx.get("rag_context", []), max_chunks=8, max_text_len=300)
         open_debts_text = format_open_debts(ctx.get("open_debts", []), max_debts=5, max_desc_len=60)
         task = pm.get("m5.generate").render_user(
             title=wi["title"],
@@ -358,6 +360,16 @@ class AgenticWriteWorkflow:
         craft_guide = self._build_craft_guide(ctx)
         if craft_guide:
             task += pm.get("m5.craft_instruction").render_user(craft_guide=craft_guide)
+
+        # ---- 角色状态硬约束（P-C 修复·agentic 路径补齐 2026-09-10）：m5 直写路径把
+        # characters/*.md 的生死/时间线真源注入为 system 不可违背规则，但本路径的任务
+        # 模板（m5.generate）无该字段且从未渲染 → autowrite 主路径 Writer 长期看不到
+        # 角色状态权威约束，是设定一致/人设稳定反复不达标（4 次回滚）的直接缺口。
+        character_constraints = (ctx.get("character_constraints") or "").strip()
+        if character_constraints:
+            task += pm.get("g.character_state_constraint").render_user(
+                character_constraints=character_constraints
+            )
         return task
 
     # ------------------------------------------------------------------

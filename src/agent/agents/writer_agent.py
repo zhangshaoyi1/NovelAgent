@@ -316,6 +316,78 @@ class WriterAgent:
             raise RuntimeError("定向修订输出异常截短")
         return revised
 
+    def _top_up_length(self, text: str, target_words: int, min_words: int,
+                       max_rounds: int = 2) -> str:
+        """续写补字（2026-09-10）：输出过短时从正文结尾续写拼接，而非整章重写。
+
+        背景：思考型模型（dots3-note-prev 等）思考 token 吃掉输出预算，
+        间歇性产出低于字数下限的章节，此前只能反复重写并在仍不达标时
+        整章放弃（五灵破 ch25/ch155 三次实证）。续写补字把「重写」降级为
+        「追加」：保留已达标的部分，只补足差额，单轮成本远低于整章重写。
+
+        Args:
+            text: 当前最佳草稿（未达标）
+            target_words: 目标字数
+            min_words: 字数下限
+            max_rounds: 最多续写轮数（每轮追加后重计字数）
+
+        Returns:
+            补足后的全文；仍不达标则原样返回（由调用方决定放弃）。
+        """
+        from agent.client.gateway_adapter import chat_creative
+
+        merged = text
+        for i in range(max_rounds):
+            cur = _count_cjk(merged)
+            if cur >= min_words:
+                break
+            need = max(300, min(target_words - cur, target_words))
+            try:
+                resp = chat_creative(
+                    self.llm,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "你是网文续写器。只输出正文的自然延续，禁止任何解释、"
+                                "标题、批注或对已有内容的复述；保持既有文风、人称与"
+                                "情节走向，推进新的子事件（动作/对话/情绪反应），"
+                                "禁止用重复描写、空泛抒情或大段心理独白注水。"
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"以下是一章的已写正文（尚未写完，禁止提前收尾）：\n\n"
+                                f"{merged}\n\n"
+                                f"请从结尾处无缝继续写约 {need} 字（当前全文 {cur} 字，"
+                                f"目标约 {target_words} 字），直接输出续写内容。"
+                            ),
+                        },
+                    ],
+                    temperature=0.7,
+                    max_tokens=8192,
+                    enable_thinking=False,
+                )
+            except Exception as e:  # noqa: BLE001 - 补字失败降级为未补足，由调用方走放弃/熔断链路
+                self.console.print(
+                    f"[yellow]      …续写补字第 {i + 1} 轮调用失败（{e}），跳过[/yellow]"
+                )
+                continue
+            piece = (resp or "").strip()
+            # 续写异常截短（不足 200 字）视为本轮无效，避免拼入残句
+            if len(piece) < 200:
+                self.console.print(
+                    f"[yellow]      …续写补字第 {i + 1} 轮输出过短（{len(piece)} 字），跳过[/yellow]"
+                )
+                continue
+            merged = merged.rstrip() + "\n\n" + piece
+            self.console.print(
+                f"[dim]      · 续写补字第 {i + 1} 轮：+{_count_cjk(piece)} 字 → "
+                f"全文 {_count_cjk(merged)} 字[/dim]"
+            )
+        return merged
+
     # ------------------------------------------------------------------
     # 单轮起草（携带或不携带审稿意见）
     # ------------------------------------------------------------------
@@ -538,6 +610,14 @@ class WriterAgent:
                 best_draft, best_report, draft, report, min_len
             )
             if _count_cjk(best_draft) < min_len:
+                # 续写补字（2026-09-10）：先追加续写补足差额，仍不达标才放弃落盘。
+                # 根因：思考型模型思考 token 吃输出预算，间歇性产出过短章节，
+                # 整章重写同样过短只能放弃（五灵破 ch25/ch155 三次实证）。
+                _target = _chapter_length_from_ctx(ctx) or (min_len * 5 // 4)
+                best_draft = self._top_up_length(
+                    best_draft, target_words=_target, min_words=min_len
+                )
+            if _count_cjk(best_draft) < min_len:
                 raise RuntimeError(
                     "Writer 反复产出过短章节（未达字数下限），放弃落盘以避免写出残缺章节。"
                 )
@@ -591,6 +671,14 @@ class WriterAgent:
             best_draft, best_report = self._keep_best(
                 best_draft, best_report, draft, report, min_len
             )
+            if _count_cjk(best_draft) < min_len:
+                # 续写补字（2026-09-10）：先追加续写补足差额，仍不达标才放弃落盘。
+                # 根因：思考型模型思考 token 吃输出预算，间歇性产出过短章节，
+                # 整章重写同样过短只能放弃（五灵破 ch25/ch155 三次实证）。
+                _target = _chapter_length_from_ctx(ctx) or (min_len * 5 // 4)
+                best_draft = self._top_up_length(
+                    best_draft, target_words=_target, min_words=min_len
+                )
             if _count_cjk(best_draft) < min_len:
                 raise RuntimeError(
                     "Writer 反复产出过短章节（未达字数下限），放弃落盘以避免写出残缺章节。"

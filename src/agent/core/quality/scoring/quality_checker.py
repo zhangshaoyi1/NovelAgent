@@ -136,16 +136,31 @@ def resolve_max_cjk_words(chapter_length: int | float | None = None) -> int:
 
 
 def _chapter_length_from_ctx(ctx: dict[str, Any] | None) -> int | None:
-    """从校验上下文中取每章目标字数（兼容多种键名，均为可选）"""
+    """从校验上下文中取每章目标字数（兼容多种键名，均为可选）
+
+    数值化兜底（2026-09-10）：world_info 配置里 chapter_length 常以字符串落盘
+    （如 "2000"），此前原样返回会在 resolve_min/max_cjk_words 的
+    ``int(str * float)`` 处抛 TypeError（agentic 续写补字路径实测踩中）。
+    可解析则统一收敛为 int，不可解析返回 None（门禁回落绝对下限）。
+    """
     ctx = ctx or {}
     for key in ("chapter_length", "word_count"):
         v = ctx.get(key)
         if v:
-            return v
+            return _coerce_positive_int(v)
     wi = ctx.get("world_info")
     if isinstance(wi, dict) and wi.get("chapter_length"):
-        return wi.get("chapter_length")
+        return _coerce_positive_int(wi.get("chapter_length"))
     return None
+
+
+def _coerce_positive_int(v: Any) -> int | None:
+    """把 str/int/float 收敛为正整数；不可解析返回 None"""
+    try:
+        n = int(float(v))
+    except (TypeError, ValueError):
+        return None
+    return n if n > 0 else None
 
 # ============================================================
 # 题材层规则注册表（T-3：模块级单一通道，供题材包 hook 注册）
