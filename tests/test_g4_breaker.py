@@ -9,6 +9,8 @@
   仅验证写章/评测阶段的预算熔断与产物保留语义（规划阶段熔断已由单元层 ``_check_budget`` 覆盖）。
 - ``_resolve_target()`` 在离线 stub 下回退为 100 章，baseline 过大；测试统一传
   ``target_chapters=12`` 使 balanced 档 baseline 高限 = 640k，token 阈值可预期。
+- 模拟超预算统一走 ``_patch_round_usage()``：F-8 起预算口径是「本轮窗口用量」
+  （``totals() - _usage_baseline``），打恒定 totals 会被基线相减抵消，务必用该辅助。
 """
 
 from __future__ import annotations
@@ -76,6 +78,28 @@ def _set_tracer_totals(tokens_total: int) -> None:
     set_tracer(store)
 
 
+def _patch_round_usage(monkeypatch, *, tokens: int = 2_000_000) -> None:
+    """模拟「本轮新增 tokens」——把某轮真实消耗注入预算判定链路。
+
+    F-8（2026-09-07）起，预算判定口径是「本轮窗口用量」：
+    ``_used_tokens() = totals() - _usage_baseline``，基线在 ``run()`` 开头快照。
+
+    因此**不能**把 ``totals()`` 打成恒定大值：基线同样会快照成该值，相减恒为 0，
+    预算永不超限（2026-09-10 定位到的 3 例失效根因，与生产逻辑无关）。
+    故首读（= 基线快照）返回 0，其后返回 ``tokens``，等价于「本轮真的烧了 tokens」。
+    """
+    reads = {"n": 0}
+
+    def _totals() -> dict[str, int]:
+        reads["n"] += 1
+        return {"tokens_total": 0 if reads["n"] == 1 else tokens}
+
+    monkeypatch.setattr(
+        "agent.core.llmops.trace.get_tracer",
+        lambda: SimpleNamespace(totals=_totals),
+    )
+
+
 # ============================================================
 # 1. 预算内 → _check_budget() 返回 False
 # ============================================================
@@ -109,10 +133,7 @@ def test_breaker_tripped_flag_set_on_token_exceed(tmp_path: Path, monkeypatch) -
     """Token 超限熔断：run() 写章前触发后 result.tripped==True（设计：trip 仅置 tripped）。"""
     p = _make_pipeline(tmp_path, skip_planning=True)
     p._start_time = time.monotonic()
-    monkeypatch.setattr(
-        "agent.core.llmops.trace.get_tracer",
-        lambda: SimpleNamespace(totals=lambda: {"tokens_total": 2_000_000}),
-    )
+    _patch_round_usage(monkeypatch)  # 本轮烧掉 2M，远超 balanced 12 章上限 0.64M
     result = p.run()
     assert result.tripped is True, "Token 超限后 result.tripped 应为 True"
     assert "熔断" in result.block_reason, (
@@ -168,10 +189,7 @@ def test_breaker_preserves_written_chapters(tmp_path: Path, monkeypatch) -> None
 
     p = _make_pipeline(tmp_path, skip_planning=True)
     p._start_time = time.monotonic()
-    monkeypatch.setattr(
-        "agent.core.llmops.trace.get_tracer",
-        lambda: SimpleNamespace(totals=lambda: {"tokens_total": 2_000_000}),
-    )
+    _patch_round_usage(monkeypatch)
     result = p.run()
     assert result.tripped is True
     assert (chapters_dir / "ch_001.md").exists(), "熔断后已写章节应保留"
@@ -194,10 +212,7 @@ def test_breaker_skips_eval_after_tripped(tmp_path: Path, monkeypatch) -> None:
         tmp_path, skip_planning=True, eval_enabled=True, evaluator=_StubEvaluator()
     )
     p._start_time = time.monotonic()
-    monkeypatch.setattr(
-        "agent.core.llmops.trace.get_tracer",
-        lambda: SimpleNamespace(totals=lambda: {"tokens_total": 2_000_000}),
-    )
+    _patch_round_usage(monkeypatch)
     result = p.run()
     assert result.tripped is True
     assert eval_called["count"] == 0, "熔断后不应调用 evaluator.evaluate_with_repair"
@@ -210,10 +225,7 @@ def test_breaker_no_trip_within_budget(tmp_path: Path, monkeypatch) -> None:
     """预算内：正常跑完不触发熔断，tripped=False。"""
     p = _make_pipeline(tmp_path, skip_planning=True)
     p._start_time = time.monotonic()
-    monkeypatch.setattr(
-        "agent.core.llmops.trace.get_tracer",
-        lambda: SimpleNamespace(totals=lambda: {"tokens_total": 100}),
-    )
+    _patch_round_usage(monkeypatch, tokens=100)  # 本轮仅 100 tokens，远在预算内
     result = p.run()
     assert result.tripped is False, "预算内不应触发熔断"
     assert result.blocked is False
