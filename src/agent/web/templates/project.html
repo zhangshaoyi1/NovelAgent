@@ -153,9 +153,10 @@
   function autoWriteChapters() {
     const batch = parseInt(document.getElementById('aw-chapters').value, 10) || 5;
     const mode = document.getElementById('aw-mode').value;
-    // 续写批次数叠加到已写章数 → 绝对目标（server 端拿当前章数兜底）
-    const target = (window.__chaptersCount || 0) + batch;
-    const argv = ['--chapters', String(target), '--mode', mode];
+    // B2（2026-09-10）：改传相对批次 --batch，由 CLI 用实时章数换算绝对目标。
+    // 旧写法在前端算 `快照章数 + batch`，页面快照过期时会算出低于实际水位的目标
+    // → pipeline 循环首轮即退出、一章不写（可复现空跑事故）。
+    const argv = ['--batch', String(batch), '--mode', mode];
     const c = startRunConsole('自动续写 ' + batch + ' 章（' + mode + '）');
     runCommand('{{ name }}', 'autowrite', argv, c, () => location.reload());
   }

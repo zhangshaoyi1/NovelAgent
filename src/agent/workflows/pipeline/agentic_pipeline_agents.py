@@ -163,3 +163,44 @@ class _PipelineAgentsMixin:
         # 与 _resolve_target 的兜底一致，回归设计默认值 100。
         return 100
 
+    def _rolling_eval_checkpoint(self) -> bool:
+        """B1（2026-09-10）：滚动体检检查点——写满 N 章就地体检一次。
+
+        Returns:
+            True = 达标（或体检无法执行时保守放行继续写）；False = 不达标，应中断本批。
+
+        设计动机：原体检只在写章循环**结束后**执行一次。web 端续写按钮把批次翻译成
+        「绝对目标章数」（如 --chapters 190），只要目标未写满或中途被 task-stop 打断，
+        体检就永远不会触发（2026-09-10 事故：ch156-178 共 23 章零体检记录）。
+        改为循环内周期体检后，长批次也能滚动体检、及时刹车。
+
+        失败降级：体检抛异常（LLM 不可用等）时**放行**——体检是质量闸门，
+        不应因基础设施抖动而中断写作（与既有 `evaluate_with_repair` 的异常处理一致）。
+        """
+        self._emit_progress("evaluating", 0, 100)
+        self._emit_event("evaluating")
+        try:
+            evaluator = self._ensure_evaluator()
+            report = evaluator.evaluate()
+        except Exception as e:  # noqa: BLE001
+            self.console.print(f"[yellow]⚠ 滚动体检执行失败（{e}），放行继续[/yellow]")
+            self._emit_failure("eval", str(e), severity="warn")
+            return True  # noqa: SILENT_DEGRADE - 体检基建失败不阻断写作
+        if report is None:
+            return True  # noqa: SILENT_DEGRADE - 无报告视为不可判定，放行
+        passed = bool(getattr(report, "overall_pass", False))
+        score = getattr(report, "score", None)
+        if passed:
+            self.console.print(f"[green]✓ 滚动体检通过（得分 {score}）[/green]")
+        else:
+            failed = [
+                f"{d.label}={d.value}"
+                for d in (getattr(report, "dimensions", None) or [])
+                if not getattr(d, "passed", True)
+            ]
+            self.console.print(
+                f"[yellow]⚠ 滚动体检未达标（得分 {score}）："
+                f"{'、'.join(failed[:6]) or '见报告'}[/yellow]"
+            )
+        return passed
+

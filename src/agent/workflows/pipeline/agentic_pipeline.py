@@ -129,6 +129,11 @@ class AgenticPipelineWorkflow(
         payoff_enabled: bool = True,
         # ---- 写章失败冷却重试等待（秒；0=关闭；默认 90s 抵御 provider 间歇性风暴）----
         chapter_retry_wait_s: float = 90.0,
+        # ---- B1（2026-09-10）：滚动体检周期（章）。>0 时每写满 N 章跑一次体检，
+        # 不过则立即中断本批，避免长批次（如 --chapters 190）因循环未结束而永不体检。
+        # 原设计「体检仅在循环结束后执行」在 web 端绝对目标 + 中途打断场景下会完全失效
+        # （2026-09-10 事故：ch156-178 共 23 章零体检）。
+        rolling_eval_every: int = 5,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.llm = llm_client
@@ -181,6 +186,8 @@ class AgenticPipelineWorkflow(
         # 写章失败的冷却重试等待（秒；0=关闭）。>0 时单章失败先冷却等待再重试 1 次，
         # 用于抵御 provider 间歇性 403/429 风暴（免费池过载），避免整批报废。
         self._chapter_retry_wait_s = float(chapter_retry_wait_s)
+        # B1：滚动体检周期（章）；0=关闭（仅保留循环结束后的终审体检）
+        self.rolling_eval_every = max(0, int(rolling_eval_every))
         # G11：风格模仿 + 写作方法模板（透传给 writer/planner/outline；默认开）
         self.style_enabled = bool(style_enabled)
         self.style_file = style_file
@@ -577,6 +584,22 @@ class AgenticPipelineWorkflow(
                 # 进度未推进（stub/异常）→ 强制退出，避免死循环
                 if self._current_total() == start_total:
                     self.console.print("[red]写章未推进进度，终止流水线[/red]")
+                    break
+
+            # ---- B1（2026-09-10）：滚动体检检查点 ----
+            # 每写满 rolling_eval_every 章就地体检一次；不过则立即中断本批，
+            # 避免长批次因循环未结束（绝对目标 + 中途打断）而完全跳过体检。
+            if (
+                self.eval_enabled
+                and self.rolling_eval_every > 0
+                and wrote > 0
+                and wrote % self.rolling_eval_every == 0
+                and self._current_total() < target  # 批末仍会走完整体检，此处不重复
+            ):
+                if not self._rolling_eval_checkpoint():
+                    self.console.print(
+                        "[yellow]⚠ 滚动体检不达标：中断本批，待修复后继续[/yellow]"
+                    )
                     break
 
         result.chapters_written = wrote

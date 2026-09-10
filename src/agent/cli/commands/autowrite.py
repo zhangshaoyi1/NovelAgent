@@ -153,6 +153,11 @@ def autowrite(
     chapters: int = typer.Option(
         0, "--chapters", "-n", help="目标章节数（0 表示取 MasterPlan 或默认 100）"
     ),
+    batch: int = typer.Option(
+        0, "--batch", "-b",
+        help="本轮续写批次数（>0 时按「当前已写章数 + batch」推导绝对目标，"
+             "避免前端快照过期导致目标小于水位而空跑；与 --chapters 互斥，batch 优先）",
+    ),
     mode: str = typer.Option(
         "auto", "--mode", help="写章引擎档位：auto / heavy / light"
     ),
@@ -164,6 +169,11 @@ def autowrite(
     ),
     max_rollback: int = typer.Option(
         3, "--max-rollback", help="最大回溯次数，超过则上报人工（默认 3）"
+    ),
+    rolling_eval_every: int = typer.Option(
+        5, "--rolling-eval-every",
+        help="滚动体检周期（章）：每写满 N 章就地体检一次，不过则中断本批（0=关闭，"
+             "仅在整批写完后体检）。修复长批次（--batch 大）因循环未结束而永不体检的问题",
     ),
     max_time: int = typer.Option(
         None, "--max-time", help="整轮墙钟上限（秒，0=不限制）"
@@ -291,6 +301,29 @@ def autowrite(
         os.environ["NOVEL_AGENT_DOTENV"] = env_file
 
     project_path = Path(project_dir)
+
+    # ---- B2（2026-09-10）：--batch 相对批次 → 绝对目标章数 ----
+    # 前端（web 续写按钮）此前把「当前章数 + 批次」算好再传 --chapters，但页面快照
+    # 可能过期（水位已涨而快照未刷新），导致算出的目标 < 实际水位 → pipeline 循环
+    # 首轮即不满足 `current < target`，开跑就秒退、一章不写（可复现的空跑事故）。
+    # 改为 CLI 侧用实时章数换算，前端只传批次，消除快照依赖。
+    _batch = int(batch) if not isinstance(batch, typer.models.OptionInfo) else 0
+    if _batch > 0:
+        try:
+            _ch_dir = project_path / "chapters"
+            _cur = sum(
+                1 for _f in _ch_dir.glob("ch*.md")
+                if _f.stem[2:].isdigit()
+            ) if _ch_dir.exists() else 0
+        except Exception:  # noqa: BLE001
+            _cur = 0  # noqa: SILENT_DEGRADE
+        _abs_target = _cur + _batch
+        if not json_output:
+            console.print(
+                f"[cyan]续写批次 {_batch} 章：当前 {_cur} 章 → 目标 {_abs_target} 章[/cyan]"
+            )
+        chapters = _abs_target
+
     # 零前置（仅给 brief）不再硬拒：交给 pipeline 内部编排自主生成 world.md（拍板 #6）。
     # 仅在非 JSON 模式给出一句提示，避免污染 --json 的 stdout 信封。
     if not (project_path / "world.md").exists():
@@ -470,6 +503,11 @@ def autowrite(
         eval_enabled=not no_eval,
         rollback_window=rollback_window,
         max_rollback_attempts=max_rollback,
+        rolling_eval_every=(
+            rolling_eval_every
+            if not isinstance(rolling_eval_every, typer.models.OptionInfo)
+            else 5
+        ),
         console=workflow_console,
         # G4 新增参数（T4）：透传到 pipeline
         max_time=max_time if max_time and max_time > 0 else None,
