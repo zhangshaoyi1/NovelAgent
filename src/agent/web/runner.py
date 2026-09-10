@@ -183,19 +183,15 @@ class RunManager:
 
             holder = probe_project_lock(pdir)
             if holder:
-                self._emit(
-                    run,
-                    {
-                        "type": "log",
-                        "data": {
-                            "text": (
-                                f"✗ 已有写任务在运行（pid={holder.get('pid')}，"
-                                f"启动于 {holder.get('started_at')}，命令 {holder.get('command')}），"
-                                "本次未启动。请等待其完成或先停止该进程。"
-                            )
-                        },
-                    },
+                text = (
+                    f"✗ 已有写任务在运行（pid={holder.get('pid')}，"
+                    f"启动于 {holder.get('started_at')}，命令 {holder.get('command')}），"
+                    "本次未启动。请等待其完成或先停止该进程。"
                 )
+                # 同步持久化到 run.logs：拦截发生在任何任务日志产生之前，
+                # 只发 SSE 会导致页面事后查看时显示"没有日志"（2026-09-10 事故）。
+                run["logs"].append(text)
+                self._emit(run, {"type": "log", "data": {"text": text}})
                 await self._finish(run, exit_code=9)
                 return
 
