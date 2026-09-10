@@ -372,6 +372,68 @@ class AgenticWriteWorkflow:
             )
         return task
 
+    def _build_beat_ban(self, ctx: dict[str, Any]) -> str:
+        """回溯重写时的【已用桥段禁用清单】（2026-09-10 回滚率削减·P0）。
+
+        背景五灵破 ch151-155 连续重写 3 遍后 Writer 用"教学→失败→成功→感动"
+        模板连灌 3 章（coherence 85→30）。重写时 Writer 既看不到相邻新章写过
+        什么，也看不到被打回的上一版——本方法补齐这两个输入：
+
+        - 相邻前 2 章（本轮窗口内已写完的新版）：chapters/ch<N-1>.md 等；
+        - 本章上一版（被打回）：chapters/_archived/rollback_to_*/ch<N>.md
+          取最近一次归档。
+
+        提取用确定性段首骨架（beat_sketch，零 LLM 成本）；任何读取失败静默
+        跳过（该清单是增强信息，不得阻断重写）。
+        """
+        from agent.core.quality.beat_sketch import extract_beat_sketch, render_beats
+
+        try:
+            num = int(ctx.get("chapter_num") or 0)
+        except Exception:  # noqa: BLE001
+            num = 0  # noqa: SILENT_DEGRADE
+        if num <= 0:
+            return ""
+        sections: list[str] = []
+
+        # 相邻前 2 章的新版桥段
+        for off in (2, 1):
+            p = Path(self.project_dir) / "chapters" / f"ch{num - off:03d}.md"
+            if not p.exists():
+                continue
+            try:
+                beats = extract_beat_sketch(p.read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                continue  # noqa: SILENT_DEGRADE
+            if beats:
+                sections.append(f"第 {num - off} 章（本轮新版，已写完）：\n{render_beats(beats)}")
+
+        # 本章上一版（最近一次归档的被打回稿）
+        archive_dir = Path(self.project_dir) / "chapters" / "_archived"
+        try:
+            candidates = sorted(
+                archive_dir.glob(f"rollback_to_*/ch{num:03d}.md"),
+                key=lambda p: p.stat().st_mtime,
+                reverse=True,
+            )
+        except Exception:  # noqa: BLE001
+            candidates = []  # noqa: SILENT_DEGRADE
+        if candidates:
+            try:
+                beats = extract_beat_sketch(candidates[0].read_text(encoding="utf-8"))
+            except Exception:  # noqa: BLE001
+                beats = []  # noqa: SILENT_DEGRADE
+            if beats:
+                sections.append(
+                    f"第 {num} 章（上一版，已因体检不达标被打回——其骨架整体作废）：\n{render_beats(beats)}"
+                )
+
+        if not sections:
+            return ""
+        return pm.get("g.beat_ban").render_user(
+            beats_text="\n\n".join(sections)[:1600]
+        )
+
     # ------------------------------------------------------------------
     # 外环 Critic：复用 M5 九项 LLM 审稿作为门禁（与 M5 同等质量基线）
     # ------------------------------------------------------------------
@@ -554,6 +616,14 @@ class AgenticWriteWorkflow:
                 + rewrite_hint
                 + "\n请在上文各项设定/风格要求不变的前提下，优先消除上述未达标项后重新提交。"
             )
+            # 已用桥段禁用清单（2026-09-10）：重写时明确"上一版/相邻章写过什么"，
+            # 防止同构桥段连灌（构造失败静默跳过，不阻断重写）。
+            try:
+                _beat_ban = self._build_beat_ban(ctx)
+            except Exception:  # noqa: BLE001  # noqa: SILENT_DEGRADE
+                _beat_ban = ""  # noqa: SILENT_DEGRADE
+            if _beat_ban:
+                task = task + "\n\n" + _beat_ban
         else:
             # 非重写路径：注入上一轮体检教训（反馈闭环·缺口2修复 2026-09-08）。
             # 重写路径已有 build_rewrite_hint 覆盖同一信息，不重复注入。
@@ -619,7 +689,7 @@ class AgenticWriteWorkflow:
             from agent.workflows.evaluation.m13_foreshadow import sync_foreshadow_states
 
             sync_foreshadow_states(self.project_dir, console=self.console)
-        except Exception:  # noqa: BLE001
+        except Exception:  # noqa: BLE001  # noqa: SILENT_DEGRADE
             pass  # noqa: SILENT_DEGRADE
         # 标题已发布 → 失效缓存，下一章查重可见本章标题
         m5._published_titles_cache = None

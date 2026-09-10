@@ -96,10 +96,31 @@ SEVERITY_GATE = {"high", "mid"}
 
 _EVAL_SYSTEM_PROMPT = """你是一位苛刻的网文总编，负责用真实标准给小说维度打分。
 只输出 JSON，不要任何解释文字。格式：
-{"value": <数字>, "rationale": "<一句话理由>", "issues": [{"type": "人设|设定|逻辑", "severity": "high|mid|low", "desc": "<逐条描述>"}]}
-- 计数类维度（人设稳定/设定一致/逻辑漏洞）：对文本中每一个独立的硬伤/漏洞分别列举一条 issue，逐项列举、不得合并多条为一条；不得因"情节需要/伏笔/铺垫/人设成长"等理由豁免；凡确凿的设定/人设/因果冲突均计入（移除"明显"限定）。value 必须等于 issues 中计入门禁的条数（severity 为 high 或 mid 计入，low 仅上报）。
+{"value": <数字>, "rationale": "<一句话理由>", "issues": [{"type": "人设|设定|逻辑", "severity": "high|mid|low", "quote": "<原文引用≤30字>", "desc": "<逐条描述>"}]}
+- 计数类维度（人设稳定/设定一致/逻辑漏洞）：对文本中每一个独立的硬伤/漏洞分别列举一条 issue，逐项列举、不得合并多条为一条；不得因"情节需要/伏笔/铺垫/人设成长"等理由豁免；凡确凿的设定/人设/因果冲突均计入（移除"明显"限定）。每个 issue 必须附 quote 字段——从原文摘出、≤30 字的定位凭据；给不出原文引用的问题视为臆测，不得列入。value 必须等于 issues 中计入门禁的条数（severity 为 high 或 mid 计入，low 仅上报）。
 - 评分类维度（连贯性/追读力）：value 是 0-100 的整数评分；仅在确凿流畅、有追更欲时给 80+，衔接生硬/平铺直叙不得给高分；给出分数须有依据，不给水分为满分。
 严格客观，确有问题时给低分。"""
+
+
+def _count_gated_issues(issues: list) -> float:
+    """计数门禁：仅统计 severity ∈ SEVERITY_GATE 且**带原文定位（quote）**的 issue。
+
+    2026-09-10（回滚率削减·P0）：LLM 评委在 5 章窗口上挑刺恒能挑出非零，
+    且部分 issue 属幻觉（无法在原文定位）。约定 issue 必须附 quote（≤30 字
+    原文引用）作为定位凭据：无 quote 的条目视为臆测、不计入门禁。
+    若全部条目均无 quote（旧格式响应/过渡期），回退原口径全量计数，
+    避免格式过渡期把真问题整体清零。
+    """
+    locatable = [
+        it for it in issues
+        if isinstance(it, dict) and str(it.get("quote", "") or "").strip()
+    ]
+    counted = locatable if locatable else issues
+    return float(sum(
+        1 for it in counted
+        if isinstance(it, dict)
+        and str(it.get("severity", "")).lower() in SEVERITY_GATE
+    ))
 
 _APPEAL_SYSTEM_PROMPT = """你是一位资深网文编辑兼重度读者，评估这一章「读者会不会爱看」。
 只输出 JSON，不要任何解释文字。格式：
@@ -311,10 +332,9 @@ class ReaderAppealScorer:
             issues = data.get("issues") or []
             if dimension in COUNT_DIMS and issues:
                 # 以 issues 为准重算：仅计入 severity ∈ SEVERITY_GATE 的条数，忽略 LLM 自报 value。
-                val = float(sum(
-                    1 for it in issues
-                    if str(it.get("severity", "")).lower() in SEVERITY_GATE
-                ))
+                # 2026-09-10：进一步要求 issue 附原文定位（quote），无定位的臆测不计入
+                # （全部无 quote 时回退原口径，见 _count_gated_issues docstring）。
+                val = _count_gated_issues(issues)
             else:
                 # 评分维或无 issues：回退 LLM 自报 value（向后兼容、行为不变）。
                 # 2026-09-09：评分维 value 键缺失 = 形状异常（非真实 0 分），按解析失败

@@ -158,6 +158,13 @@ def build_rewrite_hint(report: Any, chapter_nums: list[int]) -> str:
                 f"- {d.label}（{d.name}）：实测 {d.value} {arrow} 合格线 {d.threshold}"
             )
             lines.extend(_dim_issue_lines(d))
+            # 2026-09-10（回滚率削减·P0）：只给"哪里错了"会催生保守灌水，补正向指引
+            try:
+                from agent.core.quality.eval_lessons import guidance_for
+
+                lines.append(f"  · 正向做法：{guidance_for(d.name, d.label)}")
+            except Exception:  # noqa: BLE001 - 指引缺失不影响重写
+                pass  # noqa: SILENT_DEGRADE
     reason = getattr(report, "escalated_reason", "") or ""
     if reason:
         lines.append(f"上下文：{reason}")

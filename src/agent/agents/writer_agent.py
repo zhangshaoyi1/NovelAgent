@@ -369,11 +369,11 @@ class WriterAgent:
                     max_tokens=8192,
                     enable_thinking=False,
                 )
-            except Exception as e:  # noqa: BLE001 - 补字失败降级为未补足，由调用方走放弃/熔断链路
+            except Exception as e:  # noqa: BLE001
                 self.console.print(
                     f"[yellow]      …续写补字第 {i + 1} 轮调用失败（{e}），跳过[/yellow]"
                 )
-                continue
+                continue  # noqa: SILENT_DEGRADE - 补字失败降级，由调用方走放弃/熔断链路
             piece = (resp or "").strip()
             # 续写异常截短（不足 200 字）视为本轮无效，避免拼入残句
             if len(piece) < 200:

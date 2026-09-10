@@ -32,6 +32,53 @@ _MAX_LESSON_CHARS = 1600
 _MAX_ISSUES_PER_DIM = 5
 _MAX_DESC_CHARS = 160
 
+# 维度 → 正向修复指引（2026-09-10 回滚率削减·P0）。
+# 只告诉 Writer"哪里错了"会催生保守灌水（五灵破 ch151-155 三连"教学→成功"
+# 桥段实证），每条教训必须成对给出"正确的做法"。
+_GUIDANCE: dict[str, str] = {
+    "character_stability_high": (
+        "重读角色档案 characters/*.md 的生死/性格/口癖真源，写前核对本章"
+        "每个出场角色的当前状态；让每个角色的言行都能从档案推导"
+    ),
+    "setting_consistency_high": (
+        "境界体系/金手指规则以 world.md 冻结版为准，写前逐条核对本章用到的"
+        "每条规则与数值，禁止即兴发明未登记的能力或境界"
+    ),
+    "logic_holes": (
+        "关键转折必须有动机铺垫、因果链完整；禁止靠巧合、碰巧救人、信息凭空"
+        "出现推进剧情；反派行动要有合理目的与代价"
+    ),
+    "coherence": (
+        "本章开头显式承接上一章结尾的时间/地点/悬念；场景与时间切换必须"
+        "交代过渡，禁止跳跃式剪辑"
+    ),
+    "readability": (
+        "每 800 字内设一个小钩子（危机/反转/新信息/情绪冲击）；章末留强悬念"
+    ),
+    "padding_repetition_abnormal": (
+        "每个场景必须推进剧情或人物关系；静态描写与重复情绪独白压缩到 3 句"
+        "以内；禁止连续章节复用同一种桥段模板"
+    ),
+    "foreshadow_recycle_rate": (
+        "优先回收登记在案的旧伏笔再埋新伏笔；回收时要显式点名伏笔本体，"
+        "让读者能对上号"
+    ),
+}
+
+_GUIDANCE_DEFAULT = "对照该维度合格线逐条自查修正，修正手段必须落在具体情节上而非口号"
+
+
+def guidance_for(name: str, label: str = "") -> str:
+    """按维度名（回退中文名包含匹配）取正向修复指引。"""
+    g = _GUIDANCE.get(str(name or ""))
+    if not g:
+        hay = f"{name or ''}{label or ''}"
+        for key, val in _GUIDANCE.items():
+            if key in hay or (label and key.rstrip("_high") in hay):
+                g = val
+                break
+    return g or _GUIDANCE_DEFAULT
+
 
 def _lessons_path(project_dir: str | Path) -> Path:
     return Path(project_dir) / _LESSONS_REL
@@ -82,14 +129,16 @@ def save_eval_lessons(project_dir: str | Path, report: Any) -> None:
                 for s in (sub.get("suggestions") or [])[:3]:
                     if isinstance(s, str) and s.strip():
                         suggestions.append(s.strip()[:_MAX_DESC_CHARS])
+        path = _lessons_path(project_dir)
+        overall_pass_flag = bool(getattr(report, "overall_pass", False))
         payload = {
             "at": time.time(),
-            "overall_pass": bool(getattr(report, "overall_pass", False)),
+            "overall_pass": overall_pass_flag,
             "score": round(float(getattr(report, "score", 0.0)), 2),
             "failures": failures,
             "suggestions": suggestions,
+            "history": _merge_history(path, failures, overall_pass_flag),
         }
-        path = _lessons_path(project_dir)
         path.parent.mkdir(parents=True, exist_ok=True)
         tmp = path.with_suffix(".json.tmp")
         tmp.write_text(
@@ -98,6 +147,33 @@ def save_eval_lessons(project_dir: str | Path, report: Any) -> None:
         tmp.replace(path)
     except Exception:
         pass  # noqa: SILENT_DEGRADE
+
+
+def _merge_history(
+    path: Path, failures: list[dict[str, Any]], overall_pass: bool
+) -> dict[str, int]:
+    """跨轮累计每个维度的连续失败次数（顽固问题标记）。
+
+    体检通过即清零（与"通过即写空 failures"同语义）；失败则对每个失败维度
+    count+1。读不到旧文件/解析失败按空处理（静默降级，不阻断）。
+    """
+    prev: dict[str, int] = {}
+    try:
+        if path.exists():
+            data = json.loads(path.read_text(encoding="utf-8"))
+            raw = data.get("history") or {}
+            if isinstance(raw, dict):
+                prev = {str(k): int(v) for k, v in raw.items() if v}
+    except Exception:  # noqa: BLE001
+        prev = {}  # noqa: SILENT_DEGRADE - 旧文件损坏按空 history 处理
+    if overall_pass:
+        return {}
+    merged = dict(prev)
+    for f in failures:
+        name = str(f.get("name", ""))
+        if name:
+            merged[name] = int(prev.get(name, 0)) + 1
+    return merged
 
 
 def load_eval_lessons_text(
@@ -119,17 +195,33 @@ def load_eval_lessons_text(
             f"上一轮全书体检未通过（综合分 {data.get('score', '?')}/100），"
             "以下问题已在新章节中出现过，请务必规避同类错误："
         ]
+        history = data.get("history") or {}
         for f in failures:
             label = f.get("label", f.get("name", "?"))
             arrow = "≥" if f.get("direction") == ">=" else "≤"
+            streak = 0
+            try:
+                streak = int(history.get(f.get("name"), 0) or 0)
+            except Exception:  # noqa: BLE001
+                streak = 0  # noqa: SILENT_DEGRADE
+            tag = (
+                f"（已连续 {streak} 轮不达标，属顽固问题，本轮必须彻底解决）"
+                if streak >= 2
+                else ""
+            )
             issues = f.get("issues") or []
             if issues:
-                lines.append(f"【{label}】实测 {f.get('value')} {arrow} 合格线 {f.get('threshold')}，具体问题：")
+                lines.append(
+                    f"【{label}】实测 {f.get('value')} {arrow} 合格线 "
+                    f"{f.get('threshold')}{tag}，具体问题："
+                )
                 lines.extend(issues)
             else:
                 lines.append(
-                    f"【{label}】实测 {f.get('value')} {arrow} 合格线 {f.get('threshold')}（无逐条明细，请整体自查该维度）"
+                    f"【{label}】实测 {f.get('value')} {arrow} 合格线 "
+                    f"{f.get('threshold')}{tag}（无逐条明细，请整体自查该维度）"
                 )
+            lines.append(f"- 正向做法：{guidance_for(f.get('name', ''), label)}")
         for s in (data.get("suggestions") or [])[:4]:
             lines.append(f"- 评审建议：{s}")
         text = "\n".join(lines)
