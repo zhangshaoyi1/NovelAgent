@@ -265,8 +265,6 @@ __all__ = [
     "OllamaEmbedding",
     "OpenAICompatibleEmbedding",
     "QwenLocalEmbedding",
-    "LLMClient",
-    "ModelRouter",
     # registry
     "get_skill_registry", "SkillInfo", "SkillProvider", "SkillRegistry",
     "GenrePackRegistry", "GenrePack", "GenreManifest", "Trope", "first_genre",
