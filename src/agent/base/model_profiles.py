@@ -91,7 +91,7 @@ def save_store(data: dict[str, Any]) -> None:
     except Exception:
         try:
             os.unlink(tmp)
-        except OSError:
+        except (OSError, SystemExit):
             pass  # noqa: SILENT_DEGRADE
         raise
 

@@ -17,6 +17,7 @@ from typing import Any
 
 from agent.cli._app import app, command, console, typer
 from agent.cli._shared import *  # noqa: F401,F403 - emit_result / make_quiet_console
+from agent.utils import safe_remove
 
 # skill 源目录：src/agent/skills/
 _SKILLS_SRC = Path(__file__).resolve().parents[2] / "skills"
@@ -112,8 +113,10 @@ def export_one(
     _read_frontmatter(src)  # 校验契约（缺失抛 ValueError）
 
     out = Path(out_dir) / name
-    if out.exists():
-        shutil.rmtree(out)
+    # 清空旧产物走 safe_remove：它对 WorkBuddy safe-delete 护栏抛的 SystemExit 免疫
+    # （2026-09-11 事故同族）。清不掉时显式失败——否则新旧文件混写会导出半成品。
+    if out.exists() and not safe_remove(out):
+        raise OSError(f"无法清空导出目录：{out}（被占用或被安全策略拦截）")
     out.mkdir(parents=True, exist_ok=True)
 
     files = _copy_files(src, out)

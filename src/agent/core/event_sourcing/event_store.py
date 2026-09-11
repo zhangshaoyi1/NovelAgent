@@ -173,7 +173,7 @@ class FileEventStore(EventStoreProvider):
                 )
                 try:
                     old_file.unlink(missing_ok=True)
-                except OSError:
+                except (OSError, SystemExit):
                     pass  # noqa: SILENT_DEGRADE
 
 

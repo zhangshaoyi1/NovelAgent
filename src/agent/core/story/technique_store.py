@@ -13,7 +13,6 @@
 from __future__ import annotations
 
 import json
-import shutil
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
@@ -87,14 +86,16 @@ class TechniqueStore:
     def confirm_all(self) -> list[TechniqueAsset]:
         confirmed = [a for a in self.list_preview() if self.add_to_library(a)]
         if self.preview_dir_exists():
-            shutil.rmtree(self.preview_dir, ignore_errors=True)
+            # 用 safe_remove 而非 shutil.rmtree(ignore_errors=True)：后者只吞 OSError，
+            # 不吞 WorkBuddy safe-delete 护栏抛的 SystemExit（2026-09-11 事故同族）。
+            safe_remove(self.preview_dir)
         return confirmed
 
     def clear_preview(self) -> int:
         if not self.preview_dir_exists():
             return 0
         n = len(list(self.preview_dir.glob("*.json")))
-        shutil.rmtree(self.preview_dir, ignore_errors=True)
+        safe_remove(self.preview_dir)
         return n
 
     # ---------------- 资产库 ----------------
