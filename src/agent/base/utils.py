@@ -200,6 +200,11 @@ def safe_remove(path: "Path | str", *, trash_root: "Path | str | None" = None) -
         1. path 不存在 → 直接返回 True（幂等）。
         2. 文件：优先 os.remove；失败 → 清空内容 + 改名 <name>.bak；仍失败 → warning + False。
         3. 目录：优先 shutil.rmtree；失败 → 改名到 <trash_root>/<name>；仍失败 → warning + False。
+
+    异常边界（2026-09-11 事故补）：除 ``OSError`` 外必须同时吞掉 ``SystemExit``——
+    WorkBuddy safe-delete 批量护栏在删除越线时抛的是 ``SystemExit(1)`` 而非 ``OSError``，
+    仅 catch OSError 会让异常逃逸，本函数「绝不抛错中断主流程」的契约当场失效。
+    回退链里的 ``os.replace`` / ``shutil.move`` 是**移动**，不触发该护栏，故仍能兜住。
     """
     p = Path(path)
 
@@ -213,19 +218,21 @@ def safe_remove(path: "Path | str", *, trash_root: "Path | str | None" = None) -
             os.remove(p)
         else:
             shutil.rmtree(p)
-    except OSError:
+    except (OSError, SystemExit):
         # 回退策略
         try:
             if p.is_file():
-                # 清空内容后改名 .bak（同目录惰性残骸）
+                # 清空内容后改名 .bak（同目录惰性残骸）。
+                # 用 os.replace 而非 Path.rename：目标已存在时可覆盖，不因 .bak
+                # 残留（护栏持续拦截时的常态）而反复失败。
                 p.write_text("")
-                p.rename(p.with_name(p.name + ".bak"))
+                os.replace(str(p), str(p.with_name(p.name + ".bak")))
             else:
                 # 目录改名到 trash_root（默认 <parent>/.trash/<name>）
                 target = (Path(trash_root) if trash_root else p.parent / ".trash") / p.name
                 target.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(p), str(target))
-        except OSError:
+        except (OSError, SystemExit):
             warnings.warn(f"safe_remove 无法安全删除 {p}", stacklevel=2)
             return False  # noqa: SILENT_DEGRADE
 

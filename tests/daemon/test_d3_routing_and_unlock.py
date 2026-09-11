@@ -6,7 +6,7 @@
 - --json / PYTEST / 进程内直调 → 不路由（直跑语义保持）；
 - 路由全链路（进程内模拟 daemon）：提交 → 伪 daemon 认领归档 → 跟随返回退出码；
 - follow_task：done→0 / stopped→130 / failed 透传退出码 / Ctrl+C→停止标记；
-- unlock：无锁 / 陈旧锁删除 / 存活拒绝 / --force 覆盖。
+- unlock：无锁 / 陈旧锁删除 / 存活拒绝 / --force 覆盖 / safe-delete 护栏拦删除时改名挪走。
 """
 
 from __future__ import annotations
@@ -235,3 +235,29 @@ def test_unlock_alive_holder_refused(
     result2 = runner.invoke(app, ["unlock", "-d", str(proj), "--force"])
     assert result2.exit_code == 0, result2.output
     assert not (proj / ".state" / "writer.lock").exists()
+
+
+def test_unlock_quarantines_when_delete_guard_blocks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """safe-delete 护栏拦删除（unlink 抛 SystemExit）→ 改名挪走，命令不崩、锁失效。
+
+    解锁命令正是事故后的排障入口，它自己崩掉最难受（2026-09-11 事故）。
+    """
+    import agent.cli.commands  # noqa: F401
+    from agent.cli._app import app
+
+    proj = _make_project(tmp_path)
+    lock = _write_lock(proj, pid=os.getpid() + 99991)  # 不存在的 pid → 判死
+
+    def _blocked_unlink(*args: object, **kwargs: object) -> None:
+        raise SystemExit(1)
+
+    monkeypatch.setattr(Path, "unlink", _blocked_unlink)
+
+    result = runner.invoke(app, ["unlock", "-d", str(proj)])
+
+    assert result.exit_code == 0, result.output
+    assert not lock.exists(), "锁名必须腾出来（改名挪走）"
+    assert lock.with_name("writer.lock.stale").exists()
+    assert "已改名挪走" in result.output

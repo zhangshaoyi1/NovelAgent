@@ -8,6 +8,7 @@
 - 幂等：path 不存在直接返回 True。
 - 主路径正常：os.remove / shutil.rmtree 成功时原路径消失、返回 True。
 - 绝不抛错：主路径与回退路径都失败时 warning + False，不抛异常。
+- safe-delete 批量护栏：删除抛 ``SystemExit``（非 OSError）时同样不逃逸（2026-09-11 事故）。
 - make_quiet_console 返回输出到 stderr 的 rich.Console（--json 模式用）。
 """
 
@@ -134,6 +135,66 @@ class TestSafeRemoveDirFallback:
         ).is_dir()
         # 内容保留到显式 trash_root 下（兼容多嵌套一层）
         assert list(custom_trash.rglob("a.txt")), "目录内容应保留到显式 trash_root"
+
+
+# ============================================================
+# safe-delete 批量护栏（SystemExit）——2026-09-11 事故
+# ============================================================
+def _raise_system_exit(*args: object, **kwargs: object) -> None:
+    """模拟 safe-delete 批量护栏：删除越线时抛 SystemExit(1)（**不是 OSError**）"""
+    raise SystemExit(1)
+
+
+class TestSafeRemoveDeleteGuardTolerance:
+    """护栏抛 SystemExit，只 catch OSError 会让本函数「绝不抛错」的契约当场失效。"""
+
+    def test_file_fallback_when_remove_raises_system_exit(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        f = tmp_path / "draft.wip"
+        f.write_text("正文", encoding="utf-8")
+        monkeypatch.setattr(agent.base.utils.os, "remove", _raise_system_exit)
+
+        assert safe_remove(f) is True, "SystemExit 不得逃逸"
+        assert not f.exists()
+        assert (tmp_path / "draft.wip.bak").exists(), "应走改名兜底"
+
+    def test_bak_target_overwritten_when_bak_already_exists(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """护栏持续拦截时 .bak 残骸是常态：已有 .bak 也必须能覆盖，不得退化为 False。"""
+        f = tmp_path / "draft.wip"
+        f.write_text("新", encoding="utf-8")
+        (tmp_path / "draft.wip.bak").write_text("旧", encoding="utf-8")
+        monkeypatch.setattr(agent.base.utils.os, "remove", _raise_system_exit)
+
+        assert safe_remove(f) is True
+        assert not f.exists()
+
+    def test_dir_fallback_when_rmtree_raises_system_exit(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        d = tmp_path / "draftdir"
+        d.mkdir()
+        (d / "a.txt").write_text("hi")
+        monkeypatch.setattr(agent.base.utils.shutil, "rmtree", _raise_system_exit)
+
+        assert safe_remove(d) is True, "SystemExit 不得逃逸"
+        assert not d.exists()
+
+    def test_returns_false_when_all_strategies_raise_system_exit(
+        self, tmp_path: Path, monkeypatch
+    ) -> None:
+        """回退链也全被拦 → 仅 warning + False，仍不抛错（契约末态）。"""
+        f = tmp_path / "x.txt"
+        f.write_text("y")
+        monkeypatch.setattr(agent.base.utils.os, "remove", _raise_system_exit)
+        monkeypatch.setattr(agent.base.utils.Path, "write_text", _raise_system_exit)
+
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")
+            assert safe_remove(f) is False
+        assert f.exists()
 
 
 # ============================================================

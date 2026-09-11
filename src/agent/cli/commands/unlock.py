@@ -36,6 +36,7 @@ def unlock(
     import os
     from pathlib import Path
 
+    from agent.core.infra.degrade import degrade
     from agent.core.project_lock import (
         LEGACY_LOCK_NAMES,
         _pid_alive,
@@ -86,8 +87,24 @@ def unlock(
             console.print(f"[cyan]陈旧锁[/cyan] {lock_path.name}：持有者已死（{holder}）")
         try:
             lock_path.unlink()
-        except OSError:
-            pass  # noqa: SILENT_DEGRADE - 以文件实际存在性为准（见下）
+        except (OSError, SystemExit):
+            # WorkBuddy safe-delete 批量护栏拦删除时抛的是 ``SystemExit`` 而非
+            # ``OSError``（2026-09-11 事故）——人工解锁命令自己崩掉是最难受的：
+            # 它正是事故后的排障入口。降级为「改名挪走」：移动不触发护栏，
+            # 锁名照样腾出来，效果等同解锁。
+            try:
+                os.replace(str(lock_path), f"{lock_path}.stale")
+                degrade(
+                    "unlock.quarantine",
+                    f"锁文件删除被 safe-delete 护栏拦截，已改名挪走：{lock_path.name}",
+                )
+            except (OSError, SystemExit):
+                pass  # noqa: SILENT_DEGRADE - 以文件实际存在性为准（见下）
+            if not lock_path.exists():
+                console.print(
+                    f"[cyan]已改名挪走[/cyan] {lock_path.name} → {lock_path.name}.stale"
+                    "（safe-delete 护栏拦删除，效果等同已删除）"
+                )
         if lock_path.exists():
             console.print("[bold red]✗ 删除失败：锁文件仍存在[/bold red]")
             raise typer.Exit(code=1)

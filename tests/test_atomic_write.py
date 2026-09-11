@@ -31,6 +31,29 @@ def test_atomic_write_text_roundtrip(tmp_path: Path) -> None:
     assert not list(tmp_path.rglob("*.tmp-atomic"))
 
 
+def test_tmp_cleanup_tolerates_delete_guard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """safe-delete 护栏（unlink 抛 SystemExit）不得掩盖原子写的真实失败（2026-09-11）。
+
+    tmp 残留时 ``finally`` 会尝试清理；护栏抛的是 ``SystemExit`` 而非 ``OSError``，
+    一旦逃逸，调用方看到的将是 SystemExit 而不是原本的写入异常，排查方向被带偏。
+    """
+    f = tmp_path / "a.txt"
+
+    def _replace_fails(*args: object, **kwargs: object) -> None:
+        raise OSError("replace 失败（模拟同盘占用）")
+
+    def _unlink_blocked(*args: object, **kwargs: object) -> None:
+        raise SystemExit(1)
+
+    monkeypatch.setattr(Path, "replace", _replace_fails)
+    monkeypatch.setattr(Path, "unlink", _unlink_blocked)
+
+    with pytest.raises(OSError):  # 真实错误类型必须原样透传
+        atomic_write_text(f, "内容")
+
+
 def test_atomic_write_bytes_roundtrip(tmp_path: Path) -> None:
     f = tmp_path / "bin.dat"
     atomic_write_bytes(f, b"\x00\x01")

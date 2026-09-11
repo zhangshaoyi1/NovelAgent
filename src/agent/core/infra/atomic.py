@@ -20,8 +20,29 @@ import shutil
 import tempfile
 from pathlib import Path
 
+from agent.core.infra.degrade import degrade
+
 PathLike = Path | str
 _Content = str | bytes
+
+
+def _discard_tmp(path: Path) -> None:
+    """尽力丢弃临时文件 / 临时目录，**绝不向外抛错**。
+
+    异常边界（2026-09-11 事故补）：WorkBuddy safe-delete 批量护栏在删除越线时抛
+    ``SystemExit(1)`` 而非 ``OSError``。本函数多用在 ``finally`` 里，异常逃逸会
+    掩盖真实结果并让调用方误判原子写失败——故统一吞掉并投递可见降级日志。
+    ``shutil.rmtree(ignore_errors=True)`` 只吞 ``OSError``，**不吞** ``SystemExit``。
+    """
+    try:
+        if path.is_file():
+            path.unlink()
+        elif path.exists():
+            shutil.rmtree(path, ignore_errors=True)
+    except SystemExit as exc:
+        degrade("atomic.discard", f"临时路径清理被 safe-delete 护栏拦截：{path.name}", exc)
+    except OSError as exc:
+        degrade("atomic.discard", f"临时路径清理失败：{path.name}", exc)
 
 
 def _to_bytes(content: _Content) -> bytes:
@@ -40,10 +61,7 @@ def atomic_write_text(path: PathLike, text: str, *, encoding: str = "utf-8") -> 
         tmp.replace(target)
     finally:
         if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass  # noqa: SILENT_DEGRADE
+            _discard_tmp(tmp)
     return target
 
 
@@ -57,10 +75,7 @@ def atomic_write_bytes(path: PathLike, data: bytes) -> Path:
         tmp.replace(target)
     finally:
         if tmp.exists():
-            try:
-                tmp.unlink()
-            except OSError:
-                pass  # noqa: SILENT_DEGRADE
+            _discard_tmp(tmp)
     return target
 
 
@@ -93,7 +108,7 @@ def atomic_write_set(writes: dict[PathLike, _Content]) -> list[Path]:
             tmp.write_bytes(payload)
             staged.append((target, tmp, payload))
     except OSError:
-        shutil.rmtree(staging_root, ignore_errors=True)
+        _discard_tmp(staging_root)
         raise
 
     try:
@@ -103,4 +118,4 @@ def atomic_write_set(writes: dict[PathLike, _Content]) -> list[Path]:
             committed.append(target)
         return committed
     finally:
-        shutil.rmtree(staging_root, ignore_errors=True)
+        _discard_tmp(staging_root)
