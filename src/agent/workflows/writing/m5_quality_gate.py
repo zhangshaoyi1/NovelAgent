@@ -108,6 +108,8 @@ class M5QualityGateMixin:
                     # P-4/P-8（提示词改进）：质检校验角色硬约束 + 细纲情节点覆盖（缺省为空）
                     hard_constraints=ctx.get("character_constraints", ""),
                     plot_points=ctx.get("plot_points", ""),
+                    # P-9（提示词改进）：事实对照卡 = 连续性账本投影（≤800 字，规则 6 逐条对照）
+                    fact_card=str(ctx.get("continuity_projection", "") or "")[:800],
                     chapter_text=text,
                 )
 

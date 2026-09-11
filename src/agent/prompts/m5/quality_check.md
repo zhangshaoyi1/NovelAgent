@@ -19,7 +19,7 @@ validation:
 3. chapter_end_suspense: 章末必须有悬念/反转/期待之一
 4. scene_ratio: 场景+动作+环境描写合计 ≥ 30%
 5. banned_word_limit: "突然/忽然/就在这时/微微一笑" 全章 ≤ 2 次
-6. setting_consistency: 不与 world.md / subline.md / character.md 冲突
+6. setting_consistency: 与【本章事实对照卡】**逐条对照**（见下方事实卡；任一不一致即不通过）；无事实卡时对照 world.md / subline.md / character.md
 7. dialogue_personality: 角色台词符合其语言指纹
 8. foreshadow_status: 本章如埋/回收伏笔，需标注
 9. climax_expansion: 高潮章节自动扩篇幅 + 多视角 + 慢镜头
@@ -57,6 +57,9 @@ validation:
 
 【本章细纲情节点】（规则 12 校验依据；为空则跳过该规则）
 {{ plot_points }}
+
+【本章事实对照卡】（规则 6 逐条对照依据；来自连续性账本，为空则退回自觉对照）
+{{ fact_card }}
 
 【本章是否为高潮章节】
 {{ is_climax }}
