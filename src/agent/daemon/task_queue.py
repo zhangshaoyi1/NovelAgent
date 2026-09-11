@@ -238,6 +238,12 @@ def finalize_task(
     if note:
         task["note"] = note
     dst = root / "done" / src.name
+    # 目标目录缺失会让 os.replace 抛 FileNotFoundError，退化为「写副本 + 删源」——
+    # 徒增一次告警，并在护栏拦截时存在残留风险。归档前先确保 done/ 存在。
+    try:
+        dst.parent.mkdir(parents=True, exist_ok=True)
+    except OSError:  # noqa: SILENT_DEGRADE - 建目录失败交由下方 os.replace 兜底
+        pass
     # 归档用「改名」（os.replace）而非「写副本 + 删源」：rename 是移动操作，不会被
     # WorkBuddy safe-delete 批量护栏拦截。旧写法 src.unlink() 在护栏触发时抛
     # SystemExit → 把 daemon 打死、任务同时残留 running/ 与 done/（2026-09-11 事故）。

@@ -116,10 +116,37 @@ class RunManager:
 
         pdir = project_path(run["project"])
         result = await asyncio.to_thread(tq.request_stop, pdir, task_id)
-        if result:
-            self._emit(run, {"type": "log", "data": {"text": "■ 已请求停止，daemon 正在终止任务进程树…"}})
-            return True
-        return False
+        if not result:
+            return False
+        self._emit(run, {"type": "log", "data": {"text": "■ 已请求停止，daemon 正在终止任务进程树…"}})
+
+        # 兜底（2026-09-11 事故）：停止的**执行者**是 daemon——Web 只写 stop_requested，
+        # 由 daemon 轮询后 taskkill 并归档。若 daemon 已崩溃/离线，则无人执行：任务永远
+        # 停在 running、页面永远显示「终止中」。此处检测 daemon 失活后由 Web 直接终止。
+        if not await asyncio.to_thread(tq.daemon_alive, pdir.parent):
+            task = await asyncio.to_thread(tq.get_task, pdir, task_id) or {}
+            pid = int(task.get("pid") or 0)
+            from agent.daemon import process_manager as pm
+
+            if pid:
+                await asyncio.to_thread(
+                    pm.force_terminate,
+                    pdir,
+                    task_id,
+                    pid,
+                    note="Web 兜底终止（daemon 离线）",
+                    status=tq.STATUS_STOPPED,
+                )
+                self._emit(
+                    run,
+                    {"type": "log", "data": {"text": f"■ daemon 已离线，已由 Web 直接终止进程树 pid={pid} 并归档任务"}},
+                )
+            else:
+                await asyncio.to_thread(
+                    tq.finalize_task, pdir, task_id, tq.STATUS_STOPPED, 1, "Web 兜底归档（daemon 离线）"
+                )
+                self._emit(run, {"type": "log", "data": {"text": "■ daemon 已离线，已由 Web 直接归档任务为「已停止」"}})
+        return True
 
     def new_run(
         self,

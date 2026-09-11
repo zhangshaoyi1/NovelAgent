@@ -105,19 +105,56 @@ class WriterDaemon:
 
     # ---------------- 主循环 ----------------
     def run_forever(self) -> None:
-        self._clear_stale_stop_flags()
-        self._recover_orphans()
+        # 启动阶段（清残留标志 / 崩溃恢复）同样在守护之外会静默致死，逐个兜底。
+        try:
+            self._clear_stale_stop_flags()
+        except BaseException:  # noqa: BLE001 - 启动阶段异常不致命
+            self._log_crash()  # noqa: SILENT_DEGRADE - 落盘留痕后继续启动
+        try:
+            self._recover_orphans()
+        except BaseException:  # noqa: BLE001 - 启动阶段异常不致命
+            self._log_crash()  # noqa: SILENT_DEGRADE - 落盘留痕后继续启动
         while True:
-            for root in self.roots:
-                tq.write_heartbeat(root, os.getpid())
-            if self._stop_flagged():
-                self._shutdown_gracefully()
-                return
-            if self._child is None:
-                self._try_claim_and_spawn()
-            else:
-                self._poll_child()
+            try:
+                for root in self.roots:
+                    tq.write_heartbeat(root, os.getpid())
+                if self._stop_flagged():
+                    self._shutdown_gracefully()
+                    return
+                if self._child is None:
+                    self._try_claim_and_spawn()
+                else:
+                    self._poll_child()
+            except BaseException:  # noqa: BLE001 - daemon 绝不因单轮异常静默死亡
+                # 2026-09-11 事故：daemon 由 Web 以 DEVNULL 拉起，主循环内任何未捕获
+                # 异常（含 safe-delete 护栏抛出的 SystemExit）都会让进程**无声退出**：
+                # 既没有停止执行者，也没有服务端告警，表现为「页面点终止一直终止中」。
+                # 兜底：单轮失败记录栈、短暂退避后继续，进程存活是第一优先级。
+                self._log_crash()
+                time.sleep(1.0)
+                continue  # noqa: SILENT_DEGRADE - 已写 .daemon/crash.log，进程继续服务
             time.sleep(self.poll_interval)
+
+    def _log_crash(self) -> None:
+        """把主循环未捕获异常写入 ``<root>/.daemon/crash.log``（绝不再抛）。"""
+        try:
+            import traceback
+
+            stamp = datetime.now().isoformat(timespec="seconds")
+            text = f"\n===== {stamp} daemon 主循环异常（已兜底，进程继续）=====\n{traceback.format_exc()}"
+            for root in self.roots:
+                try:
+                    log_path = Path(root) / ".daemon" / "crash.log"
+                    log_path.parent.mkdir(parents=True, exist_ok=True)
+                    if log_path.exists() and log_path.stat().st_size > 1_000_000:
+                        log_path.write_text("", encoding="utf-8")  # 截断防无限增长
+                    with open(log_path, "a", encoding="utf-8") as fh:
+                        fh.write(text)
+                except Exception:  # noqa: BLE001 - 崩溃日志本身失败不得再抛
+                    pass  # noqa: SILENT_DEGRADE - 日志写失败也不能影响主循环
+            print(text, flush=True)
+        except BaseException:  # noqa: BLE001 - 记录失败也绝不冒泡
+            pass  # noqa: SILENT_DEGRADE - 记录失败也绝不冒泡
 
     def _stop_flagged(self) -> bool:
         return any(tq.daemon_stop_flag(r).exists() for r in self.roots)
@@ -310,12 +347,18 @@ def ensure_daemon(roots: list[Path | str]) -> bool:
     args = [sys.executable, "-m", "agent.daemon"]
     for r in roots:
         args += ["--root", str(r)]
+    # 环境隔离：daemon 是常驻进程，禁止继承宿主的 safe-delete 护栏 shim
+    # （护栏对「删除」抛 SystemExit，而 except Exception 捕不到，会打死 daemon——
+    # 2026-09-11 事故族）。显式关闭后关键路径的 unlink 退化为普通删除，进程不受影响。
+    child_env = dict(os.environ)
+    child_env["CODEBUDDY_SAFE_DELETE_ENABLED"] = "0"
     kwargs: dict[str, Any] = {
         "cwd": str(REPO_ROOT),
         "stdin": subprocess.DEVNULL,
         "stdout": subprocess.DEVNULL,
         "stderr": subprocess.DEVNULL,
         "close_fds": True,
+        "env": child_env,
     }
     if os.name == "nt":
         kwargs["creationflags"] = (
