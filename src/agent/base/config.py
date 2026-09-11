@@ -132,6 +132,11 @@ def _build_llm_config_from_env() -> "LLMConfig":
     base_url = os.getenv("LLM_BASE_URL", "")
     timeout = int(os.getenv("LLM_TIMEOUT", "120"))
     max_retries = int(os.getenv("LLM_MAX_RETRIES", "3"))
+    # P2-6（2026-09-11）：输出预算下限，0/空=不干预
+    try:
+        max_tokens = int(os.getenv("LLM_MAX_TOKENS", "0") or 0) or None
+    except ValueError:
+        max_tokens = None  # noqa: SILENT_DEGRADE
 
     # 模型档案覆盖（仅覆盖档案中显式填写的字段，空字段保持 env 值）
     if profile:
@@ -149,6 +154,8 @@ def _build_llm_config_from_env() -> "LLMConfig":
             timeout = int(profile["timeout"])
         if profile.get("max_retries") is not None and str(profile.get("max_retries")).strip() != "":
             max_retries = int(profile["max_retries"])
+        if profile.get("max_tokens"):
+            max_tokens = int(profile["max_tokens"])
 
     return LLMConfig(
         provider=provider,
@@ -170,6 +177,7 @@ def _build_llm_config_from_env() -> "LLMConfig":
         ],
         fallback_model=os.getenv("LLM_FALLBACK_MODEL", ""),
         enable_thinking=enable_thinking,
+        max_tokens=max_tokens,
     )
 
 

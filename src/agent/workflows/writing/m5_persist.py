@@ -293,6 +293,9 @@ class M5PersistMixin:
                 ),
             )
 
+            from agent.workflows.evaluation.m13_foreshadow import seed_foresight_threads
+
+            seed_foresight_threads(self.project_dir)  # P1-4：先播种，mark 才有 beat 可标
             store = ForesightStore(self.project_dir)
             threads = store.load()
             changed = False

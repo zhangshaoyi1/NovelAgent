@@ -20,10 +20,6 @@
 """
 
 from agent.core.story.setting_manager import SettingManager
-from agent.core.story.foreshadow_manager import (
-    ForeshadowManager,
-    ForeshadowState,
-)
 from agent.core.story.relation_manager import RelationManager
 from agent.core.story.chapters import (
     strip_frontmatter,
@@ -32,7 +28,6 @@ from agent.core.story.chapters import (
     iter_chapter_texts,
     read_chapters_text,
 )
-from agent.core.story.snapshot_manager import SnapshotManager, ResumeBriefing
 from agent.core.story.evidence_chain import EvidenceRef, EvidenceChain
 from agent.core.story.tension_curve import (
     TensionCurveManager,
@@ -81,8 +76,6 @@ from agent.core.story.meta.philosophy import (
 
 __all__ = [
     "SettingManager",
-    "ForeshadowManager",
-    "ForeshadowState",
     "RelationManager",
     "WorldNode",
     "WorldEdge",
@@ -92,8 +85,6 @@ __all__ = [
     "take_chapter_files",
     "iter_chapter_texts",
     "read_chapters_text",
-    "SnapshotManager",
-    "ResumeBriefing",
     "EvidenceRef",
     "EvidenceChain",
     "TensionCurveManager",

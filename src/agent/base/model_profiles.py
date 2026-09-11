@@ -40,6 +40,7 @@ _PROFILE_DEFAULTS: dict[str, Any] = {
     "enable_thinking": None,  # None=不干预 False=强制关闭 True=强制开启
     "timeout": 0,  # 0=未设置（配置解析时回退 .env 的 LLM_TIMEOUT）
     "max_retries": 3,
+    "max_tokens": 0,  # 0=未设置（floor 语义，见 gateway_adapter._apply_max_tokens_floor）
     "enabled": True,
     "notes": "",
     "created_at": "",
@@ -120,6 +121,10 @@ def _normalize(raw: dict[str, Any]) -> dict[str, Any]:
         p["max_retries"] = max(0, int(p["max_retries"] or 3))
     except (TypeError, ValueError):
         p["max_retries"] = 3  # noqa: SILENT_DEGRADE
+    try:
+        p["max_tokens"] = max(0, int(p.get("max_tokens") or 0))
+    except (TypeError, ValueError):
+        p["max_tokens"] = 0  # noqa: SILENT_DEGRADE
     p["enabled"] = bool(p.get("enabled", True))
     if p["enable_thinking"] is not None:
         p["enable_thinking"] = bool(p["enable_thinking"])
@@ -234,6 +239,7 @@ def profile_to_llm_kwargs(p: dict[str, Any]) -> dict[str, Any]:
         "enable_thinking": p.get("enable_thinking"),
         "timeout": p.get("timeout") or None,
         "max_retries": p.get("max_retries") or None,
+        "max_tokens": p.get("max_tokens") or None,
     }
 
 

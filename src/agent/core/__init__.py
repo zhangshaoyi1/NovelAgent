@@ -53,10 +53,6 @@ from agent.core.engine.collab import AgentNode, SubtaskDAG, MessageBus, Collabor
 
 # ── story 层导出 ────────────────────────────────────────────────────
 from agent.core.story.setting_manager import SettingManager
-from agent.core.story.foreshadow_manager import (
-    ForeshadowManager,
-    ForeshadowState,
-)
 from agent.core.story.relation_manager import RelationManager
 from agent.core.story.chapters import (
     strip_frontmatter,
@@ -65,7 +61,6 @@ from agent.core.story.chapters import (
     iter_chapter_texts,
     read_chapters_text,
 )
-from agent.core.story.snapshot_manager import SnapshotManager, ResumeBriefing
 from agent.core.story.evidence_chain import EvidenceRef, EvidenceChain
 from agent.core.story.tension_curve import (
     TensionCurveManager,
@@ -165,7 +160,6 @@ from agent.core.registry.genre_merger import GenreMerger
 # ── infra 层导出 ─────────────────────────────────────────────────────
 from agent.core.infra.compose_runner import run_compose, resolve_project_dir
 from agent.core.infra.context import ContextEngine, ContextItem
-from agent.core.infra.context_loader import ContextLoader, LoadedContext
 from agent.core.infra.dashboard_aggregator import DashboardAggregator
 from agent.core.infra.doctor import Doctor
 from agent.core.infra.hook_dispatcher import dispatch_genre_hooks
@@ -241,11 +235,9 @@ __all__ = [
     "AgentNode", "SubtaskDAG", "MessageBus", "CollaborationError",
     # story
     "SettingManager",
-    "ForeshadowManager", "ForeshadowState",
     "RelationManager",
     "strip_frontmatter", "list_chapter_files", "take_chapter_files",
     "iter_chapter_texts", "read_chapters_text",
-    "SnapshotManager", "ResumeBriefing",
     "EvidenceRef", "EvidenceChain",
     "TensionCurveManager", "TensionScore", "ArcPlan", "ArcPhase",
     "PacingStore", "Debt",
@@ -283,7 +275,6 @@ __all__ = [
     "run_compose", "resolve_project_dir",
     "Conflict", "ConflictReport", "ConflictArbiter",
     "ContextEngine", "ContextItem",
-    "ContextLoader", "LoadedContext",
     "DashboardAggregator",
     "Doctor",
     "dispatch_genre_hooks",

@@ -13,7 +13,6 @@
 """
 
 from agent.core.infra.context import ContextEngine, ContextItem
-from agent.core.infra.context_loader import ContextLoader, LoadedContext
 from agent.core.infra.compose_runner import run_compose, resolve_project_dir
 from agent.core.infra.dashboard_aggregator import DashboardAggregator
 from agent.core.infra.hook_dispatcher import dispatch_genre_hooks
@@ -22,8 +21,6 @@ from agent.core.infra.doctor import Doctor
 __all__ = [
     "ContextEngine",
     "ContextItem",
-    "ContextLoader",
-    "LoadedContext",
     "run_compose",
     "resolve_project_dir",
     "DashboardAggregator",

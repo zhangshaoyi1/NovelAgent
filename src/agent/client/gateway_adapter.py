@@ -313,6 +313,9 @@ def _build_gateway_inner(env_file: str | None = None, console: Any = None) -> tu
         rate_limiter=RateLimiter(),
         semantic_cache=SemanticCache(),
     )
+    # P2-6：把 LLMConfig 挂到 gateway 上，供 _apply_max_tokens_floor 读取
+    # 档位/.env 配置的 max_tokens 下限（不改各 chat_* 函数签名）。
+    gateway._novelagent_config = config
 
     return gateway, config
 
@@ -326,6 +329,25 @@ def create_gateway(
     返回 Gateway 实例，可直接调用 gateway.chat(ChatRequest(...))。
     """
     return _build_gateway_inner(env_file=env_file, console=console)[0]
+
+
+def _apply_max_tokens_floor(gateway: Any, max_tokens: int | None) -> int | None:
+    """P2-6（2026-09-11）：模型档位 max_tokens 作为请求下限（floor 语义）。
+
+    档位/.env 配置的 max_tokens 表示模型输出预算（思考型模型思考 token 吃掉
+    输出预算 → 需 ≥16384）；调用点硬编码值（如 writer 8192）低于该预算时抬升
+    到预算，高于时不动。未配置（None/0）行为与旧版完全一致。
+    配置来源：``_build_gateway_inner`` 把 LLMConfig 挂在 gateway 上传递。
+    """
+    cfg = getattr(gateway, "_novelagent_config", None)
+    floor = getattr(cfg, "max_tokens", None) if cfg is not None else None
+    try:
+        floor_v = int(floor)  # None / 测试替身（MagicMock）等非数值一律不干预
+    except (TypeError, ValueError):
+        return max_tokens
+    if floor_v > 0 and (max_tokens or 0) < floor_v:
+        return floor_v
+    return max_tokens
 
 
 def chat_creative(
@@ -343,6 +365,7 @@ def chat_creative(
     """
     from llmagent.gateway.models import ChatRequest, HintComplexity, TaskHint
 
+    max_tokens = _apply_max_tokens_floor(gateway, max_tokens)
     hint = TaskHint(
         complexity=HintComplexity.complex,
         quality_critical=True,
@@ -405,7 +428,7 @@ def chat_utility_response(
     req = _build_utility_request(
         messages,
         temperature=temperature,
-        max_tokens=max_tokens,
+        max_tokens=_apply_max_tokens_floor(gateway, max_tokens),
         model=model,
         enable_thinking=enable_thinking,
         cache_class=cache_class,
@@ -469,6 +492,7 @@ def chat_structured(
     system_msg = f"请严格按照以下 JSON Schema 输出结构化数据：\n{schema_text}"
     enhanced = [{"role": "system", "content": system_msg}] + messages
 
+    max_tokens = _apply_max_tokens_floor(gateway, max_tokens)
     hint = TaskHint(
         complexity=HintComplexity.complex if use == "creative" else HintComplexity.simple,
         quality_critical=True,

@@ -70,6 +70,10 @@ class LLMConfig:
     fallback_providers: list[str] = field(default_factory=list)
     # 思考开关：None=不干预，False=强制关闭，True=强制开启
     enable_thinking: bool | None = None
+    # P2-6（2026-09-11）：模型输出预算下限（floor）。None/0=不干预（各调用点
+    # 硬编码值生效）；>0 时在 gateway_adapter 请求组装点把低于它的调用抬升到该值。
+    # 来源：.env LLM_MAX_TOKENS → 模型档位 max_tokens 覆盖。
+    max_tokens: int | None = None
 
     def __post_init__(self) -> None:
         """归一化 fallback_providers"""

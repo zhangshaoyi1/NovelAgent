@@ -204,6 +204,13 @@ class LLMClient:
             validation_attempt: 内部递归重试计数，防无限循环，调用方勿传。
         """
         # Gateway 后端委托（唯一路径）
+        # P2-6：档位/.env 的 max_tokens 为下限（floor），硬编码调用值低于它时抬升
+        try:
+            _cfg_floor = int(getattr(self.config, "max_tokens", None) or 0) if getattr(self, "config", None) else 0
+        except (TypeError, ValueError):
+            _cfg_floor = 0  # noqa: SILENT_DEGRADE
+        if _cfg_floor > 0 and (max_tokens or 0) < _cfg_floor:
+            max_tokens = _cfg_floor
         req = self._build_chat_request(
             messages, temperature=temperature, max_tokens=max_tokens,
             use=use, model=model, enable_thinking=enable_thinking, **kwargs,

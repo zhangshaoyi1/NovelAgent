@@ -578,6 +578,83 @@ def extract_foreshadow_keywords(content: str) -> list[str]:
     return out[:4]
 
 
+def seed_foresight_threads(project_dir: str | Path) -> dict[str, int]:
+    """从 foreshadows.md 播种 ForesightStore threads（确定性、幂等、只增不覆盖）。
+
+    P1-4 修复（2026-09-11）：ForesightStore 的 beats 从未被播种 → G15 归档 hook
+    的 ``mark_committed`` 无 beat 可标，伏笔确定性状态机（thread+beats）整体空转。
+    本函数把登记表每行 F-ID 映射为一条 ForesightThread：
+
+    - plant beat 锚 ``planted_at`` 首个 chNNN；reveal beat 锚 ``expected`` 首个 chNNN；
+    - 登记表状态 已埋/已回收 → 对应 beat 预置 ``exec_status="written"``（不伪造
+      commit_id，证据链仍由正文对账/归档 hook 补齐）；
+    - 已存在的 fid 跳过（绝不覆盖既有 beats/状态，幂等）；
+    - 缺 foreshadows.md → 空操作，不阻断。
+    """
+    from agent.core.story.foresight import ForesightBeat, ForesightStore, ForesightThread
+
+    project = Path(project_dir)
+    f_file = project / "foreshadows.md"
+    if not f_file.exists():
+        return {"seeded": 0, "skipped": 0}
+
+    store = ForesightStore(project)
+    existing = {t.fid for t in store.load()}
+    seeded = skipped = 0
+    for line in f_file.read_text(encoding="utf-8").splitlines():
+        if not line.startswith("| F-"):
+            continue
+        parts = [p.strip() for p in line.split("|")]
+        if len(parts) < 7:
+            continue
+        fid, content, planted_at, expected, state, related = parts[1:7]
+        if fid in existing:
+            skipped += 1
+            continue
+        pm = re.search(r"ch(\d+)", planted_at or "")
+        em = re.search(r"ch(\d+)", expected or "")
+        planted_ch = int(pm.group(1)) if pm else None
+        expected_ch = int(em.group(1)) if em else None
+
+        beats: list[ForesightBeat] = []
+        if planted_ch is not None:
+            beats.append(
+                ForesightBeat(
+                    beat_id=f"{fid}-plant",
+                    type="plant",
+                    anchor_chapter=planted_ch,
+                    exec_status="written" if state in ("已埋", "已回收") else "planned",
+                )
+            )
+        if expected_ch is not None:
+            beats.append(
+                ForesightBeat(
+                    beat_id=f"{fid}-reveal",
+                    type="reveal",
+                    anchor_chapter=expected_ch,
+                    exec_status="written" if state == "已回收" else "planned",
+                )
+            )
+
+        if planted_ch and expected_ch:
+            span = "cross_volume" if expected_ch - planted_ch > 20 else "within_volume"
+        else:
+            span = "local"
+        hidden = related or (f"预期回收：{expected}" if expected else content)
+        store.upsert(
+            ForesightThread(
+                fid=fid,
+                core_question=content or hidden,
+                hidden_truth=hidden,
+                planned_span=span,
+                expected_resolve=expected or "",
+                beats=beats,
+            )
+        )
+        seeded += 1
+    return {"seeded": seeded, "skipped": skipped}
+
+
 def sync_foreshadow_states(
     project_dir: str | Path, console: Any = None
 ) -> dict[str, list[str]]:
