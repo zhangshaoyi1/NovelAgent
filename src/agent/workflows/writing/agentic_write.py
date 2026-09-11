@@ -519,6 +519,9 @@ class AgenticWriteWorkflow:
             # P-1（提示词改进）：质检也带上轮体检教训作复审重点——教训不仅写前注入，
             # 质检复查同样聚焦（反馈闭环完整化；读取失败降级为空，不影响质检）
             recheck_focus=self._lessons_focus(),
+            # P-4/P-8（提示词改进）：质检校验角色硬约束 + 细纲情节点覆盖（数据缺省为空）
+            hard_constraints=ctx.get("character_constraints", ""),
+            plot_points=ctx.get("plot_points", ""),
             chapter_text=cleaned,
         )
         try:

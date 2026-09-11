@@ -105,6 +105,9 @@ class M5QualityGateMixin:
                     is_climax="是" if is_climax else "否",
                     stage_calibration=self._stage_calibration(ctx, attempt),
                     recheck_focus=self._recheck_focus(last_failed_rules, attempt),
+                    # P-4/P-8（提示词改进）：质检校验角色硬约束 + 细纲情节点覆盖（缺省为空）
+                    hard_constraints=ctx.get("character_constraints", ""),
+                    plot_points=ctx.get("plot_points", ""),
                     chapter_text=text,
                 )
 
