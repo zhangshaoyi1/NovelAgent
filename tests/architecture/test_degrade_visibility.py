@@ -66,10 +66,12 @@ def find_violations() -> list[tuple[str, int, str]]:
                 continue
             if _body_has_visible_handling(node.body):
                 continue
-            # 取 except 语句最后物理行（支持多行 except）检查豁免标记
-            end_line = node.end_lineno or node.lineno
-            line_text = lines[end_line - 1] if end_line <= len(lines) else ""
-            if _EXEMPT_MARK in line_text:
+            # 检查 except 语句区间（lineno..end_lineno）内**任何一行**含豁免标记：
+            # ExceptHandler.end_lineno 是块尾（body 末行），标记通常加在 except 头行；
+            # 多行 except 标记可能加在最后物理行——区间扫描兜底两者。
+            head = max(1, node.lineno)
+            tail = min(len(lines), node.end_lineno or node.lineno)
+            if any(_EXEMPT_MARK in lines[i - 1] for i in range(head, tail + 1)):
                 continue
             out.append((str(py.relative_to(SRC)), node.lineno, lines[node.lineno - 1].strip()[:90]))
     return out

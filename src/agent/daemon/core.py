@@ -21,10 +21,12 @@ import os
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
 from agent.daemon import task_queue as tq
+from agent.daemon import process_manager as pm
 
 #: agent 仓库根（含 src/ 与 scripts/）：本文件位于 <root>/src/agent/daemon/core.py
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -149,12 +151,17 @@ class WriterDaemon:
                 print(f"[daemon] 清除陈旧停止标志（先于本次启动，已忽略）：{flag}")
 
     def _recover_orphans(self) -> None:
-        """启动时把遗留 running 任务标记 failed（上一次 daemon 崩溃的残留）。"""
+        """启动时恢复遗留任务（阶段 1：先杀后标/重新接管 + 锁自愈）。
+
+        取代旧的 ``interrupt_orphans``（只标 failed 不杀进程——遗留孤儿会继续写、
+        与新任务抢锁）。现委托 ProcessManager.recover_running：
+        pid 存活且心跳新鲜 → 重新接管；孤儿进程 → 杀树 + 标记；进程已死 → 标记 + 锁清。
+        """
         for root in self.roots:
             for project in self._projects_under(root):
-                n = tq.interrupt_orphans(project)
+                n = pm.recover_running(project)
                 if n:
-                    print(f"[daemon] 恢复：{project.name} 有 {n} 个中断任务已标记 failed")
+                    print(f"[daemon] 恢复：{project.name} 处理 {n} 个遗留 running 任务（先杀后标/接管）")
 
     def _projects_under(self, root: Path) -> list[Path]:
         """root 下所有像小说项目的子目录（含 .state）。"""
@@ -224,7 +231,16 @@ class WriterDaemon:
 
         self._child = proc
         self._child_task = task
-        tq.update_task(project_dir, task["task_id"], pid=proc.pid)
+        # 进程管理（阶段 1）：记录超时阈值 / 锁归属 / 初始心跳
+        tq.update_task(
+            project_dir, task["task_id"],
+            pid=proc.pid,
+            max_runtime_s=pm.resolve_max_runtime(
+                task["command"], list(task.get("argv") or [])
+            ),
+            lock_owned=task["command"] in tq.writer_commands(),
+            heartbeat_at=datetime.now().isoformat(timespec="seconds"),
+        )
         print(f"[daemon] 执行任务 {task['task_id']}（{task['command']}，pid={proc.pid}）")
 
     def _poll_child(self) -> None:
@@ -232,8 +248,30 @@ class WriterDaemon:
         task = self._child_task
         project_dir = Path(task["project_dir"])
 
-        # 停止请求：杀进程树（轮询任务文件，CLI/Web 写入的 stop_requested）
+        # 任务级监督心跳（daemon 每轮刷新 = 存活证明；崩溃恢复据此区分孤儿）
+        tq.update_task_heartbeat(project_dir, task["task_id"])
+
         current = tq.get_task(project_dir, task["task_id"]) or {}
+
+        # ① 超时熔断：运行超过 max_runtime_s → 强制终止（防僵尸任务堵死全局串行队列）
+        if pm.should_timeout(current):
+            print(
+                f"[daemon] 任务 {task['task_id']} 超时"
+                f"（>{current.get('max_runtime_s')}s），强制终止进程树"
+            )
+            pid = self._child.pid
+            self._child = None
+            self._child_task = None
+            if self._log_fh:
+                self._log_fh.close()
+                self._log_fh = None
+            pm.force_terminate(
+                project_dir, task["task_id"], pid,
+                note="超时熔断（ProcessManager）", status=tq.STATUS_FAILED,
+            )
+            return
+
+        # ② 停止请求：杀进程树（轮询任务文件，CLI/Web 写入的 stop_requested）
         if current.get("stop_requested") and self._child.returncode is None:
             print(f"[daemon] 收到停止请求：{task['task_id']}，终止进程树 pid={self._child.pid}")
             kill_process_tree_pid(self._child.pid)

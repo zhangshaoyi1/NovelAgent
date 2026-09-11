@@ -386,26 +386,15 @@ run_manager = RunManager()
 
 
 def writer_commands() -> set[str]:
-    """会向项目落盘的写命令名单——从 ``@command(writes=True)`` 注册表推导。
+    """会向项目落盘的写命令名单——单一真相源：daemon.task_queue.writer_commands
+    （从 ``@command(writes=True)`` 注册表推导，注册表失败时保守名单兜底）。
 
-    历史教训（2026-09-07 五灵破归档事故）：此前此处硬编码 ``{"autowrite",
-    "rewrite"}``，与 CLI 侧真正建锁的命令**完全错位**——CLI 的 rewrite 从不建
-    ``rewrite.lock``，预检恒判「空闲」形同虚设；而真正会建锁的 ``write`` 反而不在
-    名单里。现改为单一真相源：命令在注册表声明 ``writes=True``，Web 自动跟随。
+    历史教训（2026-09-07 五灵破归档事故）：曾硬编码名单与 CLI 建锁命令错位，
+    预检形同虚设；现统一走注册表推导（R4 红线：daemon 不 import cli，读 WRITE_COMMANDS）。
     """
-    try:
-        import agent.cli.commands  # noqa: F401  # 触发 @command 注册副作用
-    except Exception:  # noqa: BLE001 - 注册表加载失败时退回保守名单
-        pass  # noqa: SILENT_DEGRADE
-    try:
-        from agent.core.engine.command_router import WRITE_COMMANDS
+    from agent.daemon import task_queue as tq
 
-        if WRITE_COMMANDS:
-            return set(WRITE_COMMANDS)
-    except Exception:  # noqa: BLE001
-        pass  # noqa: SILENT_DEGRADE
-    # 兜底：宁可多拦，不可漏拦
-    return {"autowrite", "write", "rewrite", "compose", "rollback"}
+    return tq.writer_commands()
 
 
 def is_write_command(name: str) -> bool:

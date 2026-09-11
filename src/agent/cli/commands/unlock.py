@@ -87,7 +87,7 @@ def unlock(
             console.print(f"[cyan]陈旧锁[/cyan] {lock_path.name}：持有者已死（{holder}）")
         try:
             lock_path.unlink()
-        except (OSError, SystemExit):
+        except (OSError, SystemExit):  # noqa: SILENT_DEGRADE - 降级为改名挪走（见下）
             # WorkBuddy safe-delete 批量护栏拦删除时抛的是 ``SystemExit`` 而非
             # ``OSError``（2026-09-11 事故）——人工解锁命令自己崩掉是最难受的：
             # 它正是事故后的排障入口。降级为「改名挪走」：移动不触发护栏，

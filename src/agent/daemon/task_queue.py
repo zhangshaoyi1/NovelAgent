@@ -126,6 +126,10 @@ def submit_task(
         "env_extra": dict(env_extra or {}),
         "status": STATUS_QUEUED,
         "stop_requested": False,
+        # ---- 进程管理（阶段 1：ProcessManager）----
+        "max_runtime_s": None,    # 超时熔断阈值（daemon spawn 时按命令/--max-time 解析）
+        "heartbeat_at": None,     # daemon 最后监督心跳（崩溃恢复依据）
+        "lock_owned": False,      # 是否持有项目写锁（强杀后锁自愈依据）
     }
     path = tasks_root(project_dir) / "pending" / f"{task['task_id']}.json"
     _atomic_write_json(path, task)
@@ -308,6 +312,30 @@ def write_heartbeat(root: Path | str, pid: int) -> None:
         heartbeat_path(root),
         {"pid": pid, "ts": time.time(), "updated_at": datetime.now().isoformat(timespec="seconds")},
     )
+
+
+def update_task_heartbeat(project_dir: Path | str, task_id: str) -> None:
+    """刷新 running 任务的任务级心跳（daemon 每轮监督即视为任务存活证明）。"""
+    update_task(project_dir, task_id, heartbeat_at=datetime.now().isoformat(timespec="seconds"))
+
+
+def writer_commands() -> set[str]:
+    """会向项目落盘的写命令名单（daemon 侧）。
+
+    单一真相源：读 ``core.engine.command_router.WRITE_COMMANDS``（命令在
+    注册表声明 ``writes=True`` 自动收录）。红线约束：daemon 属业务层，
+    不得 import ``agent.cli.commands`` 触发注册副作用——若 WRITE_COMMANDS
+    为空（CLI 注册未发生）则退回保守名单；**CLI 侧新增写命令时若此处
+    未收录，需同步补入保守名单**（宁可多拦，不可漏拦）。
+    """
+    try:
+        from agent.core.engine.command_router import WRITE_COMMANDS
+
+        if WRITE_COMMANDS:
+            return set(WRITE_COMMANDS)
+    except Exception:  # noqa: BLE001, SILENT_DEGRADE - 注册表读取失败退回保守名单
+        pass
+    return {"autowrite", "write", "rewrite", "compose", "rollback"}
 
 
 def read_heartbeat(root: Path | str) -> dict | None:
