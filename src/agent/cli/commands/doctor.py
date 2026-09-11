@@ -46,6 +46,7 @@ def doctor(
       - db：world/characters/sublines/relations/foreshadows 的存在性与 frontmatter 可解析性
       - rag：.state/rag/index.json 是否存在（长篇章节缺失则建议 reindex）
       - deps：LLM 依赖配置完整性（复用 GatewayAdapter.preflight，不联网；--ping 才探测端点）
+      - runtime：运行时生效性（代码指纹 / 生效档位 / shim 删除语义 / 「跑旧代码」的在途进程）
 
     --json 输出字段：success(恒为 True，表示体检已执行) / healthy / checks[]
     """

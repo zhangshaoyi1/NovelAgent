@@ -200,9 +200,12 @@ def test_agent_service_evaluate_offline(tmp_path, monkeypatch):
     svc = AgentService(proj, tier="auto")
     out = svc.run_evaluate(no_rollback=False)
     report = out["report"]
-    # 伏笔回收率 0 < 0.9 → 不达标 → 自动回溯
+    # 2026-09-11（P0-A）：evaluate() 不再让「软维度 / 不可信证据 / 全局结构问题」
+    # 直连不可逆回滚（旧实现只看 overall_pass 布尔即回滚删章）。本用例（离线评分降级）
+    # 的裁决落在 LOCAL_REPAIR / RETRY_EVAL 一类非回滚动作 → 不回滚，并记录说明。
     assert report["overall_pass"] is False
-    assert report["rolled_back"] is True
+    assert report["rolled_back"] is False
+    assert any("未触发回滚" in n for n in report.get("notes", []))
     # 评测回归已记录
     assert svc.eval_harness.latest() is not None
     # 看板含追踪汇总

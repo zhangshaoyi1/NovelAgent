@@ -65,11 +65,56 @@ def _full_name(node: ast.AST) -> tuple[str, str] | None:
     return None
 
 
-def _is_delete_call(node: ast.Call) -> bool:
+def _collect_import_aliases(tree: ast.AST) -> tuple[dict[str, str], set[str]]:
+    """收集本文件的删除入口别名表（消除 ``from os import remove`` 类盲区）。
+
+    Returns:
+        ``(module_alias, imported_funcs)``：
+        - ``module_alias``：本地模块名 → 真实模块名（``import shutil as sh`` → ``{"sh": "shutil"}``）；
+        - ``imported_funcs``：``from os import remove`` / ``from shutil import rmtree as rt``
+          引入的**本地函数名**集合。
+    """
+    module_alias: dict[str, str] = {}
+    imported_funcs: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for a in node.names:
+                local = a.asname or a.name.split(".")[0]
+                module_alias[local] = a.name.split(".")[0]
+        elif isinstance(node, ast.ImportFrom):
+            mod = (node.module or "").split(".")[0]
+            if mod not in ("os", "shutil"):
+                continue
+            for a in node.names:
+                if (mod, a.name) in _DELETE_FULL_NAMES:
+                    imported_funcs.add(a.asname or a.name)
+    return module_alias, imported_funcs
+
+
+def _is_delete_call(
+    node: ast.Call,
+    module_alias: dict[str, str] | None = None,
+    imported_funcs: set[str] | None = None,
+) -> bool:
+    """是否删除调用。
+
+    识别三类（2026-09-11 补别名盲区）：
+    ① 全限定名 ``os.remove`` / ``os.unlink`` / ``os.rmdir`` / ``shutil.rmtree``
+       （owner 先经 ``module_alias`` 归一，故 ``sh.rmtree`` / ``o.remove`` 也命中）；
+    ② ``from os import remove`` / ``from shutil import rmtree as rt`` 引入的本地名直调；
+    ③ 任意对象上的 ``.unlink()`` / ``.rmdir()``（``Path.unlink`` 等）。
+    注：裸 ``.remove()`` 不判（``list.remove`` 是常见非删除语义）。
+    """
+    module_alias = module_alias or {}
+    imported_funcs = imported_funcs or set()
     func = node.func
+    if isinstance(func, ast.Name):
+        return func.id in imported_funcs
     full = _full_name(func)
-    if full and full in _DELETE_FULL_NAMES:
-        return True
+    if full is not None:
+        owner = module_alias.get(full[0], full[0])
+        if (owner, full[1]) in _DELETE_FULL_NAMES:
+            return True
     return isinstance(func, ast.Attribute) and func.attr in _DELETE_METHOD_NAMES
 
 
@@ -117,11 +162,16 @@ def _collect_unguarded_deletes(root: Path = SRC) -> list[str]:
         except SyntaxError:  # pragma: no cover - 语法错误由 lint/编译流程兜住
             continue
 
+        # 2026-09-11：先建本文件的 import 别名表，再判定删除调用
+        # （否则 ``from os import remove`` / ``import shutil as sh`` 会漏检）。
+        module_alias, imported_funcs = _collect_import_aliases(tree)
         ancestors: list[ast.AST] = []
 
         def walk(node: ast.AST) -> None:
             ancestors.append(node)
-            if isinstance(node, ast.Call) and _is_delete_call(node):
+            if isinstance(node, ast.Call) and _is_delete_call(
+                node, module_alias, imported_funcs
+            ):
                 if _is_guarded(node, ancestors, lines) is None:
                     try:
                         rel = py.relative_to(root).as_posix()
@@ -195,6 +245,41 @@ def test_static_check_actually_detects_unguarded_delete(tmp_path: Path) -> None:
         encoding="utf-8",
     )
     assert _collect_unguarded_deletes(tmp_path) == []
+
+
+def test_static_check_detects_import_aliases(tmp_path: Path) -> None:
+    """自检（2026-09-11 补盲区）：import 别名形式的删除调用同样必须被抓住。
+
+    原判据只认全限定名，``from os import remove`` / ``import shutil as sh`` /
+    ``from shutil import rmtree as rt`` 三类写法全部漏检——红线形同虚设。
+    """
+
+    def _scan(name: str, code: str) -> list[str]:
+        d = tmp_path / name
+        d.mkdir()
+        (d / "m.py").write_text(code, encoding="utf-8")
+        return _collect_unguarded_deletes(d)
+
+    # ① from os import remove → 裸名直调
+    assert _scan("c1", "from os import remove\n\ndef f(p):\n    remove(p)\n") == [
+        "m.py:4  remove(p)"
+    ]
+    # ② from shutil import rmtree as rt → 别名单调
+    assert _scan("c2", "from shutil import rmtree as rt\n\ndef f(p):\n    rt(p)\n") == [
+        "m.py:4  rt(p)"
+    ]
+    # ③ import shutil as sh → 模块别名属性调用
+    assert _scan("c3", "import shutil as sh\n\ndef f(p):\n    sh.rmtree(p)\n") == [
+        "m.py:4  sh.rmtree(p)"
+    ]
+    # ④ 非删除同名调用（list.remove）不得误报
+    assert _scan("c4", "def f(xs):\n    xs.remove(1)\n") == [], "list.remove 不是删除入口"
+    # ⑤ 别名调用已受守卫 → 不报
+    assert _scan(
+        "c5",
+        "from os import remove\n\ndef f(p):\n    try:\n        remove(p)\n"
+        "    except (OSError, SystemExit):\n        pass\n",
+    ) == [], "受守卫的别名删除不得误报"
 
 
 # ============================================================

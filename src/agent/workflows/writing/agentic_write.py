@@ -612,6 +612,24 @@ class AgenticWriteWorkflow:
         # 修复（P0，2026-08-21）：M5 实例的 state_machine 需先从磁盘 load()，
         # 否则 _load_context 里 progress 恒空 → chapter_num 恒为 1、支线恒取第一条。
         m5.state_machine.load()
+        # ---- F18.4 M18 未完成草稿检测（能力对账修复 2026-09-11）：与 M5 同位 ----
+        # 只在已进入 WRITING（非首次进入）时检测；命中则告警不交互阻塞（自动流水线无人应答）。
+        try:
+            if m5.state_machine.state == State.WRITING:
+                from agent.workflows.evaluation.m18_recovery import check_draft_on_startup
+
+                _draft_decision = check_draft_on_startup(
+                    self.project_dir, console=self.console, interactive=False
+                )
+                if _draft_decision.has_draft and _draft_decision.draft is not None:
+                    self.console.print(
+                        f"[yellow]⚠ 检测到未完成草稿（第 "
+                        f"{_draft_decision.draft.chapter_num} 章），续写将覆盖之；"
+                        f"如需恢复请先运行 novel-agent draft-status -d "
+                        f"{self.project_dir}[/yellow]"
+                    )
+        except Exception:  # noqa: BLE001 - 检测失败不阻断写章
+            pass  # noqa: SILENT_DEGRADE
         ctx = m5._load_context()
 
         # F-8：章号锚定（见 run() docstring）。覆盖 ctx 后同步重取前情
@@ -624,6 +642,21 @@ class AgenticWriteWorkflow:
                 pass  # noqa: SILENT_DEGRADE
 
         task = self._build_task(ctx)
+
+        # ---- F-E2.2 题材套路动态注入（能力对账修复 2026-09-11）----
+        # 原实现只在 M5 路径读/清（m5_write_chapter.py:341/459）→ agentic 路径两者皆无，
+        # CLI ``inject_genre`` 注入的题材套路对 autowrite 完全无效（P2-1 哑火）。
+        # 此处补接线，与 M5 同源；读取失败降级不阻断。
+        try:
+            _tropes_text = m5._collect_injected_tropes(ctx)
+        except Exception:  # noqa: BLE001 - 读取失败不影响写作
+            _tropes_text = ""  # noqa: SILENT_DEGRADE
+        if _tropes_text:
+            task = (
+                task
+                + "\n\n# 题材套路（本次运行显式注入，请自然融入，不要生硬堆砌）\n"
+                + _tropes_text
+            )
 
         # 针对性重写提示（由 Pipeline 回溯闭环传入）：把全书体检未达标项
         # 编译成 Writer 可读的修正要求，避免盲目重写导致反复不达标。
@@ -678,6 +711,25 @@ class AgenticWriteWorkflow:
         if revision_attempts > 0:
             self._emit_substage("revise", ctx["chapter_num"])
 
+        # ---- F18.4 M18 草稿保存（能力对账修复 2026-09-11）----
+        # 原实现只在**废弃**的 M5 入口调用（m5_write_chapter.py:367）→ agentic 路径
+        # 生成后崩溃/中断无草稿可恢复，长章（12~15 分钟）只能整章重跑。
+        # 此处补接线，与 M5 同位（生成后、落盘前）；失败降级不阻断。
+        draft_mgr = None
+        try:
+            from agent.workflows.evaluation.m18_recovery import DraftManager
+
+            draft_mgr = DraftManager(self.project_dir)
+            draft_mgr.save_draft(
+                chapter_num=ctx["chapter_num"],
+                subline_id=str(ctx.get("subline_id", "")),
+                text=text,
+            )
+        except Exception as e:  # noqa: BLE001 - 草稿保存失败不阻断写章
+            self.console.print(
+                f"[yellow]⚠ 草稿保存失败（不影响本章产出）：{e}[/yellow]"
+            )  # noqa: SILENT_DEGRADE
+
         # 落盘（复用 M5 方法，保证产物兼容）
         title = m5._extract_title(text, ctx)
         # 标题唯一性保障（与 M5 同源）：占位/重复标题就地重生，不依赖整章重写
@@ -692,6 +744,15 @@ class AgenticWriteWorkflow:
 
         word_count = len(re.sub(r"\s", "", text))
         evidence_chain = m5._build_evidence_chain(ctx)
+        # ---- F-E4.3 证据链源校验（能力对账修复 2026-09-11）----
+        # 原实现只在废弃 M5 入口调用（m5_write_chapter.py:404）→ agentic 路径
+        # evidence_chain.missing_sources 恒空；frontmatter 引用不存在的源文件也无告警。
+        try:
+            evidence_chain = m5._validate_evidence(evidence_chain)
+        except Exception as e:  # noqa: BLE001 - 校验失败不阻断落盘
+            self.console.print(
+                f"[yellow]⚠ 证据链校验失败（跳过，不影响落盘）：{e}[/yellow]"
+            )  # noqa: SILENT_DEGRADE
         chapter_file = m5._save_chapter(
             ctx,
             text,
@@ -702,6 +763,20 @@ class AgenticWriteWorkflow:
             evidence_chain,
         )
         m5._update_progress(ctx)
+        # ---- F18.4 M18 清除草稿（能力对账修复 2026-09-11）----
+        # 章节已成功持久化 → 草稿使命完成；失败降级不阻断（draft-status 可手动清理）。
+        if draft_mgr is not None:
+            try:
+                draft_mgr.clear_draft()
+            except Exception as e:  # noqa: BLE001
+                self.console.print(f"[yellow]⚠ 草稿清理失败：{e}[/yellow]")  # noqa: SILENT_DEGRADE
+        # ---- F-E2.2 生成后清除运行时注入的套路（能力对账修复 2026-09-11）----
+        # 与 M5 同源：套路是「运行期上下文」，用毕即清，避免污染后续章节。
+        try:
+            if m5._injected_store.get():
+                m5._injected_store.clear()
+        except Exception:  # noqa: BLE001 - 清理失败不影响产出
+            pass  # noqa: SILENT_DEGRADE
         # ---- G15 章后归档 hook（能力对账修复 2026-09-11）：与 M5.run() 同位接线。
         # 此前唯一调用点在架构红线禁跑的废弃 M5 入口内 → ledger.json 永不落盘，
         # 上一章动态状态断供（五灵破 ch181/182 章间矛盾机制性根因）。

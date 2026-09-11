@@ -175,9 +175,11 @@ class TestBackwardCompat:
             "coherence", "连贯性", 88.0, 85.0, ">=", False, "llm",
             soft_margin=5.0, scope="window",
         )
+        # 2026-09-11：HA-Eval L4 新增 confidence / trustworthy（只增不删）
         assert set(r.to_dict()) == {
             "name", "label", "value", "threshold", "direction",
             "required", "source", "soft_margin", "scope", "passed",
+            "confidence", "trustworthy",
         }
 
     def test_positional_construction_still_works(self):

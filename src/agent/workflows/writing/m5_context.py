@@ -195,6 +195,22 @@ class M5ContextMixin:
 
                 _script = load_payoff_script(self.project_dir, enabled=True)
                 _payoff_task, _emotion_target = chapter_payoff(_script, chapter_num)
+                # P2-3（2026-09-11）：爽点注入默认开，但剧本只由手动 `payoff-plan` 生成
+                # → 未跑过该命令的项目上「静默空转」。此处告警**一次**（类级去重防刷屏）。
+                if not (_script.get("chapters") or []):
+                    _cls = type(self)
+                    if not getattr(_cls, "_payoff_empty_warned", False):
+                        _cls._payoff_empty_warned = True
+                        try:
+                            _c = getattr(self, "console", None)
+                            if _c is not None:
+                                _c.print(
+                                    "[yellow]⚠ 爽点注入已开启，但 .state/payoff_script.json "
+                                    "为空/缺失 —— 本章无爽点剧本（静默空转）。如需启用请运行 "
+                                    "novel-agent payoff-plan[/yellow]"
+                                )
+                        except Exception:  # noqa: BLE001 - 告警失败不影响写作
+                            pass  # noqa: SILENT_DEGRADE
             except Exception as e:  # noqa: BLE001 - 剧本读取失败降级为空
                 degrade("m5.context.payoff", "爽点剧本/情绪目标读取失败，降级为空", e)
                 pass

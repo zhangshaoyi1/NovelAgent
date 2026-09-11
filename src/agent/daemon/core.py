@@ -114,6 +114,22 @@ class WriterDaemon:
             self._recover_orphans()
         except BaseException:  # noqa: BLE001 - 启动阶段异常不致命
             self._log_crash()  # noqa: SILENT_DEGRADE - 落盘留痕后继续启动
+        # 设施③（2026-09-11）：登记本进程代码指纹，并提示「仍在跑旧代码」的在途进程——
+        # 把「改了 .py 以为生效」的隐式假设变成可查事实（doctor 亦可读取该记录）。
+        try:
+            from agent.core.infra.runtime_selfcheck import (
+                format_fingerprint,
+                remember_process,
+                stale_running_processes,
+            )
+
+            for root in self.roots:
+                for msg in stale_running_processes(root):
+                    self._append_runtime_log(root, f"⚠ {msg}")
+                remember_process(root, "daemon")
+                self._append_runtime_log(root, f"daemon 启动 {format_fingerprint()}")
+        except BaseException:  # noqa: BLE001 - 自检失败不影响 daemon 启动
+            pass  # noqa: SILENT_DEGRADE
         while True:
             try:
                 for root in self.roots:
@@ -155,6 +171,21 @@ class WriterDaemon:
             print(text, flush=True)
         except BaseException:  # noqa: BLE001 - 记录失败也绝不冒泡
             pass  # noqa: SILENT_DEGRADE - 记录失败也绝不冒泡
+
+    def _append_runtime_log(self, root: Path, message: str) -> None:
+        """把运行时生效性告警写入 ``<root>/.daemon/runtime.log``（绝不再抛）。
+
+        与 ``crash.log`` 分离：这是「改动未生效 / 跑旧代码」的可查痕迹，
+        不与「进程崩了」混淆。
+        """
+        try:
+            log_path = Path(root) / ".daemon" / "runtime.log"
+            log_path.parent.mkdir(parents=True, exist_ok=True)
+            stamp = datetime.now().isoformat(timespec="seconds")
+            with open(log_path, "a", encoding="utf-8") as fh:
+                fh.write(f"[{stamp}] {message}\n")
+        except (OSError, SystemExit):
+            pass  # noqa: SILENT_DEGRADE - 日志写失败不得影响 daemon 启动
 
     def _stop_flagged(self) -> bool:
         return any(tq.daemon_stop_flag(r).exists() for r in self.roots)

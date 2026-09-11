@@ -213,7 +213,12 @@ def test_to_dict_summary_field() -> None:
                 "escalated", "escalated_reason", "repair", "notes", "appeal",
                 "golden_three", "ai_flavor", "padding"):
         assert key in d, f"既有键 {key} 必须保留（只增不删）"
-    assert len(d) == 14, "既有 13 键 + 新增 summary = 14"
+    # 2026-09-11：HA-Eval L4 分级新增 5 键（gate_decision / trustworthy /
+    # hard_failed / soft_failed / evidence_validation_failed）→ 14 + 5 = 19
+    for key in ("gate_decision", "trustworthy", "hard_failed",
+                "soft_failed", "evidence_validation_failed"):
+        assert key in d, f"分级键 {key} 必须存在（只增不删）"
+    assert len(d) == 19, "既有 14 键 + HA-Eval L4 分级 5 键 = 19"
 
 
 # ============================================================

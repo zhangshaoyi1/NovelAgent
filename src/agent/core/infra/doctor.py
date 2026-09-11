@@ -24,6 +24,7 @@ from typing import Any
 import frontmatter
 
 from agent.core.engine.state_machine import State
+from agent.core.infra.runtime_selfcheck import runtime_checks
 
 @dataclass
 class CheckItem:
@@ -142,6 +143,7 @@ class Doctor:
         checks += self._check_db()
         checks += self._check_rag(ping=ping)
         checks += self._check_deps(ping=ping)
+        checks += self._check_runtime()  # 设施③（2026-09-11）：运行时生效性自检
         return checks
 
     @staticmethod
@@ -553,6 +555,31 @@ class Doctor:
             return bool(text)
         except Exception:  # noqa: BLE001
             return False
+
+    # ============================================================
+    # 运行时生效性（设施③，2026-09-11）
+    # ============================================================
+    def _check_runtime(self) -> list[CheckItem]:
+        """检查「本进程实际生效」的运行时状态（代码指纹 / 档位 / shim / 陈旧进程）。
+
+        动机：2026-09-10~11 两天内 5 次踩「改动没生效」——改 .py 不影响已启动进程、
+        档位 timeout 与上游脱节、shim 语义随宿主变化。这些全是隐式假设，本检查把
+        它们变显式可查（详见 :mod:`agent.core.infra.runtime_selfcheck`）。
+        """
+        try:
+            items = runtime_checks(self.project_dir)
+        except Exception as e:  # noqa: BLE001 - 自检失败不得让 doctor 崩溃
+            return [CheckItem("runtime", "warn", f"运行时自检执行失败：{e}")]  # noqa: SILENT_DEGRADE
+
+        return [
+            CheckItem(
+                module="runtime",
+                status=it.get("status", "info"),
+                detail=it.get("detail", ""),
+                fix_command=it.get("fix", ""),
+            )
+            for it in items
+        ]
 
 
 def doctor_to_dict(checks: list[CheckItem]) -> list[dict[str, Any]]:

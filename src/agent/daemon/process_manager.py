@@ -163,7 +163,8 @@ def cleanup_stale_lock(project_dir: Path | str, pid: int) -> bool:
             return True
         except (OSError, SystemExit):  # noqa: SILENT_DEGRADE - 改名也失败则以实际存在性为准
             return not lock.exists()
-    return False
+    # 注：try/except 双分支均已 return，原先此处的 `return False` 不可达
+    #（2026-09-11 死代码清理）
 
 
 def force_terminate(

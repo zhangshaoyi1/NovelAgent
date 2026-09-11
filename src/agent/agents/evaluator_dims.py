@@ -303,11 +303,18 @@ class _EvaluatorDimensionsMixin:
         # ---- HA-Eval L3：坏数据校验（进入硬门禁前的最后一道）----
         # 原实现只防「LLM 没输出」（给安全默认值），不防「LLM 输出了坏值」（直接采信）。
         # 这里把可疑分数降级为 confidence=0，由 L4 处置层保证"不可信即不处置"。
+        validation_failed = False
         try:
             DimensionValidator().validate_batch(dims)
         except Exception as e:  # noqa: BLE001 - 校验本身异常不得阻断体检（G3 哲学）
+            # HA-Eval L4（2026-09-11）：校验器自身失效 ⇒ 无法证明任何分数可信。
+            # 原实现「按原值判定」让**未经校验的坏数据直通硬门禁**（可触发删章重写）；
+            # 现标记整份报告证据不可信 → 闸门裁决 recheck（只复评，不处置）。
+            validation_failed = True
             if self.console is not None:
-                self.console.print(f"[yellow]⚠ 维度证据校验失败，按原值判定：{e}[/yellow]")  # noqa: SILENT_DEGRADE
+                self.console.print(
+                    f"[yellow]⚠ 维度证据校验失败，本报告标记为不可信（不触发处置）：{e}[/yellow]"
+                )  # noqa: SILENT_DEGRADE
 
         failed = [d for d in dims if not d.passed]
         hard_failed = [d for d in failed if d.required]
@@ -331,7 +338,12 @@ class _EvaluatorDimensionsMixin:
                     norm.append(max(0.0, 1.0 - d.value / d.threshold))
         score = (sum(norm) / len(norm)) * 100 if norm else 100.0
 
-        report = NovelHealthReport(overall_pass=overall, score=score, dimensions=dims)
+        report = NovelHealthReport(
+            overall_pass=overall,
+            score=score,
+            dimensions=dims,
+            evidence_validation_failed=validation_failed,
+        )
         # ---- HA-Eval L5：维度级审计落盘（只追加、不阻断；失败静默降级）----
         try:
             from agent.core.quality.audit import QualityAuditStore, record_from_report

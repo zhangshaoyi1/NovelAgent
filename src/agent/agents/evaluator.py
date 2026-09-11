@@ -340,9 +340,42 @@ class EvaluatorAgent(
 
     # ---------------------------------------------------------------- 主入口
     def evaluate(self) -> NovelHealthReport:
-        """单次全书体检（不自动重写；需要时回退并返回 RepairPlan）。"""
+        """单次全书体检（不自动重写；需要时回退并返回 RepairPlan）。
+
+        HA-Eval L4 守门（2026-09-11）：本入口原实现为「``overall_pass=False``
+        即 ``trigger_rollback()``（**不可逆**）」，**绕过**了 :class:`DispositionPolicy`
+        与 :class:`DispositionGate`——单条软维度或不可信分数即可直连删章重写。
+        这是 2026-09-10~11「写作反复停 / 67% 重写率」的直接来源之一。
+
+        现与 :meth:`evaluate_with_repair` 对齐：**只有「硬指标 + 证据可信」的失败**
+        才允许触发回滚，且必须过守门器；软维度失败（如迷爱看单维触底）与证据不可信
+        （confidence=0）一律只告警、不处置。
+        """
         report = self._evaluate_once()
         if report.overall_pass or not self.auto_rollback:
+            return report
+        # ---- HA-Eval L4：不可逆动作必须先过声明式处置层（与 evaluate_with_repair 同源）----
+        failed = [d for d in report.dimensions if not d.passed]
+        decision = self._disposition.plan(failed)
+        if decision.action is not Action.ROLLBACK_REWRITE:
+            # 非回滚裁决：可逆路径（LOCAL_REPAIR/CONTINUE）、证据不可信（RETRY_EVAL）、
+            # 全局结构问题（ESCALATE，末窗回滚修不到）。后两者须让上层感知，
+            # 避免「静默不回滚」——上层可据此提示人工介入。
+            if decision.action is Action.ESCALATE:
+                report.escalated = True
+                report.escalated_reason = decision.reason
+            report.notes.append(
+                f"未触发回滚（裁决={decision.action.value}）：{decision.reason}"
+            )
+            return report
+        auth = self._gate.authorize(
+            decision,
+            chapters=self.rollback_window,
+            budget_remaining=self.budget_remaining_tokens,
+            dry_run=self.disposition_dry_run,
+        )
+        if not auth.ok:
+            report.notes.append(f"回滚被守门器拒绝：{auth.reason}")
             return report
         plan = self.trigger_rollback()
         if plan is None:

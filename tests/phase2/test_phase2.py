@@ -281,18 +281,13 @@ def test_evaluator_overall_pass_with_safe_defaults(tmp_path):
 
 
 def test_evaluator_auto_rollback_on_failure(tmp_path):
-    # 8 章 + 伏笔回收率 0（2 已埋、0 回收）→ 不达标 → 自动回溯最近 5 章
-    proj = _make_project(
-        tmp_path,
-        n_chapters=8,
-        foreshadows=(
-            "| ID | 内容 | 埋设 | 预期 | 状态 |\n|---|---|---|---|---|\n"
-            "| F-01 | a | ch001 | ch010 | 已埋 |\n"
-            "| F-02 | b | ch002 | ch020 | 已埋 |\n"
-        ),
-    )
-    # 强制 recycle 不达标：score_fn 不影响 recycle（确定性），但让其他维度也通过，
-    # 仅靠 recycle<0.9 触发回溯。
+    """可信的**硬指标**失败 → evaluate() 触发不可逆回滚（端到端链路）。
+
+    2026-09-11（P0-A）：evaluate() 原先「``overall_pass=False`` 即回滚」，绕过了
+    DispositionPolicy/DispositionGate。现与 evaluate_with_repair 对齐——只有
+    「硬指标 + 证据可信」失败才回滚。本用例用注入报告直接锁定该放行路径。
+    """
+    proj = _make_project(tmp_path, n_chapters=8)
     ev = EvaluatorAgent(
         proj,
         rollback_window=5,
@@ -301,6 +296,14 @@ def test_evaluator_auto_rollback_on_failure(tmp_path):
             "agent.workflows.evaluation.m10_rollback", fromlist=["M10RollbackWorkflow"]
         ).M10RollbackWorkflow(proj),
     )  # 默认 auto_rollback=True
+
+    # 可信的硬指标失败（count 维，required=True，confidence 恒 1.0）
+    hard = DimensionResult(
+        "character_stability_high", "角色稳定性", 2, 0, "<=", True, "computed",
+    )
+    blocked = NovelHealthReport(overall_pass=False, score=50.0, dimensions=[hard])
+    ev._evaluate_once = lambda: blocked  # type: ignore[method-assign]
+
     rep = ev.evaluate()
     assert rep.overall_pass is False
     assert rep.rolled_back is True
@@ -319,6 +322,40 @@ def test_evaluator_auto_rollback_on_failure(tmp_path):
     sm = StateMachine(proj)
     sm.load()
     assert sm.progress["total_written"] == 3
+
+
+def test_evaluator_no_rollback_on_book_ending_scope(tmp_path):
+    """全局结构失败（scope=book_ending）→ ESCALATE 上报人工，**不做末窗回滚**。
+
+    2026-09-11（P0-A）：旧实现 evaluate() 不看作用域、一律回滚，会白删末窗章节
+    （结构问题末窗回滚修不到）。新实现交 DispositionPolicy 裁决，与
+    evaluate_with_repair 同源。
+    """
+    # 8 章 + 伏笔回收率 0（2 已埋、0 回收）→ ending_convergence 不达标
+    proj = _make_project(
+        tmp_path,
+        n_chapters=8,
+        foreshadows=(
+            "| ID | 内容 | 埋设 | 预期 | 状态 |\n|---|---|---|---|---|\n"
+            "| F-01 | a | ch001 | ch010 | 已埋 |\n"
+            "| F-02 | b | ch002 | ch020 | 已埋 |\n"
+        ),
+    )
+    ev = EvaluatorAgent(
+        proj,
+        rollback_window=5,
+        rollback_provider=__import__(
+            "agent.workflows.evaluation.m10_rollback", fromlist=["M10RollbackWorkflow"]
+        ).M10RollbackWorkflow(proj),
+    )
+    rep = ev.evaluate()
+    assert rep.overall_pass is False
+    assert rep.rolled_back is False, "全局结构问题不得触发末窗回滚"
+    assert rep.escalated is True, "应上报人工"
+    assert any("未触发回滚" in n for n in rep.notes)
+    # 章节未被删（1..8 全在）
+    remain = sorted(int(p.stem[2:]) for p in (proj / "chapters").glob("ch*.md"))
+    assert remain == [1, 2, 3, 4, 5, 6, 7, 8]
 
 
 def test_evaluator_escalates_when_repair_fails(tmp_path):

@@ -188,19 +188,47 @@ class _PipelineAgentsMixin:
             return True  # noqa: SILENT_DEGRADE - 体检基建失败不阻断写作
         if report is None:
             return True  # noqa: SILENT_DEGRADE - 无报告视为不可判定，放行
-        passed = bool(getattr(report, "overall_pass", False))
+        # ---- HA-Eval L4（2026-09-11）：闸门分级 ----
+        # 原实现「overall_pass=False 即中断整批」把软维度（迷爱看/黄金三章/伏笔等
+        # required=False 的 LLM 评分维）与硬指标一视同仁——单章软维单次 FAIL 就会
+        # 中断整个批次（09-11 事故：爽点密度 38<40 → escalated → 写作停摆）。
+        # 现按四象限裁决（见 NovelHealthReport.gate_decision）：
+        #   block   → 可信失败的**硬指标** → 中断本批（不可放宽）
+        #   warn    → 仅软维度失败         → 告警，继续写作
+        #   recheck → 存在不可信证据       → 只告警，不处置（本入口无复评能力）
+        dims = getattr(report, "dimensions", None) or []
+        failed = [d for d in dims if not getattr(d, "passed", True)]
         score = getattr(report, "score", None)
-        if passed:
+        if hasattr(report, "gate_decision"):
+            gate = report.gate_decision()
+        else:  # 兼容缺该属性的旧报告对象
+            gate = "pass" if bool(getattr(report, "overall_pass", False)) else "block"  # noqa: SILENT_DEGRADE
+        fail_txt = "、".join(
+            f"{d.label}={d.value}" for d in failed[:6]
+        ) or "见报告"
+        if gate == "pass":
             self.console.print(f"[green]✓ 滚动体检通过（得分 {score}）[/green]")
-        else:
-            failed = [
-                f"{d.label}={d.value}"
-                for d in (getattr(report, "dimensions", None) or [])
-                if not getattr(d, "passed", True)
-            ]
+            return True
+        if gate == "block":
             self.console.print(
-                f"[yellow]⚠ 滚动体检未达标（得分 {score}）："
-                f"{'、'.join(failed[:6]) or '见报告'}[/yellow]"
+                f"[yellow]⚠ 滚动体检未达标（硬指标，得分 {score}）：{fail_txt}，中断本批[/yellow]"
             )
-        return passed
+            return False
+        if gate == "recheck":
+            self.console.print(
+                f"[yellow]⚠ 滚动体检判定证据不可信（得分 {score}）：{fail_txt}；"
+                f"本轮只告警不处置，继续写作[/yellow]"
+            )
+            self._emit_failure("eval", f"滚动体检证据不可信：{fail_txt}", severity="warn")
+            return True
+        # warn：仅软维度失败 → 告警，继续写作（不回滚、不中断）
+        soft_txt = "、".join(
+            f"{d.label}={d.value}" for d in failed if not getattr(d, "required", False)
+        ) or fail_txt
+        self.console.print(
+            f"[yellow]⚠ 滚动体检软维度未达标（得分 {score}）：{soft_txt}；"
+            f"仅告警，继续写作（不回滚不中断）[/yellow]"
+        )
+        self._emit_failure("eval", f"滚动体检软维度告警：{soft_txt}", severity="warn")
+        return True
 

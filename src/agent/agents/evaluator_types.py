@@ -73,9 +73,27 @@ class DimensionResult:
     @property
     def passed(self) -> bool:
         # G2：引入容差带 soft_margin，边界合格章节不被误杀；劣质章节（远低于阈值）仍被抓。
+        # 注意：``passed`` 只回答「值是否达标」，是**事实**；是否**可信到能据此处置**
+        # 由 :attr:`trustworthy` / :attr:`credible_failed` 回答（HA-Eval L4）。
         if self.direction == ">=":
             return self.value >= self.threshold - self.soft_margin - 1e-9
         return self.value <= self.threshold + self.soft_margin + 1e-9
+
+    @property
+    def trustworthy(self) -> bool:
+        """本维证据是否可信（confidence>0）。不可信 ⇒ 禁止据此触发任何处置动作。
+
+        与 :attr:`confidence` 同源；确定性 computed 维（无 evidence）恒为 True。
+        """
+        return self.confidence > 0.0
+
+    @property
+    def credible_failed(self) -> bool:
+        """「可信地判失败」——唯一允许触发处置的失败形态（HA-Eval L4 守门依据）。
+
+        ``passed=False`` 但证据不可信（confidence=0）时返回 False，使闸门只复评、不处置。
+        """
+        return (not self.passed) and self.trustworthy
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -89,6 +107,10 @@ class DimensionResult:
             "soft_margin": self.soft_margin,
             "scope": self.scope,
             "passed": self.passed,
+            # HA-Eval L4（2026-09-11）：证据可信度显式导出——审计/教训落盘/上游消费者
+            # 原来看不到 confidence，导致「不可信判定」在链路中被当成真失败。
+            "confidence": round(self.confidence, 4),
+            "trustworthy": self.trustworthy,
         }
 
 
@@ -139,9 +161,58 @@ class NovelHealthReport:
     padding: Optional[dict] = None        # B6：防注水（重复度 + 信息密度）
     # ---- G7：人话总结层（主理人拍板 1/2：确定性模板拼装，零 LLM；表格前插总结段）----
     summary: Optional[dict] = None
+    # ---- HA-Eval L4（2026-09-11）：证据校验器自身失效标记 ----
+    # True ⇒ 无法证明任何维度分数可信 → 整份报告不可信（闸门裁决 recheck，禁止处置）。
+    evidence_validation_failed: bool = False
 
     def dimension(self, name: str) -> Optional[DimensionResult]:
         return next((d for d in self.dimensions if d.name == name), None)
+
+    # ---- HA-Eval L4 分级裁决（2026-09-11）：把「一个布尔 overall_pass」升级为
+    #      「硬/软 × 可信/不可信」四象限，供闸门决定「是否允许不可逆动作」。 ----
+    @property
+    def trustworthy(self) -> bool:
+        """失败维度是否**全部可信**。任一失败维度 confidence=0 ⇒ False（禁止据此处置）。
+
+        校验器自身失效（``evidence_validation_failed``）时整份报告不可信。
+        """
+        if self.evidence_validation_failed:
+            return False
+        return all(d.trustworthy for d in self.dimensions if not d.passed)
+
+    @property
+    def hard_failed(self) -> list[DimensionResult]:
+        """不可放宽的硬指标失败（required=True）——唯一允许触发回滚的类别。"""
+        return [d for d in self.dimensions if d.required and not d.passed]
+
+    @property
+    def soft_failed(self) -> list[DimensionResult]:
+        """软维度失败（required=False）——只告警/定向修复，不得中断整批。"""
+        return [d for d in self.dimensions if not d.required and not d.passed]
+
+    @property
+    def hard_failed_credible(self) -> list[DimensionResult]:
+        """可信地失败的硬指标（硬指标失败且证据可信）——回滚的充要条件。"""
+        return [d for d in self.dimensions if d.required and d.credible_failed]
+
+    def gate_decision(self) -> str:
+        """闸门分级裁决（字符串常量，便于落盘/展示）：
+
+        - ``"pass"``    无失败维度
+        - ``"block"``   存在**可信失败**的硬指标 ⇒ 允许不可逆动作（回滚/断批）
+        - ``"warn"``    仅软维度可信失败 ⇒ 告警，不中断整批
+        - ``"recheck"`` 存在不可信失败证据（confidence=0）⇒ 只复评，禁止任何处置
+        """
+        if not self.dimensions:
+            return "pass"
+        any_failed = any(not d.passed for d in self.dimensions)
+        if not any_failed:
+            return "pass"
+        if not self.trustworthy:
+            return "recheck"
+        if self.hard_failed:
+            return "block"
+        return "warn"
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -160,6 +231,12 @@ class NovelHealthReport:
             "padding": self.padding,
             # ---- G7（只增不删）：人话总结层 ----
             "summary": self.summary,
+            # ---- HA-Eval L4 分级（只增不删）：闸门裁决 + 失败分类 ----
+            "gate_decision": self.gate_decision(),
+            "trustworthy": self.trustworthy,
+            "hard_failed": [d.name for d in self.hard_failed],
+            "soft_failed": [d.name for d in self.soft_failed],
+            "evidence_validation_failed": self.evidence_validation_failed,
         }
 
     def to_markdown(self) -> str:
