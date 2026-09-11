@@ -245,7 +245,10 @@ def finalize_task(
         _atomic_write_json(dst, task)
         try:
             src.unlink()
-        except OSError:
+        except (OSError, SystemExit):
+            # 同上：这里也必须吞 SystemExit——「改名失败」与「护栏拦删除」可能同时
+            # 发生（例如 src 被外部占用 + 删除已越线），异常逃逸会把 daemon 打死
+            # 并留下 running/ 与 done/ 双份残留。残留本身可被下次 recover 识别。
             pass  # noqa: SILENT_DEGRADE
     return task
 
