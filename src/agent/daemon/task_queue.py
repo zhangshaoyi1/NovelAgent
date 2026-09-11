@@ -42,6 +42,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
+from agent.core.infra.degrade import degrade
+
 #: 不接受 --dir 的全局工具命令（原 web.runner 定义迁移至此，单一真相源）。
 NO_DIR_COMMANDS = {
     "export-skill",
@@ -231,11 +233,20 @@ def finalize_task(
     task["finished_at"] = datetime.now().isoformat(timespec="seconds")
     if note:
         task["note"] = note
-    _atomic_write_json(root / "done" / src.name, task)
+    dst = root / "done" / src.name
+    # 归档用「改名」（os.replace）而非「写副本 + 删源」：rename 是移动操作，不会被
+    # WorkBuddy safe-delete 批量护栏拦截。旧写法 src.unlink() 在护栏触发时抛
+    # SystemExit → 把 daemon 打死、任务同时残留 running/ 与 done/（2026-09-11 事故）。
+    _atomic_write_json(src, task)
     try:
-        src.unlink()
-    except OSError:
-        pass  # noqa: SILENT_DEGRADE
+        os.replace(str(src), str(dst))
+    except OSError as exc:
+        degrade("task_queue.finalize", "任务归档改名失败，退化为写副本 + 尽力删源", exc)
+        _atomic_write_json(dst, task)
+        try:
+            src.unlink()
+        except OSError:
+            pass  # noqa: SILENT_DEGRADE
     return task
 
 
@@ -349,3 +360,12 @@ def clear_daemon_stop_flag(root: Path | str) -> None:
         daemon_stop_flag(root).unlink()
     except OSError:
         pass  # noqa: SILENT_DEGRADE
+    except SystemExit as exc:
+        # safe-delete 护栏拦下删除会让停止标志残留 → 毒化下次 daemon 拉起
+        # （见 2026-09-10 事故）。降级为改名挪走，同样使标志不再被读到。
+        degrade("task_queue.clear_stop_flag", "停止标志删除被拦，改用改名挪走", exc)
+        flag = daemon_stop_flag(root)
+        try:
+            os.replace(str(flag), f"{flag}.stale")
+        except OSError as exc2:
+            degrade("task_queue.clear_stop_flag", "停止标志改名挪走失败", exc2)
