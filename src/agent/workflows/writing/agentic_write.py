@@ -437,6 +437,16 @@ class AgenticWriteWorkflow:
     # ------------------------------------------------------------------
     # 外环 Critic：复用 M5 九项 LLM 审稿作为门禁（与 M5 同等质量基线）
     # ------------------------------------------------------------------
+    def _lessons_focus(self) -> str:
+        """P-1：质检复审重点——上轮体检教训（读取失败降级为空，不影响质检）。"""
+        try:
+            from agent.core.quality.eval_lessons import load_eval_lessons_text
+
+            text = (load_eval_lessons_text(self.project_dir) or "").strip()
+            return text[:400] if text else ""
+        except Exception:  # noqa: BLE001 - 教训读取失败不影响质检
+            return ""  # noqa: SILENT_DEGRADE
+
     def _llm_quality_gate(self, text: str, ctx: Any) -> tuple[bool, dict[str, Any]]:
         wi = ctx["world_info"]
         is_climax = ctx.get("pressure_stage") == "高潮"
@@ -506,6 +516,9 @@ class AgenticWriteWorkflow:
             is_climax="是" if is_climax else "否",
             # 提速·评审校准：开篇/铺垫章不以中后期节奏苛求，减少无效重写轮
             stage_calibration=M5WriteChapterWorkflow._stage_calibration(ctx, 0),
+            # P-1（提示词改进）：质检也带上轮体检教训作复审重点——教训不仅写前注入，
+            # 质检复查同样聚焦（反馈闭环完整化；读取失败降级为空，不影响质检）
+            recheck_focus=self._lessons_focus(),
             chapter_text=cleaned,
         )
         try:
