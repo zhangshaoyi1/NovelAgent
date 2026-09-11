@@ -28,6 +28,7 @@ from rich.console import Console
 
 from agent.core.story.chapters import iter_chapter_texts  # G6：公共章节读取 helper（根因 B6-3）
 from agent.core.engine.state_machine import StateMachine
+from agent.core.infra.degrade import degrade  # F-1 降级可见化统一出口
 # D-J（2026-08-29）：不再在 agents 层直接 import workflows（违反依赖方向）。
 # 回退能力经 ``rollback_provider`` 构造注入（见 RollbackProvider），未注入时懒加载兜底。
 from agent.core.quality.scoring.reader_appeal import (  # G5：迷爱看六维双闸
