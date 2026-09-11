@@ -419,7 +419,7 @@ class M5WriteChapterWorkflow(
 
         # ---- G15 章后归档 hook：本章 deltas 归档进连续性账本 + 伏笔 beats 标记落地。
         # 缺账本/失败一律 try/except 降级不阻断（对齐 `_maybe_advance_mainline` hook 位置）。
-        self._archive_chapter(ctx, chapter_title)
+        self._archive_chapter(ctx, chapter_title, canonical_text)
 
         # ---- M13 伏笔对账 hook（2026-09-06）：按正文实证同步 foreshadows.md 状态。
         # 此前登记表只读不写（update_state 死桥），回收率恒 0%；失败降级不阻断。

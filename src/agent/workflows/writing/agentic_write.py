@@ -702,6 +702,11 @@ class AgenticWriteWorkflow:
             evidence_chain,
         )
         m5._update_progress(ctx)
+        # ---- G15 章后归档 hook（能力对账修复 2026-09-11）：与 M5.run() 同位接线。
+        # 此前唯一调用点在架构红线禁跑的废弃 M5 入口内 → ledger.json 永不落盘，
+        # 上一章动态状态断供（五灵破 ch181/182 章间矛盾机制性根因）。
+        # 本章交接归档进连续性账本 + 伏笔 beats 标记落地；失败降级不阻断。
+        m5._archive_chapter(ctx, title, text)
         # M13 伏笔对账 hook（与 M5 同源；失败降级不阻断）
         try:
             from agent.workflows.evaluation.m13_foreshadow import sync_foreshadow_states

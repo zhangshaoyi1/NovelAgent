@@ -16,6 +16,108 @@ from agent.workflows.writing.m5_text_hygiene import hard_replace_english  # noqa
 
 logger = logging.getLogger(__name__)
 
+# ---------------------------------------------------------------------------
+# G15 章后归档：确定性事实抽取（纯规则，无 LLM，失败静默降级不阻断写章）
+# ---------------------------------------------------------------------------
+# 背景（2026-09-11 五灵破 ch181/182 章间矛盾复盘）：旧实现 must_carry/facts 全部
+# 硬编码空列表（占位实现，从未接线）→ 上一章动态状态（物品/人数/动作/约定）对
+# 下一章不可见 → writer 只能自创 → 触发人设/设定/连贯性硬指标失败。
+# 本抽取器从「结尾 800 字」按确定性规则产出最小事实集，宁滥勿缺但封顶防爆。
+
+_ITEM_PATTERN = re.compile(r"[匣盒锁钥匙剑刀玉符信图卷丹印珠瓶牌镜环链杖珠]")
+_COUNT_PATTERN = re.compile(r"[0-9一二两三四五六七八九十百千几]+[人多双名只条枚颗道把柄根张块片个]")
+_OPEN_LOOP_PATTERN = re.compile(r"未[有着能]|尚未|还没|不曾|正要|刚要|约定|决意|决定|誓要|下一步")
+_SENT_SPLIT = re.compile(r"[。！？!?\n]")
+
+
+def _chapter_body_text(chapter_num: int, chapter_text: str | None, chapters_dir: Path) -> str:
+    """取本章正文体：优先调用方传入，缺省回读刚落盘的章节文件（去 frontmatter）。"""
+    text = chapter_text
+    if not text:
+        f = chapters_dir / f"ch{chapter_num:03d}.md"
+        if not f.exists():
+            return ""
+        text = f.read_text(encoding="utf-8")
+    if text.startswith("---"):
+        parts = text.split("---", 2)
+        if len(parts) >= 3:
+            text = parts[2]
+    return re.sub(r"\s*\n\s*", "\n", text.strip())
+
+
+def _tail_sentences(tail: str) -> list[str]:
+    """结尾段切句，去空去重，保持原文顺序。"""
+    out: list[str] = []
+    for s in _SENT_SPLIT.split(tail):
+        s = s.strip()
+        if len(s) >= 6 and s not in out:
+            out.append(s)
+    return out
+
+
+def _present_characters(body: str, ctx: dict[str, Any]) -> list[str]:
+    """从 characters_info（**name** 标记行）解析角色名，返回在本章正文出场者。"""
+    names: list[str] = []
+    for line in (ctx.get("characters_info") or "").splitlines():
+        m = re.search(r"\*\*(.+?)\*\*", line)
+        if m:
+            name = m.group(1).strip()
+            if name and name in body and name not in names:
+                names.append(name)
+    return names
+
+
+def _extract_chapter_facts(
+    chapter_num: int, body: str, ctx: dict[str, Any]
+) -> tuple[list[tuple[str, str, str, str, str]], list[str], list[str]]:
+    """确定性抽取最小事实集。
+
+    Returns:
+        (facts_raw, must_carry, next_chapter_constraints)
+        facts_raw: [(domain, subject_id, field, value, evidence)] → ContinuityFact
+        must_carry / next_chapter_constraints: list[str] → ContinuityHandoff
+    """
+    facts_raw: list[tuple[str, str, str, str, str]] = []
+    must_carry: list[str] = []
+    constraints: list[str] = []
+    if not body:
+        return facts_raw, must_carry, constraints
+
+    tail = body[-800:]
+    sentences = _tail_sentences(tail)
+    commit_id = f"ch{chapter_num:03d}"
+
+    # 1) 出场角色（≤3）：presence 事实 + must_carry
+    for name in _present_characters(body, ctx)[:3]:
+        snip = next((s for s in sentences if name in s), "")[:80]
+        facts_raw.append(
+            ("character", name, "presence", f"第{chapter_num}章结尾段在场", snip or commit_id)
+        )
+
+    # 2) 计数/量化场景事实（≤2）：人数、物品件数等，防下章自创口径
+    count_hits = [s for s in sentences if _COUNT_PATTERN.search(s)]
+    for s in count_hits[:2]:
+        key = _COUNT_PATTERN.search(s).group(0)
+        facts_raw.append(("world", commit_id, "count", key, s[:100]))
+
+    # 3) 关键物品句（≤2）：匣/锁/钥匙等叙事道具，must_carry 权威口径
+    item_hits = [s for s in sentences if _ITEM_PATTERN.search(s) and s not in count_hits]
+    for s in item_hits[:2]:
+        must_carry.append(s[:120])
+
+    # 4) 未闭环动作（≤3）：下一章约束（待续口径）
+    for s in sentences:
+        if _OPEN_LOOP_PATTERN.search(s) and s not in must_carry:
+            constraints.append("待续：" + s[:110])
+        if len(constraints) >= 3:
+            break
+
+    # 5) must_carry 兜底：仍为空时取结尾最后一到两句（结尾状态永远必须携带）
+    if not must_carry and sentences:
+        must_carry.append(sentences[-1][:120])
+
+    return facts_raw, must_carry[:5], constraints
+
 
 @dataclass
 class PreValidationResult:
@@ -24,7 +126,6 @@ class PreValidationResult:
     decision: str  # "continue" | "interrupt"
     report: ConflictReport
     auto_resolved: list[str] = field(default_factory=list)
-
 
 
 class M5PersistMixin:
@@ -133,34 +234,61 @@ class M5PersistMixin:
 
         atomic_write_text(file, frontmatter.dumps(post))
         return file
-    def _archive_chapter(self, ctx: dict[str, Any], chapter_title: str) -> None:
+    def _archive_chapter(
+        self,
+        ctx: dict[str, Any],
+        chapter_title: str,
+        chapter_text: str | None = None,
+    ) -> None:
         """G15 章后归档 hook：本章最小交接归档进连续性账本 + 伏笔 beats 标记落地。
 
         - 向 `ContinuityLedgerStore.commit` 写入本章交接（source_commit_id=本章 ID），
           `latest_handoff()` 即成为下一章投影的「上一章交接」来源。
+        - facts / must_carry / next_chapter_constraints 由确定性抽取器从本章正文
+          （优先 ``chapter_text``，缺省回读落盘文件）产出，非空（能力对账红线
+          ``test_capability_parity`` 强制：禁止字面量空列表回潮）。
         - 把规划锚指向本章（``anchor_chapter == 本章``）的伏笔 beat 标记为 committed，
           由纯函数 `derive_status` 自动推进线程状态。
         - 缺账本 / 任何异常 → 静默降级，绝不阻断写章（与「降级不阻断」一致）。
         """
         try:
-            from agent.core.continuity import ContinuityHandoff, ContinuityLedgerStore
+            from agent.core.continuity import ContinuityFact, ContinuityHandoff, ContinuityLedgerStore
             from agent.core.story.foresight import ForesightBeat, ForesightStore, mark_committed
 
             chapter_num = ctx["chapter_num"]
             commit_id = f"ch{chapter_num:03d}"
 
+            body = _chapter_body_text(chapter_num, chapter_text, self.chapters_dir)
+            facts_raw, must_carry, constraints = _extract_chapter_facts(chapter_num, body, ctx)
+            facts = [
+                ContinuityFact(
+                    domain=domain,
+                    subject_id=subject_id,
+                    field=field_name,
+                    value=value,
+                    source_commit_id=commit_id,
+                    evidence=evidence,
+                )
+                for domain, subject_id, field_name, value, evidence in facts_raw
+            ]
+            tail = body[-260:] if body else ""
+            summary = (
+                f"第{chapter_num}章《{chapter_title}》结尾状态：{tail}" if tail
+                else f"第{chapter_num}章《{chapter_title}》"
+            )
+
             ledger = ContinuityLedgerStore(self.project_dir)
             ledger.load()
             ledger.commit(
                 chapter=chapter_num,
-                facts=[],
+                facts=facts,
                 knowledge=[],
                 open_loops=[],
                 handoff=ContinuityHandoff(
                     chapter=chapter_num,
-                    summary=f"第{chapter_num}章《{chapter_title}》",
-                    must_carry=[],
-                    next_chapter_constraints=[],
+                    summary=summary,
+                    must_carry=must_carry,
+                    next_chapter_constraints=constraints,
                     source_commit_id=commit_id,
                 ),
             )
