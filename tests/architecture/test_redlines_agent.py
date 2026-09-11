@@ -4,7 +4,9 @@
 - R1  仅 `agent/client/` 与 `llmagent/gateway/` 可 import provider SDK（openai/ollama）
 - R2  `agent/base/` 是最底层，不得 import 任何上层包
 - R3  业务层（workflows/core/agents）不得触碰 `llmagent.gateway.providers` / `llmagent.gateway.secrets`
-- R4  业务层（workflows/core/agents）不得 import `agent.cli` / `agent.web`（依赖只能向下）
+- R4  业务层（workflows/core/agents）不得 import `agent.cli` / `agent.web`（依赖只能向下）；
+      接入层内部按方向矩阵：`cli/` 不得 import `agent.web`（§3.7），
+      `web/` → `agent.cli` 为设计内单向（Web 经子进程调 CLI，需读命令元数据）
 - R5  API key 直读仅允许白名单文件（gateway secrets / client 凭据装配 / base 配置 /
       doctor 诊断 / web 模型档案回显），白名单外出现即失败——收紧增量，存量不扩散
 - R6  分层依赖矩阵：base/client/core/tasks/agents/memory 各层仅可 import 白名单内的
@@ -110,6 +112,12 @@ class TestR3GatewayInternalsAreSealed:
         )
 
 
+# 接入层内部方向矩阵（架构文档 §3.7：cli/ 与 core/ 不得 import web/）。
+# web 是 CLI 的上层封装——经子进程调用 CLI（§3.7），需读取 CLI 命令元数据，
+# 故 web → cli 是设计内的单向依赖；cli → web 为明令禁止，须在此拦死。
+R4_CLI_FORBIDDEN = ("agent.web",)
+
+
 class TestR4BusinessLayerDoesNotImportUi:
     def test_business_layer_imports_no_cli_or_web(self):
         banned = ("agent.cli", "agent.web")
@@ -118,10 +126,17 @@ class TestR4BusinessLayerDoesNotImportUi:
         violations = []
         for p in _iter_py_files():
             rel = _rel(p)
-            if rel.startswith(("cli/", "web/")) or rel in allowed:
+            if rel in allowed:
                 continue
+            if rel.startswith("cli/"):
+                # 接入层内部只禁一个方向：cli 不得依赖 web
+                banned_here = R4_CLI_FORBIDDEN
+            elif rel.startswith("web/"):
+                continue  # web → cli 为设计内单向，不检查
+            else:
+                banned_here = banned
             for mod in _imports_of(p):
-                if any(mod == b or mod.startswith(b + ".") for b in banned):
+                if any(mod == b or mod.startswith(b + ".") for b in banned_here):
                     violations.append(f"{rel}: import {mod}")
         assert not violations, "业务层不得 import cli/web（方向只能向下）:\n" + "\n".join(violations)
 

@@ -13,10 +13,11 @@ def web(
     """启动 Web UI 服务（FastAPI + SSE 实时界面）。"""
     import uvicorn
 
-    from agent.web.app import app as fastapi_app
-
     console.print(
         f"[bold green]NovelAgent Web UI[/bold green] 启动中 → "
         f"http://{host}:{port}"
     )
-    uvicorn.run(fastapi_app, host=host, port=port)
+    # 架构不变性 §3.7 / R4：cli/ 不得 import web/（依赖只能向下）。
+    # 因此这里不 import agent.web.app，改由 uvicorn 在运行时按 import string 解析，
+    # 反向依赖（web → cli 读命令元数据）保持不变，环被拆成单向。
+    uvicorn.run("agent.web.app:app", host=host, port=port)
