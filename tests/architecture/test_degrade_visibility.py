@@ -91,3 +91,58 @@ def test_degrade_tool_exists() -> None:
     """降级工具必须存在（统一出口）。"""
     tool = SRC / "agent" / "core" / "infra" / "degrade.py"
     assert tool.exists(), "agent/core/infra/degrade.py 缺失（F-1 统一降级出口）"
+
+
+# ── F-1 豁免棘轮（2026-09-12 建立）────────────────────────────────
+# 背景：存量 405 处豁免此前「只增不减」——没有任何机制推动清偿，于是同一份
+# 架构文档里出现双标：R6 分层矩阵零豁免（真红线），降级可见化 405 豁免（装饰性红线）。
+# 这里冻结基线并强制单调递减：清偿一批就下调一批，新增降级点必须接 degrade()。
+DEGRADE_EXEMPTION_BUDGET = 402
+
+# 主链路重点清偿对象（写作 / 评估 / 流水线）：单独设上限，
+# 防止「总量在降、关键路径却在涨」被总数掩盖。
+DEGRADE_EXEMPTION_BUDGET_BY_FILE = {
+    "agent/workflows/writing/agentic_write.py": 19,
+    "agent/workflows/pipeline/agentic_pipeline.py": 15,
+    "agent/agents/planner.py": 12,
+    "agent/agents/evaluator_dims.py": 9,
+    "agent/cli/commands/autowrite.py": 11,
+}
+
+
+def count_exemptions() -> dict[str, int]:
+    """统计每个源文件中的 SILENT_DEGRADE 豁免标记数。"""
+    counts: dict[str, int] = {}
+    for py in sorted(SRC.rglob("*.py")):
+        try:
+            text = py.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError):
+            continue
+        n = text.count(_EXEMPT_MARK)
+        if n:
+            counts[py.relative_to(SRC).as_posix()] = n
+    return counts
+
+
+def test_exemption_budget_never_grows() -> None:
+    """棘轮：豁免总数只减不增。"""
+    counts = count_exemptions()
+    total = sum(counts.values())
+    assert total <= DEGRADE_EXEMPTION_BUDGET, (
+        f"降级豁免总数 {total} 超过预算 {DEGRADE_EXEMPTION_BUDGET}（F-1 棘轮：只减不增）。\n"
+        f"新增降级点请接入 degrade()，不要新增 # noqa: {_EXEMPT_MARK}；"
+        f"清偿后请同步下调 DEGRADE_EXEMPTION_BUDGET。"
+    )
+
+
+def test_exemption_budget_by_file() -> None:
+    """主链路豁免不得在总量掩护下局部恶化。"""
+    counts = count_exemptions()
+    violations = [
+        f"  {f}: 当前 {counts.get(f, 0)} > 预算 {budget}"
+        for f, budget in DEGRADE_EXEMPTION_BUDGET_BY_FILE.items()
+        if counts.get(f, 0) > budget
+    ]
+    assert not violations, (
+        "主链路降级豁免超预算（写作/评估路径优先清偿）：\n" + "\n".join(violations)
+    )

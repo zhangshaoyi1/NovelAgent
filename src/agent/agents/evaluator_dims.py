@@ -488,8 +488,9 @@ class _EvaluatorDimensionsMixin:
         try:
             sm.load()
             progress = sm.progress or {}
-        except Exception:  # noqa: BLE001
-            progress = {}  # noqa: SILENT_DEGRADE
+        except Exception as e:  # noqa: BLE001
+            degrade("evaluator_dims.mainline_stats.progress", "主线进度读取失败，降级为空进度", e)
+            progress = {}
         visited: set[str] = set(progress.get("mainline_visited", []) or [])
         # 双保险：章 frontmatter subline 反推
         try:
@@ -500,12 +501,17 @@ class _EvaluatorDimensionsMixin:
                     sub = post.metadata.get("subline", "")
                     if sub:
                         visited.add(str(sub))
-        except Exception:  # noqa: BLE001 - 反推失败不影响主记录
-            pass  # noqa: SILENT_DEGRADE
+        except Exception as e:  # noqa: BLE001 - 反推失败不影响主记录
+            degrade("evaluator_dims.mainline_stats.subline", "支线反推失败，仅保留主记录", e)
         try:
             total = len(SettingManager(self.project_dir).list_sublines())
-        except Exception:  # noqa: BLE001
-            total = 0  # noqa: SILENT_DEGRADE
+        except Exception as e:  # noqa: BLE001
+            degrade(
+                "evaluator_dims.mainline_stats.total",
+                "支线总数读取失败，降级为 0（该维度不计入达标判定）",
+                e,
+            )
+            total = 0
         if total > 0:
             visited &= set(SettingManager(self.project_dir).list_sublines())  # 只统计本书支线
         return visited, total
