@@ -1,7 +1,7 @@
 ---
 name: shared.score_calibration
 version: 1
-description: 可复用片段——评分区分度约束（反"安全分"塌缩）。prompt_manager 无 include 机制，此文件为单一真源参考；实际使用处（quality/reader_appeal_eval、m21/verdict、m_d/review、m23/short_analyze）已内联同一文案，修改时须同步。
+description: 可复用片段——评分区分度约束（反"安全分"塌缩）。prompt_manager 无 include 机制，此文件为单一真源参考；实际使用处（quality/reader_appeal_eval、m21/verdict、m_d/review、m23/short_analyze、m15/bookworm、m20/report）已内联同一文案，修改时须同步。
 ---
 
 # system

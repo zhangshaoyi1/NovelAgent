@@ -21,7 +21,7 @@ validation:
 5. banned_word_limit: "突然/忽然/就在这时/微微一笑" 全章 ≤ 2 次
 6. setting_consistency: 与【本章事实对照卡】**逐条对照**（见下方事实卡；任一不一致即不通过）；无事实卡时对照 world.md / subline.md / character.md
 7. dialogue_personality: 角色台词符合其语言指纹
-8. foreshadow_status: 本章如埋/回收伏笔，需标注
+8. foreshadow_status: 本章如埋/回收伏笔，需标注；**回收质量按标准判定**——回收必须落在可定位的具体场景（可观察的动作/事件/对话，兑现段落 ≥60 字），仅在内心独白/回忆里提及（如"他想起××还在抽屉里"）不算回收 → 规则不通过，issue 写明"内心提及式兑现"
 9. climax_expansion: 高潮章节自动扩篇幅 + 多视角 + 慢镜头
 10. no_english: 正文不得含任何英文单词/变量名/缩写/外文词（2+ 连续拉丁字母即不通过），必须改写为纯中文叙事（VIP→贵宾认证、CEO→掌权者、KPI→绩效指标、bug→漏洞、allocation_weight→分配权重的后门代码、NGOs→国际非政府组织 等）；代码/变量名严禁直接写进正文
 11. hard_constraint: 不得违反「角色硬约束」（见【本章角色硬约束】段，如"XXX 永不使用XX能力/绝不下跪/绝不背叛"）——设定注入之外，质检显式校验约束未被违背
