@@ -1,14 +1,13 @@
 from __future__ import annotations
 
 import logging
-from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
 from agent.core.infra.prompt_manager import pm
 from agent.core.registry.genre_pack import GenrePackRegistry
 
 from agent.client.gateway_adapter import chat_creative, chat_utility
-from agent.core.quality.scoring import QualityChecker, LLMBackedChecker, Severity
+from agent.core.quality.scoring import QualityChecker, Severity
 from agent.core.quality.scoring.quality_checker import (
     _chapter_length_from_ctx,
     _count_cjk,
@@ -142,7 +141,11 @@ class M5QualityGateMixin:
                         check_prompt = check_prompt + "\n\n" + "\n\n".join(rules_parts)
 
                 # 提速：主质检与 D 多维审查并行执行（原先串行，省一次完整往返）
-                resp, last_d_issues = self._check_parallel(text, ctx, check_prompt)
+                # 合并同质检查（2026-09-13）：主质检 + D 审查单次调用（省 1 次/轮，
+                # 正文只传一份）；d_issues 从同一 JSON 提取，缺失显性降级为空。
+                check_prompt_full = check_prompt + self._d_supplement()
+                last_d_issues: list[dict[str, Any]] = []
+                resp = self._check_combined(check_prompt_full)
                 try:
                     report = parse_llm_json(resp)
                 except ValueError as e:
@@ -153,11 +156,11 @@ class M5QualityGateMixin:
                             self.llm,
                             messages=[
                                 {"role": "system", "content": pm.get("m5.quality_check").system},
-                                {"role": "user", "content": check_prompt
+                                {"role": "user", "content": check_prompt_full
                                  + f"\n\n【上次质检输出解析失败原因，务必修正】"
                                    f"请只输出一个合法的 JSON 对象，不要包含 ```json 标记：\n{e}"},
                             ],
-                            max_tokens=4096,
+                            max_tokens=6144,
                             enable_thinking=False,
                         )
                         report = parse_llm_json(retry)
@@ -170,9 +173,19 @@ class M5QualityGateMixin:
                         )
                         report = {"overall_pass": True, "rules": [], "suggestions": "校验解析失败，重试后降级通过"}
 
-                # D：多维 LLM 质量审查（仅当 strict_review 开启；并入同一 revise_loop 预算）
-                # 维度 blocking 视为本章未通过、触发既有修订循环。
+                # D：从合并输出提取 d_issues（仅 strict_review 开启）。
+                # 缺失/非列表 = 模型未完成附加任务 → 显性降级为空（与原 D 审查
+                # 调用失败的放行语义一致，但必须留痕，不许静默）。
                 if self.strict_review:
+                    raw_d = report.get("d_issues")
+                    if isinstance(raw_d, list):
+                        last_d_issues = [i for i in raw_d if isinstance(i, dict)]
+                    else:
+                        from agent.core.infra.degrade import degrade
+                        degrade(
+                            "m5.quality_gate.d_missing",
+                            "合并质检输出缺 d_issues 字段，D 多维审查降级为空（本轮未覆盖）",
+                        )
                     report["d_issues"] = last_d_issues
                     d_blocking = any(
                         i.get("severity") == Severity.BLOCK.value for i in last_d_issues
@@ -349,41 +362,51 @@ class M5QualityGateMixin:
     # ============================================================
     # 3.5 提速：并行质检 / 阶段校准 / 复审聚焦 / 修订要点压缩
     # ============================================================
-    def _check_parallel(
-        self, text: str, ctx: dict[str, Any], check_prompt: str
-    ) -> tuple[str, list[dict[str, Any]]]:
-        """主质检（9 项规则）与 D 多维审查并行执行，取二者较大耗时为墙钟时间。
+    def _d_supplement(self) -> str:
+        """合并同质检查（2026-09-13）：D 多维审查的维度块（并入主质检 prompt）。
 
-        strict_review 关闭时 D 审查不启动；线程池异常时降级为串行主质检
-        （D 审查返回空，与既有降级行为一致，不阻断写章）。
+        原 `_check_parallel` 用两个并发调用分别取质检 JSON 与 d_issues——二者
+        输入同为章节正文、输出同构（issue 列表），合并后省 1 次调用且正文只传
+        一份（输入 token 减半）。strict_review 关闭 / 规则渲染失败 → 空串
+        （退化为仅主质检，与既有降级语义一致）。
+        """
+        if not getattr(self, "strict_review", False):
+            return ""
+        try:
+            llm_rules = list(self._qc.llm_rules)
+        except Exception as e:  # noqa: BLE001 - 显性降级为不合并
+            from agent.core.infra.degrade import degrade
+
+            degrade("m5.quality_gate.d_merge", "D 维度规则读取失败，本次质检不合并 D 审查", e)
+            return ""
+        if not llm_rules:
+            return ""
+        dims = "\n".join(
+            f"- {r.dimension}（{r.name}，id={r.id}）：{r.prompt_template}" for r in llm_rules
+        )
+        return (
+            "\n\n【附加任务：D 多维审查（与上述质检同一次完成，勿分开两次作答）】\n"
+            "在输出 JSON 顶层追加字段 d_issues：数组，逐维度审查同一章正文，\n"
+            '每项格式 {"rule_id": "<维度id>", "severity": "block|warn", "description": "<问题>"}；\n'
+            'severity 取 "block"（该维度不达标且必须修订）或 "warn"（提示）；'
+            "全部达标时输出空数组 []。\n"
+            f"审查维度：\n{dims}"
+        )
+
+    def _check_combined(self, check_prompt: str) -> str:
+        """主质检 + D 多维审查合并为单次调用（输出契约见 _d_supplement）。
 
         Returns:
-            (质检原始 JSON 文本, D 多维审查 issue 列表)
+            质检原始 JSON 文本（含 d_issues 字段，若有）。
         """
         messages = [
             {"role": "system", "content": pm.get("m5.quality_check").system},
             {"role": "user", "content": check_prompt},
         ]
-        try:
-            with ThreadPoolExecutor(max_workers=2) as ex:
-                f_check = ex.submit(
-                    chat_utility, self.llm, messages=messages,
-                    max_tokens=4096, enable_thinking=False,  # H4：1500 截断质检 JSON 导致 fail-open
-                )
-                f_d = (
-                    ex.submit(self._run_d_review, text, ctx)
-                    if self.strict_review
-                    else None
-                )
-                resp = f_check.result()
-                d_issues = f_d.result() if f_d is not None else []
-            return resp, d_issues
-        except Exception as e:  # noqa: BLE001 - 并行异常降级串行，不影响正确性
-            logger.warning("[m5] 并行质检异常，降级串行执行: %s", e)
-            resp = chat_utility(
-                self.llm, messages=messages, max_tokens=4096, enable_thinking=False
-            )
-            return resp, []
+        return chat_utility(
+            self.llm, messages=messages,
+            max_tokens=6144, enable_thinking=False,  # 合并输出更大：6144 防 H4 截断 fail-open
+        )
     def _apply_golden_write_gate(
         self, report: dict[str, Any], text: str, ctx: dict[str, Any]
     ) -> dict[str, Any]:
@@ -527,32 +550,3 @@ class M5QualityGateMixin:
             return "\n".join(lines)
         except Exception:  # noqa: BLE001 - 压缩失败回退原始全文，保证行为不回退
             return full_text
-    # ============================================================
-    # 3.6 D：多维 LLM 质量审查（并入 revise_loop）
-    # ============================================================
-    def _run_d_review(self, text: str, ctx: dict[str, Any]) -> list[dict[str, Any]]:
-        """D：用 LLMBackedChecker 合并评审 4 个网文维度（爽点/OOC/连贯性/追读力）
-
-        合并为单次 ``chat_utility`` 调用；LLM 不可用 / 调用异常 / 超时均降级为空
-        （放行 + 记录，绝不阻断写章）。返回可序列化的 issue 字典列表。
-
-        Args:
-            text: 当前章节正文
-            ctx: 上下文
-
-        Returns:
-            ``[{"rule_id", "severity", "description"}, ...]``；降级时为空列表。
-        """
-        try:
-            checker = LLMBackedChecker(self.llm)
-            issues = checker.run_rules(self._qc.llm_rules, text, ctx)
-        except Exception:  # noqa: BLE001 - D 审查失败降级为空，不阻断主路径
-            return []
-        return [
-            {
-                "rule_id": i.rule_id,
-                "severity": i.severity.value,
-                "description": i.description,
-            }
-            for i in issues
-        ]

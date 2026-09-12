@@ -189,3 +189,17 @@ def test_reflection_in_batch_summary(tmp_path: Path) -> None:
     from agent.workflows.pipeline.batch_replan import build_batch_summary
 
     assert "作战笔记" in build_batch_summary(tmp_path)
+
+
+# ---------------------------------------------------------------- 质检合并（同质检查单次调用）
+def test_d_supplement_merge_and_off(tmp_path: Path) -> None:
+    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
+
+    proj = _build_minimal_project(tmp_path)
+    wf = M5WriteChapterWorkflow(proj, llm_client=None, pre_validate=False)
+    wf.strict_review = False
+    assert wf._d_supplement() == ""  # 关闭 D 审查 → 不合并
+
+    wf.strict_review = True
+    block = wf._d_supplement()
+    assert "d_issues" in block and "rule_id" in block and "审查维度" in block
