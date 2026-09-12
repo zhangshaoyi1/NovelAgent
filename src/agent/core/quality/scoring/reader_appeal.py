@@ -178,7 +178,7 @@ def _gather_canon(project_dir: Path) -> str:
         try:
             content = world.read_text(encoding="utf-8")
         except OSError:
-            content = ""
+            content = ""  # noqa: SILENT_DEGRADE - 增强信息，缺失静默跳过（见 docstring）
         for title, tag in (("修炼境界体系", "境界体系（冻结）"), ("金手指登记", "金手指登记")):
             section = _extract_md_section(content, title).strip()
             if section:

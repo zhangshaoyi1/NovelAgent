@@ -25,6 +25,7 @@ from __future__ import annotations
 
 from agent.core.infra.prompt_manager import pm
 import json
+import logging
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -37,6 +38,8 @@ from rich.table import Table
 from agent.client.gateway_adapter import create_gateway, chat_utility
 from llmagent.gateway import Gateway
 from agent.utils import parse_llm_json
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================
@@ -375,6 +378,7 @@ class BookwormSkill:
                 break
             except ValueError as e:
                 last_err = e
+                logger.warning("[m15] 书虫测评 JSON 解析失败（第 %d 次）：%s", attempt + 1, e)
                 if attempt == 0:
                     retry = chat_utility(
                         self.llm,

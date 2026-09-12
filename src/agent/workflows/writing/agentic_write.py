@@ -47,6 +47,11 @@ from agent.core.quality.scoring.quality_checker import (
     resolve_max_cjk_words,
 )
 from agent.core.quality.guardrails import is_architecture_confirmed
+from agent.workflows.writing.m5_quality_gate import (
+    GOLDEN_WRITE_GATE_FLOOR,
+    GOLDEN_WRITE_GATE_FIRST_N,
+    GOLDEN_WRITE_GATE_TOTAL,
+)
 from agent.core.story.evidence_chain import EvidenceChain
 from agent.core.infra.prompt_helpers import format_open_debts, format_rag_context
 
@@ -644,6 +649,56 @@ class AgenticWriteWorkflow:
                     report["overall_pass"] = False
             except Exception as e:  # noqa: BLE001 - D 审查失败降级为空，不影响九项质检
                 degrade("agentic_write.d_review", "D 多维审查失败，降级为空", e)
+
+        # ---- 金三写时门禁（2026-09-12）：前三章吸引力六维不达标 → blocking，禁止落盘 ----
+        # 此前金三只在批末评估，写时九项审稿无吸引力维度，低质量开局照样兜底落盘，
+        # 批末金三评估必然熔断且回溯修不到开头（五灵破 19+7 次 escalated 实证）。
+        if int(ctx.get("chapter_num", 0) or 0) <= GOLDEN_WRITE_GATE_FIRST_N:
+            try:
+                from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
+
+                if getattr(self, "_golden_scorer", None) is None:
+                    self._golden_scorer = ReaderAppealScorer(self.llm, self.console)
+                _gr = self._golden_scorer.score_chapter(cleaned)
+            except Exception as e:  # noqa: BLE001 - 评分器异常降级放行（G3），批末仍会把关
+                degrade(
+                    "agentic_write.golden_gate",
+                    "金三写时评分失败，本轮放行（批末金三门禁仍会把关）",
+                    e,
+                )
+                _gr = None
+            if _gr is not None and _gr.llm_used:
+                _failing = [
+                    f"{k}={v}（触底线 {GOLDEN_WRITE_GATE_FLOOR}）"
+                    for k, v in _gr.dimensions.items()
+                    if v < GOLDEN_WRITE_GATE_FLOOR
+                ]
+                if _gr.total_score < GOLDEN_WRITE_GATE_TOTAL or _failing:
+                    passed = False
+                    report["overall_pass"] = False
+                    report["golden_gate_failed"] = True
+                    report.setdefault("issues", []).append(
+                        {
+                            "rule_id": "golden_gate",
+                            "severity": "blocking",
+                            "description": (
+                                f"金三门禁未达标：读者吸引力综合分 {_gr.total_score}/"
+                                f"{GOLDEN_WRITE_GATE_TOTAL}"
+                                + (f"；触底维度：{'、'.join(_failing)}" if _failing else "")
+                                + "。本章为开篇前三章，不达标不得落盘。"
+                                "定向强化：世界观新颖度低→给设定独特记忆点/代价/异象；"
+                                "人物弧光弱→给主角一次主动选择或小胜利，而非纯被动；"
+                                "爽点密度低→压缩压抑段、提前兑现一个具体爽点节拍；"
+                                "情绪曲线平→制造明显起伏；代入感弱→收紧视角、增加可感细节；"
+                                "钩子弱→章末悬念更具体。保持情节/人物/设定不变，只提升写法。"
+                            ),
+                        }
+                    )
+                    report["suggestions"] = (
+                        str(report.get("suggestions", ""))
+                        + "\n金三门禁："
+                        + ("；".join(_gr.suggestions[:3]) if _gr.suggestions else "见触底维度")
+                    )
         return passed, report
 
     # ------------------------------------------------------------------

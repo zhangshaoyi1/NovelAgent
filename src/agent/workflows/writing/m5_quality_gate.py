@@ -27,6 +27,13 @@ logger = logging.getLogger(__name__)
 
 MAX_REVISIONS = 2
 
+# 金三写时门禁（2026-09-12）：前三章落盘前必须过读者吸引力六维门禁。
+# 此前金三只在批末评估（evaluator golden gate），写时 9 项规则质检不含吸引力维度，
+# 导致低质量开局照样落盘、批末必然熔断且修不到开头（五灵破 19+7 次实证）。
+GOLDEN_WRITE_GATE_FIRST_N = 3
+GOLDEN_WRITE_GATE_TOTAL = 60  # 综合合格线（与 B4 golden_three_threshold 默认一致）
+GOLDEN_WRITE_GATE_FLOOR = 40  # 单维触底线（与 golden_three_floor 默认一致）
+
 
 class M5QualityGateMixin:
     """质量校验 + 自动修订 + D 多维审查 + 提速辅助（由 m5_write_chapter 拆出，仅由 M5WriteChapterWorkflow 组合使用）"""
@@ -244,6 +251,17 @@ class M5QualityGateMixin:
                         "可适当精简冗余描写，使其更紧凑。"
                     )
 
+            # ---- 金三写时门禁（第 1~N 章专属）：读者吸引力六维不达标不得落盘 ----
+            if (
+                int(ctx.get("chapter_num", 0) or 0) <= GOLDEN_WRITE_GATE_FIRST_N
+            ):
+                report = self._apply_golden_write_gate(
+                    report, text, ctx
+                )
+                quality_report_text = (
+                    quality_report_text + report.get("golden_gate_instruction", "")
+                )
+
             if report.get("overall_pass", False):
                 break
 
@@ -366,6 +384,85 @@ class M5QualityGateMixin:
                 self.llm, messages=messages, max_tokens=4096, enable_thinking=False
             )
             return resp, []
+    def _apply_golden_write_gate(
+        self, report: dict[str, Any], text: str, ctx: dict[str, Any]
+    ) -> dict[str, Any]:
+        """金三写时门禁：对本章草稿做读者吸引力六维评分。
+
+        不达标 → overall_pass=False + 失败规则（含逐维分数与差距），
+        修订指令注入 quality_report_text（由调用方拼接），走既有修订闭环。
+        评分器离线/异常 → 显性 degrade 后放行（G3：基础设施失败不阻断，
+        但批末 evaluator 金三门禁仍在，不会被静默放过）。
+        结果写入 report["golden_write_gate"] 供落盘前硬判定。
+        """
+        report.setdefault("golden_write_gate", {"applied": False})
+        report.pop("golden_gate_instruction", None)  # 防止上一轮指令残留到本轮
+        try:
+            from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
+
+            if getattr(self, "_golden_scorer", None) is None:
+                self._golden_scorer = ReaderAppealScorer(self.llm, self.console)
+            gr = self._golden_scorer.score_chapter(text)
+        except Exception as e:  # noqa: BLE001 - 评分器异常降级放行（G3）
+            from agent.core.infra.degrade import degrade
+
+            degrade(
+                "m5.golden_write_gate",
+                "金三写时评分失败，本轮放行（批末金三门禁仍会把关）",
+                e,
+            )
+            report["golden_write_gate"] = {"applied": False, "error": str(e)}
+            return report
+        if not gr.llm_used:
+            report["golden_write_gate"] = {"applied": False, "error": "scorer offline"}
+            return report
+
+        failing = [
+            f"{k}（{v}/100，触底线 {GOLDEN_WRITE_GATE_FLOOR}，差 {GOLDEN_WRITE_GATE_FLOOR - v}）"
+            for k, v in gr.dimensions.items() if v < GOLDEN_WRITE_GATE_FLOOR
+        ]
+        total_fail = gr.total_score < GOLDEN_WRITE_GATE_TOTAL
+        result = {
+            "applied": True,
+            "dimensions": dict(gr.dimensions),
+            "total": gr.total_score,
+            "passed": not (total_fail or failing),
+        }
+        report["golden_write_gate"] = result
+        if result["passed"]:
+            return report
+
+        report["overall_pass"] = False
+        issue = "金三门禁未达标：综合分 {}/{}；{}".format(
+            gr.total_score,
+            GOLDEN_WRITE_GATE_TOTAL,
+            "；".join(failing) if failing else "单维均触底线之上",
+        )
+        report.setdefault("rules", []).append(
+            {"rule": "golden_gate", "pass": False, "issue": issue}
+        )
+        report["suggestions"] = (
+            report.get("suggestions", "")
+            + "\n金三门禁："
+            + ("；".join(gr.suggestions[:3]) if gr.suggestions else issue)
+        )
+        report["golden_gate_instruction"] = (
+            "\n\n# 金三门禁硬性修订指令（本章为开篇前 "
+            f"{GOLDEN_WRITE_GATE_FIRST_N} 章，不达标不得落盘）\n"
+            f"读者吸引力综合分 {gr.total_score}/{GOLDEN_WRITE_GATE_TOTAL}"
+            + (f"；触底维度：{'、'.join(failing)}" if failing else "")
+            + "。\n针对不足维度定向强化：世界观新颖度低→给设定一个独特的记忆点/代价/异象；"
+            "人物弧光弱→给主角一次主动选择或小胜利，而非纯被动挨打；"
+            "爽点密度低→压缩压抑段、提前兑现一个具体爽点节拍；"
+            "情绪曲线平→制造一次明显起伏；代入感弱→收紧视角、增加可感细节；"
+            "钩子弱→章末悬念更具体。保持情节/人物/设定不变，只提升写法。"
+            + ("评分建议：" + "；".join(gr.suggestions[:3]) if gr.suggestions else "")
+        )
+        self.console.print(
+            f"  [yellow]金三写时门禁未通过（综合 {gr.total_score}），纳入修订...[/yellow]"
+        )
+        return report
+
     @staticmethod
     def _stage_calibration(ctx: dict[str, Any], attempt: int) -> str:
         """提速·评审校准：开篇/铺垫章不以中后期节奏苛求，复审聚焦上轮失败项，

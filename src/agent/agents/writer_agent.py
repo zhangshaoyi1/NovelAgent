@@ -548,6 +548,20 @@ class WriterAgent:
                 return cand_draft, cand_report
         return best_draft, best_report
 
+    @staticmethod
+    def _golden_refuse_save(report: dict[str, Any], ctx: Any) -> bool:
+        """金三写时门禁硬判定：前三章评分不达标 ⇒ 禁止兜底落盘。
+
+        低质量开局一旦落盘，批末金三评估必然熔断且回溯修不到开头；
+        此处宁可断批显性失败，也不带病存档。非 dict ctx / 章号未知时不拦（保守）。"""
+        if not (isinstance(report, dict) and report.get("golden_gate_failed")):
+            return False
+        ch = ctx.get("chapter_num") if isinstance(ctx, dict) else getattr(ctx, "chapter_num", None)
+        try:
+            return bool(ch is not None and int(ch) <= 3)
+        except (TypeError, ValueError):
+            return False
+
     def run(self, task: str, ctx: Any = None) -> tuple[str, int, bool]:
         """自主撰写一章。
 
@@ -594,6 +608,12 @@ class WriterAgent:
 
         # 兜底落盘：全轮未通过时，用篇幅达标的最佳稿兜底（标记未通过）；全是 stub 才放弃
         if not passed:
+            # 金三硬判定：前三章吸引力评分不达标 ⇒ 拒绝兜底落盘（宁断批不带病存档）
+            if self._golden_refuse_save(report, ctx):
+                raise RuntimeError(
+                    "前三章金三门禁不达标（读者吸引力评分低于合格线），"
+                    f"已修订 {revision_attempts} 轮仍未达标，放弃落盘以避免低质量开局固化。"
+                )
             best_draft, best_report = self._keep_best(
                 best_draft, best_report, draft, report, min_len
             )
@@ -656,6 +676,12 @@ class WriterAgent:
 
         # 兜底落盘：全轮未通过时，用篇幅达标的最佳稿兜底（标记未通过）；全是 stub 才放弃
         if not passed:
+            # 金三硬判定：前三章吸引力评分不达标 ⇒ 拒绝兜底落盘（宁断批不带病存档）
+            if self._golden_refuse_save(report, ctx):
+                raise RuntimeError(
+                    "前三章金三门禁不达标（读者吸引力评分低于合格线），"
+                    f"已修订 {revision_attempts} 轮仍未达标，放弃落盘以避免低质量开局固化。"
+                )
             best_draft, best_report = self._keep_best(
                 best_draft, best_report, draft, report, min_len
             )

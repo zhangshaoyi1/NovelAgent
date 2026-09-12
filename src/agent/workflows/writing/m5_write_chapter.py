@@ -46,7 +46,11 @@ from llmagent.gateway import Gateway
 
 from agent.workflows.writing.m5_context import M5ContextMixin
 from agent.workflows.writing.m5_persist import M5PersistMixin, PreValidationResult  # noqa: F401 - re-export
-from agent.workflows.writing.m5_quality_gate import MAX_REVISIONS, M5QualityGateMixin  # noqa: F401 - re-export
+from agent.workflows.writing.m5_quality_gate import (  # noqa: F401 - re-export
+    GOLDEN_WRITE_GATE_FIRST_N,
+    MAX_REVISIONS,
+    M5QualityGateMixin,
+)
 from agent.workflows.writing.m5_text_hygiene import (  # noqa: F401 - re-export 兼容旧导入
     M5TextHygieneMixin,
     _auto_split_paragraphs,
@@ -377,6 +381,22 @@ class M5WriteChapterWorkflow(
             ctx, chapter_text
         )
         quality_passed = bool(quality_report.get("overall_pass", False))
+
+        # ------ 3.5 金三写时门禁硬判定（2026-09-12）------
+        # 前三章是全书的门面与后续所有评估的锚点，评分不达标不得落盘——
+        # 宁可断批显性失败，也不带病存档（否则批末金三评估必然熔断且修不到开头）。
+        golden_gate = quality_report.get("golden_write_gate") or {}
+        if (
+            int(ctx.get("chapter_num", 0) or 0) <= GOLDEN_WRITE_GATE_FIRST_N
+            and golden_gate.get("applied")
+            and not golden_gate.get("passed", True)
+        ):
+            raise RuntimeError(
+                f"第{ctx['chapter_num']}章金三门禁不达标"
+                f"（综合 {golden_gate.get('total')}/{60}，逐维 {golden_gate.get('dimensions')}），"
+                f"已自动修订 {revision_attempts} 次仍未达标，拒绝落盘。"
+                "请人工检查开篇质量，或用 --golden-three-threshold 调整合格线。"
+            )
 
         # ------ 4. 提取章节标题 + 清理正文元信息 ------
         chapter_title = self._extract_title(final_text, ctx)
