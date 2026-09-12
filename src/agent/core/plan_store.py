@@ -31,6 +31,10 @@ from __future__ import annotations
 
 import json
 import time
+import os
+import uuid
+
+from agent.core.infra.atomic import _discard_tmp, _replace_with_retry
 from pathlib import Path
 from typing import Any, Callable
 
@@ -177,12 +181,19 @@ class PlanStore:
 
     # ---------------------------------------------------------------- 落盘
     def _atomic_write(self, plan: dict[str, Any]) -> None:
+        """唯一 tmp + 撞锁重试（plan.json 多入口写者：planner/m4/m6/web，
+        与 infra.atomic 的同类修复保持一致）。"""
         self.state_dir.mkdir(parents=True, exist_ok=True)
-        tmp = self.plan_file.with_suffix(".tmp")
-        tmp.write_text(
-            json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8"
+        tmp = self.plan_file.with_name(
+            f"{self.plan_file.name}.tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}"
         )
-        tmp.replace(self.plan_file)
+        try:
+            tmp.write_text(
+                json.dumps(plan, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+            _replace_with_retry(tmp, self.plan_file)
+        finally:
+            _discard_tmp(tmp)
 
     def _append_history(
         self, old: dict[str, Any], new: dict[str, Any], *, reason: str, override: bool

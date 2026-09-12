@@ -16,7 +16,9 @@ cli/_shared 均可 import，无循环依赖）；next_steps 映射表也在此�
 from __future__ import annotations
 
 import json
+import os
 import time
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -41,9 +43,17 @@ def _atomic_write_progress(progress_file: Path, events: list[dict], summary: dic
     try:
         progress_file.parent.mkdir(parents=True, exist_ok=True)
         payload = {"events": events, "summary": summary}
-        tmp = progress_file.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
-        tmp.replace(progress_file)
+        # 唯一 tmp + 撞锁重试（infra.atomic 同类修复；固定 tmp 名在并发写者下互踩）
+        from agent.core.infra.atomic import _discard_tmp, _replace_with_retry
+
+        tmp = progress_file.with_name(
+            f"{progress_file.name}.tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+        )
+        try:
+            tmp.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+            _replace_with_retry(tmp, progress_file)
+        finally:
+            _discard_tmp(tmp)
     except Exception:  # noqa: BLE001 - 落盘失败不阻断（G3 哲学）
         pass  # noqa: SILENT_DEGRADE
 

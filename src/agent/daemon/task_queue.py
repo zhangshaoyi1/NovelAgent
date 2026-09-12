@@ -42,6 +42,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any, Iterator
 
+from agent.core.infra.atomic import _discard_tmp, _replace_with_retry
 from agent.core.infra.degrade import degrade
 
 #: 不接受 --dir 的全局工具命令（原 web.runner 定义迁移至此，单一真相源）。
@@ -77,11 +78,20 @@ def _ensure_dirs(project_dir: Path) -> None:
 
 
 def _atomic_write_json(path: Path, data: dict) -> None:
-    """同目录 tmp + os.replace 原子写入，避免读到半截 json。"""
+    """同目录唯一 tmp + os.replace 原子写入，避免读到半截 json。
+
+    task.json 存在**双写者**：daemon（心跳 update_task_heartbeat）与子进程
+    （状态推进）。固定 tmp 名会让两个写者互相踩暂存文件；目标被对方短暂
+    打开时 Windows 抛 PermissionError(WinError 5)——2026-09-11/12 crash.log
+    连续 5 次实证。唯一 tmp 名 + 撞锁退避重试双管齐下（infra.atomic 同类修复）。
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
-    os.replace(tmp, path)
+    tmp = path.with_name(f"{path.name}.tmp-{os.getpid()}-{uuid.uuid4().hex[:8]}")
+    try:
+        tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+        _replace_with_retry(tmp, path)
+    finally:
+        _discard_tmp(tmp)
 
 
 def _read_json(path: Path) -> dict:
@@ -192,7 +202,8 @@ def claim_next(project_dir: Path | str, daemon_pid: int) -> dict | None:
             continue
         target = root / "running" / path.name
         try:
-            os.replace(path, target)
+            # 同类修复：rename 目标（running/<id>.json）也可能被写者短暂占用
+            _replace_with_retry(path, target)
         except OSError:
             continue  # noqa: SILENT_DEGRADE - 被并发取消等，跳过
         task["status"] = STATUS_RUNNING
@@ -249,7 +260,7 @@ def finalize_task(
     # SystemExit → 把 daemon 打死、任务同时残留 running/ 与 done/（2026-09-11 事故）。
     _atomic_write_json(src, task)
     try:
-        os.replace(str(src), str(dst))
+        _replace_with_retry(src, dst)
     except OSError as exc:
         degrade("task_queue.finalize", "任务归档改名失败，退化为写副本 + 尽力删源", exc)
         _atomic_write_json(dst, task)

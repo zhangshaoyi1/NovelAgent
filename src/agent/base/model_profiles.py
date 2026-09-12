@@ -22,6 +22,7 @@ import os
 import re
 import tempfile
 import threading
+import time
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -88,7 +89,17 @@ def save_store(data: dict[str, Any]) -> None:
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, ensure_ascii=False, indent=2)
-        os.replace(tmp, path)
+        # mkstemp 已保证唯一 tmp；这里补撞锁重试——models.json 有 CLI 与 web
+        # 两个写者，Windows 下目标被对方短暂打开时 os.replace 抛 WinError 5
+        # （与 infra.atomic 的同类修复一致；base 层不反向依赖 core，就地实现）。
+        for delay in (0.1, 0.3, 0.9):
+            try:
+                os.replace(tmp, path)
+                break
+            except PermissionError:  # noqa: SILENT_DEGRADE - 重试后上抛，非降级点
+                time.sleep(delay)
+        else:
+            os.replace(tmp, path)
     except Exception:
         try:
             os.unlink(tmp)

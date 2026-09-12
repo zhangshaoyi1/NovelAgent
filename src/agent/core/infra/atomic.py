@@ -16,8 +16,11 @@ Windows 兼容：``os.replace`` 可覆盖已存在目标（``Path.replace`` 同�
 
 from __future__ import annotations
 
+import os
 import shutil
 import tempfile
+import time
+import uuid
 from pathlib import Path
 
 from agent.core.infra.degrade import degrade
@@ -44,6 +47,37 @@ def _discard_tmp(path: Path) -> None:
     except OSError as exc:
         degrade("atomic.discard", f"临时路径清理失败：{path.name}", exc)
 
+#: ``os.replace`` 撞锁（Windows sharing violation → ``PermissionError``/WinError 5）
+# 时的重试退避序列；全部耗尽后做最后一次尝试，仍失败则向上传播。
+_REPLACE_BACKOFF_S = (0.1, 0.3, 0.9)
+
+
+def _unique_tmp(target: Path, tag: str = "atomic") -> Path:
+    """同目录唯一临时文件名（pid + 随机后缀）。
+
+    固定 tmp 名（如 ``<name>.tmp-atomic``）在多进程并发写同一目标时会被两个写者
+    同时打开、交错写入——tmp 文件本身就是共享资源。唯一名保证各写者的暂存互不可见。
+    """
+    return target.with_name(
+        f"{target.name}.tmp-{tag}-{os.getpid()}-{uuid.uuid4().hex[:8]}"
+    )
+
+
+def _replace_with_retry(tmp: Path, target: Path) -> None:
+    """``os.replace`` 带 Windows 撞锁重试。
+
+    同一目标存在多个写者（daemon 心跳 vs 子进程状态更新、CLI vs web）时，
+    目标文件可能被另一进程短暂打开，``os.replace`` 抛 ``PermissionError``
+    （WinError 5）。按退避序列重试避开撞锁窗口；耗尽后最后一搏，仍失败向上传播。
+    """
+    for delay in _REPLACE_BACKOFF_S:
+        try:
+            os.replace(tmp, target)
+            return
+        except PermissionError:  # noqa: SILENT_DEGRADE - 重试后上抛，非降级点
+            time.sleep(delay)
+    os.replace(tmp, target)
+
 
 def _to_bytes(content: _Content) -> bytes:
     if isinstance(content, bytes):
@@ -52,13 +86,13 @@ def _to_bytes(content: _Content) -> bytes:
 
 
 def atomic_write_text(path: PathLike, text: str, *, encoding: str = "utf-8") -> Path:
-    """单文件原子写：先写同目录临时文件，再 ``os.replace`` 覆盖目标。"""
+    """单文件原子写：唯一临时文件 + 撞锁重试 + ``os.replace`` 覆盖目标。"""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(target.name + ".tmp-atomic")
+    tmp = _unique_tmp(target)
     try:
         tmp.write_text(text, encoding=encoding)
-        tmp.replace(target)
+        _replace_with_retry(tmp, target)
     finally:
         if tmp.exists():
             _discard_tmp(tmp)
@@ -66,13 +100,13 @@ def atomic_write_text(path: PathLike, text: str, *, encoding: str = "utf-8") -> 
 
 
 def atomic_write_bytes(path: PathLike, data: bytes) -> Path:
-    """单文件原子写（字节内容）。"""
+    """单文件原子写（字节内容）：唯一临时文件 + 撞锁重试。"""
     target = Path(path)
     target.parent.mkdir(parents=True, exist_ok=True)
-    tmp = target.with_name(target.name + ".tmp-atomic")
+    tmp = _unique_tmp(target)
     try:
         tmp.write_bytes(data)
-        tmp.replace(target)
+        _replace_with_retry(tmp, target)
     finally:
         if tmp.exists():
             _discard_tmp(tmp)
@@ -114,7 +148,7 @@ def atomic_write_set(writes: dict[PathLike, _Content]) -> list[Path]:
     try:
         committed: list[Path] = []
         for target, tmp, _payload in staged:
-            tmp.replace(target)  # 同盘 rename，Windows/POSIX 均可覆盖
+            _replace_with_retry(tmp, target)  # 同盘 rename + 撞锁重试
             committed.append(target)
         return committed
     finally:

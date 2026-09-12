@@ -47,7 +47,12 @@ def test_tmp_cleanup_tolerates_delete_guard(
     def _unlink_blocked(*args: object, **kwargs: object) -> None:
         raise SystemExit(1)
 
-    monkeypatch.setattr(Path, "replace", _replace_fails)
+    # 类级修复（2026-09-12）：replace 改经 _replace_with_retry（os.replace +
+    # 撞锁重试），patch 点从 Path.replace 挪到模块内 os.replace。
+    import agent.core.infra.atomic as atomic_mod
+
+    monkeypatch.setattr(atomic_mod.os, "replace", _replace_fails)
+    monkeypatch.setattr(atomic_mod.time, "sleep", lambda _s: None)
     monkeypatch.setattr(Path, "unlink", _unlink_blocked)
 
     with pytest.raises(OSError):  # 真实错误类型必须原样透传
