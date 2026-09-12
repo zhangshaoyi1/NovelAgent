@@ -552,7 +552,9 @@ class AgenticWriteWorkflow:
                     {"role": "system", "content": pm.get("m5.quality_check").system},
                     {"role": "user", "content": check_prompt},
                 ],
-                max_tokens=1500,
+                # H4 修复：九项审稿输出含 rules/issues/d_issues 全量 JSON，1500 会被截断
+                # 导致 parse_llm_json 失败走 fail-open 放行；放宽到 4096（与修订评审一致）。
+                max_tokens=4096,
                 enable_thinking=False,
             )
             report = parse_llm_json(resp)

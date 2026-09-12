@@ -328,7 +328,7 @@ class M5QualityGateMixin:
             with ThreadPoolExecutor(max_workers=2) as ex:
                 f_check = ex.submit(
                     chat_utility, self.llm, messages=messages,
-                    max_tokens=1500, enable_thinking=False,
+                    max_tokens=4096, enable_thinking=False,  # H4：1500 截断质检 JSON 导致 fail-open
                 )
                 f_d = (
                     ex.submit(self._run_d_review, text, ctx)
@@ -341,7 +341,7 @@ class M5QualityGateMixin:
         except Exception as e:  # noqa: BLE001 - 并行异常降级串行，不影响正确性
             logger.warning("[m5] 并行质检异常，降级串行执行: %s", e)
             resp = chat_utility(
-                self.llm, messages=messages, max_tokens=1500, enable_thinking=False
+                self.llm, messages=messages, max_tokens=4096, enable_thinking=False
             )
             return resp, []
     @staticmethod

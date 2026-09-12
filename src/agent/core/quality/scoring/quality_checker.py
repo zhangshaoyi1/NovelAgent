@@ -262,7 +262,7 @@ class LLMQualityRule(QualityRule):
                     {"role": "system", "content": pm.get("m_d.review").system},
                     {"role": "user", "content": user},
                 ],
-                max_tokens=800,
+                max_tokens=2048,  # H4 关联：单维 issue 文本过长同样会截断 JSON 走 fail-open
                 enable_thinking=False,
             )
             data = parse_llm_json(resp_text)
@@ -316,7 +316,8 @@ class LLMBackedChecker:
                     {"role": "system", "content": pm.get("m_d.review").system},
                     {"role": "user", "content": user},
                 ],
-                max_tokens=1500,
+                # H4 修复：多维度合并审查输出全量 issue JSON，1500 截断会触发 fail-open 放行
+                max_tokens=4096,
                 enable_thinking=False,
             ),
             default=None,
