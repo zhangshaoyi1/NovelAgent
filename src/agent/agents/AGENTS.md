@@ -9,9 +9,12 @@
 | 文件 | 导出 | 作用 |
 |------|------|------|
 | `planner.py` | `PlannerAgent`, `MasterPlan`, `Arc`, `CharacterSketch`, `PlannedForeshadow`, `QualityTargets` | 架构师（产出 Master Plan） |
-| `writer_agent.py` | `WriterAgent` | 自主写章 Agent（Phase 1，Writer + Critic 内联） |
+| `writer_agent.py` | `WriterAgent` | 自主写章 Agent（Phase 1，Writer + Critic 内联；含伏笔播种闭环接线 P1-4） |
 | `editor.py` | `EditorAgent`, `EditReport`, `EditConflict` | 主编 / 一致性仲裁 |
-| `evaluator.py` | `EvaluatorAgent`, `NovelHealthReport`, `DimensionResult`, `RepairPlan` | 评测员（全书「不崩」终审 + 自动回溯修复） |
+| `evaluator.py` | `EvaluatorAgent`, `NovelHealthReport`, `DimensionResult`, `RepairPlan` | 评测员（全书「不崩」终审 + 自动回溯修复；含豁免棘轮/降级可见化与失效证据守门链路） |
+| `evaluator_types.py` | `RollbackProvider` 等 | 评测类型定义（Protocol） |
+| `evaluator_dims.py` / `evaluator_metrics.py` | — | 评测维度与指标 |
+| `registry.py` | — | 智能体注册 |
 
 ## 依赖规则
 

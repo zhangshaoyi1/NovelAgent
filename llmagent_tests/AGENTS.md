@@ -14,6 +14,8 @@ llmagent 编排内核的测试套件。
 | `test_m1.py` | M1 阶段 |
 | `test_m2.py` | M2 阶段 |
 | `test_m3.py` | M3 阶段 |
+| `test_escape_hatch.py` | 安全逃生门（escape hatch 机制） |
+| `test_router_cascade.py` | 路由级联 |
 
 ## 运行方式
 

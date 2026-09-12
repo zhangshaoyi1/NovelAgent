@@ -9,10 +9,17 @@
 | 子目录 | 阶段 | 文件 |
 |--------|------|------|
 | `planning/` | 写作规划（M1-M4） | `m1_config.py` / `m2_discuss.py` / `m3_outline.py` / `m4_character.py` |
-| `writing/` | 章节写作（M5-M6, M8） | `m5_write_chapter.py` / `m6_adjust.py` / `m8_mode.py` / `agentic_write.py` |
+| `writing/` | 章节写作（M5-M6, M8） | `m5_write_chapter.py`（主文件经多继承组合 Mixin：`m5_context.py` 上下文装配 / `m5_quality_gate.py` 质量闸 / `m5_persist.py` 落盘归档 / `m5_text_hygiene.py` 文本净化）+ `m6_adjust.py` / `m8_mode.py` / `agentic_write.py`；`writing/__init__.py` 只显式导出 agentic_write/m5_write_chapter/m6/m8，不含 m5 子模块 |
 | `evaluation/` | 评测审计（M10-M21） | `m10_rollback.py` / `m11_export.py` / `m12_audit.py` / `m13_foreshadow.py` / `m14_architecture.py` / `m15_bookworm.py` / `m16_pacing.py` / `m17_learn.py` / `m18_recovery.py` / `m19_review_sync.py` / `m20_analyze.py` / `m21_review.py` |
 | `market/` | 市场分析（M22-M23） | `m22_setup.py` / `m23_short.py` |
-| `pipeline/` | 流水线编排 | `agentic_pipeline.py` / `mainline_orchestrator.py` / `mainline.py` / `budget_planner.py` / `qa_sync.py` |
+| `pipeline/` | 流水线编排（已拆多模块） | `agentic_pipeline.py`（主编排，含滚动体检检查点 `_rolling_eval_checkpoint`）+ 拆分件：`agentic_pipeline_agents/cost/ending/events/planning/types.py`、`mainline_orchestrator.py` / `mainline.py` / `budget_planner.py` / `qa_sync.py` / `plan_consistency.py` |
+
+### 近期新增机制（2026-09-10~12）
+
+- 滚动体检检查点（B1）与体检触发修复两件套（`agentic_pipeline.py`）
+- 伏笔播种闭环（`m13_foreshadow.py` 接线章后归档 hook，P1-4）
+- 回退预算跨批持久化（`rollback_budget.py`）
+- 桥段禁用清单（`beat_sketch.py`，回滚率削减 P0）
 
 > ⚠️ 禁止在 `workflows/` 根目录新增平铺 .py 文件——一律放入对应域子包。
 

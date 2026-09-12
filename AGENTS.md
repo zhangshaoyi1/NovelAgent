@@ -26,7 +26,7 @@ agent/
 │   │   ├── engine/               # 核心引擎（状态机/Agent循环/命令路由/工作流编排）
 │   │   ├── story/                # 故事领域模型（设定/伏笔/章节/高潮曲线）
 │   │   ├── quality/              # 质量保障层（护栏/一致性/评分/改写）
-│   │   ├── llm/                  # LLM 基础设施（预算计划/Embedding路由）
+│   │   ├── llm/                  # 预算计划（embedding 路由已在 client/，兼容层已拆除）
 │   │   ├── llmops/               # LLMOps（追踪/成本/评测）
 │   │   ├── registry/             # 扩展机制注册表（Skill/题材包）
 │   │   ├── infra/                # 基础设施（上下文工程/仪表盘/诊断/Compose）
@@ -61,7 +61,8 @@ agent/
 │   ├── templates/                # Jinja2 模板目录
 │   ├── methods/                  # 写作方法目录
 │   ├── state_schema/             # 状态 Schema 定义
-│   └── web/                      # FastAPI Web UI
+│   ├── daemon/                   # 后台写作守护进程（任务队列/进程管理/跟随）
+│   └── web/                      # FastAPI Web UI（web→cli 仅命令注册副作用，禁止 cli import web）
 ├── src/llmagent/                 # 编排内核（Gateway/Task/Catalog/Session/EventBus）
 │   ├── gateway/                  # 模型调用网关（唯一LLM出口）
 │   ├── kernel/                   # 核心运行时（Task/Session/Agent/Planner/Memory）
@@ -145,15 +146,16 @@ agent/
 
 ### 测试验证：
 
-→ 修改后统一运行验证：`python -m pytest tests/ -q --tb=short`
-→ 全量 1200+ 测试应全部通过（零失败需验证）
+→ 修改后统一运行验证：`python -m pytest -q --tb=short`（全量口径 = 无参数，含 tests/ + llmagent_tests/，2000+ 用例）
+→ 看 FAILED 行判定，不看退出码；`tests/architecture/` 红线测试零失败
 
 ### 提交前检查：
 
 → 所有测试通过
 → 不破坏架构不变性
 → 非平凡修改有决策记录
-→ 不提交 `.env.accel`、`outputs/`、`.agents/notes/`、`_debug_*.py`
+→ 不提交 `.env.accel`、`outputs/`、`_debug_*.py`
+→ `.agents/notes/` **随代码一起提交**（决策记录纳入版本管理，2026-09-12 起）
 
 ***
 
@@ -161,9 +163,21 @@ agent/
 
 1. **单向依赖原则**：依赖方向永远是 `base → client → core → agents → workflows`，绝不反向
 2. **降级不阻断**：任何 LLM 不可用 / API 失败都应该优雅降级，不阻断写作流程
-3. **向后兼容**：旧导入路径保留废弃警告，不要直接删除旧入口
+3. **删除即收口（2026-09-12 起）**：零调用方兼容层直接删除、不留废弃警告再导出（core/llm 兼容层与 core 悬空导出已拆除）；新增降级点必须接 `degrade()`（豁免棘轮只减不增），新增 state.json 直写会被状态所有权红线拦截
 4. **Agentic 设计**：任何失败都返回错误信息给用户，而非静默崩溃
 5. **LLM 统一出口**：所有 LLM 调用必须通过 `agent.client.gateway_adapter` 的辅助函数（`chat_creative()` / `chat_utility()` / `chat_structured()`），**禁止直接使用旧 `LLMClient`**
+6. **软维度单次 FAIL 不触发回滚**（探针实证单次证据不可靠）——已翻转语义勿改回，旧测试报 `rolled_back` 属预期
+7. **E3 `_pre_validation` 是有意取舍**，已登记能力对账豁免，勿擅自接线；勿凭旧清单删码
+
+### 架构红线测试（tests/architecture/，改架构前必看）
+
+| 红线 | 含义 |
+|---|---|
+| `test_state_ownership.py` | 状态所有权：冻结 state.json 直写面（豁免棘轮，只减不增） |
+| `test_degrade_visibility.py` | F-1 降级可见化：降级点必须走 degrade() 通道，静默点清零 |
+| `test_capability_parity.py` | 能力对账：接口对账 + 副作用 hook 对账（差集真机制，勿改白名单） |
+| `test_hostile_delete_env.py` | 宿主敌意：safe-delete 护栏免疫，删除路径不被 SystemExit 逃逸 |
+| R4 方向矩阵 | cli↔web 循环依赖已拆除：web→cli 仅命令注册副作用，禁止反向 |
 
 ***
 
