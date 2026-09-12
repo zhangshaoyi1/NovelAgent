@@ -612,6 +612,14 @@ class Guardrails:
             )
         return None
 
+    def check_cross_chapter_dup(self, text: str) -> list[str]:
+        """跨章段落重复公开入口（写时门禁用，2026-09-12 风险 1 前置）。
+
+        fingerprint_db 由调用方经 ``load_fingerprints`` 注入（并剔除本章自身
+        旧指纹，打回重写时不误伤）。返回命中描述列表，空 = 通过。
+        """
+        return self._check_dup(text)
+
     def register_fingerprints(self, chapter: str | int, text: str) -> None:
         """落盘后增量更新全书指纹库（仅收录 ≥40 字长段落的归一化文本）。
 

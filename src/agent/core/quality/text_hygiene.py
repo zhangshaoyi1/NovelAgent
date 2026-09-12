@@ -177,6 +177,38 @@ def _check_dialogue_jump(body: str) -> list[dict[str, str]]:
     return issues
 
 
+def _check_sentence_repetition(body: str) -> list[dict[str, str]]:
+    """章内句级重复（车轱辘话）检测——与批末 required 维度 padding_repetition_abnormal
+    （阈值 0.30）同口径的前置写时版（2026-09-12 风险 2）。
+
+    判定：按中文句末标点切句（<8 字忽略），任一句与先前句的字符集合 Jaccard
+    ≥ 0.85 即记一次重复；重复句占比 ≥ 0.30 → blocking。纯确定性，毫秒级。
+    """
+    parts = re.split(r"[。！？…；\n]+", body)
+    sents = [p.strip() for p in parts if len(p.strip()) >= 8]
+    if len(sents) < 10:  # 句数太少占比无统计意义
+        return []
+    repeated = 0
+    seen: list[set[str]] = []
+    for s in sents:
+        ss = set(s)
+        if ss and any(len(ss & t) / len(ss | t) >= 0.85 for t in seen):
+            repeated += 1
+        seen.append(ss)
+    ratio = repeated / len(sents)
+    if ratio < 0.30:
+        return []
+    return [
+        _issue(
+            "repetition_abnormal",
+            "blocking",
+            f"章内重复句占比 {ratio:.0%}（≥ 30%，{repeated}/{len(sents)} 句近似重复），"
+            "疑似注水/车轱辘话。请定位并改写或合并相似句，用新情节/细节推进，"
+            "禁止重复表达凑字。",
+        )
+    ]
+
+
 def hygiene_issues(text: str) -> list[dict[str, str]]:
     """对章节正文执行文体卫生扫描，返回问题列表。
 
@@ -280,6 +312,7 @@ def hygiene_issues(text: str) -> list[dict[str, str]]:
 
     issues.extend(_check_phrase_echo(body))
     issues.extend(_check_dialogue_jump(body))
+    issues.extend(_check_sentence_repetition(body))
     return issues
 
 

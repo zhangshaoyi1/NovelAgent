@@ -575,6 +575,101 @@ class AgenticWriteWorkflow:
             }
             return False, report
 
+        # ---- 跨章段落重复前置（G14 写时化，2026-09-12 风险 1）----
+        # 此前只在落盘后 pipeline gate + 完本 fullbook_dup_scan 才扫，命中仅贴 flag
+        # 保留该章（changan 书 672 处相似段落事后人工修复实证）。指纹库命中 → blocking。
+        try:
+            from agent.core.quality.guardrails import Guardrails, load_fingerprints
+
+            _fpdb = load_fingerprints(
+                Path(self.project_dir) / ".state" / "chapter_fingerprints.json"
+            )
+            _fpdb.pop(str(ctx.get("chapter_num")), None)  # 打回重写时排除本章旧指纹
+            if _fpdb:
+                _dup_gr = Guardrails(
+                    check_junk=False, check_title=False, check_dup=True,
+                    check_meta_leak=False, check_narrative_tell=False,
+                    check_density=False, fingerprint_db=_fpdb,
+                )
+                _dup_hits = _dup_gr.check_cross_chapter_dup(cleaned)
+            else:
+                _dup_hits = []
+        except Exception as e:  # noqa: BLE001 - 指纹库异常不阻断写作（批末 gate 仍会扫）
+            _dup_hits = []
+            degrade("agentic_write.dup_check", "跨章重复扫描失败，本轮跳过", e)
+        if _dup_hits:
+            return False, {
+                "overall_pass": False,
+                "rules": [],
+                "issues": [
+                    {
+                        "rule_id": "cross_chapter_dup",
+                        "severity": "blocking",
+                        "description": h
+                        + "。禁止整段复制/复用已发布章节：请为该段换切入角度、换措辞、"
+                        "换视角重写（情节可以呼应，文字必须独立）。",
+                    }
+                    for h in _dup_hits
+                ],
+                "suggestions": (
+                    "跨章重复：逐条把相似段落重写为独立性表达；可沿用情节目的，"
+                    "但禁止沿用原句式与原描写顺序。修复后重新提交。"
+                ),
+            }
+
+        # ---- 一致性确定性规则前置（2026-09-12 风险 4）----
+        # 生死/时间线（BLOCK）此前只在落盘后 Editor 审查，二次失败即固化；
+        # 现前置为写时 blocking。golden_finger/realm/relation（WARN）随报告透出。
+        try:
+            from agent.core.quality.consistency.checker import (
+                CheckTrigger,
+                ConsistencyChecker,
+                Severity as _CSeverity,
+            )
+
+            _crep = ConsistencyChecker(Path(self.project_dir)).check(
+                CheckTrigger.POST_WRITE, {"chapter_text": cleaned}
+            )
+        except Exception as e:  # noqa: BLE001 - 一致性扫描异常不阻断（批末评估仍会覆盖）
+            _crep = None
+            degrade("agentic_write.consistency_check", "一致性规则扫描失败，本轮跳过", e)
+        if _crep is not None:
+            _cblock = [
+                {
+                    "rule_id": f"consistency_{c.rule_id}",
+                    "severity": "blocking",
+                    "description": (
+                        c.description
+                        + " 以 characters/*.md、world.md 为唯一真源修正本章表述"
+                        "（若剧情确需如此，须先更新真源再写）。"
+                        + ("建议：" + "；".join(c.suggestions[:2]) if c.suggestions else "")
+                    ),
+                }
+                for c in _crep.conflicts
+                if c.severity == _CSeverity.BLOCK
+            ]
+            _cwarn = [
+                {
+                    "rule_id": f"consistency_{c.rule_id}",
+                    "severity": "warning",
+                    "description": c.description,
+                }
+                for c in _crep.conflicts
+                if c.severity != _CSeverity.BLOCK
+            ]
+            if _cblock:
+                return False, {
+                    "overall_pass": False,
+                    "rules": [],
+                    "issues": _cblock + _cwarn,
+                    "suggestions": (
+                        "一致性冲突逐条修复：以角色档案/世界书真源为准改写本章表述；"
+                        "确需改剧情走向的，先走设定更新流程，禁止正文与真源打架。"
+                    ),
+                }
+            if _cwarn:
+                _hygiene_warn.extend(_cwarn)  # 与文体卫生 warning 同路透出
+
         check_prompt = pm.get("m5.quality_check").render_user(
             tone=wi["tone"],
             chapter_length=wi["chapter_length"],
