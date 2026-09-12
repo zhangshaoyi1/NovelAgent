@@ -652,11 +652,12 @@ class AgenticPipelineWorkflow(
 
                     _led = ContinuityLedgerStore(self.project_dir)
                     _led.load()
-                    _cid = f"ch{ch_num:03d}"
+                    from agent.core.continuity.ledger import commit_id_matches
+
                     chapter_facts = [
                         f"{f.domain}/{f.subject_id}/{f.field} = {f.value}（{f.evidence}）"
                         for f in _led.ledger.facts
-                        if f.source_commit_id == _cid
+                        if commit_id_matches(f.source_commit_id, ch_num)
                     ][:12]
                     _h = _led.ledger.latest_handoff()
                     if _h is not None and _h.chapter == ch_num and _h.summary:
@@ -668,9 +669,11 @@ class AgenticPipelineWorkflow(
                 # 名册缺失只影响注入丰富度，不阻断写作。----
                 try:
                     from agent.core.story.entity_ledger import sync_entities_from_facts
+                    from agent.core.continuity.ledger import commit_id_matches
 
                     _ch_fact_objs = [
-                        f for f in _led.ledger.facts if f.source_commit_id == _cid
+                        f for f in _led.ledger.facts
+                        if commit_id_matches(f.source_commit_id, ch_num)
                     ]
                     sync_entities_from_facts(self.project_dir, _ch_fact_objs, ch_num)
                 except Exception as sync_e:  # noqa: BLE001

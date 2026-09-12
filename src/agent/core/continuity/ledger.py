@@ -193,4 +193,16 @@ class ContinuityLedgerStore:
         return self.ledger.latest_handoff().chapter if self.ledger.latest_handoff() else None
 
 
-__all__ = ["ContinuityLedgerStore"]
+def commit_id_matches(source_commit_id: str, chapter: int) -> bool:
+    """判断一条事实是否属于某章——兼容两种 commit id 风格。
+
+    账本中并存两套 id：裸章号（``ContinuityLedger.commit`` 返回 ``str(chapter)``，
+    由一致性守护/增量生产者写入）与 ``chNNN``（m5_persist 写入）。2026-09-13
+    实弹发现（灵荒炉火）：管线钩子只匹配 ch 风格导致 character 域 facts 全部
+    漏配、实体名册未生成——本助手统一两种风格。
+    """
+    s = str(source_commit_id or "").strip().lower()
+    return s in (str(chapter), f"ch{chapter}", f"ch{chapter:03d}")
+
+
+__all__ = ["ContinuityLedgerStore", "commit_id_matches"]

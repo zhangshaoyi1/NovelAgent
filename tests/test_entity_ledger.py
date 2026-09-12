@@ -223,3 +223,29 @@ def test_sync_entities_from_facts_empty_no_save(tmp_path):
 
     assert sync_entities_from_facts(tmp_path, [], 9) == 0
     assert not (tmp_path / ".state" / "continuity" / "entity_ledger.json").exists()
+
+
+# ---------------------------------------------------------------- commit id 双风格兼容（2026-09-13 实弹发现）
+def test_commit_id_matches_both_styles():
+    from agent.core.continuity.ledger import commit_id_matches
+
+    assert commit_id_matches("5", 5)
+    assert commit_id_matches("ch5", 5)
+    assert commit_id_matches("ch005", 5)
+    assert not commit_id_matches("ch006", 5)
+    assert not commit_id_matches("6", 5)
+    assert not commit_id_matches("", 5)
+
+
+def test_backfill_real_project_numeric_commits(tmp_path):
+    # 回归：裸章号 commit 的 character facts 能被过滤器命中并登记名册
+    from agent.core.story.entity_ledger import sync_entities_from_facts
+
+    facts = [
+        NS(domain="character", subject_id="林凡", field="status", value="外门弟子"),
+        NS(domain="character", subject_id="小工", field="alive", value="自主动作"),
+        NS(domain="world", subject_id="培元丹", field="count", value="十"),
+    ]
+    assert sync_entities_from_facts(tmp_path, facts, 5) >= 2
+    st = EntityLedgerStore(tmp_path).load()
+    assert st.get("林凡") and st.get("小工")
