@@ -230,7 +230,10 @@ class _PipelineAgentsMixin:
             # ---- P1：回退计数跨批持久化 + 熔断上报人工 ----
             budget = self._rollback_budget()
             target = self._last_rollback_target(report)
-            budget.bump(target, fail_txt)
+            # 只有真的执行了回退重写才计数；gate=block 且未回退必然 escalated，
+            # 由下面 evaluator_gave_up 分支上报，避免同一回合与批末体检重复 bump。
+            if getattr(report, "rolled_back", False):
+                budget.bump(target, fail_txt)
             evaluator_gave_up = bool(getattr(report, "escalated", False))
             if budget.tripped() or evaluator_gave_up:
                 reason = (

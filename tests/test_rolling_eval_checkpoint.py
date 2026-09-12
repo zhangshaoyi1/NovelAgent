@@ -27,18 +27,27 @@ def _dim(name: str, label: str, value: float, threshold: float, direction: str, 
     )
 
 
-def _report(passed: bool):
+def _report(passed: bool, *, rolled_back: bool = False, escalated: bool = False):
     dims = [
         _dim("setting_consistency_high", "设定一致", 0.0 if passed else 3.0, 0.0, "<=", passed),
         _dim("logic_holes", "逻辑漏洞", 0.0 if passed else 3.0, 0.0, "<=", passed),
     ]
-    return SimpleNamespace(overall_pass=passed, score=80.0 if passed else 66.0, dimensions=dims)
+    return SimpleNamespace(
+        overall_pass=passed,
+        score=80.0 if passed else 66.0,
+        dimensions=dims,
+        rolled_back=rolled_back,
+        escalated=escalated,
+    )
 
 
 class _FakeEvaluator:
-    def __init__(self, passed: bool = True, raises: Exception | None = None):
+    def __init__(self, passed: bool = True, raises: Exception | None = None,
+                 rolled_back: bool = False, escalated: bool = False):
         self._passed = passed
         self._raises = raises
+        self._rolled_back = rolled_back
+        self._escalated = escalated
         self.calls = 0
         self.rewrite_calls = 0
         self.last_failed_report = None
@@ -48,7 +57,8 @@ class _FakeEvaluator:
         self.calls += 1
         if self._raises is not None:
             raise self._raises
-        return _report(self._passed)
+        return _report(self._passed, rolled_back=self._rolled_back,
+                       escalated=self._escalated)
 
 
 def _pipeline(tmp_path: Path, evaluator: _FakeEvaluator, every: int = 5) -> AgenticPipelineWorkflow:
@@ -84,6 +94,29 @@ def test_rolling_checkpoint_blocks_when_report_fails(tmp_path: Path) -> None:
     p = _pipeline(tmp_path, ev)
     assert p._rolling_eval_checkpoint() is False
     assert ev.calls == 1
+
+
+def test_rolling_block_without_rollback_does_not_bump_budget(tmp_path: Path) -> None:
+    """P1 修正（2026-09-12）：gate=block 且未真回退（必然 escalated）不得 bump——
+    否则同一回合滚动体检 + 批末体检对同一窗口重复计数，提前误触发熔断。"""
+    from agent.core.quality.rollback_budget import RollbackBudget
+
+    ev = _FakeEvaluator(passed=False, rolled_back=False, escalated=True)
+    p = _pipeline(tmp_path, ev)
+    assert p._rolling_eval_checkpoint() is False
+    budget = RollbackBudget.load(tmp_path)
+    assert budget.consecutive == 0
+
+
+def test_rolling_block_with_real_rollback_bumps_budget(tmp_path: Path) -> None:
+    """真回退（rolled_back=True）仍计 1 次——修正不得误伤正常计数。"""
+    from agent.core.quality.rollback_budget import RollbackBudget
+
+    ev = _FakeEvaluator(passed=False, rolled_back=True, escalated=False)
+    p = _pipeline(tmp_path, ev)
+    assert p._rolling_eval_checkpoint() is False
+    budget = RollbackBudget.load(tmp_path)
+    assert budget.consecutive == 1
 
 
 def test_rolling_checkpoint_uses_repair_loop(tmp_path: Path) -> None:
