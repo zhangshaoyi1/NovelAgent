@@ -17,7 +17,18 @@ import typer
 from agent.cli._app import app, command, console
 from agent.core.infra.compose_runner import run_compose
 from agent.core.quality.guardrails import fullbook_dup_scan
+from agent.core.story.closure_plan import build_closure_plan, save_closure_plan
 from agent.core.engine.state_machine import State
+
+
+def _prepare_closure_plan(project_dir) -> None:
+    """完本收束计划：开写前收集未了事项并落盘（显性回显，失败向上抛由 runner 降级）。"""
+    plan = build_closure_plan(project_dir)
+    path = save_closure_plan(project_dir, plan)
+    console.print(
+        f"[cyan][compose] 完本收束计划已生成：{plan.get('total_open', 0)} 项未了事项"
+        f"（{path}）——结局模式章将逐条处置[/cyan]"
+    )
 
 
 @command(
@@ -56,6 +67,7 @@ def compose(
         env=env,
         checkup=not no_checkup,
         fullbook_scan=fullbook_dup_scan,
+        closure_plan=_prepare_closure_plan,
     )
     if rc != 0:
         raise typer.Exit(code=rc)

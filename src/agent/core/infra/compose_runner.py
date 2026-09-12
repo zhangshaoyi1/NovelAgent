@@ -48,6 +48,7 @@ def run_compose(
     env: str = "",
     checkup: bool = True,
     fullbook_scan: Callable[[Path], None] | None = None,
+    closure_plan: Callable[[Path], None] | None = None,
 ) -> int:
     """执行一次「开新书/续写 → 写至完本」的流程。
 
@@ -80,6 +81,15 @@ def run_compose(
         print("[compose] 新书模式，autowrite 将自主规划生成设定集/架构/大纲/角色...")
 
     print("[compose] 启动多角色自主写作...")
+    # ---- 完本收束计划（长线一致性设计稿第一期·E）：开写前收集全部未了事项
+    # （伏笔/叙事线/实体义务/问题债务）落盘 .state/closure_plan.json，结局模式
+    # 章由写时管线注入逐条处置。实现归属 core/story，由调用方注入回调，
+    # infra 不依赖 story（与 fullbook_scan 同范式）。----
+    if closure_plan is not None:
+        try:
+            closure_plan(project_dir)
+        except Exception as e:  # noqa: BLE001 - 收束计划生成失败非致命，但必须显性
+            print(f"⚠ 完本收束计划生成失败（非致命）：{e}")  # noqa: SILENT_DEGRADE
     # 锁继承：compose 进程已被派发层加了 writer.lock，spawn 的子进程若不声明
     # 血缘会被父锁挡死（父子 PID 不同）。注入 NOVEL_AGENT_INHERIT_LOCK_PID
     # 让子进程共享父锁；外部进程（CLI/Web 另起的写命令）不受影响、照常被拒。

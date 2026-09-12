@@ -391,6 +391,12 @@ class AgenticWriteWorkflow:
             except Exception as e:  # noqa: BLE001 - 缺口读取失败不阻断
                 degrade("agentic_write.ending_gap", "收尾缺口读取失败，本章无缺口注入", e)
 
+            # ---- 完本收束清单（设计稿第一期·E）：结局模式章携带全部未了事项
+            # 逐条处置（回收/有意留白），缺计划 → 空（由 compose 批前生成）----
+            _closure_text = str(ctx.get("closure_text") or "")
+            if _closure_text:
+                task += _closure_text
+
         # ---- G11：风格指引注入（style.md 存在即注入；缺失/关闭 → 与 G10 输出逐字节一致）----
         style_guide = (ctx.get("style_guide") or "").strip()
         if style_guide:

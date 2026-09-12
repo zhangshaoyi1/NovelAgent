@@ -294,6 +294,8 @@ class M5ContextMixin:
             #      信息账本/战力标尺账的写时注入（缺/损坏 → degrade 降级为空）----
             "batch_directive": batch_directive,
             "ledger_context": self._load_ledger_context(subline_data, chapter_num),
+            # ---- 完本收束清单（设计稿第一期·E）：仅结局模式装载（缺/空 → ""）----
+            "closure_text": self._load_closure_text() if bool(progress.get("ending_mode", False)) else "",
         }
     def _load_batch_directive(self) -> dict[str, Any]:
         """读批间复规划裁决（.state/batch_directive.json）；缺失/损坏 → 空降级。"""
@@ -320,6 +322,16 @@ class M5ContextMixin:
             from agent.core.infra.degrade import degrade
 
             degrade("m5.context.ledger", "长线一致性账本注入失败，降级为空", e)
+            return ""
+
+    def _load_closure_text(self) -> str:
+        """完本收束清单注入文本（.state/closure_plan.json）；缺失/空 → ""。"""
+        try:
+            from agent.core.story.closure_plan import load_closure_plan, render_closure_text
+
+            return render_closure_text(load_closure_plan(self.project_dir))
+        except Exception as e:  # noqa: BLE001 - 降级不阻断写章
+            degrade("m5.context.closure", "完本收束清单装载失败，降级为空", e)
             return ""
 
     def _build_reuse_guard(self, chapter_num: int) -> str:
