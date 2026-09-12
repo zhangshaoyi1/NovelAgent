@@ -495,6 +495,47 @@ def _rule_realm_overstep(ctx: dict[str, Any], checker: "ConsistencyChecker") -> 
     return conflicts
 
 
+def _rule_presence_conflict(ctx: dict[str, Any], checker: "ConsistencyChecker") -> list[Conflict]:
+    """POST_WRITE：问题债务登记簿（issue_debt）的 presence_ban 强制执行。
+
+    被禁主体（死亡/离场/封印等已确认不应在当前场景出现的角色）在本章正文
+    出现即 BLOCK——这是"确认问题登记后强制约束后续章节"闭环的门禁端
+    （2026-09-12：此前"下落/离场"只有事实记录没有约束消费，死人/离场角色
+    再出场只能靠 RAG 碰运气）。登记簿损坏/缺失时静默放行（G3）。
+    """
+    chapter_text = ctx.get("chapter_text", "")
+    if not chapter_text:
+        return []
+    try:
+        from agent.core.story.issue_debt import KIND_PRESENCE_BAN, IssueDebtStore
+
+        debts = IssueDebtStore(checker.project_dir).load().open_items(
+            kinds=[KIND_PRESENCE_BAN]
+        )
+    except Exception:  # noqa: BLE001 - 登记簿异常不阻断（写时注入端同样降级）
+        return []
+    conflicts: list[Conflict] = []
+    for d in debts:
+        subject = (d.subject or "").strip()
+        if subject and subject in chapter_text:
+            conflicts.append(Conflict(
+                rule_id="presence_conflict",
+                severity=Severity.BLOCK,
+                description=(
+                    f"被禁主体「{subject}」出现在本章正文，但问题债务 {d.id} 已确认"
+                    f"其不应出场（{d.constraint}"
+                    f"{'，登记于第' + str(d.registered_ch) + '章' if d.registered_ch else ''}）。"
+                    "请删除/改写相关情节，或先走设定更新流程显性推翻该禁令并销账。"
+                ),
+                affected_chapters=[],
+                suggestions=[
+                    f"处理方式二选一：① 按债务约束改写本章（移除{subject}的出场）；"
+                    f"② 若剧情确需其出场，用 issue-debt resolve {d.id} 销账后再写。"
+                ],
+            ))
+    return conflicts
+
+
 class ConsistencyChecker:
     """一致性校验器（T-5：可配置 rule 集，至少 1 条委托 ConflictArbiter）"""
 
@@ -535,6 +576,12 @@ class ConsistencyChecker:
                 name="境界越级",
                 severity=Severity.WARN,
                 check=lambda c, a: _rule_realm_overstep(c, self),
+            ),
+            _ConsistencyRule(
+                id="presence_conflict",
+                name="禁出场主体违规",
+                severity=Severity.BLOCK,
+                check=lambda c, a: _rule_presence_conflict(c, self),
             ),
         ]
 

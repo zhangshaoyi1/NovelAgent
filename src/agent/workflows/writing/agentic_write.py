@@ -413,6 +413,22 @@ class AgenticWriteWorkflow:
                 character_constraints=character_constraints
             )
 
+        # ---- 问题债务注入（2026-09-12）：确认未解决的问题（presence_ban/watch/
+        # gate_skipped）从 .state/issue_debts.json 渲染成硬约束/提醒，随任务注入
+        # writer——确认的问题必须登记并约束后续章节，不允许"当时放行、几十章后
+        # 才发现修不起"。空 = 无未销账债务，不注入。----
+        try:
+            from agent.core.story.issue_debt import render_constraints
+
+            _debt_constraints = render_constraints(
+                self.project_dir, int(ctx.get("chapter_num") or 0)
+            )
+        except Exception as e:  # noqa: BLE001 - 债务注入失败不阻断写章
+            degrade("agentic_write.issue_debt", "问题债务约束渲染失败，本章无债务注入", e)
+            _debt_constraints = ""
+        if _debt_constraints:
+            task += "\n" + _debt_constraints
+
         # ---- 设定台账硬约束（P0-1 补·2026-09-12）：world.md 自开书起零回写，写作中
         # 涌现的设定（阵盘/镇灵符/导引纹……）只存在于正文，Writer 隔几章就重新发明一遍
         # → 章间设定矛盾 → 连贯性/设定一致硬指标长期不达标（43 次体检仅 1 次通过）。
@@ -549,6 +565,20 @@ class AgenticWriteWorkflow:
                 encoding="utf-8",
             )
             tmp.replace(qf_path)
+            # 问题债务登记：gate_skipped 章同时挂账（kind=gate_skipped），写时
+            # 注入提醒 + 批末查漏，不允许"未经门禁"的章静默滑过。
+            try:
+                from agent.core.story.issue_debt import KIND_GATE_SKIPPED, IssueDebtStore
+
+                _store = IssueDebtStore(self.project_dir).load()
+                _store.add(
+                    KIND_GATE_SKIPPED,
+                    constraint=f"第{ch}章写时门禁故障放行：{reason}",
+                    registered_ch=int(ch),
+                )
+                _store.save()
+            except Exception as debt_e:  # noqa: BLE001 - 债务登记失败不影响 flag
+                degrade("agentic_write.gate_skipped_log", "gate_skipped 债务登记失败", debt_e)
         except Exception as e:  # noqa: BLE001 - 登记失败不阻断写章，degrade 留痕
             degrade("agentic_write.gate_skipped_log", "gate_skipped 登记落盘失败", e)
 

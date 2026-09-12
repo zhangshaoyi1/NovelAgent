@@ -16,6 +16,7 @@ from agent.cli.commands.confirm_architecture import confirm_architecture
 from agent.cli.commands.outline import outline
 from agent.cli.commands.design_characters import design_characters
 from agent.cli.commands.write import write
+from agent.cli.commands.issue_debt import issue_debt
 from agent.cli.commands.adjust_route import adjust_route
 from agent.cli.commands.adjust_relation import adjust_relation
 from agent.cli.commands.mode import mode

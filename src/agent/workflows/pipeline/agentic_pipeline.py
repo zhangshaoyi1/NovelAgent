@@ -495,6 +495,29 @@ class AgenticPipelineWorkflow(
                     self.console.print(
                         f"[yellow]第 {ch_num} 章编辑提示：{len(edit.conflicts)} 项一致性警告[/yellow]"
                     )
+                    # ---- 问题债务登记（2026-09-12）：WARN 级一致性警告此前只打
+                    # console 即丢弃——"当时觉得问题不大"的问题没有任何登记，
+                    # 几十章后同类问题复发时无记忆、修复代价巨大。确认放行的
+                    # 警告统一登记为 watch 债务，写时注入提醒（销账闭环见
+                    # issue_debt.py）。登记失败仅告警不阻断。----
+                    try:
+                        from agent.core.story.issue_debt import KIND_WATCH, IssueDebtStore
+
+                        _store = IssueDebtStore(self.project_dir).load()
+                        for _c in edit.conflicts:
+                            _store.add(
+                                KIND_WATCH,
+                                constraint=(
+                                    f"第{ch_num}章一致性警告（{_c.rule_id}）："
+                                    f"{_c.description}"
+                                ),
+                                registered_ch=ch_num,
+                            )
+                        _store.save()
+                    except Exception as debt_e:  # noqa: BLE001 - 登记失败不阻断
+                        self.console.print(
+                            f"[yellow]⚠ 问题债务登记失败（不影响本章）：{debt_e}[/yellow]"
+                        )  # noqa: SILENT_DEGRADE
                 elif edit.frozen_violations:
                     self.console.print(
                         f"[yellow]第 {ch_num} 章编辑提示："
