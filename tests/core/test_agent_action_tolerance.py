@@ -93,11 +93,11 @@ class TestRetryPromptCoversFieldMissing:
         assert "必填字段" in text
         assert "action" in text
 
-    def test_fallback_constant_mentions_missing_action(self) -> None:
-        from agent.agents.writer_agent import _RETRY_JSON_PROMPT
+    def test_fallback_constant_removed(self) -> None:
+        """F-3：legacy 兜底常量已删除（md 单一真源，缺失即显性 KeyError，不再双源）"""
+        import agent.agents.writer_agent as wa
 
-        assert "必填字段" in _RETRY_JSON_PROMPT
-        assert "action" in _RETRY_JSON_PROMPT
+        assert not hasattr(wa, "_RETRY_JSON_PROMPT")
 
     def test_prompt_manager_serves_updated_retry(self) -> None:
         from agent.core.infra.prompt_manager import pm

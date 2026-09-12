@@ -15,9 +15,9 @@ from pathlib import Path
 from unittest.mock import MagicMock
 from types import SimpleNamespace
 
+from agent.core.infra.prompt_manager import pm
 from agent.core.quality.scoring.reader_appeal import (
     _EVAL_DIM_LABELS,
-    _EVAL_SYSTEM_PROMPT,
     ReaderAppealScorer,
 )
 
@@ -44,8 +44,9 @@ def _project(tmp_path: Path) -> Path:
 # P0-1 / P0-5 prompt 关键词断言
 # ============================================================
 def test_prompt_requires_enumeration() -> None:
+    system = pm.get("quality.reader_appeal_eval").system
     for kw in ("issues", "逐项", "不得合并", "豁免", "80+", "依据"):
-        assert kw in _EVAL_SYSTEM_PROMPT, f"prompt 缺少关键词 {kw}"
+        assert kw in system, f"prompt 缺少关键词 {kw}"
     # 维度标签不应含"明显"（已改为"逐项列举"）
     joined = " ".join(_EVAL_DIM_LABELS.values())
     assert "明显" not in joined

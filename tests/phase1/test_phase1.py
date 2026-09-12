@@ -16,7 +16,7 @@ from agent.core.engine.agent_loop import AgentAction, AgentLoop, LoopResult
 from agent.core.base.structured_output import StructuredOutputError, pydantic_to_json_schema
 from agent.core.engine.tool_contracts import ToolResult
 from agent.core.tools import registry
-from agent.agents.writer_agent import WriterAgent, _RETRY_JSON_PROMPT
+from agent.agents.writer_agent import WriterAgent
 from agent.workflows.writing.agentic_write import AgenticWriteWorkflow
 
 
