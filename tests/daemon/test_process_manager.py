@@ -30,6 +30,47 @@ def test_resolve_max_runtime_defaults() -> None:
     assert pm.resolve_max_runtime("cost", []) == pm.DEFAULT_OTHER_MAX_RUNTIME_S
 
 
+def test_resolve_max_runtime_scales_with_chapters() -> None:
+    """写命令按提交章数缩放：基础 1h + 15min/章（五灵破归档 ch190 事故加固）。"""
+    # 335 章 → 3600 + 335*900
+    assert pm.resolve_max_runtime("autowrite", ["--chapters", "335"]) == 3600 + 335 * 900
+    assert pm.resolve_max_runtime("autowrite", ["--chapters=10"]) == 3600 + 10 * 900
+    assert pm.resolve_max_runtime("autowrite", ["-n", "5"]) == 3600 + 5 * 900
+    assert pm.resolve_max_runtime("autowrite", ["--batch", "8"]) == 3600 + 8 * 900
+    # 章数缩放不低于固定默认 2h
+    assert pm.resolve_max_runtime("autowrite", ["--chapters", "1"]) >= pm.DEFAULT_WRITE_MAX_RUNTIME_S
+    # 显式 --max-time 仍最优先
+    assert pm.resolve_max_runtime("autowrite", ["--chapters", "335", "--max-time", "600"]) == 600
+
+
+def test_should_stall_progress_reset(tmp_path: Path) -> None:
+    """停滞熔断（每章重置语义）：有新进度不杀，停滞超窗杀，无产物保守不杀。"""
+    import os
+
+    state = tmp_path / ".state"
+    state.mkdir()
+    now = time.time()
+    task = {
+        "status": tq.STATUS_RUNNING,
+        "project_dir": str(tmp_path),
+        "max_runtime_s": 10 ** 9,
+        "started_at": datetime.fromtimestamp(now - 10 ** 7).isoformat(),
+    }
+    # 无任何进度产物 → 保守 False（交给墙钟）
+    assert pm.should_stall(task, now) is False
+    # 进度产物陈旧（>窗口）→ True（即便远未到墙钟上限）
+    old = state / "progress.json"
+    old.write_text("{}", encoding="utf-8")
+    past = now - pm.PROGRESS_STALL_S - 60
+    os.utime(old, (past, past))
+    assert pm.should_stall(task, now) is True
+    # 进度产物新鲜（<窗口）→ False（等效"每写一章重置超时"，运行再久也不杀）
+    fresh = tmp_path / ".events" / "events.jsonl"
+    fresh.parent.mkdir()
+    fresh.write_text("x", encoding="utf-8")
+    assert pm.should_stall(task, now) is False
+
+
 def test_should_timeout() -> None:
     """超时判定：running + 超 max_runtime。"""
     now = time.time()

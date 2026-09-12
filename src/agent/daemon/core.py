@@ -321,6 +321,28 @@ class WriterDaemon:
 
         current = tq.get_task(project_dir, task["task_id"]) or {}
 
+        # ⓪ 进度停滞熔断（每章重置语义）：项目进度产物超过窗口无更新 → 挂起判定。
+        # 先于墙钟检查：流水线健康推进时（任一产物有更新）永不触发，
+        # 与 ① 的章数缩放墙钟互补——墙钟兜"整体超预算"，停滞兜"单点挂死"。
+        if pm.should_stall(current):
+            stall_s = pm._env_int_stall()
+            print(
+                f"[daemon] 任务 {task['task_id']} 进度停滞"
+                f"（>{stall_s}s 无任何进度产物更新），强制终止进程树"
+            )
+            pid = self._child.pid
+            self._child = None
+            self._child_task = None
+            if self._log_fh:
+                self._log_fh.close()
+                self._log_fh = None
+            pm.force_terminate(
+                project_dir, task["task_id"], pid,
+                note=f"进度停滞熔断（ProcessManager，>{stall_s}s 无更新）",
+                status=tq.STATUS_FAILED,
+            )
+            return
+
         # ① 超时熔断：运行超过 max_runtime_s → 强制终止（防僵尸任务堵死全局串行队列）
         if pm.should_timeout(current):
             print(

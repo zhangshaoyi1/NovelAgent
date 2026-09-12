@@ -28,15 +28,62 @@ from agent.core.infra.degrade import degrade
 from agent.daemon import task_queue as tq
 
 # 默认超时：写命令 2h（长任务），非写命令 30min（短任务兜底，防止僵尸堵串行队列）
+# 2026-09-12：写命令默认上限改为**按提交章数缩放**（基础 1h + 15min/章），
+# 固定 2h 会把长跑任务（如 335 章预计 13h+）在半路熔断（五灵破归档 ch190 事故）。
+# 章数缩放只兜"慢"不兜"死"——真正的挂起由 should_stall 进度停滞熔断兜底。
 DEFAULT_WRITE_MAX_RUNTIME_S = 7200
 DEFAULT_OTHER_MAX_RUNTIME_S = 1800
+# 章数缩放参数：基础墙钟 + 每章预算（15min/章为实测上限的保守值）
+PER_CHAPTER_RUNTIME_S = 900
+CHAPTER_BASE_RUNTIME_S = 3600
 
 # 心跳阈值（与 daemon/follow.py 的 HEARTBEAT_MAX_AGE 对齐：>120s 视为失去监督）
 HEARTBEAT_MAX_AGE = 120
+# 进度停滞熔断窗口：项目内任一进度产物超过该时长无更新 → 判定挂起。
+# 60min ≈ 实测最慢单章（~30min）的 2 倍余量；环境变量 NOVEL_PROGRESS_STALL_S 可调。
+PROGRESS_STALL_S = 3600
+# 进度信号文件/目录（相对项目根）：任一 mtime 新于阈值即视为"有进度"
+_PROGRESS_SIGNALS = (
+    ".state/progress.json",
+    ".events/events.jsonl",
+    ".state/quality_audit.jsonl",
+    ".state/tasks/logs",   # 目录：任一任务日志 mtime
+    "chapters",            # 目录：任一章节文件 mtime
+)
+
+
+def has_explicit_max_time(argv: list[str]) -> bool:
+    """argv 是否显式携带 --max-time（显式值沿用墙钟语义，不做章数缩放）。"""
+    for i, a in enumerate(argv):
+        if a == "--max-time" and i + 1 < len(argv):
+            return True
+        if a.startswith("--max-time="):
+            return True
+    return False
+
+
+def _parse_int(raw: Any) -> int | None:
+    try:
+        return int(raw)
+    except (TypeError, ValueError):
+        return None
+
+
+def _chapters_from_argv(argv: list[str]) -> int:
+    """从 argv 解析目标章数：--chapters/-n 绝对值优先，--batch/-b 兜底；无则 0。"""
+    for i, a in enumerate(argv):
+        val: int | None = None
+        if a in ("--chapters", "-n", "--batch", "-b") and i + 1 < len(argv):
+            val = _parse_int(argv[i + 1])
+        elif a.startswith("--chapters=") or a.startswith("--batch="):
+            val = _parse_int(a.split("=", 1)[1])
+        if val is not None and val > 0:
+            return val
+    return 0
 
 
 def resolve_max_runtime(command: str, argv: list[str]) -> int:
-    """任务超时阈值：CLI --max-time 显式优先；否则按命令类型默认兜底。
+    """任务超时阈值：CLI --max-time 显式优先；写命令按章数缩放；无章数信息回退 2h。
 
     支持 ``--max-time 3600`` 与 ``--max-time=3600`` 两种写法。
     """
@@ -56,6 +103,12 @@ def resolve_max_runtime(command: str, argv: list[str]) -> int:
             except (TypeError, ValueError):  # noqa: SILENT_DEGRADE - 解析失败回退默认/跳过
                 break
     if command in tq.writer_commands():
+        chapters = _chapters_from_argv(argv)
+        if chapters > 0:
+            return max(
+                CHAPTER_BASE_RUNTIME_S + PER_CHAPTER_RUNTIME_S * chapters,
+                DEFAULT_WRITE_MAX_RUNTIME_S,
+            )
         return DEFAULT_WRITE_MAX_RUNTIME_S
     return DEFAULT_OTHER_MAX_RUNTIME_S
 
@@ -76,6 +129,57 @@ def should_timeout(task: dict[str, Any], now: float | None = None) -> bool:
         return False
     now_ts = now if now is not None else time.time()
     return (now_ts - started_ts) > max_runtime
+
+
+def _safe_mtime(p: Path) -> float:
+    try:
+        return p.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _latest_progress_mtime(project_dir: Path | str) -> float:
+    """项目内最新进度产物 mtime（无任何产物返回 0.0）。"""
+    root = Path(project_dir)
+    latest = 0.0
+    for rel in _PROGRESS_SIGNALS:
+        p = root / rel
+        if p.is_file():
+            latest = max(latest, _safe_mtime(p))
+        elif p.is_dir():
+            for child in p.iterdir():
+                latest = max(latest, _safe_mtime(child))
+    return latest
+
+
+def should_stall(task: dict[str, Any], now: float | None = None) -> bool:
+    """进度停滞判定（每章重置语义）：running 且项目进度产物超过窗口无更新。
+
+    与墙钟 should_timeout 互补：墙钟兜"整体超预算"，停滞兜"单点挂死"。
+    只要流水线还在产出（事件/进度/章节/日志任一有更新），即视为健康推进，
+    无论已运行多久——效果等价于"每写一章就重置超时"。
+    项目无任何进度产物（如冷启动前期）时保守返回 False，交给墙钟判定。
+    """
+    if task.get("status") != tq.STATUS_RUNNING:
+        return False
+    if not task.get("project_dir"):
+        return False
+    now_ts = now if now is not None else time.time()
+    window = _env_int_stall()
+    latest = _latest_progress_mtime(task["project_dir"])
+    if latest <= 0:
+        return False
+    return (now_ts - latest) > window
+
+
+def _env_int_stall() -> int:
+    import os
+
+    try:
+        v = int(os.environ.get("NOVEL_PROGRESS_STALL_S", "") or PROGRESS_STALL_S)
+        return v if v > 0 else PROGRESS_STALL_S
+    except ValueError:
+        return PROGRESS_STALL_S
 
 
 def _pid_alive(pid: int) -> bool:
