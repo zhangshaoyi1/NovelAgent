@@ -108,8 +108,10 @@ def audit_plan(project_dir: str | Path, arcs: list[Any], current_chapter: int) -
                 BLOCK, "structure",
                 f"弧线收尾章 {last_end} 超出全书总章数 {total}",
             ))
-    except Exception:  # noqa: BLE001 - 总章数缺失时跳过越界检查
-        pass
+    except Exception as e:  # noqa: BLE001 - 总章数缺失时显性跳过越界检查
+        from agent.core.infra.degrade import degrade
+
+        degrade("plan_managers.total", "全书总章数读取失败，跳过越界检查", e)
 
     # ---- 债务管理者：进行中叙事线在弧线目标中零推进迹象 ----
     try:
@@ -125,8 +127,10 @@ def audit_plan(project_dir: str | Path, arcs: list[Any], current_chapter: int) -
                         WARN, "debt",
                         f"高 urgency 叙事线「{t.name}」在本批弧线中无任何推进迹象",
                     ))
-    except Exception:  # noqa: BLE001 - 名册缺失跳过
-        pass
+    except Exception as e:  # noqa: BLE001 - 名册缺失显性跳过
+        from agent.core.infra.degrade import degrade
+
+        degrade("plan_managers.threads", "叙事线审计数据源读取失败，跳过债务管理者检查", e)
 
     # ---- 角色管理者：休眠实体在弧线中无安排 ----
     try:
@@ -142,8 +146,10 @@ def audit_plan(project_dir: str | Path, arcs: list[Any], current_chapter: int) -
                         f"休眠实体「{e.name}」（末见第{e.last_ch}章，义务：{e.open_obligations()[0].text[:30]}）"
                         "在本批弧线中无回归/收束安排",
                     ))
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        from agent.core.infra.degrade import degrade
+
+        degrade("plan_managers.dormant", "休眠实体审计数据源读取失败，跳过角色管理者检查", e)
 
     return report
 

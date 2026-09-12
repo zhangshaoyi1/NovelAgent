@@ -51,11 +51,11 @@ def _pair_key(a: str, b: str) -> str:
 
 
 class RelationLedgerStore:
-    """关系网账本存取（``.state/continuity/relations_state.json``）。"""
+    """关系网账本存取（``.state/continuity/relations.json``）。"""
 
     def __init__(self, project_dir: str | Path) -> None:
         self.project_dir = Path(project_dir)
-        self.path = self.project_dir / ".state" / "continuity" / "relations_state.json"
+        self.path = self.project_dir / ".state" / "continuity" / "relations.json"
         self.entries: list[RelationEntry] = []
 
     def load(self) -> "RelationLedgerStore":
