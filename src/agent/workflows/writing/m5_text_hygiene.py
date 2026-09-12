@@ -205,11 +205,35 @@ class M5TextHygieneMixin:
         再走一遍同链（链内各步幂等）。
         """
         text = M5TextHygieneMixin._clean_chapter_body(text)
+        text = M5TextHygieneMixin._strip_meta_tail_notes(text)
         text = M5TextHygieneMixin._dedup_repeated_chapter(text)
         text = M5TextHygieneMixin._dedup_tail_loop(text)
         text = M5TextHygieneMixin._format_chapter_body(text)
         clean_text, _still = hard_replace_english(text)
         return clean_text
+
+    # 行首（允许 **加粗**/# 等装饰前缀）即命中的「LLM 自我修订尾注 / agent→LLM 指令标记」。
+    # 这类标记只应出现在章末附注（实证：五灵破归档 ch4 / ch170 / ch176 整块修订说明
+    # 附于章末漏网），按"命中行起整块剥离"处理；行中出现同词属叙事正文，交由
+    # guardrails G14 元指令泄漏检测走 LLM 修订，不在此误删。
+    _META_TAIL_NOTE_RE = re.compile(
+        r"^[#*\s>]*(?:修订说明|修订笔记|改稿说明|章末悬念|留下悬念|本章要求|写作指令|作者指令|系统指令|写作提示)\s*[:：]?",
+    )
+
+    @staticmethod
+    def _strip_meta_tail_notes(text: str) -> str:
+        """确定性剥离章末混入的「修订说明」类元尾注（G14 的落盘前兜底）。
+
+        guardrails 只能检出+打回重写，重写耗尽后按决策①仍会带污染落盘；
+        此处在 canonical body 链内做最后一步确定性清洗：命中行（含其后所有
+        内容——尾注恒在章末）整体剥除。
+        """
+        lines = text.split("\n")
+        for idx, line in enumerate(lines):
+            if M5TextHygieneMixin._META_TAIL_NOTE_RE.match(line):
+                stripped = "\n".join(lines[:idx]).rstrip()
+                return stripped + "\n" if stripped else ""
+        return text
 
     @staticmethod
     def compose_chapter_markdown(chapter_num: int, title: str, body: str) -> str:

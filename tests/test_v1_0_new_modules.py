@@ -414,6 +414,48 @@ class TestPostProcessor:
         if result.modified:
             assert "然而" not in result.text or result.text != text
 
+    def test_insertion_never_creates_dangling_comma(self):
+        """打断插入不得产生「，。」类残缺标点（ch042/049/124/130/185 实证）。"""
+        import random
+
+        from agent.core.anti_ai.post_processor import AIismCleaner
+
+        para = "一" * 120 + "。" + "二" * 30 + "。"
+        for seed in range(200):
+            random.seed(seed)
+            result = AIismCleaner().process(para)
+            assert "，。" not in result.text, f"seed={seed}: {result.text!r}"
+            assert "，！" not in result.text and "，？" not in result.text
+
+
+class TestMetaTailNoteStrip:
+    def _finalize(self, text: str) -> str:
+        from agent.workflows.writing.m5_text_hygiene import M5TextHygieneMixin
+
+        return M5TextHygieneMixin._finalize_chapter_text(text)
+
+    def test_strip_bold_revision_note_block(self):
+        text = "正文第一段。\n\n**修订说明**：\n1. 补充情节点：xxx\n2. 扩写场景：yyy\n"
+        out = self._finalize(text)
+        assert "修订说明" not in out
+        assert "正文第一段" in out
+
+    def test_strip_plain_tail_note(self):
+        text = "正文第一段。\n\n修订笔记：本章补了伏笔。\n"
+        out = self._finalize(text)
+        assert "修订笔记" not in out
+
+    def test_inline_narrative_not_stripped(self):
+        """行中同词属叙事正文，不得误删（交给 guardrails 走 LLM 修订）。"""
+        text = "他说这是一份修订说明，说完便走了。\n\n第二段。\n"
+        out = self._finalize(text)
+        assert "修订说明" in out
+
+    def test_idempotent(self):
+        text = "正文第一段。\n\n**修订说明**：xxx\n"
+        once = self._finalize(text)
+        assert self._finalize(once) == once
+
 
 # ========== 高潮曲线测试 ==========
 

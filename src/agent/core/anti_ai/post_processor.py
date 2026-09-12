@@ -16,6 +16,7 @@ class ProcessingResult:
     changes: list[str] = field(default_factory=list)
 
 
+
 class PostProcessor:
     """修正引擎——组合多个修正器"""
 
@@ -249,6 +250,13 @@ class AIismCleaner(TextProcessor):
                 break
 
         modified_text = "\n\n".join(paragraphs)
+
+        # 3. 修复打断插入造成的悬空逗号（"，。/，！/，？"类残缺标点，
+        #    五灵破归档 ch042/049/124/130/185 "，怎么说呢，。" 实证）
+        repaired = re.sub(r"，(?=[。！？；])", "", modified_text)
+        if repaired != modified_text:
+            changes.append("修复插入打断造成的悬空逗号")
+            modified_text = repaired
 
         return ProcessingResult(
             text=modified_text,
