@@ -422,6 +422,39 @@ class M5PersistMixin:
 
         atomic_write_text(file, frontmatter.dumps(post))
         return file
+
+    def _record_book_ledger(
+        self,
+        ctx: dict[str, Any],
+        chapter_title: str,
+        chapter_text: str | None = None,
+        quality_passed: bool = True,
+        revision_attempts: int = 0,
+    ) -> None:
+        """书级台账 hook（2026-09-12）：登场登记 + 质量基线记录。
+
+        章后持久化书级信号——登场连续性登记表（"初次登场用再次口吻"检测的
+        数据源）与滑窗质量基线（全书质量漂移告警的数据源）。任何异常显性
+        降级不阻断写章（与 _archive_chapter 同语义）。
+        """
+        try:
+            from agent.core.quality import book_ledger
+
+            chapter_num = int(ctx["chapter_num"])
+            body = _chapter_body_text(
+                chapter_num, chapter_text, self.chapters_dir
+            )
+            book_ledger.record_debuts(self.project_dir, body, chapter_num)
+            book_ledger.record_quality(
+                self.project_dir, chapter_num, quality_passed, revision_attempts
+            )
+        except Exception as e:  # noqa: BLE001 - 台账失败不阻断写章
+            degrade(
+                "m5.record_book_ledger",
+                "书级台账记录失败（登场登记/质量基线），跳过不阻断",
+                e,
+            )
+
     def _archive_chapter(
         self,
         ctx: dict[str, Any],

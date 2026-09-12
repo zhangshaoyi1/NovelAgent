@@ -421,6 +421,12 @@ class M5WriteChapterWorkflow(
         # 缺账本/失败一律 try/except 降级不阻断（对齐 `_maybe_advance_mainline` hook 位置）。
         self._archive_chapter(ctx, chapter_title, canonical_text)
 
+        # ---- 书级台账 hook（2026-09-12）：与 agentic 入口同位（能力对账要求
+        # 两侧 run 链路同名调用）；失败降级不阻断。
+        self._record_book_ledger(
+            ctx, chapter_title, canonical_text, quality_passed, revision_attempts
+        )
+
         # ---- M13 伏笔对账 hook（2026-09-06）：按正文实证同步 foreshadows.md 状态。
         # 此前登记表只读不写（update_state 死桥），回收率恒 0%；失败降级不阻断。
         try:

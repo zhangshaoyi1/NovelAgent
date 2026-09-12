@@ -381,6 +381,20 @@ class AgenticWriteWorkflow:
             task += pm.get("g.setting_canon_constraint").render_user(
                 setting_constraints=setting_constraints
             )
+
+        # ---- 主线契约注入（2026-09-12 书级质检）：全书主题承诺一等公民化。
+        # 此前系统只在"章内"闭环，无"这本书承诺讲什么"的牵引 → 长篇复印机式
+        # 推进（五灵破 192 章实证）。契约从 plan.json.brief 播种，只读不写；
+        # 读取失败降级为空串（不注入、不阻断），与 style_guide 同语义。
+        try:
+            from agent.core.quality.book_ledger import theme_contract_text
+
+            _contract = theme_contract_text(self.project_dir, ctx["chapter_num"])
+        except Exception as e:  # noqa: BLE001 - 契约读取失败不影响写作
+            _contract = ""
+            degrade("agentic_write.theme_contract", "主线契约读取失败，跳过注入", e)
+        if _contract:
+            task += "\n\n" + _contract
         return task
 
     def _build_beat_ban(self, ctx: dict[str, Any]) -> str:
@@ -520,6 +534,42 @@ class AgenticWriteWorkflow:
                 "suggestions": "无需强制改写；如篇幅过大可适当精简冗余场景/对白。",
             }
             return True, report
+
+        # ---- 书级·文体卫生确定性门禁（2026-09-12）：残缺比喻/成语误用/短语复读/
+        # 密度失控等生成残留走纯规则拦截（LLM 九项审稿无文笔维度，且不带前文，
+        # 抓不住「跟……似的」「名不传虚」这类确定性硬伤——五灵破 ch004/ch050、
+        # 无灵 ch140/ch240/ch350 实证）。blocking → 打回修订；warning 随报告透出。
+        try:
+            from agent.core.quality.text_hygiene import hygiene_issues, split_issues
+
+            _hygiene = hygiene_issues(cleaned)
+        except Exception as e:  # noqa: BLE001 - 卫生扫描失败不阻断质检
+            _hygiene = []
+            degrade("agentic_write.text_hygiene", "文体卫生扫描失败，跳过", e)
+        _hygiene_block, _hygiene_warn = split_issues(_hygiene)
+        # 登场连续性（初次登场用『再次』口吻）：窄口径 warning，不做 blocking
+        # （语义证据不足以支撑不可逆处置，走 ESCALATE 哲学）。
+        try:
+            from agent.core.quality.book_ledger import check_debut_echo
+
+            _hygiene_warn += check_debut_echo(
+                self.project_dir, cleaned, ctx["chapter_num"]
+            )
+        except Exception as e:  # noqa: BLE001 - 登场检查失败不影响质检
+            degrade("agentic_write.debut_check", "登场连续性检查失败，跳过", e)
+        if _hygiene_block:
+            report = {
+                "overall_pass": False,
+                "rules": [],
+                "issues": _hygiene_block + _hygiene_warn,
+                "suggestions": (
+                    "文体卫生逐条修复：残缺比喻补全本体；成语按建议替换；"
+                    "同一短语全章至多两次；削减感叹号与比喻堆叠；复读短语改写。"
+                    "修复后重新提交。"
+                ),
+            }
+            return False, report
+
         check_prompt = pm.get("m5.quality_check").render_user(
             tone=wi["tone"],
             chapter_length=wi["chapter_length"],
@@ -563,6 +613,10 @@ class AgenticWriteWorkflow:
             degrade("agentic_write.quality_gate", "LLM 质检失败，降级为通过（本章未经质量门禁）", e)
             report = {"overall_pass": True, "rules": [], "suggestions": "门禁解析失败，默认通过"}
             passed = True
+
+        # 文体卫生/登场连续性 warning 随报告透出（不阻断，供 Writer 复查与台账追溯）
+        if _hygiene_warn:
+            report["issues"] = list(report.get("issues") or []) + _hygiene_warn
 
         # F-11：D 多维审查（爽点/OOC/连贯/追读力，strict_review 开启时执行；
         # BLOCK 级视为未通过触发修订——与 M5 语义一致；失败降级不阻断九项质检）
@@ -712,6 +766,17 @@ class AgenticWriteWorkflow:
                     + _lessons
                     + "\n请在上文各项设定/风格要求不变的前提下，规避上述问题后提交。"
                 )
+            # 书级质量漂移告警（2026-09-12）：最近 N 章通过率过低时显性告知
+            # Writer——单章独立判过/挂时全书系统性劣化不可见（质量彩票问题）。
+            try:
+                from agent.core.quality.book_ledger import baseline_drift_text
+
+                _drift = baseline_drift_text(self.project_dir)
+            except Exception as e:  # noqa: BLE001 - 漂移告警失败不影响写作
+                _drift = ""
+                degrade("agentic_write.baseline_drift", "质量基线读取失败，跳过", e)
+            if _drift:
+                task = task + "\n\n" + _drift
 
         # WriterAgent（默认门禁注入 LLM 九项审稿，使质量不低于 M5）
         writer = WriterAgent(
@@ -818,6 +883,9 @@ class AgenticWriteWorkflow:
         # 上一章动态状态断供（五灵破 ch181/182 章间矛盾机制性根因）。
         # 本章交接归档进连续性账本 + 伏笔 beats 标记落地；失败降级不阻断。
         m5._archive_chapter(ctx, title, text)
+        # ---- 书级台账 hook（2026-09-12）：登场登记 + 质量基线记录（与 M5 同位，
+        # 能力对账要求两侧 run 链路同名调用）；失败降级不阻断。
+        m5._record_book_ledger(ctx, title, text, quality_passed, revision_attempts)
         # M13 伏笔对账 hook（与 M5 同源；失败降级不阻断）
         try:
             from agent.workflows.evaluation.m13_foreshadow import sync_foreshadow_states

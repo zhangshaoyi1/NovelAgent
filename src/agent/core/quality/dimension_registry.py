@@ -208,6 +208,21 @@ DIMENSIONS: dict[str, DimensionSpec] = {
         required=True, source=SourceKind.COMPUTED,
         summary_reason="重复句占比偏高，建议删减车轱辘话/合并相似句",
     ),
+    # ---------------------------------------------------- 书级·文体卫生（2026-09-12）
+    "text_hygiene_blocking": _spec(
+        name="text_hygiene_blocking", label="文体卫生",
+        unit=Unit.COUNT, direction=Direction.LOWER_BETTER, default_threshold=0.0,
+        required=True, source=SourceKind.COMPUTED,
+        summary_reason="正文存在生成残留（残缺比喻/成语误用/短语复读/密度失控），"
+                       "请按质检逐条修复后提交",
+    ),
+    "debut_continuity": _spec(
+        name="debut_continuity", label="登场连续",
+        unit=Unit.COUNT, direction=Direction.LOWER_BETTER, default_threshold=0.0,
+        source=SourceKind.COMPUTED,
+        summary_reason="实体以『再次/依旧』口吻登场但无首次登场记录，"
+                       "请补写引入或改写措辞",
+    ),
     # ---------------------------------------------------- G8：全书结构维（收尾窗口）
     "mainline_progress": _spec(
         name="mainline_progress", label="主线推进",
