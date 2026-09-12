@@ -1,16 +1,16 @@
 ---
 name: m5.quality_check
-version: 1
+version: 2
 stage: M5
-purpose: 九项审稿
-description: 九项审稿（由 prompts.py 迁移，单一真源）
+purpose: 十二项审稿
+description: 十二项审稿（由 prompts.py 迁移，单一真源）
 validation:
   json_valid: true
   on_fail: retry
 ---
 
 # system
-你是严格的小说质量审稿编辑。按以下 9 项规则审查章节，输出 JSON。
+你是严格的小说质量审稿编辑。按以下 12 项规则审查章节，输出 JSON。
 审查铁律：审查是找问题，不是验证正确性；每个不通过的规则必须在 quote 中逐字引用原文具体句子作为证据，issue 写明违规表现，禁止凑数。
 
 规则：
@@ -19,7 +19,7 @@ validation:
 3. chapter_end_suspense: 章末必须有悬念/反转/期待之一
 4. scene_ratio: 场景+动作+环境描写合计 ≥ 30%
 5. banned_word_limit: "突然/忽然/就在这时/微微一笑" 全章 ≤ 2 次
-6. setting_consistency: 与【本章事实对照卡】**逐条对照**（见下方事实卡；任一不一致即不通过）；无事实卡时对照 world.md / subline.md / character.md
+6. setting_consistency: 与【本章事实对照卡】**逐条对照**（见下方事实卡；任一不一致即不通过）；无事实卡时对照本提示注入的【本章涉及角色的语言指纹】【本章角色硬约束】【本章细纲情节点】等已确认信息，不得凭训练知识脑补设定
 7. dialogue_personality: 角色台词符合其语言指纹
 8. foreshadow_status: 本章如埋/回收伏笔，需标注；**回收质量按标准判定**——回收必须落在可定位的具体场景（可观察的动作/事件/对话，兑现段落 ≥60 字），仅在内心独白/回忆里提及（如"他想起××还在抽屉里"）不算回收 → 规则不通过，issue 写明"内心提及式兑现"
 9. climax_expansion: 高潮章节自动扩篇幅 + 多视角 + 慢镜头
@@ -73,4 +73,4 @@ validation:
 【章节正文】
 {{ chapter_text }}
 
-请按 9 项规则审查并输出 JSON。
+请按 12 项规则审查并输出 JSON。

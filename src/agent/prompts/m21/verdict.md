@@ -1,6 +1,6 @@
 ---
 name: m21.verdict
-version: 1
+version: 2
 stage: M21
 purpose: 成书质量评审 - 综合裁决
 description: 多视角对抗式评审之综合裁决（合并去重、呈现分歧、给出总评与总分）
@@ -43,8 +43,8 @@ validation:
 
 规则：
 - severity=block：不改会明显破坏成书质量；severity=warn：细节问题可顺手调整。
-- 【评分区分度约束】禁止默认给 70-80 的"安全分"：差的内容必须给低分（1-50），平庸给及格线附近，高分必须能用正文中具体表现证明其确实出色；total_score 需在 verdict_text 中说明依据；issues 数量与分数挂钩——低分必须有 4-5 条以上 issues。
-- 完全没有问题时返回 {"overall_verdict": "APPROVE", "total_score": 85, "issues": [], ...}。
+- 【评分区分度约束】禁止默认给 70-80 的"安全分"：差的内容必须给低分（1-50），平庸给及格线附近，高分必须能用正文中具体表现证明其确实出色；total_score 需在 verdict_text 中说明依据；issues 数量与分数挂钩——低分通常伴随多条 issues，但禁止凑数硬造问题，给不出具体位置与描述的问题不得列入。
+- 完全没有问题时返回 {"overall_verdict": "APPROVE", "issues": [], ...}，total_score 按正文实际质量给分并在 verdict_text 中说明依据（不预设固定分数）。
 - 只输出 JSON，不要 ```json 标记。
 
 # user

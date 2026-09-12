@@ -12,10 +12,12 @@
 | 门禁/约束 | `g`、`g8`、`g11`、`g12` | 通用约束与门禁提示词（`g/beat_ban.md` 桥段禁用清单、`g/setting_canon_constraint.md` 设定正典约束） |
 | 写章 | `m5` | 写章族（`generate.md` 生成、`quality_check.md` 质检、`deslop.md` 净化问题模式目录） |
 | 质检 | `quality` | 质量评估提示词（如 `reader_appeal_eval.md` 读者吸引力） |
-| 其他 | `e`、`agents`、`budget`、`methods`、`shared` | 评估/智能体/预算/方法/共享片段 |
+| 其他 | `e`、`agents`、`budget`、`methods` | 评估/智能体/预算/方法 |
 | 元配置 | `_meta.yaml` | Prompt 元配置 |
 
 ## 修改约定
 
 - 提示词随改进批次迭代（P-1~P-12 已落地：质检输出精简、硬约束校验、细纲覆盖校验、deslop 问题模式、事实对照卡、章内情绪节奏、教训进复审重点等），改动需附验收证据
 - 改 prompt 不影响已运行进程：换档/改档后必须重启 Web/daemon 进程才生效
+- `version` 字段随每次实质内容修改 +1（热重载靠 mtime，version 用于人工追踪）
+- 原 `shared/`（json_output / score_calibration）无任何代码与模板引用，2026-09-12 已删除；JSON 输出约束在各提示词内联维护，改口径时需同步所有输出 JSON 的提示词
