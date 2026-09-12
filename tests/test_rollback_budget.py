@@ -106,7 +106,7 @@ class _Writer:
     def __init__(self, sink: list[Any]) -> None:
         self._sink = sink
 
-    def run(self, rewrite_hint: str = "") -> None:
+    def run(self, rewrite_hint: str = "", chapter_num: int | None = None) -> None:
         self._sink.append(rewrite_hint)
 
 

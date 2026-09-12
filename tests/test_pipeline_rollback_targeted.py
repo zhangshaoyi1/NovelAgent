@@ -58,9 +58,11 @@ class _FakeWriter:
         self.calls: list[dict] = []
         self.next_chapter = 8
 
-    def run(self, rewrite_hint=None):
-        ch = self.next_chapter
-        self.next_chapter += 1
+    def run(self, rewrite_hint=None, chapter_num=None):
+        # 2026-09-12：rewriter 须传 chapter_num 锚定（F-8）——不锚定会把
+        # LOCAL_REPAIR 写成「新章」而非重写问题章
+        assert chapter_num is not None, "rewriter 必须传 chapter_num 锚定重写章号"
+        ch = chapter_num
         self.calls.append({"chapter": ch, "hint": rewrite_hint})
         return SimpleNamespace(
             chapter_num=ch, chapter_text="x" * 100, chapter_title=f"第{ch}章"

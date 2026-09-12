@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import time as _time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -141,6 +142,88 @@ GOLDEN_JOIN_CHAR_LIMIT: int = 10000 # 与 score_chapter 截断（行 315）对�
 from agent.core.quality.dimension_registry import COUNT_DIMS  # noqa: F401
 # 计入硬门禁的 severity 集合（high 必计、mid 计入以收紧；low 仅上报，不计入门禁）。
 SEVERITY_GATE = {"high", "mid"}
+
+# 需要对照「设定真源」判定的维度（2026-09-12）。这些维度评的是"正文是否违反
+# 既定设定/角色状态"，评委必须先拿到真源，否则只能凭简介猜 → 恒挑出伪不一致。
+_CANON_DIMS = {
+    "character_stability_high",
+    "setting_consistency_high",
+    "logic_holes",
+}
+# 注入真源后正文窗口不变，放宽这几维的 prompt 截断（8000 → 12000 字符），
+# 避免 3 章正文被挤出窗口。成本仅批末体检每 5 章一次，远低于一次整窗回退。
+_CANON_PROMPT_CHARS = 12000
+
+
+def _extract_md_section(content: str, title: str) -> str:
+    """取 `## <title>` 小节正文（到下一个 `##` 为止）；不存在返回空串。"""
+    m = re.search(rf"^##\s*{re.escape(title)}\s*\n", content, re.M)
+    if not m:
+        return ""
+    rest = content[m.end():]
+    nxt = re.search(r"^##\s", rest, re.M)
+    return rest[: nxt.start()] if nxt else rest
+
+
+def _gather_canon(project_dir: Path) -> str:
+    """汇总设定真源：world.md 冻结设定（境界体系/金手指）+ 角色状态/时间线。
+
+    与写作端 m5_context 的真源口径一致（状态段落 → 关键词兜底 → 基础信息），
+    让审端与写端对着同一份事实说话。文件缺失/读取失败静默跳过（真源是
+    增强信息，不阻断评分）。
+    """
+    parts: list[str] = []
+    world = project_dir / "world.md"
+    if world.exists():
+        try:
+            content = world.read_text(encoding="utf-8")
+        except OSError:
+            content = ""
+        for title, tag in (("修炼境界体系", "境界体系（冻结）"), ("金手指登记", "金手指登记")):
+            section = _extract_md_section(content, title).strip()
+            if section:
+                parts.append(f"【设定真源·{tag}】{section[:1200]}")
+    chars_dir = project_dir / "characters"
+    if chars_dir.exists():
+        bits: list[str] = []
+        for p in sorted(chars_dir.glob("*.md"))[:8]:
+            try:
+                card = p.read_text(encoding="utf-8")
+            except OSError:
+                continue  # noqa: SILENT_DEGRADE
+            status = ""
+            for t in ("状态", "当前状态", "生死", "存活状态"):
+                status = _extract_md_section(card, t).strip()
+                if status:
+                    break
+            if not status:
+                if re.search(r"已故|去世|死亡|牺牲|阵亡|陨落|辞世", card):
+                    status = "（档案正文提及已故/牺牲，按已故处理）"
+                elif re.search(r"在世|存活|健在", card):
+                    status = "（档案正文提及在世/存活）"
+            timeline = (
+                _extract_md_section(card, "时间线").strip()
+                or _extract_md_section(card, "关键时间线").strip()
+                or _extract_md_section(card, "生平").strip()
+            )
+            basis = _extract_md_section(card, "基础").strip()[:150]
+            info = "；".join(
+                b for b in (f"状态：{status[:120]}" if status else "",
+                            f"时间线：{timeline[:160]}" if timeline else "",
+                            f"基础：{basis}" if basis else "") if b
+            )
+            if info:
+                bits.append(f"- {p.stem}：{info}")
+        if bits:
+            parts.append(
+                "【角色真源（判定角色状态/言行矛盾时以此为准）】\n" + "\n".join(bits)
+            )
+    if not parts:
+        return ""
+    return (
+        "【设定真源】以下为既定设定与角色状态，正文与之**冲突**才计 issue；"
+        "评委不知道但设定允许的内容不算不一致。\n" + "\n".join(parts)
+    )
 
 
 def _count_gated_issues(issues: list) -> float:
@@ -336,7 +419,8 @@ class ReaderAppealScorer:
                 return self._default_for(dimension)
             prompt = (
                 f"请评估以下小说片段在「{_EVAL_DIM_LABELS.get(dimension, dimension)}」"
-                f"维度上的表现。\n\n{text[:8000]}"
+                f"维度上的表现。\n\n"
+                f"{text[:_CANON_PROMPT_CHARS if dimension in _CANON_DIMS else 8000]}"
             )
             _messages = [
                 {"role": "system", "content": pm.get("quality.reader_appeal_eval").system},
@@ -439,6 +523,14 @@ class ReaderAppealScorer:
             idx = content.find("## 故事简介")
             if idx >= 0:
                 parts.append("【世界观简介】" + content[idx: idx + 400])
+        # 设定真源（2026-09-12，五灵破归档 31 次回退复盘）：一致性类维度必须
+        # 对照真源判定——此前评委只拿 400 字简介对 3 章正文自由裁量，
+        # 长窗口上恒能挑出"不一致"（多为评委不知道设定），造成假性不达标 →
+        # 整窗 5 章回退。注入冻结设定与角色状态后，只有与真源冲突才计 issue。
+        if dimension in _CANON_DIMS:
+            canon = _gather_canon(d)
+            if canon:
+                parts.insert(1, canon)
         # 最新章节（最多 3 章）——复用公共 helper（G6，消除根因 B6-3 重复实现）
         for f in take_chapter_files(list_chapter_files(project_dir), side="last", n=3):
             try:
