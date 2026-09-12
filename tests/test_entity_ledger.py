@@ -242,9 +242,9 @@ def test_backfill_real_project_numeric_commits(tmp_path):
     from agent.core.story.entity_ledger import sync_entities_from_facts
 
     facts = [
-        NS(domain="character", subject_id="林凡", field="status", value="外门弟子"),
-        NS(domain="character", subject_id="小工", field="alive", value="自主动作"),
-        NS(domain="world", subject_id="培元丹", field="count", value="十"),
+        _NS(domain="character", subject_id="林凡", field="status", value="外门弟子"),
+        _NS(domain="character", subject_id="小工", field="alive", value="自主动作"),
+        _NS(domain="world", subject_id="培元丹", field="count", value="十"),
     ]
     assert sync_entities_from_facts(tmp_path, facts, 5) >= 2
     st = EntityLedgerStore(tmp_path).load()
