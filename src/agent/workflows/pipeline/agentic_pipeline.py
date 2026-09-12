@@ -598,9 +598,31 @@ class AgenticPipelineWorkflow(
             except Exception:  # noqa: BLE001 - 指纹持久化失败不阻断
                 pass  # noqa: SILENT_DEGRADE
 
-            # 记忆回写
+            # 记忆回写（2026-09-12 修复"语义记忆名存实亡"）：从连续性账本提取
+            # 本章事实回写语义层——此前恒传 facts=[]，MemoryLayer 从不吸收章节
+            # 事实（本回写同时是 P2-13 时序三元组记忆查询的前置数据源）。
             try:
-                self.memory.record_chapter(ch_num, ch_title, facts=[])
+                chapter_facts: list[str] = []
+                chapter_summary = ch_title
+                try:
+                    from agent.core.continuity import ContinuityLedgerStore
+
+                    _led = ContinuityLedgerStore(self.project_dir)
+                    _led.load()
+                    _cid = f"ch{ch_num:03d}"
+                    chapter_facts = [
+                        f"{f.domain}/{f.subject_id}/{f.field} = {f.value}（{f.evidence}）"
+                        for f in _led.ledger.facts
+                        if f.source_commit_id == _cid
+                    ][:12]
+                    _h = _led.ledger.latest_handoff()
+                    if _h is not None and _h.chapter == ch_num and _h.summary:
+                        chapter_summary = _h.summary
+                except Exception:  # noqa: BLE001 - 账本读取失败仅降级为标题摘要
+                    pass  # noqa: SILENT_DEGRADE
+                self.memory.record_chapter(
+                    ch_num, ch_title, summary=chapter_summary, facts=chapter_facts
+                )
             except Exception:  # noqa: BLE001
                 pass  # noqa: SILENT_DEGRADE
 
