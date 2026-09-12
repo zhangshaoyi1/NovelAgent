@@ -207,6 +207,15 @@ class _PipelineAgentsMixin:
         self._note_gate_ok()
         if report is None:
             return True  # noqa: SILENT_DEGRADE - 无报告视为不可判定，放行
+        # ---- 教训落盘（2026-09-12）：滚动检查点也要落盘，不能只靠批末——
+        # 检查点不达标中断本批时批末 save 不会执行，失败明细丢失 → 重写轮盲写。
+        # 通过时写空 failures 清零，语义与批末一致。
+        try:
+            from agent.core.quality.eval_lessons import save_eval_lessons
+
+            save_eval_lessons(self.project_dir, report)
+        except Exception as e:  # noqa: BLE001 - 教训落盘失败不阻断写作
+            degrade("pipeline.rolling_lessons", "滚动体检教训落盘异常", e)
         # ---- HA-Eval L4（2026-09-11）：闸门分级 ----
         # 原实现「overall_pass=False 即中断整批」把软维度（迷爱看/黄金三章/伏笔等
         # required=False 的 LLM 评分维）与硬指标一视同仁——单章软维单次 FAIL 就会
@@ -306,7 +315,10 @@ class _PipelineAgentsMixin:
             hint = build_rewrite_hint(getattr(ev, "last_failed_report", None), chapter_nums)
             for ch in chapter_nums:
                 try:
-                    w.run(rewrite_hint=hint)
+                    # 章号锚定（F-8）：LOCAL_REPAIR 不回滚、total_written 不变，
+                    # 不传章号 run() 会按 total_written+1 写出「新章」而非重写
+                    # 问题章；回滚路径显式锚定与顺序补写等价。
+                    w.run(rewrite_hint=hint, chapter_num=ch)
                 except Exception as e:  # noqa: BLE001
                     raise RuntimeError(f"重写第 {ch} 章失败：{e}")
 

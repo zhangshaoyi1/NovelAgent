@@ -25,6 +25,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from agent.core.infra.degrade import degrade
+
 _LESSONS_REL = Path(".state") / "memory" / "eval_lessons.json"
 
 # 注入 prompt 的教训段上限（字符），防止失败过多时挤占正文预算
@@ -155,8 +157,11 @@ def save_eval_lessons(project_dir: str | Path, report: Any) -> None:
             json.dumps(payload, ensure_ascii=False, indent=1), encoding="utf-8"
         )
         tmp.replace(path)
-    except Exception:
-        pass  # noqa: SILENT_DEGRADE
+    except Exception as e:  # noqa: BLE001 - 教训落盘失败不阻断写作流水线
+        # 2026-09-12：静默吞掉会让回退后「盲写」——失败明细丢失、下一轮原样
+        # 翻车（五灵破归档实测：40.53 分失败的教训未落盘，重写轮拿不到明细）。
+        # 降级不阻断，但必须留痕。
+        degrade("eval_lessons.save", "体检教训落盘失败，下一轮写作将缺少失败明细", e)
 
 
 def _merge_history(
