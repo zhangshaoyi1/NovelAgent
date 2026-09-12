@@ -75,7 +75,14 @@ def audit_plan(project_dir: str | Path, arcs: list[Any], current_chapter: int) -
                              audited_at=datetime.now(timezone.utc).isoformat(timespec="seconds"))
 
     # ---- 连续性管理者：衔接当前进度、不重叠 ----
-    for a in arcs:
+    # 只审「未来弧线」（chapter_end > 当前进度）：复规划的 keep 逻辑会合法保留
+    # 已完结历史弧线，2026-09-13 实弹误报实证——历史弧线被当成
+    # "起始章未越过当前进度"的 BLOCK。历史不可改写，也不可审计。
+    future_arcs = [
+        a for a in arcs if int(getattr(a, "chapter_end", 0)) > current_chapter
+    ]
+
+    for a in future_arcs:
         if int(getattr(a, "chapter_start", 0)) <= current_chapter:
             report.findings.append(AuditFinding(
                 BLOCK, "continuity",
@@ -83,7 +90,7 @@ def audit_plan(project_dir: str | Path, arcs: list[Any], current_chapter: int) -
                 f"未越过当前进度 {current_chapter}（历史不可改写）",
             ))
             break
-    sorted_arcs = sorted(arcs, key=lambda a: int(getattr(a, "chapter_start", 0)))
+    sorted_arcs = sorted(future_arcs, key=lambda a: int(getattr(a, "chapter_start", 0)))
     for prev, nxt in zip(sorted_arcs, sorted_arcs[1:]):
         if int(getattr(nxt, "chapter_start", 0)) < int(getattr(prev, "chapter_end", 0)):
             report.findings.append(AuditFinding(
@@ -102,7 +109,7 @@ def audit_plan(project_dir: str | Path, arcs: list[Any], current_chapter: int) -
             ))
     try:
         total = _plan_total(project_dir)
-        last_end = max((int(getattr(a, "chapter_end", 0)) for a in arcs), default=0)
+        last_end = max((int(getattr(a, "chapter_end", 0)) for a in future_arcs), default=0)
         if total and last_end > total:
             report.findings.append(AuditFinding(
                 BLOCK, "structure",

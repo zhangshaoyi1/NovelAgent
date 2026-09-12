@@ -180,3 +180,17 @@ def test_ledger_context_includes_relations(tmp_path: Path) -> None:
     # 最小项目出场角色未必含林惊澜——留疤段/命中其一即可；未命中则至少不炸
     if any(n in (wf.sm.load_subline(sublines[0]).get("content") or "") for n in ("主角", "林惊澜")):
         assert "关系网轨迹" in text or "心性轨迹" in text
+
+
+def test_audit_plan_ignores_historical_arcs(tmp_path: Path) -> None:
+    # 实弹回归（2026-09-13）：复规划 keep 的历史弧线（end <= 当前进度）不得被判 BLOCK
+    proj = _build_minimal_project(tmp_path)
+    report = audit_plan(
+        proj,
+        [_arc("历史弧", 5, 10), _arc("未来弧", 12, 30)],
+        current_chapter=11,
+    )
+    assert report.passed  # 历史弧不审计；未来弧 12-30 合法
+    # 但未来弧若起始章仍在过去，必须拦
+    report2 = audit_plan(proj, [_arc("历史弧", 5, 10), _arc("坏弧", 9, 30)], current_chapter=11)
+    assert not report2.passed
