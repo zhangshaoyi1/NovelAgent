@@ -274,6 +274,7 @@ class M4CharacterWorkflow:
             protagonist_who=pt.get("who", ""),
             protagonist_want=pt.get("want", ""),
             protagonist_obstacle=pt.get("obstacle", ""),
+            protagonist_inner_conflict=arch.get("inner_conflict", "") or "（架构未登记内心冲突，请为主角设计欲望与良知/恐惧/执念的对抗）",
             main_plot_beginning=mp.get("beginning", ""),
             main_plot_development=mp.get("development", ""),
             main_plot_twist=mp.get("twist", ""),
@@ -454,6 +455,7 @@ class M4CharacterWorkflow:
                 surface_goal=c.get("surface_goal") or "",
                 deep_goal=c.get("deep_goal") or "",
                 secret=c.get("secret") or "",
+                flaw=c.get("flaw") or "",
                 arc={
                     "start": arc.get("start") or "",
                     "end": arc.get("end") or "",

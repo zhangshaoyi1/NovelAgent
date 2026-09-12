@@ -243,6 +243,7 @@ class M3OutlineWorkflow:
             main_plot_resolution=mp.get("resolution", ""),
             sublines_preview=arch.get("sublines_preview", ""),
             conflict_nodes=arch.get("conflict_nodes", ""),
+            protagonist_inner_conflict=arch.get("inner_conflict", "") or "（架构未登记内心冲突，请在支线中自行设计欲望与良知/恐惧的对抗）",
             theme=arch.get("theme", ""),
             ending=arch.get("ending", ""),
             emotional_tone=arch.get("emotional_tone", ""),
