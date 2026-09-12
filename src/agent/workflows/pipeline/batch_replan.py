@@ -85,7 +85,31 @@ def build_batch_summary(project_dir: str | Path) -> str:
 
     if not parts:
         return "（暂无可用的进展摘要）"
-    return "\n\n".join(parts)
+    return "\n\n".join(parts) + _append_metrics(project_dir)
+
+
+def _append_metrics(project_dir: Path) -> str:
+    """度量类摘要段（引入率 + 上批作战笔记）；单源失败返回空。"""
+    from agent.core.infra.degrade import degrade
+
+    tail: list[str] = []
+    try:
+        from agent.core.story.intro_rate import intro_rate_text
+
+        t = intro_rate_text(project_dir)
+        if t:
+            tail.append(t)
+    except Exception as e:  # noqa: BLE001
+        degrade("batch_replan.summary.intro_rate", "引入率度量失败，摘要缺该段", e)
+    try:
+        from agent.core.quality.batch_reflection import load_latest_reflection_text
+
+        t = load_latest_reflection_text(project_dir)
+        if t:
+            tail.append(t)
+    except Exception as e:  # noqa: BLE001
+        degrade("batch_replan.summary.reflection", "作战笔记读取失败，摘要缺该段", e)
+    return "\n\n".join(tail)
 
 
 def maybe_replan(

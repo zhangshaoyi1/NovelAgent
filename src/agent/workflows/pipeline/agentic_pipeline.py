@@ -679,6 +679,17 @@ class AgenticPipelineWorkflow(
                         "实体名册自动登记失败，本章出场信息未入册",
                         sync_e,
                     )
+                # ---- 资源账本同步（设计稿第二期）：同一 facts 流确定性记账 ----
+                try:
+                    from agent.core.story.resource_ledger import sync_resources_from_facts
+
+                    sync_resources_from_facts(self.project_dir, _ch_fact_objs, ch_num)
+                except Exception as res_e:  # noqa: BLE001
+                    degrade(
+                        "pipeline.resource_sync",
+                        "资源账本同步失败，本章资源变动未入账",
+                        res_e,
+                    )
                 self.memory.record_chapter(
                     ch_num, ch_title, summary=chapter_summary, facts=chapter_facts
                 )
@@ -851,6 +862,19 @@ class AgenticPipelineWorkflow(
         if self._gate_escalation_reason and not result.escalated:
             result.escalated = True
             result.escalated_reason = self._gate_escalation_reason
+
+        # ---- L2 批末反思（设计稿 §9 第二期）：每批 1 次，作战笔记经
+        # batch_replan 摘要注入下一批复规划；失败显性降级不阻断收尾 ----
+        if result.chapters_written > 0:
+            try:
+                from agent.core.quality.batch_reflection import record_batch_reflection
+
+                if record_batch_reflection(self.project_dir, batch_end_ch=result.final_chapter):
+                    self.console.print(
+                        "[cyan]批末反思完成（作战笔记落盘 .state/batch_reflection.json）[/cyan]"
+                    )
+            except Exception as ref_e:  # noqa: BLE001
+                degrade("pipeline.batch_reflection", "批末反思调用异常", ref_e)
 
         # ---- G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）----
         self._finalize_cost(result)

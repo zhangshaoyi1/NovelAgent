@@ -358,7 +358,18 @@ class M5ContextMixin:
         except Exception as e:  # noqa: BLE001
             degrade("m5.context.relation", "关系网账本注入失败，降级为空", e)
             rel = ""
-        return "\n".join(b for b in (base, disp, rel) if b)
+        # 资源账本（主角/出场角色名下资源，动用前对账；损坏/空 → 空段）
+        try:
+            from agent.core.story.resource_ledger import ResourceLedgerStore
+
+            names = self._extract_character_names(subline_data)
+            res = ResourceLedgerStore(self.project_dir).load().render_for_prompt(
+                list(dict.fromkeys(["主角", *names]))
+            )
+        except Exception as e:  # noqa: BLE001
+            degrade("m5.context.resource", "资源账本注入失败，降级为空", e)
+            res = ""
+        return "\n".join(b for b in (base, disp, rel, res) if b)
 
     def _load_closure_text(self) -> str:
         """完本收束清单注入文本（.state/closure_plan.json）；缺失/空 → ""。"""
