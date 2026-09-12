@@ -18,6 +18,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import time as _time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
@@ -34,6 +36,7 @@ from agent.core.story.chapters import (  # G6：公共章节读取 helper（消�
 )
 from agent.utils import parse_llm_json
 from agent.client.gateway_adapter import (
+    _is_transient_provider_error,
     chat_utility,
     chat_utility_response,
     create_gateway,
@@ -49,6 +52,43 @@ from agent.core.quality.eval_evidence import EvalEvidence, build_evidence
 # Evaluator 维度评分（单维，要求 LLM 给一个数值）
 # HA-Eval L2：改由 dimension_registry 登记表派生（SSOT），新增维度只需登记一次。
 from agent.core.quality.dimension_registry import _EVAL_DIM_LABELS  # noqa: F401
+
+# 评分调用外层再加长退避（秒）：网关收口点退避只撑 ~15s 故障窗，网关故障
+# 实测可达数分钟；此处 20s/40s 两档长退避，仍失败才降级为默认。测试可置
+# () 关闭。仅对瞬时故障（_is_transient_provider_error）生效，解析失败不重试。
+_EVAL_RETRY_DELAYS_S: tuple[float, ...] = (20.0, 40.0)
+
+logger = logging.getLogger(__name__)
+
+
+def _chat_with_eval_backoff(llm: Any, messages: list, *, dimension: str, console: Any) -> Any:
+    """带长退避的评分调用：瞬时故障按 _EVAL_RETRY_DELAYS_S 退避重试后上抛。"""
+    delays = tuple(_EVAL_RETRY_DELAYS_S)
+    for i in range(len(delays) + 1):
+        try:
+            return chat_utility_response(
+                llm,
+                messages=messages,
+                temperature=0.2,
+                max_tokens=8192,
+                enable_thinking=False,
+            )
+        except Exception as e:  # noqa: BLE001 - 瞬时故障退避，其余立即上抛，不吞错
+            if i >= len(delays) or not _is_transient_provider_error(e):
+                raise
+            wait = delays[i]
+            logger.warning(
+                "维度 %s 评分调用瞬时故障（%s），%.0fs 后重试（%d/%d）",
+                dimension, e, wait, i + 1, len(delays),
+            )
+            if console is not None:
+                console.print(
+                    f"[yellow]⚠ 维度 {dimension} 评分调用瞬时故障（{e}），"
+                    f"{wait:.0f}s 后重试（{i + 1}/{len(delays)}）[/yellow]"
+                )
+            _time.sleep(wait)
+            continue
+
 
 # 迷爱看 6 维（作者侧独立评分）
 APPEAL_DIMENSIONS = {
@@ -321,11 +361,12 @@ class ReaderAppealScorer:
             # 真实小说实测：评分/计数维均须 ≥8192 才稳定出完整 JSON。
             # HA-Eval L3：改用 chat_utility_response 取完整响应对象，
             # 以便把 cache_hit / prompt_hash / response_hash 记入证据。
-            resp = chat_utility_response(self.llm,
-                messages=_messages,
-                temperature=0.2,
-                max_tokens=8192,
-                enable_thinking=False,
+            # 2026-09-12：网关收口点的瞬时故障退避只撑 ~15s 故障窗，网关故障
+            # 实测可达数分钟——退避耗尽后维度"降级为默认"会污染体检分，导致
+            # 假性不达标 → 无谓回滚（五灵破归档 ch190 前夜）。此处对瞬时故障
+            # 再加长退避重试（20s/40s），仍失败才降级。
+            resp = _chat_with_eval_backoff(
+                self.llm, _messages, dimension=dimension, console=self.console
             )
             raw = getattr(resp, "text", "") or ""
             data = parse_llm_json(raw)

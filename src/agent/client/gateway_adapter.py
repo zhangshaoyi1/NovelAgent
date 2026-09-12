@@ -8,13 +8,14 @@ from __future__ import annotations
 
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 from pydantic import BaseModel
 
-from agent.base.llm import LLMConfig, LLMProvider, FatalProviderError, is_fatal_provider_error
+from agent.base.llm import LLMConfig, LLMError, LLMProvider, FatalProviderError, is_fatal_provider_error
 from agent.base.structured_output import (
     StructuredOutputError,
     extract_json,
@@ -63,6 +64,47 @@ _TRANSIENT_MAX_ATTEMPTS: int = max(1, _env_int("LLM_TRANSIENT_RETRIES", 3))
 # 退避基数（秒）：第 n 次重试等待 base * 2^(n-1)，上限 30s。LLM_RETRY_BACKOFF_S 可调。
 _TRANSIENT_BACKOFF_BASE_S: float = max(0.0, _env_float("LLM_RETRY_BACKOFF_S", 2.0))
 _TRANSIENT_BACKOFF_CAP_S: float = 30.0
+
+
+# ===== 挂起式请求硬死线（2026-09-12 五灵破归档：第 190 章生成 4.5h 无返回）=====
+# 背景：SDK 的 timeout 只覆盖"连接/读超时会抛异常"的场景；当网关保持连接但
+# 永不回包也不关闭时（keep-alive 下读超时可被无限重置），请求既不返回也
+# 不抛错 → 退避重试无从触发 → 流水线无限等待。修复：每次底层调用套墙钟
+# 硬死线，到点放弃该次尝试并按瞬时故障走退避重试。
+def _hard_deadline_s(timeout: int) -> float:
+    """单次底层调用的墙钟硬死线（秒）。环境变量 LLM_HARD_DEADLINE_S 可覆盖。"""
+    override = _env_float("LLM_HARD_DEADLINE_S", 0.0)
+    if override > 0:
+        return override
+    # 默认：SDK 超时的 4 倍且不低于 900s（历史观测最长正常调用 ~412s）
+    return max(4.0 * max(timeout, 1), 900.0)
+
+
+def _run_with_deadline(fn: Any, deadline_s: float) -> Any:
+    """在守护线程中执行 fn，超过 deadline_s 未返回即视为瞬时故障。
+
+    放弃的线程成为孤儿线程（daemon，不阻塞进程退出）；其持有的挂起连接
+    最终由远端/内核回收，换取的是主流程不再被单次挂起请求卡死。
+    """
+    box: dict[str, Any] = {}
+
+    def _target() -> None:
+        try:
+            box["value"] = fn()
+        except BaseException as e:  # noqa: BLE001 - 原样转交主线程，不吞错
+            box["error"] = e
+            return
+
+    th = threading.Thread(target=_target, daemon=True, name="llm-chat-hard-deadline")
+    th.start()
+    th.join(deadline_s)
+    if th.is_alive():
+        raise LLMError(
+            f"LLM 调用硬死线超时（{deadline_s:.0f}s 无返回，疑似挂起请求 hard timeout）"
+        )
+    if "error" in box:
+        raise box["error"]
+    return box["value"]
 
 
 # ===== 将 agent LLMProvider 包装为 Gateway ModelProvider =====
@@ -184,16 +226,20 @@ class _GatewayModelProvider:
         语义层校验失败的重试（附 hint）仍由各调用点负责，与本层正交。
         """
         last_exc: Exception | None = None
+        deadline_s = _hard_deadline_s(timeout)
         for attempt in range(1, _TRANSIENT_MAX_ATTEMPTS + 1):
             t0 = time.monotonic()
             try:
-                return self._provider.chat(
-                    messages=messages,
-                    model=model,
-                    temperature=temperature,
-                    max_tokens=None,
-                    enable_thinking=enable_thinking,
-                    timeout=timeout,
+                return _run_with_deadline(
+                    lambda: self._provider.chat(  # noqa: B023 - 循环内无后续迭代复用
+                        messages=messages,
+                        model=model,
+                        temperature=temperature,
+                        max_tokens=None,
+                        enable_thinking=enable_thinking,
+                        timeout=timeout,
+                    ),
+                    deadline_s,
                 )
             except Exception as e:  # noqa: BLE001 - 统一分类后决定熔断/退避/上抛
                 last_exc = e

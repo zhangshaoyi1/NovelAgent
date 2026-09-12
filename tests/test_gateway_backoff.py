@@ -117,3 +117,35 @@ def test_env_override_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(RuntimeError):
         _run(provider)
     assert fake.calls == 2
+
+
+def test_hard_deadline_hung_request_retries(monkeypatch: pytest.MonkeyPatch) -> None:
+    """挂起式请求（永不返回）→ 硬死线触发 → 按瞬时故障退避重试。
+
+    背景（2026-09-12 五灵破归档 ch190）：SDK timeout 对"连接保活但永不回包"
+    无效，请求 4.5h 无返回也无异常，流水线卡死。
+    """
+    monkeypatch.setenv("LLM_HARD_DEADLINE_S", "0.2")
+    real_sleep = gw.time.sleep  # 硬死线用真实 join，退避 sleep 仍走 fixture 拦截
+    import threading
+
+    calls = {"n": 0}
+
+    def _hang(**kwargs: Any) -> Any:
+        calls["n"] += 1
+        if calls["n"] == 1:
+            threading.Event().wait(30)  # 模拟挂起，长于 0.2s 死线
+        return type("R", (), {"text": "ok", "usage": {}})()
+
+    provider, fake = _make_provider([])
+    provider._provider.chat = _hang  # type: ignore[method-assign]
+    resp = _run(provider)
+    assert resp.text == "ok"
+    assert calls["n"] == 2
+
+
+def test_hard_deadline_env_zero_uses_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LLM_HARD_DEADLINE_S", "0")
+    assert gw._hard_deadline_s(300) == 1200.0
+    monkeypatch.setenv("LLM_HARD_DEADLINE_S", "600")
+    assert gw._hard_deadline_s(300) == 600.0
