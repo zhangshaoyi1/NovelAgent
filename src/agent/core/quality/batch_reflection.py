@@ -69,15 +69,23 @@ def _load_audit(project_dir: Path) -> dict[str, Any]:
         return {}
 
 
-def build_reflection_input(project_dir: str | Path) -> str:
-    """确定性装配反思输入（本批生产侧证据；单源失败降级为占位行）。"""
+def build_reflection_input(project_dir: str | Path, since_ch: int = 0) -> str:
+    """确定性装配反思输入（本批生产侧证据；单源失败降级为占位行）。
+
+    ``since_ch``：只保留该章之后的证据（上次反思已覆盖的旧证据会误导 LLM
+    把存量命中当成本批复发——2026-09-13 实弹实证：L1 硬拦截生效后第 15-19
+    章零新增命中，但反思仍引用第 2/7/14 章旧命中误判"未落地"）。
+    """
     from agent.core.infra.degrade import degrade
 
     project_dir = Path(project_dir)
     parts: list[str] = []
 
     try:
-        flags = _load_flags(project_dir)
+        flags = [
+            f for f in _load_flags(project_dir)
+            if not since_ch or int(f.get("chapter", 0) or 0) > since_ch
+        ]
         if flags:
             lines = [f"- 第{f.get('chapter', '?')}章：{'；'.join(f.get('violations', [])[:3])}"
                      for f in flags[-5:]]
@@ -156,9 +164,11 @@ def record_batch_reflection(
                                            use="utility", temperature=0.4,
                                            max_tokens=3072, enable_thinking=False)
 
-        evidence = build_reflection_input(project_dir)
-        # 已有上批反思 → 注入验证闭环（对策是否兑现）
+        # 已有上批反思 → 先取其末章（证据时效过滤 + 验证闭环）
         prior = load_latest(project_dir)
+        evidence = build_reflection_input(
+            project_dir, since_ch=int((prior or {}).get("batch_end_ch", 0) or 0)
+        )
         prior_text = ""
         if prior:
             prior_text = "【上一批反思的对策（先检验是否兑现，再提新对策）】\n" + "\n".join(
