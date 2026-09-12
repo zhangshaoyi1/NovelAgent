@@ -55,6 +55,28 @@ class M5ContextMixin:
         if not subline_data["exists"]:
             raise RuntimeError(f"支线 {subline_id} 的 subline.md 不存在")
 
+        # ---- 支线裁决软移交（长线一致性设计稿第一期·D）：批间复规划产出的
+        # batch_directive.json 优先于状态机的 current_subline——规划者管决策，
+        # 状态机降级为记账员。指令里的支线必须真实存在，否则维持现状（兜底）。
+        # 读取/校验失败均显性降级为不接管，不阻断写章。----
+        batch_directive = self._load_batch_directive()
+        _d_subline = str(batch_directive.get("subline") or "")
+        if _d_subline:
+            try:
+                if _d_subline in self.sm.list_sublines():
+                    subline_id = _d_subline
+                    subline_data = self.sm.load_subline(subline_id)
+                    if not subline_data["exists"]:
+                        raise RuntimeError(f"支线 {subline_id} 的 subline.md 不存在")
+            except Exception as e:  # noqa: BLE001 - 指令支线失效 → 维持现状
+                from agent.core.infra.degrade import degrade
+
+                degrade(
+                    "m5.context.batch_directive",
+                    f"batch_directive 指定支线 {_d_subline!r} 校验失败，维持状态机现状",
+                    e,
+                )
+
         # Step 3: 主角路线当前节点
         route_info = self._load_route_node(progress)
 
@@ -268,7 +290,38 @@ class M5ContextMixin:
             "reader_signals": reader_signals,
             # ---- B1：写章防模板注入（本卷已用手段清单 + 灭门回忆计数；缺则降级为空）----
             "reuse_guard_text": self._build_reuse_guard(chapter_num),
+            # ---- 长线一致性底座（设计稿第一期）：批间复规划裁决 + 实体名册/
+            #      信息账本/战力标尺账的写时注入（缺/损坏 → degrade 降级为空）----
+            "batch_directive": batch_directive,
+            "ledger_context": self._load_ledger_context(subline_data, chapter_num),
         }
+    def _load_batch_directive(self) -> dict[str, Any]:
+        """读批间复规划裁决（.state/batch_directive.json）；缺失/损坏 → 空降级。"""
+        try:
+            p = self.project_dir / ".state" / "batch_directive.json"
+            if not p.exists():
+                return {}
+            data = json.loads(p.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception as e:  # noqa: BLE001 - 降级为不接管
+            from agent.core.infra.degrade import degrade
+
+            degrade("m5.context.batch_directive", "batch_directive.json 读取失败，裁决不接管", e)
+            return {}
+
+    def _load_ledger_context(self, subline_data: dict[str, Any], chapter_num: int) -> str:
+        """长线一致性三账（名册/信息/战力标尺）写时注入文本；失败降级为空。"""
+        try:
+            from agent.core.story.entity_ledger import render_ledger_context
+
+            appearing = self._extract_character_names(subline_data)
+            return render_ledger_context(self.project_dir, appearing, chapter_num)
+        except Exception as e:  # noqa: BLE001 - 降级不阻断写章
+            from agent.core.infra.degrade import degrade
+
+            degrade("m5.context.ledger", "长线一致性账本注入失败，降级为空", e)
+            return ""
+
     def _build_reuse_guard(self, chapter_num: int) -> str:
         """生成写章时防模板注入文本；读失败→"" 降级不阻断（B1）。"""
         try:

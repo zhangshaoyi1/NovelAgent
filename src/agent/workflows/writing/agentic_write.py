@@ -327,6 +327,22 @@ class AgenticWriteWorkflow:
             rag_context=rag_context_text,
             open_debts=open_debts_text,
         )
+        # ---- 长线一致性底座（设计稿第一期·A/D）：批间复规划裁决 + 三账注入 ----
+        # 批间复规划的下一批方向（规划者缺席/未复规划 → 空跳过）；
+        directive = ctx.get("batch_directive") or {}
+        _d_focus = str(directive.get("focus") or "").strip()
+        _d_rationale = str(directive.get("rationale") or "").strip()
+        if _d_focus or _d_rationale:
+            _d_parts = ["\n\n# 下一批方向（规划者批间复规划裁决，本章情节须服务该方向）"]
+            if _d_focus:
+                _d_parts.append(f"写作焦点：{_d_focus}")
+            if _d_rationale:
+                _d_parts.append(f"规划理由：{_d_rationale}")
+            task += "\n".join(_d_parts)
+        # 实体名册/信息账本/战力标尺账（有名实体的既有档案与"谁知道什么"，缺 → 空跳过）
+        ledger_text = str(ctx.get("ledger_context") or "")
+        if ledger_text:
+            task += "\n\n" + ledger_text
         # ---- G8（补充边界 4）：结局模式指令注入（ending 为空降级「收尾」通用指令，不阻断）----
         if ctx.get("ending_mode"):
             ending = (ctx.get("ending") or "").strip()
