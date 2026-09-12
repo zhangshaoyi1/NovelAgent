@@ -23,6 +23,8 @@ def load_genre(
     from agent.core.registry.genre_pack import GenrePackRegistry
     from agent.core.infra.hook_dispatcher import dispatch_genre_hooks
 
+    import agent.workflows.planning.m1_config  # noqa: F401  # 具名 hook load_genre_template 的注册方（R6 反向注入）
+
     registry = GenrePackRegistry()
     try:
         pack = registry.load(name)

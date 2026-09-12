@@ -52,6 +52,34 @@ def test_unknown_hook_only_warns(tmp_path: Path) -> None:
     assert "no_such_module" in str(caught[0].message)
 
 
+def test_dispatch_bare_name_registered_hook(tmp_path: Path) -> None:
+    """具名注册 hook（bare name）经 register_genre_hook 反向注入后可分发
+
+    R6：core 不 import workflows；load_genre_template 由 m1_config import 时自注册。
+    """
+    from agent.workflows.planning import m1_config  # noqa: F401  触发注册副作用
+
+    pack = GenrePackRegistry().load("xiuxian")
+    world_file = tmp_path / "world.md"
+    assert not world_file.exists()
+    dispatched = dispatch_genre_hooks(tmp_path, "xiuxian", pack)
+    assert "load_genre_template" in dispatched, "具名 hook 应解析并执行"
+    assert world_file.exists(), "load_genre_template 应真实落盘种子草稿"
+
+
+def test_dispatch_refuses_upper_layer_spec(tmp_path: Path) -> None:
+    """点分 hook 规格指向上层（agent.workflows.*）必须拒绝且不 import（R6 运行时护栏）"""
+    upper = "agent.workflows.planning.m1_config.load_genre_template"
+    pack = GenrePack(manifest=GenreManifest(name="x", hooks=[upper]))
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        dispatched = dispatch_genre_hooks(tmp_path, "x", pack)
+    assert dispatched == []
+    assert len(caught) == 1
+    msg = str(caught[0].message)
+    assert "R6" in msg and "agent.workflows" in msg
+
+
 def test_m5_check_prompt_includes_genre_rules(tmp_path: Path) -> None:
     """M5 质量校验 prompt 注入题材层质量规则文本（mock 捕获）"""
     from unittest.mock import MagicMock

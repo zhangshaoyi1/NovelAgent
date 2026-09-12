@@ -37,7 +37,7 @@ from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.engine.events import ProgressEventBus
 from agent.utils import parse_llm_json
-from agent.core.infra.hook_dispatcher import dispatch_genre_hooks
+from agent.core.infra.hook_dispatcher import dispatch_genre_hooks, register_genre_hook
 from agent.core.story.volume import (
     MAX_CHAPTER_LENGTH,
     MIN_CHAPTER_LENGTH,
@@ -71,6 +71,11 @@ def load_genre_template(project_dir: Path, genre: str, pack: Any) -> Path:
         )
         world_file.write_text(seed, encoding="utf-8")
     return world_file
+
+
+# R6：SKILL.md hooks 以具名注册引用本函数（core 不反向 import workflows，
+# 由本模块 import 时反向注入，见 core/infra/hook_dispatcher.register_genre_hook）
+register_genre_hook("load_genre_template", load_genre_template)
 
 
 @dataclass
