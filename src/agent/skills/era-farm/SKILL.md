@@ -5,13 +5,21 @@ label: 年代种田
 version: 0.1.0
 type: genre
 description: 年代重生/种田（年代种田题材包 - 重生年代/种田致富/养娃/家庭温情/非遗美食体系）
-display_name: 年代重生/种田
 commands: []
 hooks:
   - load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
+fatigue_words:
+  - 日子越过越红火
+  - 看着孩子熟睡的脸庞
+  - 这个年代独有的烟火气
+  - 靠山吃山靠水吃水
+  - 一家人和和美美
+pacing_rules:
+  - 三章内必须有明确反馈：收入入账/物资改善/家庭关系/邻里冲突化解（年代种田为经营-改善-温情循环）
+  - 致富进度需绑定年代真实物价与政策边界，禁止超越时代的暴富
 ---
 
 # era-farm Genre Skill · 年代重生/种田题材包

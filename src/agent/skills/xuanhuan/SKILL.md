@@ -5,7 +5,6 @@ label: 玄幻
 version: 0.1.0
 type: genre
 description: 玄幻题材包 - 高武/异世界大陆/斗气魔法体系/血脉觉醒/热血升级（对标起点男频第一大类）
-display_name: 东方玄幻/异界大陆
 commands: []
 hooks:
   - load_genre_template

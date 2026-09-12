@@ -5,13 +5,21 @@ label: 赛博修仙
 version: 0.1.0
 type: genre
 description: 赛博修仙（现代修仙）（赛博修仙题材包 - 现代/赛博设定的修真体系（宗门KPI/渡劫保险/灵石贷款））
-display_name: 赛博修仙（现代修仙）
 commands: []
 hooks:
   - load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
+fatigue_words:
+  - 灵石贷款到账提示音响起
+  - 本季度宗门KPI又没达标
+  - 赛博义体与经脉完美融合
+  - 数据流中浮现出古老法诀
+  - 渡劫保险理赔成功
+pacing_rules:
+  - 三章内必须有明确反馈：修为/KPI/灵石资产/义体升级（赛博修仙为打工-修炼-还贷循环）
+  - 修为突破需绑定灵石经济或科技资源代价，禁止无源突破
 ---
 
 # cyber-xiuxian Genre Skill · 赛博修仙（现代修仙）题材包

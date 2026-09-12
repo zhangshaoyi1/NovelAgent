@@ -5,13 +5,21 @@ label: 无限流
 version: 0.1.0
 type: genre
 description: 规则怪谈/无限流（无限流/规则怪谈题材包 - 规则解谜/时空循环/生存博弈/智斗体系）
-display_name: 规则怪谈/无限流
 commands: []
 hooks:
   - load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
+fatigue_words:
+  - 规则三：不要回头
+  - 副本难度陡然提升
+  - 队友的眼神变了
+  - 倒计时在无情跳动
+  - 死亡如期而至
+pacing_rules:
+  - 三章内必须有明确反馈：规则破解/生存资源/队友关系/副本推进（无限流为入本-解谜-通关循环）
+  - 规则怪谈的规则必须自洽且可由线索推导，禁止临时编造未出现的规则
 ---
 
 # infinite-flow Genre Skill · 规则怪谈/无限流题材包

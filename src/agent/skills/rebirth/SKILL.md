@@ -5,13 +5,21 @@ label: 重生
 version: 0.1.0
 type: genre
 description: 重生复仇（重生复仇题材包 - 重生/先知/弥补遗憾/逆袭体系）
-display_name: 重生复仇
 commands: []
 hooks:
   - load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
+fatigue_words:
+  - 上一世的种种涌上心头
+  - 这一世她定要讨回来
+  - 前世的记忆清晰如昨
+  - 仇人的脸在脑海中一闪而过
+  - 重活一世的意义
+pacing_rules:
+  - 三章内必须有明确反馈：复仇进度/先知变现/关系改写/危机化解（重生为先知-布局-兑现循环）
+  - 先知优势需随蝴蝶效应递减，禁止全程全知碾压
 ---
 
 # rebirth Genre Skill · 重生复仇题材包

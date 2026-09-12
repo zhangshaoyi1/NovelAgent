@@ -5,7 +5,6 @@ label: 游戏电竞
 version: 0.1.0
 type: genre
 description: 游戏电竞题材包 - 网游/电竞/全息游戏（副本开荒/赛事对抗/战队经营/操作流与意识流体系）
-display_name: 游戏/电竞
 commands: []
 hooks:
   - load_genre_template

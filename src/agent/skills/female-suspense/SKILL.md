@@ -5,13 +5,21 @@ label: 女频悬疑
 version: 0.1.0
 type: genre
 description: 女性悬疑/无CP（女性悬疑题材包 - 女主探案/心理惊悚/反转复仇/清醒反杀（无CP））
-display_name: 女性悬疑/无CP
 commands: []
 hooks:
   - load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
+fatigue_words:
+  - 一阵寒意顺着脊背爬上来
+  - 真相即将浮出水面
+  - 她的眼神闪过一丝不易察觉的慌乱
+  - 证据链完美闭合
+  - 这一切都是精心策划的骗局
+pacing_rules:
+  - 三章内必须有明确反馈：新线索/新嫌疑人/关系反转/危机逼近（悬疑为收集-推理-反转循环）
+  - 推理必须给读者公平线索，禁止超自然降神式解谜
 ---
 
 # female-suspense Genre Skill · 女性悬疑/无CP题材包

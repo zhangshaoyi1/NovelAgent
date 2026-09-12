@@ -11,6 +11,15 @@ hooks:
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
+fatigue_words:
+  - 江湖恩怨何时了
+  - 快意恩仇
+  - 这一剑惊天动地
+  - 武林盟主之位
+  - 侠之大者为国为民
+pacing_rules:
+  - 三章内必须有明确反馈：武学精进/恩怨推进/江湖名望/奇遇所得（武侠为历练-结怨-扬名循环）
+  - 武功精进需绑定秘籍/奇遇/名师，禁止无源突破
 ---
 
 # Wuxia Genre Skill · 武侠题材包

@@ -5,13 +5,21 @@ label: 男频爽文
 version: 0.1.0
 type: genre
 description: 男频爽文（通用爽点引擎题材包 - 扮猪吃虎/废柴逆袭/系统流/神豪/重生/装逼打脸，强调爽点密度、情绪曲线、期待感管理与无虐主节奏）
-display_name: 男频爽文（通用爽点引擎）
 commands: []
 hooks:
   - load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
+fatigue_words:
+  - 你惹了不该惹的人
+  - 三十年河东三十年河西
+  - 整个人如遭雷击
+  - 身份揭晓全场哗然
+  - 在他面前你连蝼蚁都不如
+pacing_rules:
+  - 每章至少一个微爽点、每 3 章一个强爽点（打脸/装逼/身份/收益兑现）
+  - 打脸闭环（装弱-冲突-打脸-后果）不可拆散跨章，装弱期不可连续超过 2 章
 ---
 
 # nanpin-shuangwen Genre Skill · 男频爽文（通用爽点引擎）题材包

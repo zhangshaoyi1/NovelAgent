@@ -5,13 +5,21 @@ label: 玄学鉴宝
 version: 0.1.0
 type: genre
 description: 玄学鉴宝/神医风水（玄学鉴宝题材包 - 玄学/鉴宝/神医/风水/相术体系）
-display_name: 玄学鉴宝/神医风水
 commands: []
 hooks:
   - load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
+fatigue_words:
+  - 眼中精光一闪
+  - 这物件有大隐隐于市的气息
+  - 祖上传下来的规矩
+  - 风水轮流转
+  - 气机流转不息
+pacing_rules:
+  - 三章内必须有明确反馈：捡漏/打眼/治病/风水局/鉴宝结论（玄学鉴宝为看货-断真假-变现循环）
+  - 玄学手段需有师承或金手指登记，禁止凭空开天眼
 ---
 
 # metaphysics Genre Skill · 玄学鉴宝/神医风水题材包

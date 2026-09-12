@@ -5,7 +5,6 @@ label: 历史科技
 version: 0.1.0
 type: genre
 description: 历史科技文题材包 - 穿越/架空历史/种田科技流/工业攀科技/朝堂权谋（知识差金手指/基建兴国体系）
-display_name: 历史/穿越科技流
 commands: []
 hooks:
   - load_genre_template

@@ -5,7 +5,6 @@ label: 女频言情
 version: 0.1.0
 type: genre
 description: 女频言情题材包 - 甜宠/古言/现言/穿越（情感线推进/心动名场面/双向奔赴/误会与和解体系）
-display_name: 女频言情（甜宠/古言/现言/穿越）
 commands: []
 hooks:
   - load_genre_template

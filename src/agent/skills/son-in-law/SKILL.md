@@ -5,13 +5,21 @@ label: 赘婿逆袭
 version: 0.1.0
 type: genre
 description: 赘婿逆袭/战神（赘婿逆袭题材包 - 隐忍赘婿/实力显露/豪门打脸/战神归来）
-display_name: 赘婿逆袭/战神
 commands: []
 hooks:
   - load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
+fatigue_words:
+  - 一个上门女婿也配
+  - 我忍了三年
+  - 今天起我不再隐忍
+  - 岳母的脸色变了
+  - 谁也不知道他的真实身份
+pacing_rules:
+  - 三章内必须有明确反馈：实力显露/身份铺垫/打脸/家庭地位变化（赘婿为隐忍-蓄力-翻盘循环）
+  - 隐忍期不可连续超过 2 章，翻盘底牌需提前铺垫禁止临时开挂
 ---
 
 # son-in-law Genre Skill · 赘婿逆袭/战神题材包

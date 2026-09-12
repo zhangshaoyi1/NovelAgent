@@ -5,13 +5,21 @@ label: 科幻
 version: 0.1.0
 type: genre
 description: 硬核科幻（硬核科幻题材包 - 硬核设定/星际文明/赛博朋克/高智叙事体系）
-display_name: 硬核科幻
 commands: []
 hooks:
   - load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
+fatigue_words:
+  - 曲率引擎轰鸣着点亮
+  - 量子纠缠超光速传递信息
+  - 这是文明的降维打击
+  - 星际战舰的阴影笼罩星球
+  - 数据在视网膜投影中流淌
+pacing_rules:
+  - 三章内必须有明确反馈：技术突破/危机化解/文明进程/谜题解开（科幻为探索-突破-应用循环）
+  - 硬设定需自洽，科技突破需有理论依据铺垫，禁止魔法化科技
 ---
 
 # sci-fi Genre Skill · 硬核科幻题材包

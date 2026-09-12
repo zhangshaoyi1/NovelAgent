@@ -5,13 +5,21 @@ label: 都市异能
 version: 0.1.0
 type: genre
 description: 都市脑洞/异能（都市异能题材包 - 异能觉醒/反套路/鉴宝读心/都市爽文体系）
-display_name: 都市脑洞/异能
 commands: []
 hooks:
   - load_genre_template
   - agent.core.quality.scoring.quality_checker.register_genre_rules
 dependencies: []
 independent: false
+fatigue_words:
+  - 异能觉醒的刹那
+  - 瞳孔中闪过一缕金光
+  - 普通人根本无法想象
+  - 都市的霓虹灯下暗流涌动
+  - 读心术告诉他真相
+pacing_rules:
+  - 三章内必须有明确反馈：异能升级/鉴宝/打脸/危机化解（都市异能为觉醒-运用-变现循环）
+  - 异能使用需有代价与成长上限登记，禁止无限制万能异能
 ---
 
 # urban-esper Genre Skill · 都市脑洞/异能题材包
