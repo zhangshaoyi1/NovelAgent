@@ -20,29 +20,7 @@ from typing import Any
 
 import frontmatter
 
-_SYSTEM_PROMPT = """你是资深网文代笔枪手，正在对小说中的**单个段落**做定向重写。
-
-铁律：
-1. 只重写指定的目标段落，输出且仅输出这一个段落的替换文本（无标题、无解释）。
-2. 不得改变段落承担的情节功能（该段推进的事件/信息/钩子必须保留）。
-3. 与给定的上文/下文自然衔接：人称、时态、场景、语言指纹保持一致。
-4. 不引入新的人物、设定、伏笔；不出现任何英文与写作元指令。
-"""
-
-_USER_TEMPLATE = """# 上文（不可改动，仅供衔接）
-{context_before}
-
-# 目标段落（要重写的段落）
-{old_paragraph}
-
-# 下文（不可改动，仅供衔接）
-{context_after}
-
-# 修改指令
-{instruction}
-
-# 任务
-请重写目标段落，仅输出替换后的段落文本。"""
+from agent.core.infra.prompt_manager import pm
 
 
 @dataclass
@@ -267,13 +245,14 @@ class ParagraphRewriter:
         try:
             from agent.client.gateway_adapter import chat_creative
 
+            _p = pm.get("quality.paragraph_rewrite")
             resp = chat_creative(
                 self.llm_client,
                 messages=[
-                    {"role": "system", "content": _SYSTEM_PROMPT},
+                    {"role": "system", "content": _p.system},
                     {
                         "role": "user",
-                        "content": _USER_TEMPLATE.format(
+                        "content": _p.render_user(
                             context_before=scheme["context_before"],
                             old_paragraph=scheme["old_paragraph"],
                             context_after=scheme["context_after"],

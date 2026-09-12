@@ -35,6 +35,7 @@ from rich.panel import Panel
 from agent.client.gateway_adapter import create_gateway, chat_utility
 from llmagent.gateway import Gateway
 from agent.core.engine.tool_contracts import tool
+from agent.core.infra.prompt_manager import pm
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import StateMachine
 from agent.core.tools.builtins import get_project_dir
@@ -346,23 +347,6 @@ class ImportWorkflow:
         result = wf.import_draft(Path("my_draft.txt"))
     """
 
-    IMPORT_SYSTEM_PROMPT = """你是小说设定提取专家。从用户提供的草稿文本中反向提取小说设定。
-
-输出 JSON：
-{
-  "title": "小说标题（从文本推断）",
-  "genre": "题材（如 xiuxian/romance/mystery，无法判断留空）",
-  "synopsis": "故事简介，100-200字",
-  "worldview": "世界观描述，200-400字",
-  "power_system": "力量体系（如有）",
-  "main_characters": [
-    {"name": "姓名", "role": "protagonist|antagonist|supporting", "identity": "身份", "core_motivation": "动机"}
-  ],
-  "chapter_count": "检测到的章节数"
-}
-
-只输出 JSON，不要 ```json 标记。"""
-
     def __init__(
         self,
         project_dir: Path,
@@ -405,7 +389,7 @@ class ImportWorkflow:
         resp = chat_utility(
             self.llm,
             messages=[
-                {"role": "system", "content": self.IMPORT_SYSTEM_PROMPT},
+                {"role": "system", "content": pm.get("m11.import").system},
                 {"role": "user", "content": f"请从以下草稿提取设定：\n\n{text}"},
             ],
             temperature=0.2,
@@ -535,15 +519,6 @@ class CompletionExtrasWorkflow:
         - 伏笔回收报告（复用 M13）
     """
 
-    AFTERWORD_SYSTEM_PROMPT = """你是小说完本感言撰写助手。根据小说信息生成一段完本感言。
-
-要求：
-1. 真诚、有温度
-2. 感谢读者陪伴
-3. 简述创作心路
-4. 200-400字
-5. 直接输出正文，不要标题"""
-
     def __init__(
         self,
         project_dir: Path,
@@ -619,7 +594,7 @@ class CompletionExtrasWorkflow:
             resp = chat_utility(
                 self.llm,
                 messages=[
-                    {"role": "system", "content": self.AFTERWORD_SYSTEM_PROMPT},
+                    {"role": "system", "content": pm.get("m11.afterword").system},
                     {"role": "user", "content": f"小说标题：{title}\n简介摘要：{synopsis}"},
                 ],
                 temperature=0.7,
