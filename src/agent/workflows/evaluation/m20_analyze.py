@@ -512,7 +512,44 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
             temperature=0.2,
             max_tokens=4096,
         )
-        data = parse_llm_json(resp)
+        # 解析容错：对齐 M1/M3/M4 惯例——解析失败附错误详情重试一次，仍失败显性抛错
+        last_err: ValueError | None = None
+        for attempt in range(2):
+            try:
+                data = parse_llm_json(resp)
+                break
+            except ValueError as e:
+                last_err = e
+                if attempt == 0:
+                    self._write("分析日志/outline_parse_retry.log",
+                                f"大纲分析 JSON 解析失败：{e}\n原始片段：{(resp or '')[:300]}")
+                    retry = chat_utility(
+                        self.llm,
+                        messages=[
+                            {"role": "system", "content": p.render_system()},
+                            {
+                                "role": "user",
+                                "content": p.render_user(
+                                    book=self.book,
+                                    total_chapters=len(chapters),
+                                    total_words=total_words,
+                                    chapter_index=index_for_llm,
+                                    sample_text=sample,
+                                    sample_len=len(sample),
+                                )
+                                + f"\n\n【上次解析失败原因，务必修正】请只输出一个合法的 JSON 对象，"
+                                f"不要包含 ```json 代码块标记：\n{last_err}",
+                            },
+                        ],
+                        temperature=0.2,
+                        max_tokens=4096,
+                    )
+                    resp = retry
+        else:
+            raise RuntimeError(
+                f"大纲分析结果无法解析为 JSON（可能被截断或格式异常）：{last_err}。"
+                f"原始输出片段：{(resp or '')[:200]}"
+            )
         self._write_outline(chapters, data, total_words)
         self._write("章节/章节索引.md", self._render_chapter_index(chapters))
 

@@ -366,7 +366,35 @@ class BookwormSkill:
             temperature=0.3,  # 评估任务低温度保证稳定
         )
 
-        data = parse_llm_json(resp)
+        # 解析容错：对齐 M1/M3/M4 惯例——解析失败附错误详情重试一次，仍失败显性抛错
+        data = None
+        last_err: ValueError | None = None
+        for attempt in range(2):
+            try:
+                data = parse_llm_json(resp)
+                break
+            except ValueError as e:
+                last_err = e
+                if attempt == 0:
+                    retry = chat_utility(
+                        self.llm,
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            {
+                                "role": "user",
+                                "content": user_prompt
+                                + f"\n\n【上次解析失败原因，务必修正】请只输出一个合法的 JSON 对象，"
+                                f"不要包含 ```json 代码块标记：\n{last_err}",
+                            },
+                        ],
+                        temperature=0.3,  # 评估任务低温度保证稳定
+                    )
+                    resp = retry
+        if data is None:
+            raise RuntimeError(
+                f"书虫测评结果无法解析为 JSON（可能被截断或格式异常）：{last_err}。"
+                f"原始输出片段：{(resp or '')[:200]}"
+            )
         review = self._parse_review(data, inp, version)
 
         if save_dir is not None:
