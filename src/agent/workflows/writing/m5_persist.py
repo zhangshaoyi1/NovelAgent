@@ -363,8 +363,16 @@ class M5PersistMixin:
             m = re.search(r"\*\*(.+?)\*\*", line)
             if m:
                 name = m.group(1).strip()
+                # 名单里的名字可能与档案文件不一致（规划占位名/模糊匹配命中）：
+                # 只登记真实存在的档案，否则每章刷「引用源不存在」告警污染溯源元数据
+                source = f"characters/{name}.md"
+                if not (self.project_dir / source).exists():
+                    resolved = self._resolve_character_source(name)
+                    if not resolved:
+                        continue
+                    source = resolved
                 characters.append(
-                    EvidenceRef(name=name, field="身份/动机", source=f"characters/{name}.md")
+                    EvidenceRef(name=name, field="身份/动机", source=source)
                 )
 
         foreshadows: list[EvidenceRef] = [
@@ -628,6 +636,16 @@ class M5PersistMixin:
     # ============================================================
     # E4 证据链校验
     # ============================================================
+    def _resolve_character_source(self, name: str) -> str | None:
+        """模糊匹配角色档案：名单名与档案文件名互含即视为同一角色（与 m5_context 口径一致）。"""
+        chars_dir = self.project_dir / "characters"
+        if not chars_dir.exists():
+            return None
+        for p in chars_dir.glob("*.md"):
+            if name in p.stem or p.stem in name:
+                return f"characters/{p.stem}.md"
+        return None
+
     def _validate_evidence(self, chain: EvidenceChain) -> EvidenceChain:
         """F-E4.3 落盘前校验所有引用源文件是否存在
 
