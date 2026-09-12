@@ -324,17 +324,30 @@ class M5ContextMixin:
             return {}
 
     def _load_ledger_context(self, subline_data: dict[str, Any], chapter_num: int) -> str:
-        """长线一致性三账（名册/信息/战力标尺）写时注入文本；失败降级为空。"""
+        """长线一致性四账（名册/信息/战力标尺/心性）写时注入文本；失败降级为空。"""
         try:
             from agent.core.story.entity_ledger import render_ledger_context
 
             appearing = self._extract_character_names(subline_data)
-            return render_ledger_context(self.project_dir, appearing, chapter_num)
+            base = render_ledger_context(self.project_dir, appearing, chapter_num)
         except Exception as e:  # noqa: BLE001 - 降级不阻断写章
             from agent.core.infra.degrade import degrade
 
             degrade("m5.context.ledger", "长线一致性账本注入失败，降级为空", e)
-            return ""
+            base = ""
+        # 心性轨迹（变更裁决后的当前画像；损坏/空 → 空段，不阻断）
+        try:
+            from agent.core.story.disposition_ledger import DispositionLedgerStore
+
+            disp = DispositionLedgerStore(self.project_dir).load().render_for_prompt(
+                list(dict.fromkeys(["主角", *self._extract_character_names(subline_data)]))
+            )
+        except Exception as e:  # noqa: BLE001
+            from agent.core.infra.degrade import degrade
+
+            degrade("m5.context.disposition", "心性账本注入失败，降级为空", e)
+            disp = ""
+        return "\n".join(b for b in (base, disp) if b)
 
     def _load_closure_text(self) -> str:
         """完本收束清单注入文本（.state/closure_plan.json）；缺失/空 → ""。"""
