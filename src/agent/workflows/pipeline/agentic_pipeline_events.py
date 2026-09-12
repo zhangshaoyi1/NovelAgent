@@ -13,7 +13,37 @@ import frontmatter
 
 from agent.workflows.pipeline.agentic_pipeline_types import PipelineResult, _now_iso
 
+# 门禁熔断阈值：连续 N 章"门禁失明"或 N 章连续"告警留章" → 停批上报人工。
+# 设计依据（红线：失败必须显性化）：单章 fail-open 可接受（降级不阻断），
+# 连续多章失明说明质检基建持续故障，继续写=质检真空裸奔，必须显性停下。
+GATE_ESCALATION_LIMIT = 3
+
 class _PipelineEventsMixin:
+    def _note_gate_blind(self, where: str, err: Exception) -> None:
+        """门禁失明计数：质检环节调用异常被降级为放行时调用（显性化 + 连续熔断）。"""
+        if not hasattr(self, "_gate_blind_streak"):
+            self._gate_blind_streak = 0
+            self._consecutive_flagged = 0
+            self._gate_escalation_reason = ""
+        try:
+            from agent.core.infra.degrade import degrade
+
+            degrade(f"pipeline.gate_blind.{where}", "质检门禁调用异常，本章放行（计连续失明）", err)
+        except Exception:  # noqa: BLE001 - degrade 不可用时至少 console 可见
+            pass  # noqa: SILENT_DEGRADE
+        self._gate_blind_streak += 1
+        if self._gate_blind_streak >= GATE_ESCALATION_LIMIT and not self._gate_escalation_reason:
+            self._gate_escalation_reason = (
+                f"质量门禁连续 {self._gate_blind_streak} 章调用异常（最后：{where}: {err}）——"
+                "质检基建持续故障，继续写作将失去质量把关，已停批。请检查 LLM 网关后重跑。"
+            )
+            self.console.print(f"[red]✗ {self._gate_escalation_reason}[/red]")
+
+    def _note_gate_ok(self) -> None:
+        """门禁正常工作（任一质检环节成功执行）→ 失明连击归零。"""
+        if hasattr(self, "_gate_blind_streak"):
+            self._gate_blind_streak = 0
+
     def _emit_progress(self, phase: str, current: int, total: int) -> None:
         """触发进度回调（若订阅）。
 
@@ -102,13 +132,29 @@ class _PipelineEventsMixin:
     def _flag_chapter_quality(
         self, chapter: int, violations: list[dict[str, Any]], ch_text: str
     ) -> None:
-        """门禁重写后仍不达标 → 标记告警（决策①：保留该章、不阻断，写 .state/chapter_quality_flags.json）。"""
+        """门禁重写后仍不达标 → 标记告警（决策①：保留该章、不阻断，写 .state/chapter_quality_flags.json）。
+
+        2026-09-12 增量：连续 GATE_ESCALATION_LIMIT 章"告警留章"→ 置
+        ``_gate_escalation_reason`` 停批上报人工——决策①的单章放行不变，但
+        连续多章低质不再静默滑过（由滚动体检兜底改为即时显性熔断）。
+        """
         flag = {
             "chapter": chapter,
             "violations": [v.get("message", v.get("rule_id", "")) for v in violations],
             "flagged_at": _now_iso(),
         }
         self._quality_flags.append(flag)
+        if not hasattr(self, "_consecutive_flagged"):
+            self._gate_blind_streak = 0
+            self._consecutive_flagged = 0
+            self._gate_escalation_reason = ""
+        self._consecutive_flagged += 1
+        if self._consecutive_flagged >= GATE_ESCALATION_LIMIT and not self._gate_escalation_reason:
+            self._gate_escalation_reason = (
+                f"连续 {self._consecutive_flagged} 章门禁打回重写后仍不达标（第 {chapter} 章为最新）——"
+                "连续告警留章，已停批上报人工。请检查最近章节质量与门禁反馈后重跑。"
+            )
+            self.console.print(f"[red]✗ {self._gate_escalation_reason}[/red]")
         # 持久化（追加写，原子）
         try:
             from agent.core.quality.guardrails import DEFAULT_GUARDRAIL_CONFIG_PATH  # 仅引用，避免误用

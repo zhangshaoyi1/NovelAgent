@@ -202,6 +202,14 @@ class AgenticPipelineWorkflow(
         self._guardrail_hits: list[dict[str, Any]] = []
         # ---- G14：门禁重写后仍不达标章节的告警标记（决策①：不阻断，写文件留痕）----
         self._quality_flags: list[dict[str, Any]] = []
+        # ---- 门禁可观测性（2026-09-12）：fail-open 不能变成质量黑洞 ----
+        # _gate_blind_streak：连续"门禁失明"（Editor/Guardrails/滚动体检调用异常，
+        #   异常被降级为放行）计数；连续超限说明质检基建持续故障，继续写=裸奔。
+        # _consecutive_flagged：连续"告警留章"章数（门禁打回重写后仍不过）。
+        # _gate_escalation_reason：非空 = 门禁侧要求停批上报人工（escalated 语义）。
+        self._gate_blind_streak = 0
+        self._consecutive_flagged = 0
+        self._gate_escalation_reason = ""
 
         # ---- G9：事件总线（未订阅 on_event / progress_file=None 时零落盘开销）----
         from agent.core.engine.events import ProgressEventBus
@@ -417,10 +425,12 @@ class AgenticPipelineWorkflow(
             ch_title = str(getattr(wf_result, "chapter_title", ""))
 
             # 编辑并联审查：一致性硬门禁（BLOCK 冲突自动打回重写 1 次，与 Guardrails 门禁同级）
+            flags_before = len(self._quality_flags)
             try:
                 edit = editor.review(ch_text)
-            except Exception:  # noqa: BLE001
-                edit = None  # noqa: SILENT_DEGRADE
+            except Exception as e:  # noqa: BLE001 - 失明显性化：降级放行但计入连续熔断
+                edit = None
+                self._note_gate_blind("editor_review", e)
             if edit is not None:
                 block_conflicts = [c for c in edit.conflicts if c.severity == "block"]
                 if block_conflicts:
@@ -437,13 +447,33 @@ class AgenticPipelineWorkflow(
                         ch_num = int(getattr(wf_result, "chapter_num", ch_num))
                         edit2 = editor.review(ch_text)
                         still = [c for c in (edit2.conflicts or []) if c.severity == "block"] if edit2 else []
-                        if not still:
+                        # 联合复检（2026-09-12）：Editor 打回的重写稿此前只复查 Editor，
+                        # Guardrails 从未见过新稿——修好一道门可能弄坏另一道，必须双检。
+                        gr_joint = None
+                        if self.guardrails is not None and str(self.gate_mode).lower() == "block":
+                            try:
+                                gr_joint = self.guardrails.gate(ch_text, mode="block")
+                            except Exception as g_e:  # noqa: BLE001 - 失明计入熔断
+                                self._note_gate_blind("guardrails_joint_recheck", g_e)
+                            else:
+                                for v in gr_joint.violations:
+                                    if v.get("rule_id") == "ai_flavor":
+                                        self._guardrail_hits.append({
+                                            "chapter": ch_num,
+                                            "rule_id": v.get("rule_id"),
+                                            "severity": v.get("severity"),
+                                            "message": v.get("message", ""),
+                                        })
+                        joint_violations = [] if not gr_joint or gr_joint.passed else list(gr_joint.violations)
+                        if not still and not joint_violations:
                             self.console.print(f"[green]第 {ch_num} 章重写后通过一致性门禁[/green]")
                         else:
-                            self._flag_chapter_quality(ch_num, [c.to_dict() for c in still], ch_text)
+                            combined = ([c.to_dict() for c in still] if still else []) + joint_violations
+                            self._flag_chapter_quality(ch_num, combined, ch_text)
                             self.console.print(
-                                f"[red]第 {ch_num} 章重写后仍 {len(still)} 项阻断未过："
-                                f"已标记告警并保留该章（不阻断写作）[/red]"
+                                f"[red]第 {ch_num} 章重写后联合复检仍不通过"
+                                f"（一致性阻断 {len(still)} 项 / 护栏 {len(joint_violations)} 项）："
+                                f"已标记告警并保留该章[/red]"
                             )
                     except Exception as re_e:  # noqa: BLE001 - 重写失败降级为告警
                         self._flag_chapter_quality(ch_num, [c.to_dict() for c in block_conflicts], ch_text)
@@ -498,18 +528,33 @@ class AgenticPipelineWorkflow(
                                             "severity": v.get("severity"),
                                             "message": v.get("message", ""),
                                         })
-                                if gr2.passed:
+                                # 联合复检（2026-09-12）：Guardrails 打回的重写稿从未被
+                                # Editor 见过——重写可能引入新的一致性冲突，必须双检。
+                                still_editor = []
+                                try:
+                                    edit_joint = editor.review(ch_text)
+                                    if edit_joint is not None:
+                                        still_editor = [
+                                            c.to_dict()
+                                            for c in (edit_joint.conflicts or [])
+                                            if c.severity == "block"
+                                        ]
+                                except Exception as e_j:  # noqa: BLE001 - 失明计入熔断
+                                    self._note_gate_blind("editor_joint_recheck", e_j)
+                                if gr2.passed and not still_editor:
                                     self.console.print(
                                         f"[green]第 {ch_num} 章重写后通过门禁[/green]"
                                     )
                                 else:
                                     # 第二次仍不过 → 降级告警标记（决策①：不终止流水线）
+                                    combined = list(gr2.violations) + still_editor
                                     self._flag_chapter_quality(
-                                        ch_num, gr2.violations, ch_text
+                                        ch_num, combined, ch_text
                                     )
                                     self.console.print(
-                                        f"[red]第 {ch_num} 章重写后仍 {len(gr2.violations)} 项未过："
-                                        f"已标记告警并保留该章（不阻断写作）[/red]"
+                                        f"[red]第 {ch_num} 章重写后联合复检仍不通过"
+                                        f"（护栏 {len(gr2.violations)} 项 / 一致性阻断 {len(still_editor)} 项）："
+                                        f"已标记告警并保留该章[/red]"
                                     )
                             except Exception as re_e:  # noqa: BLE001 - 重写失败降级为告警
                                 self._flag_chapter_quality(ch_num, gr.violations, ch_text)
@@ -533,8 +578,15 @@ class AgenticPipelineWorkflow(
                                     "severity": v.severity,
                                     "message": v.message,
                                 })
-                except Exception:  # noqa: BLE001
-                    pass  # noqa: SILENT_DEGRADE
+                except Exception as e:  # noqa: BLE001 - 失明显性化：降级放行但计入连续熔断
+                    self._note_gate_blind("guardrails_gate", e)
+
+            # ---- 章级门禁计数复位：本章未被标记告警 → 连续告警清零；门禁正常
+            #      工作（Editor 出了结论）→ 失明连击清零 ----
+            if len(self._quality_flags) == flags_before:
+                self._consecutive_flagged = 0
+            if edit is not None:
+                self._note_gate_ok()
 
             # ---- G14：章节落盘后增量更新全书指纹库（决策③：存 .state/ 下）----
             try:
@@ -605,6 +657,11 @@ class AgenticPipelineWorkflow(
                         "[yellow]⚠ 滚动体检不达标：中断本批，待修复后继续[/yellow]"
                     )
                     break
+
+            # ---- 门禁侧熔断（2026-09-12）：连续门禁失明 / 连续告警留章 → 停批 ----
+            if self._gate_escalation_reason:
+                self._emit_failure("gate_escalation", self._gate_escalation_reason, severity="block")
+                break
 
         result.chapters_written = wrote
         result.final_chapter = self._current_total()
@@ -708,6 +765,11 @@ class AgenticPipelineWorkflow(
         if self._rolling_escalation_reason and not result.escalated:
             result.escalated = True
             result.escalated_reason = self._rolling_escalation_reason
+
+        # ---- 门禁侧熔断上报（2026-09-12）：连续失明/连续告警留章 → escalated ----
+        if self._gate_escalation_reason and not result.escalated:
+            result.escalated = True
+            result.escalated_reason = self._gate_escalation_reason
 
         # ---- G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）----
         self._finalize_cost(result)

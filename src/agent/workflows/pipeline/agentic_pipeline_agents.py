@@ -201,7 +201,10 @@ class _PipelineAgentsMixin:
         except Exception as e:  # noqa: BLE001
             self.console.print(f"[yellow]⚠ 滚动体检执行失败（{e}），放行继续[/yellow]")
             self._emit_failure("eval", str(e), severity="warn")
+            # 失明计数（2026-09-12）：体检基建连续故障达到阈值会触发门禁熔断停批
+            self._note_gate_blind("rolling_eval", e)
             return True  # noqa: SILENT_DEGRADE - 体检基建失败不阻断写作
+        self._note_gate_ok()
         if report is None:
             return True  # noqa: SILENT_DEGRADE - 无报告视为不可判定，放行
         # ---- HA-Eval L4（2026-09-11）：闸门分级 ----
