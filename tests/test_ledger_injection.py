@@ -159,3 +159,46 @@ def test_load_ledger_context_degrades_on_corrupt(tmp_path: Path, caplog) -> None
         text = wf._load_ledger_context(SettingManager(proj).load_subline(sublines[0]), 10)
     assert "实体名册摘要" not in text  # 名册损坏降级，信息账/战力账仍可能为空
     assert any("entity_ledger.render" in (r.getMessage() or "") for r in caplog.records)
+
+
+# ---------------------------------------------------------------- 时效护栏
+def test_directive_stale_ignored(tmp_path: Path) -> None:
+    proj = _build_minimal_project(tmp_path)
+    wf = _wf(proj)
+    wf.state_machine.load()
+    wf.state_machine.progress = {
+        **(wf.state_machine.progress or {}),
+        "current_subline": _list_sublines(proj)[0],
+        "total_written": 200,
+    }
+    wf.state_machine.save()
+
+    p = proj / ".state" / "batch_directive.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        json.dumps({"chapter": 5, "focus": "旧焦点", "subline": "某支线"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    ctx = wf._load_context()
+    assert ctx["batch_directive"] == {}  # 200-5 > 60 → 过期忽略
+    assert "旧焦点" not in (ctx.get("ledger_context") or "")
+
+
+def test_directive_fresh_still_applies(tmp_path: Path) -> None:
+    proj = _build_minimal_project(tmp_path)
+    wf = _wf(proj)
+    wf.state_machine.load()
+    wf.state_machine.progress = {
+        **(wf.state_machine.progress or {}),
+        "total_written": 12,
+    }
+    wf.state_machine.save()
+
+    p = proj / ".state" / "batch_directive.json"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        json.dumps({"chapter": 10, "focus": "新焦点"}, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    ctx = wf._load_context()
+    assert ctx["batch_directive"]["focus"] == "新焦点"  # 13-10=3 ≤ 60 → 有效

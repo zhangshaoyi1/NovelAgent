@@ -663,6 +663,22 @@ class AgenticPipelineWorkflow(
                         chapter_summary = _h.summary
                 except Exception:  # noqa: BLE001 - 账本读取失败仅降级为标题摘要
                     pass  # noqa: SILENT_DEGRADE
+                # ---- 实体名册自动登记（长线一致性第一期尾巴）：本章出场/退场/
+                # 道具易主从连续性账本 facts 确定性同步（无 LLM）；失败显性降级，
+                # 名册缺失只影响注入丰富度，不阻断写作。----
+                try:
+                    from agent.core.story.entity_ledger import sync_entities_from_facts
+
+                    _ch_fact_objs = [
+                        f for f in _led.ledger.facts if f.source_commit_id == _cid
+                    ]
+                    sync_entities_from_facts(self.project_dir, _ch_fact_objs, ch_num)
+                except Exception as sync_e:  # noqa: BLE001
+                    degrade(
+                        "pipeline.entity_sync",
+                        "实体名册自动登记失败，本章出场信息未入册",
+                        sync_e,
+                    )
                 self.memory.record_chapter(
                     ch_num, ch_title, summary=chapter_summary, facts=chapter_facts
                 )

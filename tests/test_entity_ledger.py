@@ -193,3 +193,33 @@ def test_render_ledger_context_full(tmp_path):
     out = render_ledger_context(tmp_path, ["甲", "主角"], current_ch=3)
     assert "实体名册摘要" in out and "信息账本" in out and "战力标尺账" in out
     assert "知道A秘密" in out
+
+
+# ---------------------------------------------------------------- 自动登记同步
+from types import SimpleNamespace as _NS
+
+
+def test_sync_entities_from_facts_registers_and_retires(tmp_path):
+    from agent.core.story.entity_ledger import sync_entities_from_facts
+
+    facts = [
+        _NS(domain="character", subject_id="王铁柱", field="presence", value=f"第9章在场"),
+        _NS(domain="character", subject_id="老盟主", field="state", value="陨落"),
+        _NS(domain="character", subject_id="", field="state", value="死"),  # 空主体跳过
+        _NS(domain="world", subject_id="青云剑", field="holder", value="王铁柱"),
+        _NS(domain="world", subject_id="青云剑", field="count", value="三枚"),  # 非holder不登记
+    ]
+    n = sync_entities_from_facts(tmp_path, facts, 9)
+    assert n == 3  # 王铁柱 + 老盟主 + 持有者王铁柱（已存在仍计）
+
+    st = EntityLedgerStore(tmp_path).load()
+    assert st.get("王铁柱").appearances == [9]
+    assert st.get("老盟主").lifecycle == "retired"
+    assert st.get("青云剑") is None  # 道具本体不入册（char/faction/place 之外）
+
+
+def test_sync_entities_from_facts_empty_no_save(tmp_path):
+    from agent.core.story.entity_ledger import sync_entities_from_facts
+
+    assert sync_entities_from_facts(tmp_path, [], 9) == 0
+    assert not (tmp_path / ".state" / "continuity" / "entity_ledger.json").exists()

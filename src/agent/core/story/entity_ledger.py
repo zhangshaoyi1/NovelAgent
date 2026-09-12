@@ -455,6 +455,50 @@ class PowerScaleLedgerStore:
         return "\n【战力标尺账】\n" + "\n".join(f"- {ln}" for ln in lines)
 
 
+def sync_entities_from_facts(project_dir: str | Path, facts: list[Any], chapter_num: int) -> int:
+    """从连续性账本 facts 确定性同步实体名册（第一期尾巴：自动登记闭环）。
+
+    规则（无 LLM，纯结构化字段过滤）：
+    - ``domain="character"`` → ``ensure(subject_id, ch)`` 登记出场；
+      ``field="state"`` 且值含死亡类词（死/陨落/毙命/坐化/形神俱灭）→ 生命周期置 retired；
+    - ``domain="world"`` 且 ``field="holder"`` → 持有者作为实体登记出场（道具易主
+      既是持有者存在性的证据）。
+
+    Args:
+        facts: 具有 ``domain/subject_id/field/value`` 属性的对象（ContinuityFact）。
+    Returns:
+        更新的条目次数（无变化不落盘）。
+    Raises:
+        EntityLedgerError: 名册文件损坏（由调用方 degrade 显性处理）。
+    """
+    store = EntityLedgerStore(project_dir).load()
+    touched = 0
+    death_marks = ("死", "陨落", "毙命", "坐化", "形神俱灭")
+    for f in facts:
+        try:
+            domain = str(getattr(f, "domain", ""))
+            subject = str(getattr(f, "subject_id", "")).strip()
+            field = str(getattr(f, "field", ""))
+            value = str(getattr(f, "value", ""))
+            if not subject:
+                continue
+            if domain == "character":
+                store.ensure(subject, chapter_num)
+                touched += 1
+                if field == "state" and any(k in value for k in death_marks):
+                    store.set_lifecycle(subject, LC_RETIRED)
+            elif domain == "world" and field == "holder":
+                holder = value.strip()
+                if holder and len(holder) <= 20:
+                    store.ensure(holder, chapter_num)
+                    touched += 1
+        except EntityLedgerError:
+            continue  # 单条非法数据跳过整体同步（结构损坏由 load() 抛出）
+    if touched:
+        store.save()
+    return touched
+
+
 def render_ledger_context(
     project_dir: str | Path, appearing: list[str] | None = None, current_ch: int = 0
 ) -> str:
@@ -493,6 +537,7 @@ __all__ = [
     "PowerBenchmark",
     "PowerScaleLedgerStore",
     "render_ledger_context",
+    "sync_entities_from_facts",
     "LC_MENTIONED",
     "LC_ACCOMPANYING",
     "LC_DORMANT",

@@ -14,6 +14,9 @@ import frontmatter
 from agent.core.registry.genre_pack import GenrePackRegistry
 from agent.core.story.method_style import load_style_guide
 
+#: batch_directive 时效窗口（章）：裁决生成章号距今超过该窗口即视为过期忽略。
+_DIRECTIVE_STALE_CHAPTERS = 60
+
 logger = logging.getLogger(__name__)
 
 
@@ -60,6 +63,17 @@ class M5ContextMixin:
         # 状态机降级为记账员。指令里的支线必须真实存在，否则维持现状（兜底）。
         # 读取/校验失败均显性降级为不接管，不阻断写章。----
         batch_directive = self._load_batch_directive()
+        # 时效护栏（第一期尾巴）：裁决只在章龄窗口内有效——规划者长期缺席
+        # （连续复规划失败）时旧裁决不得永远接管支线/焦点，超窗显性降级忽略。
+        _d_ch = int(batch_directive.get("chapter") or 0)
+        _current = next_chapter(progress)
+        if _d_ch and _current - _d_ch > _DIRECTIVE_STALE_CHAPTERS:
+            degrade(
+                "m5.context.batch_directive",
+                f"batch_directive 已过期（生成于第{_d_ch}章，当前第{_current}章"
+                f" > 窗口{_DIRECTIVE_STALE_CHAPTERS}章），忽略旧裁决",
+            )
+            batch_directive = {}
         _d_subline = str(batch_directive.get("subline") or "")
         if _d_subline:
             try:
@@ -69,8 +83,6 @@ class M5ContextMixin:
                     if not subline_data["exists"]:
                         raise RuntimeError(f"支线 {subline_id} 的 subline.md 不存在")
             except Exception as e:  # noqa: BLE001 - 指令支线失效 → 维持现状
-                from agent.core.infra.degrade import degrade
-
                 degrade(
                     "m5.context.batch_directive",
                     f"batch_directive 指定支线 {_d_subline!r} 校验失败，维持状态机现状",
