@@ -87,6 +87,20 @@ class MasterPlan(BaseModel):
     notes: str = ""
 
 
+class ReplanOutput(BaseModel):
+    """批间复规划输出（长线一致性设计稿第一期，见《详细设计文档.md》§12 专区导航）。
+
+    只要求给出"当前章之后"的剩余弧线与下一批裁决——已写历史不可改写，
+    规划者管未来，状态机（core/progress.py）降级为记账员。
+    """
+
+    arcs: list[Arc] = Field(default_factory=list)  # 当前章之后的剩余剧情弧
+    batch_focus: str = ""  # 下一批写作焦点（人物/事件/情绪目标）
+    batch_subline: str = ""  # 下一批应推进的支线（空 = 维持现状，规划者不裁决）
+    rationale: str = ""  # 为什么这么规划（批间可审计）
+    notes: str = ""  # 其他备注（追加进 plan.notes）
+
+
 # decide 签名：接收 messages，返回 MasterPlan 的 dict（或 MasterPlan 实例）。
 PlanDecideFn = Callable[[list[dict[str, str]]], dict[str, Any]]
 PlanDecideAsyncFn = Callable[[list[dict[str, str]]], Awaitable[dict[str, Any]]]
@@ -457,6 +471,118 @@ class PlannerAgent:
             pass  # noqa: SILENT_DEGRADE
 
     # ---------------------------------------------------------------- 修订
+    def replan_batch(
+        self,
+        current_chapter: int,
+        summary: str,
+        decide: PlanDecideFn | None = None,
+    ) -> MasterPlan:
+        """批间复规划（长线一致性设计稿第一期·B）：据批级进展摘要重新裁决未来。
+
+        与 ``revise_plan``（仅追加备注）不同，本方法走 LLM 结构化输出：
+        1. 读现有 MasterPlan，把「当前章之后」的弧线整体交给规划者重排；
+        2. 产出下一批裁决（焦点/支线），落盘 ``.state/batch_directive.json``
+           供 m5_context 写时消费（支线裁决软移交——状态机仍是兜底）；
+        3. ``PlanStore.mutate`` 落盘（保留 scope/route 等非 MasterPlan 字段）。
+
+        Args:
+            current_chapter: 当前进度（已写到第几章）。
+            summary: 批级进展摘要（记忆/教训/债务/名册/叙事线，见
+                ``workflows/pipeline/batch_replan.build_batch_summary``）。
+            decide: 注入决策函数（离线测试用；返回 ReplanOutput 的 dict）。
+        """
+        plan = self.load_plan()
+        if plan is None:
+            raise StructuredOutputError("批间复规划失败：.state/plan.json 不存在，无计划可修订")
+
+        if decide is None:
+            if self.llm is None:
+                self.llm = create_gateway()
+            llm = self.llm
+
+            def decide(messages: list[dict[str, str]]) -> dict[str, Any]:  # noqa: F811
+                return chat_structured(
+                    llm,
+                    messages,
+                    ReplanOutput,
+                    use="creative",
+                    temperature=0.7,
+                    max_tokens=3000,
+                    enable_thinking=False,
+                )
+
+        existing = "\n".join(
+            f"- {a.name}（{a.chapter_start}-{a.chapter_end}）：{a.goal}"
+            for a in plan.episode_tree
+        ) or "（空）"
+        messages = [
+            {
+                "role": "system",
+                "content": (
+                    "你是网文总架构师，正在做批间复规划：一批章节写完，你要依据写作进展"
+                    "重新裁决未来的剧情走向。历史章节不可改写；你只负责当前章之后的规划。"
+                    "输出 JSON：arcs（剩余剧情弧，chapter_start 必须 >= 当前进度章号，"
+                    "弧线必须衔接当前进度）、batch_focus（下一批写作焦点一句话）、"
+                    "batch_subline（下一批应推进的支线名，取自已有支线或留空）、"
+                    "rationale（规划理由，要引用进展摘要中的具体事实）、notes（其他备注）。"
+                ),
+            },
+            {
+                "role": "user",
+                "content": (
+                    f"【当前进度】已写到第 {current_chapter} 章。\n"
+                    f"【现有剧情弧】\n{existing}\n\n"
+                    f"【本批进展摘要（记忆/教训/债务/实体名册/叙事线）】\n{summary}\n\n"
+                    "请据此复规划剩余剧情弧并裁决下一批方向。"
+                ),
+            },
+        ]
+        out = ReplanOutput(**decide(messages))
+
+        # 合并：保留已完结弧线（chapter_end <= 当前进度），替换剩余部分
+        keep = [a for a in plan.episode_tree if a.chapter_end <= current_chapter]
+        new_arcs: list[Arc] = []
+        for i, a in enumerate(out.arcs):
+            start = max(int(a.chapter_start), current_chapter + 1)
+            end = max(int(a.chapter_end), start)
+            new_arcs.append(
+                Arc(
+                    id=f"arc-r{i + 1}",
+                    name=a.name,
+                    chapter_start=start,
+                    chapter_end=end,
+                    goal=a.goal,
+                    subline_id=a.subline_id,
+                )
+            )
+        plan.episode_tree = keep + new_arcs
+        extra_note = f"[复规划@{current_chapter}] {out.rationale}"
+        if out.notes.strip():
+            extra_note += f"；{out.notes.strip()}"
+        plan.notes = (plan.notes + "\n" + extra_note).strip()
+        self._save(plan)
+
+        # 下一批裁决落盘（m5_context 写时消费；支线裁决软移交的载体）
+        directive = {
+            "chapter": int(current_chapter),
+            "focus": out.batch_focus.strip(),
+            "subline": out.batch_subline.strip(),
+            "rationale": out.rationale.strip(),
+            "arcs_total": len(plan.episode_tree),
+            "arcs_replanned": len(new_arcs),
+        }
+        directive_path = self.project_dir / ".state" / "batch_directive.json"
+        directive_path.parent.mkdir(parents=True, exist_ok=True)
+        directive_path.write_text(
+            json.dumps(directive, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
+        if self.memory is not None:
+            try:
+                self.memory.consolidate(last_consolidated_chapter=current_chapter)
+            except Exception:  # noqa: BLE001
+                pass  # noqa: SILENT_DEGRADE
+        return plan
+
     def revise_plan(self, current_chapter: int, note: str = "") -> MasterPlan:
         """据进度修订计划（best-effort）：补充备注并落盘。
 

@@ -158,6 +158,11 @@ def autowrite(
         help="本轮续写批次数（>0 时按「当前已写章数 + batch」推导绝对目标，"
              "避免前端快照过期导致目标小于水位而空跑；与 --chapters 互斥，batch 优先）",
     ),
+    no_replan: bool = typer.Option(
+        False, "--no-replan",
+        help="关闭批间复规划（默认开：续写批次前由 Planner 依据批级进展摘要"
+             "重排剩余剧情弧并裁决下一批方向，失败显性降级为沿用既有计划）",
+    ),
     mode: str = typer.Option(
         "auto", "--mode", help="写章引擎档位：auto / heavy / light"
     ),
@@ -481,6 +486,12 @@ def autowrite(
         no_stream=bool(_cli_value(no_stream, False)),
         project_dir=project_path,
     )
+
+    # ---- 批间复规划（长线一致性设计稿第一期·B）：续写批次前由规划者重排未来 ----
+    # 首批（无 plan.json / 零进度）不触发；失败 degrade 显性留痕后沿用既有计划。
+    from agent.workflows.pipeline.batch_replan import maybe_replan
+
+    maybe_replan(project_path, console=console, enabled=not bool(no_replan))
 
     # 构造走 service 层唯一入口（build_pipeline），避免 CLI 直连 pipeline 形成双入口。
     # use_session/use_catalog/use_memory_bridge 关闭：这些是 service 级编排特性，
