@@ -473,7 +473,6 @@ def sync_entities_from_facts(project_dir: str | Path, facts: list[Any], chapter_
     """
     store = EntityLedgerStore(project_dir).load()
     touched = 0
-    skipped: list[str] = []
     death_marks = ("死", "陨落", "毙命", "坐化", "形神俱灭")
     for f in facts:
         try:
@@ -494,14 +493,10 @@ def sync_entities_from_facts(project_dir: str | Path, facts: list[Any], chapter_
                     store.ensure(holder, chapter_num)
                     touched += 1
         except EntityLedgerError as e:
-            skipped.append(f"{subject or '?'}：{e}")
-    if skipped:
-        from agent.core.infra.degrade import degrade
+            # 单条非法数据跳过整体同步（结构损坏由 load() 抛出）；显性留痕
+            from agent.core.infra.degrade import degrade
 
-        degrade(
-            "entity_ledger.sync",
-            f"{len(skipped)} 条 facts 同步失败被跳过（首条：{skipped[0]}）",
-        )
+            degrade("entity_ledger.sync", f"一条 facts 同步失败被跳过：{e}", e)
     if touched:
         store.save()
     return touched
