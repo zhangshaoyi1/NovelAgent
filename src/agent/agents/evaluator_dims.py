@@ -29,6 +29,7 @@ from rich.console import Console
 from agent.core.story.chapters import iter_chapter_texts  # G6：公共章节读取 helper（根因 B6-3）
 from agent.core.engine.state_machine import StateMachine
 from agent.core.infra.degrade import degrade  # F-1 降级可见化统一出口
+from agent.core.quality.eval_evidence import build_degraded_evidence
 # D-J（2026-08-29）：不再在 agents 层直接 import workflows（违反依赖方向）。
 # 回退能力经 ``rollback_provider`` 构造注入（见 RollbackProvider），未注入时懒加载兜底。
 from agent.core.quality.scoring.reader_appeal import (  # G5：迷爱看六维双闸
@@ -218,15 +219,19 @@ class _EvaluatorDimensionsMixin:
                     # 六维每个 DimensionResult 的 value 必须设为 APPEAL_DIM_FLOOR(40)，
                     # 综合维 value 设 APPEAL_PASS_LINE(60)，保证全部 passed=True，禁止触发回溯。
                     self._last_appeal_source = "offline"
+                    # 类级修复：离线占位值也挂 confidence=0 证据（虽恒 passed，
+                    # 但让 to_dict 里的"通过"可被识别为未实测，禁止据此出报告结论）。
+                    _off_ev = build_degraded_evidence("离线占位（LLM 不可用）", dimension="appeal_gate")
                     for _k in APPEAL_DIMENSIONS:
                         dims.append(DimensionResult(
                             f"{APPEAL_GATE_PREFIX}{_k}", f"迷·{APPEAL_LABELS.get(_k, _k)}",
                             float(APPEAL_DIM_FLOOR), float(APPEAL_DIM_FLOOR),
-                            ">=", False, "offline", soft_margin=0.0,
+                            ">=", False, "offline", soft_margin=0.0, evidence=_off_ev,
                         ))
                     dims.append(DimensionResult(
                         "appeal_total", "迷·综合", float(APPEAL_PASS_LINE),
                         float(self.appeal_threshold), ">=", False, "offline", soft_margin=0.0,
+                        evidence=_off_ev,
                     ))
                 else:
                     self._last_appeal_source = "llm"
@@ -258,15 +263,18 @@ class _EvaluatorDimensionsMixin:
                     # 离线短路（拍板补充边界 2）：value 取 CLI 覆盖后的阈值，保证 passed 恒 True，
                     # 禁止误触发 escalated。注意与 G5 的差异：用 self.golden_three_* 而非硬编码常量。
                     self._last_golden_source = "offline"
+                    # 类级修复：同 G5，离线占位值挂 confidence=0 证据。
+                    _gold_ev = build_degraded_evidence("离线占位（LLM 不可用）", dimension="golden_gate")
                     for _k in APPEAL_DIMENSIONS:
                         dims.append(DimensionResult(
                             f"{GOLDEN_GATE_PREFIX}{_k}", f"金三·{APPEAL_LABELS.get(_k, _k)}",
                             float(self.golden_three_floor), float(self.golden_three_floor),
-                            ">=", False, "offline", soft_margin=0.0,
+                            ">=", False, "offline", soft_margin=0.0, evidence=_gold_ev,
                         ))
                     dims.append(DimensionResult(
                         "golden_total", "金三·综合", float(self.golden_three_threshold),
                         float(self.golden_three_threshold), ">=", False, "offline", soft_margin=0.0,
+                        evidence=_gold_ev,
                     ))
                 else:
                     self._last_golden_source = "llm"

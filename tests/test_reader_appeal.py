@@ -124,7 +124,9 @@ def test_parse_appeal_all_zero_dims_offline_shortcircuit(tmp_path: Path) -> None
     scorer = ReaderAppealScorer(llm_client=llm)
     rep = scorer.score_chapter("第一章 试炼\n\n林凡睁开眼。")
     assert rep.llm_used is False
-    assert rep.error == "all-zero dimensions"
+    # 类级修复（2026-09-12）：缺键统一按形状异常短路（与"全 0"同族），
+    # error 文案随首检出的缺失维度而变，只锚定关键语义。
+    assert "形状异常" in (rep.error or "")
     assert rep.source == "offline"
 
 
@@ -168,7 +170,9 @@ def test_parse_appeal_all_zero_dims_offline_shortcircuit(tmp_path: Path) -> None
     scorer = ReaderAppealScorer(llm_client=llm)
     rep = scorer.score_chapter("第一章 试炼\n\n林凡睁开眼。")
     assert rep.llm_used is False
-    assert rep.error == "all-zero dimensions"
+    # 类级修复（2026-09-12）：缺键统一按形状异常短路（与"全 0"同族），
+    # error 文案随首检出的缺失维度而变，只锚定关键语义。
+    assert "形状异常" in (rep.error or "")
     assert rep.source == "offline"
 
 

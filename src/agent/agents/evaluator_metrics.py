@@ -14,7 +14,9 @@ from pathlib import Path
 from typing import Any
 
 from agent.agents.evaluator_types import DimensionResult, NovelHealthReport
+from agent.core.infra.degrade import degrade
 from agent.core.quality.dimension_registry import safe_default_for
+from agent.core.quality.eval_evidence import build_degraded_evidence
 
 
 import json
@@ -59,8 +61,18 @@ class _EvaluatorMetricsMixin:
         if self.score_fn is not None:
             try:
                 return float(self.score_fn(name, str(self.project_dir)))
-            except Exception:  # noqa: BLE001
-                pass  # noqa: SILENT_DEGRADE
+            except Exception as e:  # noqa: BLE001
+                # 类级修复（2026-09-12）：不再静默吞——留痕 + 记 confidence=0
+                # 证据，否则降级默认值会被 L4 当成"可信失败"触发无谓回滚。
+                degrade(
+                    f"evaluator.score_fn.{name}",
+                    f"score_fn 评分失败，降级为安全默认（维度 {name}）", e,
+                )
+                if not hasattr(self, "_degraded_evidence"):
+                    self._degraded_evidence: dict[str, Any] = {}
+                self._degraded_evidence[name] = build_degraded_evidence(
+                    f"score_fn 评分失败降级：{e}", dimension=name,
+                )
         # 安全默认（无 LLM）：硬指标 0 通过，评分维度给满分。
         # HA-Eval L2：由 dimension_registry 登记表派生（SSOT）。
         return safe_default_for(name)
@@ -74,12 +86,16 @@ class _EvaluatorMetricsMixin:
         """
         provider = getattr(self.score_fn, "__self__", None)
         getter = getattr(provider, "get_evidence", None)
-        if not callable(getter):
-            return None
-        try:
-            return getter(name)
-        except Exception:  # noqa: BLE001 - 取证据失败不影响评分本身
-            return None  # noqa: SILENT_DEGRADE
+        if callable(getter):
+            try:
+                ev = getter(name)
+            except Exception:  # noqa: BLE001 - 取证据失败不影响评分本身
+                ev = None  # noqa: SILENT_DEGRADE
+            if ev is not None:
+                return ev
+        # 评分走的是降级路径（score_fn 抛异常/无真实评分）→ 返回 confidence=0
+        # 证据，让 gate_decision 判 recheck，而不是把降级值当可信失败。
+        return getattr(self, "_degraded_evidence", {}).get(name)
 
     def _metric_foreshadow_recycle(self) -> tuple[float, dict[str, int | list[dict[str, str]]]]:
         """确定性：伏笔回收率（到期口径）。

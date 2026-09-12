@@ -101,15 +101,29 @@ def test_score_chapter_offline(tmp_path):
 
 def test_score_chapter_clamps_and_defaults(tmp_path):
     llm = _fake_llm(
+        '{"dimensions": {"hook_strength": 200, "payoff_density": -5, '
+        '"immersion": 60, "character_arc": 70, "world_novelty": 80, '
+        '"emotion_curve": 90}, "one_liner": "x", "suggestions": []}'
+    )
+    scorer = ReaderAppealScorer(llm_client=llm)
+    report = scorer.score_chapter(_CHAPTER)
+    # 越界值被 clamp 到 0-100
+    assert report.dimensions["hook_strength"] == 100
+    assert report.dimensions["payoff_density"] == 0
+    assert report.llm_used is True
+
+
+def test_score_chapter_missing_dim_is_shape_anomaly(tmp_path):
+    # 类级修复（2026-09-12）：部分维度缺失 = 形状异常（与"全 0"同族），
+    # 不得补 0 冒充真实评分——否则单维漏答即假性不达标（低于触底线）。
+    llm = _fake_llm(
         '{"dimensions": {"hook_strength": 200, "payoff_density": -5}, '
         '"one_liner": "x", "suggestions": []}'
     )
     scorer = ReaderAppealScorer(llm_client=llm)
     report = scorer.score_chapter(_CHAPTER)
-    # 越界值被 clamp 到 0-100；缺失维度补 0
-    assert report.dimensions["hook_strength"] == 100
-    assert report.dimensions["payoff_density"] == 0
-    assert report.dimensions["immersion"] == 0
+    assert report.llm_used is False
+    assert "形状异常" in (report.error or "")
 
 
 # ============================================================

@@ -102,3 +102,17 @@ def build_evidence(
         issues=list(issues or []),
         rationale=rationale or "",
     )
+
+
+def build_degraded_evidence(reason: str, *, dimension: str = "") -> EvalEvidence:
+    """构造「降级即不可信」证据（confidence=0）。
+
+    类级修复（2026-09-12）：所有"LLM 没有真实评上"的降级路径（调用失败/解析
+    失败/形状异常）必须携带本证据，让 ``gate_decision`` 走 ``recheck``（只告警
+    不处置），而不是把降级默认值当成可信失败 → 无谓回滚重写。
+    """
+    ev = EvalEvidence(
+        rationale=(f"[{dimension}] " if dimension else "") + reason,
+    )
+    ev.degrade(reason)
+    return ev

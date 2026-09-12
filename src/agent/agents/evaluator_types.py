@@ -55,6 +55,34 @@ class DimensionResult:
         if self.spec is not None:
             enforce_contract(self.spec, self.value)
 
+    @classmethod
+    def degraded(
+        cls,
+        name: str,
+        label: str,
+        threshold: float,
+        direction: str,
+        *,
+        required: bool = False,
+        soft_margin: float = 0.0,
+        scope: str = "window",
+        reason: str = "评分降级（LLM 不可用/解析失败）",
+    ) -> "DimensionResult":
+        """统一降级构造入口（类级修复 2026-09-12）。
+
+        值取 dimension_registry 的 safe_default（SSOT，评分维满分/硬计数维 0），
+        证据强制 confidence=0 → ``gate_decision`` 判 ``recheck``（只告警不处置）。
+        所有"LLM 没有真实评上"的降级路径一律走本入口，禁止用降级值冒充可信失败。
+        """
+        from agent.core.quality.dimension_registry import safe_default_for
+        from agent.core.quality.eval_evidence import build_degraded_evidence
+
+        return cls(
+            name, label, safe_default_for(name), threshold, direction, required,
+            "degraded", soft_margin=soft_margin, scope=scope,
+            evidence=build_degraded_evidence(reason, dimension=name),
+        )
+
     @property
     def unit(self) -> str:
         """量纲（未登记维度返回空串）。"""

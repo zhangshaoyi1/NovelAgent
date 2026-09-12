@@ -43,7 +43,7 @@ from agent.client.gateway_adapter import (
 )
 from agent.core.infra.prompt_manager import pm
 from agent.core.quality.dimension_registry import clamp_value, safe_default_for
-from agent.core.quality.eval_evidence import EvalEvidence, build_evidence
+from agent.core.quality.eval_evidence import EvalEvidence, build_evidence, build_degraded_evidence
 
 
 # ============================================================
@@ -61,16 +61,24 @@ _EVAL_RETRY_DELAYS_S: tuple[float, ...] = (20.0, 40.0)
 logger = logging.getLogger(__name__)
 
 
-def _chat_with_eval_backoff(llm: Any, messages: list, *, dimension: str, console: Any) -> Any:
-    """带长退避的评分调用：瞬时故障按 _EVAL_RETRY_DELAYS_S 退避重试后上抛。"""
+def _chat_with_eval_backoff(
+    llm: Any, messages: list, *, dimension: str, console: Any,
+    temperature: float = 0.2, max_tokens: int = 8192,
+) -> Any:
+    """带长退避的评分调用：瞬时故障按 _EVAL_RETRY_DELAYS_S 退避重试后上抛。
+
+    2026-09-12 类级修复：path 1（Evaluator 逐维）与 path 2（迷爱看/黄金三章
+    整章六维）共用本助手——此前只有 path 1 有长退避，网关故障时 path 2 单发
+    失败即降级，是同一类问题只修了一半。
+    """
     delays = tuple(_EVAL_RETRY_DELAYS_S)
     for i in range(len(delays) + 1):
         try:
             return chat_utility_response(
                 llm,
                 messages=messages,
-                temperature=0.2,
-                max_tokens=8192,
+                temperature=temperature,
+                max_tokens=max_tokens,
                 enable_thinking=False,
             )
         except Exception as e:  # noqa: BLE001 - 瞬时故障退避，其余立即上抛，不吞错
@@ -347,6 +355,8 @@ class ReaderAppealScorer:
         try:
             text = self._gather_for_eval(dimension, str(project_dir))
             if not text:
+                # 无评估素材 = 没有真实评分 → 记不可信证据，禁止据此处置
+                self._record_degraded(dimension, "评估素材为空，降级为安全默认")
                 return self._default_for(dimension)
             prompt = (
                 f"请评估以下小说片段在「{_EVAL_DIM_LABELS.get(dimension, dimension)}」"
@@ -389,6 +399,9 @@ class ReaderAppealScorer:
         except Exception as e:  # noqa: BLE001 - LLM 不可达/解析失败：降级默认
             if self.console is not None:
                 self.console.print(f"[yellow]⚠ 维度 {dimension} 评分降级为默认：{e}[/yellow]")
+            # 类级修复：降级必须携带 confidence=0 证据，否则降级值会被 L4 当成
+            # 可信失败 → 假性不达标 → 无谓回滚（五灵破归档 ch190 前夜）。
+            self._record_degraded(dimension, f"评分失败降级：{e}")
             return self._default_for(dimension)
         value = self._clamp(dimension, val)
         # G2：结构化结果落 _last_eval（issues/rationale），不扩展 score_fn 返回协议。
@@ -408,6 +421,15 @@ class ReaderAppealScorer:
             ),
         }
         return value
+
+    def _record_degraded(self, dimension: str, reason: str) -> None:
+        """把降级结果写入 _last_eval，附 confidence=0 证据（供 get_evidence 旁路）。"""
+        self._last_eval[dimension] = {
+            "value": self._default_for(dimension),
+            "rationale": reason,
+            "issues": [],
+            "evidence": build_degraded_evidence(reason, dimension=dimension),
+        }
 
     def get_evidence(self, dimension: str) -> "EvalEvidence | None":
         """取该维度最近一次评分的证据（HA-Eval L3）。
@@ -471,17 +493,21 @@ class ReaderAppealScorer:
             f"{context}\n【本章正文】\n{chapter_text[:10000]}"
         )
         try:
-            resp = chat_utility(self.llm,
+            # 类级修复：与 path 1 共用长退避（网关故障实测可达数分钟，单发失败
+            # 即降级会让迷爱看/黄金三章闸门频繁短路）。
+            resp = _chat_with_eval_backoff(
+                self.llm,
                 messages=[
                     {"role": "system", "content": pm.get("quality.reader_appeal").system},
                     {"role": "user", "content": user_prompt},
                 ],
+                dimension="appeal_six",
+                console=self.console,
                 temperature=0.3,
                 # 思考型模型需留足预算才能产出完整 JSON（实测 ≥8192 稳）。
                 max_tokens=8192,
-                enable_thinking=False,
             )
-            return self._parse_appeal(resp)
+            return self._parse_appeal(getattr(resp, "text", "") or "")
         except Exception as e:  # noqa: BLE001 - LLM 不可达：降级占位报告
             if self.console is not None:
                 self.console.print(f"[yellow]⚠ 迷爱看评分降级（LLM 不可用）：{e}[/yellow]")
@@ -500,10 +526,15 @@ class ReaderAppealScorer:
         dims_raw = data.get("dimensions", {}) or {}
         dims: dict[str, int] = {}
         for k in APPEAL_DIMENSIONS:
+            # 类级修复：缺键 = 形状异常（与"全 0"同族）——若当 0 分参与门禁，
+            # 单维漏答即假性不达标（低于触底线 40）→ 无谓回滚。抛错走调用方
+            # 的离线占位路径（llm_used=False → evaluator_dims 离线短路放行）。
+            if k not in dims_raw:
+                raise ValueError(f"迷爱看评分输出缺少维度 {k}（形状异常）")
             try:
-                v = int(dims_raw.get(k, 0))
+                v = int(dims_raw[k])
             except (TypeError, ValueError):
-                v = 0  # noqa: SILENT_DEGRADE
+                raise ValueError(f"迷爱看维度 {k} 值不可解析（形状异常）") from None
             dims[k] = max(0, min(100, v))
         # 2026-09-09（五灵破归档两次批末误升级复盘）：解析"成功"但六维全 0 =
         # 输出形状异常（dimensions 键缺失/模型漏答），真实文本六维同时 0 分不可能。
