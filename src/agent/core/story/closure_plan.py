@@ -20,28 +20,24 @@ from typing import Any
 CLOSURE_FILE = ".state/closure_plan.json"
 
 
-def build_closure_plan(project_dir: str | Path) -> dict[str, Any]:
-    """确定性收集全部未了事项（伏笔/叙事线/实体义务/问题债务）。"""
-    project_dir = Path(project_dir)
-    foreshadows: list[dict[str, str]] = []
-    try:
-        from agent.workflows.evaluation.m13_foreshadow import M13ForeshadowWorkflow
+def build_closure_plan(
+    project_dir: str | Path, foreshadows: list[dict[str, str]] | None = None
+) -> dict[str, Any]:
+    """确定性收集全部未了事项（伏笔/叙事线/实体义务/问题债务）。
 
-        fs_path = project_dir / "foreshadows.md"
-        if fs_path.exists():
-            items = M13ForeshadowWorkflow._parse_table(
-                fs_path.read_text(encoding="utf-8")
-            )
-            foreshadows = [
-                {"fid": f.fid, "content": f.content, "state": f.state,
-                 "expected_resolve": f.expected_resolve}
-                for f in items
-                if f.state in ("未埋", "已埋")
-            ]
-    except Exception as e:  # noqa: BLE001 - 伏笔解析失败显性降级为空段
+    伏笔段由调用方注入（R6 分层：core 不 import workflows）——CLI 层用
+    ``M13ForeshadowWorkflow._parse_table`` 解析后传入；core 内不自行解析。
+    """
+    project_dir = Path(project_dir)
+    if foreshadows is None:
+        # 调用方未注入伏笔段：显性降级为空段（不由 core 越层解析）
         from agent.core.infra.degrade import degrade
 
-        degrade("closure_plan.foreshadows", "伏笔解析失败，收束计划缺伏笔段", e)
+        degrade(
+            "closure_plan.foreshadows.skip",
+            "调用方未注入伏笔解析结果，收束计划缺伏笔段（请从 CLI 层传入）",
+        )
+        foreshadows = []
 
     threads: list[dict[str, Any]] = []
     obligations: list[dict[str, str]] = []

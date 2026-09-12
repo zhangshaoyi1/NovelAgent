@@ -15,6 +15,16 @@ from agent.core.story.closure_plan import (
 from tests.conftest import _build_minimal_project
 
 
+def _parse_foreshadows(proj: Path):
+    from agent.workflows.evaluation.m13_foreshadow import M13ForeshadowWorkflow
+
+    items = M13ForeshadowWorkflow._parse_table(
+        (proj / "foreshadows.md").read_text(encoding="utf-8"))
+    return [{"fid": f.fid, "content": f.content, "state": f.state,
+             "expected_resolve": f.expected_resolve}
+            for f in items if f.state in ("未埋", "已埋")]
+
+
 def _seed_fixtures(proj: Path) -> None:
     # foreshadows.md：1 已回收 + 2 未回收
     (proj / "foreshadows.md").write_text(
@@ -42,7 +52,7 @@ def _seed_fixtures(proj: Path) -> None:
 def test_build_closure_plan_collects_all(tmp_path: Path) -> None:
     proj = _build_minimal_project(tmp_path)
     _seed_fixtures(proj)
-    plan = build_closure_plan(proj)
+    plan = build_closure_plan(proj, foreshadows=_parse_foreshadows(proj))
 
     assert {f["fid"] for f in plan["foreshadows"]} == {"F-02", "F-03"}  # 已回收不入清单
     assert plan["threads"][0]["name"] == "青云传承线"
@@ -71,7 +81,7 @@ def test_load_missing_and_corrupt(tmp_path: Path) -> None:
 def test_render_closure_text(tmp_path: Path) -> None:
     proj = _build_minimal_project(tmp_path)
     _seed_fixtures(proj)
-    plan = build_closure_plan(proj)
+    plan = build_closure_plan(proj, foreshadows=_parse_foreshadows(proj))
     text = render_closure_text(plan)
     assert "完本收束清单" in text and "共 5 项" in text
     assert "F-02" in text and "青云传承线" in text and "传承最深一层" in text
@@ -91,6 +101,6 @@ def test_render_corpus_text_escaping(tmp_path: Path) -> None:
 def test_closure_json_shape_stable(tmp_path: Path) -> None:
     proj = _build_minimal_project(tmp_path)
     _seed_fixtures(proj)
-    plan = build_closure_plan(proj)
+    plan = build_closure_plan(proj, foreshadows=_parse_foreshadows(proj))
     # json 可序列化（落盘不炸）
     json.dumps(plan, ensure_ascii=False)

@@ -579,8 +579,10 @@ class PlannerAgent:
         if self.memory is not None:
             try:
                 self.memory.consolidate(last_consolidated_chapter=current_chapter)
-            except Exception:  # noqa: BLE001
-                pass  # noqa: SILENT_DEGRADE
+            except Exception as e:  # noqa: BLE001 - 显性降级（F-1 棘轮：不加豁免标记）
+                from agent.core.infra.degrade import degrade
+
+                degrade("planner.replan.consolidate", "复规划后记忆水位更新失败", e)
         return plan
 
     def revise_plan(self, current_chapter: int, note: str = "") -> MasterPlan:

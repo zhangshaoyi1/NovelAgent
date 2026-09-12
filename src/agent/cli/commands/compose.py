@@ -23,7 +23,22 @@ from agent.core.engine.state_machine import State
 
 def _prepare_closure_plan(project_dir) -> None:
     """完本收束计划：开写前收集未了事项并落盘（显性回显，失败向上抛由 runner 降级）。"""
-    plan = build_closure_plan(project_dir)
+    # 伏笔解析在 CLI 层完成（R6 分层：core/story 不 import workflows）
+    foreshadows: list[dict[str, str]] = []
+    fs_path = project_dir / "foreshadows.md"
+    if fs_path.exists():
+        from agent.workflows.evaluation.m13_foreshadow import M13ForeshadowWorkflow
+
+        items = M13ForeshadowWorkflow._parse_table(
+            fs_path.read_text(encoding="utf-8")
+        )
+        foreshadows = [
+            {"fid": f.fid, "content": f.content, "state": f.state,
+             "expected_resolve": f.expected_resolve}
+            for f in items
+            if f.state in ("未埋", "已埋")
+        ]
+    plan = build_closure_plan(project_dir, foreshadows=foreshadows)
     path = save_closure_plan(project_dir, plan)
     console.print(
         f"[cyan][compose] 完本收束计划已生成：{plan.get('total_open', 0)} 项未了事项"

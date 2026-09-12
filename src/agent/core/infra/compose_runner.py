@@ -89,7 +89,10 @@ def run_compose(
         try:
             closure_plan(project_dir)
         except Exception as e:  # noqa: BLE001 - 收束计划生成失败非致命，但必须显性
-            print(f"⚠ 完本收束计划生成失败（非致命）：{e}")  # noqa: SILENT_DEGRADE
+            from agent.core.infra.degrade import degrade
+
+            degrade("compose.closure_plan", "完本收束计划生成失败，结局章将无收束清单注入", e)
+            print(f"⚠ 完本收束计划生成失败（非致命）：{e}")
     # 锁继承：compose 进程已被派发层加了 writer.lock，spawn 的子进程若不声明
     # 血缘会被父锁挡死（父子 PID 不同）。注入 NOVEL_AGENT_INHERIT_LOCK_PID
     # 让子进程共享父锁；外部进程（CLI/Web 另起的写命令）不受影响、照常被拒。
