@@ -10,6 +10,7 @@ from typing import Any
 import frontmatter
 from rich.panel import Panel
 
+from agent.core.infra.degrade import degrade
 from agent.core.quality.consistency import ConflictReport
 from agent.core.story.evidence_chain import EvidenceChain, EvidenceRef
 from agent.workflows.writing.m5_text_hygiene import hard_replace_english  # noqa: F401 - 兼容旧导入路径
@@ -22,12 +23,96 @@ logger = logging.getLogger(__name__)
 # 背景（2026-09-11 五灵破 ch181/182 章间矛盾复盘）：旧实现 must_carry/facts 全部
 # 硬编码空列表（占位实现，从未接线）→ 上一章动态状态（物品/人数/动作/约定）对
 # 下一章不可见 → writer 只能自创 → 触发人设/设定/连贯性硬指标失败。
-# 本抽取器从「结尾 800 字」按确定性规则产出最小事实集，宁滥勿缺但封顶防爆。
+#
+# P0-2 重做（2026-09-12，五灵破归档 31 次回退复盘）：旧版抽取器有两个致命偏移——
+#   1) **主体错位**：``subject_id`` 用章节号（``ch179``），facts 形如
+#      ``world/ch179.count=一道``（证据「裂开一道缝」）、``world/ch182.count=一根``
+#      （证据「像一根钉入大地的桩」）——抽出来的是量词噪音，不是任何实体的事实；
+#   2) **视野过窄**：只看 ``body[-800:]``，章首/章中的状态变化（换地图、角色阵亡、
+#      道具易主）整段丢失，而翻车的恰恰是这类**长程状态**。
+# 新版改为「**实体锚定**」（subject_id 一律取实体名：角色名 / 道具名），并把扫描
+# 窗口放宽为「头 600 + 中 1800 + 尾 1200」（≤4000 字直通全文）。
+# 定义性约束（X 是 Y / X 用于 Z）交由 ``core.story.setting_canon`` 沉淀并回写
+# world.md，本抽取器只负责**状态/归属/计数**这类账本事实，两条通道各司其职不重复。
 
-_ITEM_PATTERN = re.compile(r"[匣盒锁钥匙剑刀玉符信图卷丹印珠瓶牌镜环链杖珠]")
-_COUNT_PATTERN = re.compile(r"[0-9一二两三四五六七八九十百千几]+[人多双名只条枚颗道把柄根张块片个]")
+# 叙事道具名词（must_carry 用：匣/锁/符/印……出现在结尾即视为要携带的口径）
+_ITEM_PATTERN = re.compile(r"[匣盒锁钥匙剑刀玉符信图卷丹印珠瓶牌镜环链杖]")
 _OPEN_LOOP_PATTERN = re.compile(r"未[有着能]|尚未|还没|不曾|正要|刚要|约定|决意|决定|誓要|下一步")
 _SENT_SPLIT = re.compile(r"[。！？!?\n]")
+
+# ---- 扫描窗口：有界三段取样，杜绝「只盯结尾」 ----
+_SCAN_LIMIT = 4000
+_SCAN_HEAD, _SCAN_MID, _SCAN_TAIL = 600, 1800, 1200
+
+# ---- 角色状态词表：命中即沉淀 character/<角色名>.state ----
+_CHAR_STATES: tuple[str, ...] = (
+    # 死亡
+    "死了", "身亡", "阵亡", "陨落", "殒命", "毙命", "气绝",
+    # 负伤 / 失能
+    "昏迷", "昏死", "晕厥", "重伤", "垂危", "中毒", "中蛊", "瘫痪", "残废", "被俘", "被抓", "囚禁",
+    # 恢复
+    "痊愈", "苏醒", "醒来", "脱险", "获救",
+    # 位移 / 离场
+    "失踪", "下落不明", "离开", "离去", "逃走", "逃离", "远走",
+)
+_STATE_ALT = "|".join(re.escape(s) for s in _CHAR_STATES)
+
+# ---- 位移动词：捕获 character/<角色名>.location ----
+_MOVE_VERBS: tuple[str, ...] = (
+    "来到", "抵达", "赶到", "前往", "奔赴", "返回", "回到", "进入", "退往", "逃往", "潜入",
+)
+_MOVE_ALT = "|".join(re.escape(s) for s in _MOVE_VERBS)
+
+# ---- 持物动词：捕获 world/<道具名>.holder（道具易主是典型的长程状态） ----
+_TAKE_VERBS: tuple[str, ...] = (
+    "接过", "握住", "收起", "收好", "取出", "掏出", "拿过", "拿起", "夺过", "捡起", "夺得", "偷走",
+)
+_TAKE_ALT = "|".join(re.escape(s) for s in _TAKE_VERBS)
+
+# ---- 计数：必须「数量 + 2~4 字实体性名词」，否则判为量词噪音 ----
+# 旧版实况：``一道缝``（「裂开一道缝」）、``一根``（「像一根钉入大地的桩」）被当成
+# 计数事实、主体还写成章号。现要求名词以实体性后缀收尾（人/符/剑/丹……），
+# 于是「三枚镇魔符」「三个黑衣人」抽得到，而「钉入大地的桩」这类描写被挡下。
+_NUM_ALT = r"[0-9一二两三四五六七八九十百千几半]+"
+_UNIT_ALT = r"[人多双名只条枚颗道把柄根张块片具件样重层个]"
+# 名词里出现这些虚词/副词即判为切错的片段（「接着一人」「正在灵」）
+_NOUN_BAD = re.compile(r"[的了着过在正接来去又并将被把对向从和与或是那此]")
+# 实体性收尾（人物 / 法器 / 器物）
+_ENTITY_SUFFIX = re.compile(
+    r"(人|者|众|手|弟子|门人|守卫|侍卫|兵|卒|符|剑|刀|丹|印|令|旗|阵|盘|卷|"
+    r"珠|牌|匣|盒|袋|环|石|兽|妖|傀|尸|影|玉|铃|镜|锁|钥|碗|杯|盏|壶|杖|棍|"
+    r"弓|箭|甲|袍|书|册|笔|绳|链|钉|针|瓶|罐|箱|图|符)$"
+)
+_COUNT_RE = re.compile(rf"({_NUM_ALT}{_UNIT_ALT})([\u4e00-\u9fa5]{{2,6}})")
+# 持物动词后紧跟的名词可长一些（「拿起布局图边的一块碎石」→ 剥修饰语后取「碎石」）
+_TAKE_NOUN_RE = re.compile(r"[\u4e00-\u9fa5]{2,12}")
+
+
+def _pick_noun(run_text: str, entities: set[str], max_len: int = 4) -> str:
+    """从量词后的汉字串里挑出实体性名词：由长到短取首个命中（镇灵符 > 镇灵）。"""
+    upper = min(len(run_text), max_len)
+    for length in range(upper, 1, -1):
+        cand = run_text[:length]
+        if _NOUN_BAD.search(cand):
+            continue
+        if cand in entities or _ENTITY_SUFFIX.search(cand):
+            return cand
+    return ""
+
+
+def _pick_object_noun(run_text: str, entities: set[str]) -> str:
+    """持物句里挑道具名：先剥掉修饰语（「的」前）与前置量词，再取实体性收尾的名词。"""
+    tail = run_text.rsplit("的", 1)[-1]
+    stripped = re.sub(rf"^({_NUM_ALT}{_UNIT_ALT})", "", tail, count=1)
+    return _pick_noun(stripped or tail, entities, max_len=4)
+
+
+# 否定词：命中则说明该状态/动作**没有发生**（「林凡的手没有离开炉壁」≠ 离场）
+_NEG_BEFORE = re.compile(r"[不没未别莫勿]")
+
+
+def _negated(body: str, pos: int, span: int = 4) -> bool:
+    return bool(_NEG_BEFORE.search(body[max(0, pos - span) : pos]))
 
 
 def _chapter_body_text(chapter_num: int, chapter_text: str | None, chapters_dir: Path) -> str:
@@ -55,6 +140,47 @@ def _tail_sentences(tail: str) -> list[str]:
     return out
 
 
+def _scan_chunks(body: str) -> list[str]:
+    """有界三段取样：头 / 中 / 尾。
+
+    旧实现只看 ``body[-800:]``，章首立旗、章中换地图、章尾留钩子这类**长程状态**
+    全被丢弃。≤4000 字直接全文；超长时取「头 600 + 中 1800 + 尾 1200」共 3600 字，
+    兼顾章首状态与章末交接，且注入口径固定、不随章长膨胀。
+    """
+    if len(body) <= _SCAN_LIMIT:
+        return [body]
+    mid_start = max(_SCAN_HEAD, (len(body) - _SCAN_MID) // 2)
+    return [body[:_SCAN_HEAD], body[mid_start : mid_start + _SCAN_MID], body[-_SCAN_TAIL:]]
+
+
+def _scan_sentences(body: str) -> list[str]:
+    """按窗口切句，跨窗口去重并保序（窗口边界可能截出半句，故按窗口独立切）。"""
+    out: list[str] = []
+    for chunk in _scan_chunks(body):
+        for s in _tail_sentences(chunk):
+            if s not in out:
+                out.append(s)
+    return out
+
+
+def _entity_names(ctx: dict[str, Any], body: str) -> list[str]:
+    """已知实体名：characters_info 里的角色名 + 正文引号术语（本章涌现的道具/设定名）。
+
+    引号术语必须过 ``is_term_like``：正文对白用 ASCII 引号，正则配对会把两段对白
+    之间的文字整段当成引号内容（实况：``能恢复。`` 被当成实体名，进而让
+    「一条河道来」被抽成 ``world/河道.count``）。后者虽无害，但会污染实体表、
+    放大后续误匹配，必须挡在入口。
+    """
+    names = _present_characters(body, ctx)
+    from agent.core.story.setting_canon import is_term_like
+
+    for term in re.findall(r"[「『“\"]([^」』”\"\n]{2,12})[」』”\"]", body):
+        t = term.strip()
+        if t and t not in names and is_term_like(t):
+            names.append(t)
+    return names
+
+
 def _present_characters(body: str, ctx: dict[str, Any]) -> list[str]:
     """从 characters_info（**name** 标记行）解析角色名，返回在本章正文出场者。"""
     names: list[str] = []
@@ -70,49 +196,111 @@ def _present_characters(body: str, ctx: dict[str, Any]) -> list[str]:
 def _extract_chapter_facts(
     chapter_num: int, body: str, ctx: dict[str, Any]
 ) -> tuple[list[tuple[str, str, str, str, str]], list[str], list[str]]:
-    """确定性抽取最小事实集。
+    """确定性抽取最小事实集（P0-2 实体锚定版）。
 
     Returns:
         (facts_raw, must_carry, next_chapter_constraints)
         facts_raw: [(domain, subject_id, field, value, evidence)] → ContinuityFact
         must_carry / next_chapter_constraints: list[str] → ContinuityHandoff
+
+    不变式：``subject_id`` **永远是实体名**（角色名 / 道具名），绝不是章节号。
+    账本按 ``(domain, subject_id, field)`` 覆盖更新，用章节号当主体等于每章新建一行
+    噪音——投影里全是「ch179.count=一道」这类写手无法消费的信息（旧版实况）。
     """
     facts_raw: list[tuple[str, str, str, str, str]] = []
     must_carry: list[str] = []
     constraints: list[str] = []
     if not body:
         return facts_raw, must_carry, constraints
+    # 防御：调用方可能传原始文件内容（含 frontmatter），先剥掉再抽
+    if body.startswith("---"):
+        parts = body.split("---", 2)
+        if len(parts) >= 3:
+            body = parts[2]
 
-    tail = body[-800:]
-    sentences = _tail_sentences(tail)
+    sentences = _scan_sentences(body)  # 有界三段窗口：must_carry / 约束取此
+    body_sentences = _tail_sentences(body)  # 全文切句：仅用于取证据（准确优先）
     commit_id = f"ch{chapter_num:03d}"
+    seen: set[tuple[str, str, str]] = set()
 
-    # 1) 出场角色（≤3）：presence 事实 + must_carry
-    for name in _present_characters(body, ctx)[:3]:
-        snip = next((s for s in sentences if name in s), "")[:80]
-        facts_raw.append(
-            ("character", name, "presence", f"第{chapter_num}章结尾段在场", snip or commit_id)
+    def _emit(domain: str, subject: str, field_name: str, value: str, evidence: str) -> None:
+        key = (domain, subject, field_name)
+        if not subject or not value or key in seen:
+            return
+        seen.add(key)
+        facts_raw.append((domain, subject, field_name, value, evidence[:100]))
+
+    def _count_field(field_name: str) -> int:
+        return sum(1 for f in facts_raw if f[2] == field_name)
+
+    def _evidence(*needles: str) -> str:
+        return next((s for s in body_sentences if all(n in s for n in needles)), "") or commit_id
+
+    entities = set(_entity_names(ctx, body))
+    characters = _present_characters(body, ctx)
+
+    # 1) 出场角色（≤3）：presence —— 主体 = 角色名
+    for name in characters[:3]:
+        _emit("character", name, "presence", f"第{chapter_num}章在场", _evidence(name))
+
+    # 2) 角色状态变化（≤6）：死亡/负伤/失能/恢复/离场——典型长程状态，下章不可逆
+    for name in characters:
+        if _count_field("state") >= 6:
+            break
+        m = re.search(rf"{re.escape(name)}[^，。；！？\n]{{0,8}}?({_STATE_ALT})", body)
+        if not m or _negated(body, m.start(1)):
+            continue
+        _emit("character", name, "state", m.group(1), _evidence(name, m.group(1)))
+
+    # 3) 位置变化（≤4）：抵达/返回/进入某地 —— 主体 = 角色名
+    for name in characters:
+        if _count_field("location") >= 4:
+            break
+        m = re.search(
+            rf"{re.escape(name)}[^，。；！？\n]{{0,6}}?({_MOVE_ALT})([^，。；！？\n]{{2,12}})", body
         )
+        if not m or _negated(body, m.start(1)):
+            continue
+        _emit("character", name, "location", f"{m.group(1)}{m.group(2)}", m.group(0))
 
-    # 2) 计数/量化场景事实（≤2）：人数、物品件数等，防下章自创口径
-    count_hits = [s for s in sentences if _COUNT_PATTERN.search(s)]
-    for s in count_hits[:2]:
-        key = _COUNT_PATTERN.search(s).group(0)
-        facts_raw.append(("world", commit_id, "count", key, s[:100]))
+    # 4) 道具易主（≤4）：world/<道具名>.holder = 持有者 —— 主体 = 道具名
+    for name in characters:
+        if _count_field("holder") >= 4:
+            break
+        m = re.search(
+            rf"{re.escape(name)}[^，。；！？\n]{{0,4}}?({_TAKE_ALT})({_TAKE_NOUN_RE.pattern})", body
+        )
+        if not m or _negated(body, m.start(1)):
+            continue
+        item = _pick_object_noun(m.group(2), entities)
+        if item:
+            _emit("world", item, "holder", name, m.group(0))
 
-    # 3) 关键物品句（≤2）：匣/锁/钥匙等叙事道具，must_carry 权威口径
-    item_hits = [s for s in sentences if _ITEM_PATTERN.search(s) and s not in count_hits]
-    for s in item_hits[:2]:
+    # 5) 计数口径（≤3）：必须「数量 + 实体性名词」，如「三枚镇魔符」「三个黑衣人」。
+    #    量词后跟一串汉字时由长到短试，取首个实体性名词；全都不是实体
+    #    （旧版实况：一道缝 / 一根钉入大地的桩）则整条丢弃。
+    for m in _COUNT_RE.finditer(body):
+        if _count_field("count") >= 3:
+            break
+        noun = _pick_noun(m.group(2), entities)
+        if noun:
+            _emit("world", noun, "count", m.group(1), m.group(0))
+
+    # 6) must_carry：结尾段含叙事道具的句子（匣/锁/钥匙/符……），保权威口径
+    item_hits = [s for s in sentences if _ITEM_PATTERN.search(s)]
+    for s in item_hits[-2:]:
         must_carry.append(s[:120])
 
-    # 4) 未闭环动作（≤3）：下一章约束（待续口径）
+    # 7) 未闭环动作（≤3）：下一章约束（待续口径）
     for s in sentences:
-        if _OPEN_LOOP_PATTERN.search(s) and s not in must_carry:
-            constraints.append("待续：" + s[:110])
+        if _OPEN_LOOP_PATTERN.search(s):
+            entry = "待续：" + s[:110]
+            if entry not in constraints:
+                constraints.append(entry)
         if len(constraints) >= 3:
             break
 
-    # 5) must_carry 兜底：仍为空时取结尾最后一到两句（结尾状态永远必须携带）
+    # 8) must_carry 兜底：仍为空时取结尾最后一句（结尾状态永远必须携带）
     if not must_carry and sentences:
         must_carry.append(sentences[-1][:120])
 
@@ -306,8 +494,41 @@ class M5PersistMixin:
                         changed = True
             if changed:
                 store.save(threads)
+
+            self._sync_setting_canon(chapter_num, body, ctx)
         except Exception:  # noqa: BLE001 - 归档失败降级不阻断
             logger.debug("[continuity] 章后归档失败，已降级（不影响本章产出）", exc_info=True)
+
+    def _sync_setting_canon(self, chapter_num: int, body: str, ctx: dict[str, Any]) -> None:
+        """P0-1（2026-09-12）：设定回写通道——把本章涌现的定义性约束沉淀进台账并回写 world.md。
+
+        背景：``world.md`` 自开书当天起从未被回写（五灵破归档写满 185 章、零回写），
+        写作过程中涌现的设定（阵盘 / 镇灵符 / 导引纹 / 五行属性……）只存在于正文章节里，
+        Writer 隔几章就把同一设定重新发明一遍 → 章间矛盾 → 人设/设定/连贯性硬指标长期不达标。
+        本方法是缺失的「设定回流」那一环：抽定义 → 入台账 → 检测冲突 → 回写 world.md。
+
+        任何异常一律静默降级，绝不阻断写章。
+        """
+        try:
+            from agent.core.story.setting_canon import SettingCanon, extract_definitions
+
+            entities: list[str] = []
+            for line in (ctx.get("characters_info") or "").splitlines():
+                m = re.search(r"\*\*(.+?)\*\*", line)
+                if m and m.group(1).strip():
+                    entities.append(m.group(1).strip())
+
+            entries = extract_definitions(chapter_num, body, known_entities=entities)
+            if not entries:
+                return
+            canon = SettingCanon.load(self.project_dir)
+            canon.merge(entries)
+            canon.save()
+            canon.sync_to_world_md()
+        except Exception as e:  # noqa: BLE001 - 设定台账失败绝不阻断写章
+            degrade("m5_persist.setting_canon", "设定回写失败，不影响本章产出", e)
+            logger.debug("[setting-canon] 设定回写失败，已降级", exc_info=True)
+
     def _pre_validation(self, ctx: dict[str, Any]) -> PreValidationResult:
         """E3 前置冲突检测门禁
 

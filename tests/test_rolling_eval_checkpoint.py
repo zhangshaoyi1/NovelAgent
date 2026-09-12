@@ -6,6 +6,8 @@
 
 - B1：``rolling_eval_every`` 每 N 章在循环内体检一次；不过则中断本批。
 - B2：``--batch`` 由 CLI 用实时章数换算绝对目标，消除前端快照过期导致的空跑。
+- P1（2026-09-12）：检查点改走 ``evaluate_with_repair``（就地定向重写）而非 ``evaluate``
+  （只回退不重写），故本文件的假评测器实现的是 ``evaluate_with_repair``。
 """
 
 from __future__ import annotations
@@ -38,8 +40,11 @@ class _FakeEvaluator:
         self._passed = passed
         self._raises = raises
         self.calls = 0
+        self.rewrite_calls = 0
+        self.last_failed_report = None
 
-    def evaluate(self):
+    def evaluate_with_repair(self, rewriter):
+        """P1 契约：检查点走修复闭环（回退后带教训重写、再复评）。"""
         self.calls += 1
         if self._raises is not None:
             raise self._raises
@@ -60,6 +65,8 @@ def _pipeline(tmp_path: Path, evaluator: _FakeEvaluator, every: int = 5) -> Agen
     p.rolling_eval_every = every
     p._ensure_evaluator = lambda: evaluator
     p.project_dir = tmp_path
+    p.max_rollback_attempts = 3
+    p._rolling_escalation_reason = ""
     return p
 
 
@@ -79,6 +86,15 @@ def test_rolling_checkpoint_blocks_when_report_fails(tmp_path: Path) -> None:
     assert ev.calls == 1
 
 
+def test_rolling_checkpoint_uses_repair_loop(tmp_path: Path) -> None:
+    """P1 红线：检查点必须走 evaluate_with_repair（旧版 evaluate 只回退不重写）。"""
+    ev = _FakeEvaluator(passed=True)
+    p = _pipeline(tmp_path, ev)
+    assert p._rolling_eval_checkpoint() is True
+    assert ev.calls == 1, "检查点未调用修复闭环入口 evaluate_with_repair"
+    assert not hasattr(ev, "evaluate"), "假评测器不应再依赖旧的 evaluate 入口"
+
+
 def test_rolling_checkpoint_degrades_open_on_exception(tmp_path: Path) -> None:
     """体检抛异常（LLM 不可用）时必须放行——质量闸门不该因基建抖动中断写作。"""
     ev = _FakeEvaluator(raises=RuntimeError("LLM 不可用"))
@@ -88,7 +104,7 @@ def test_rolling_checkpoint_degrades_open_on_exception(tmp_path: Path) -> None:
 
 def test_rolling_checkpoint_degrades_open_on_none_report(tmp_path: Path) -> None:
     class _NoneEval:
-        def evaluate(self):
+        def evaluate_with_repair(self, rewriter):
             return None
 
     p = _pipeline(tmp_path, _NoneEval())

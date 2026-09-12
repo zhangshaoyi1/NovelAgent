@@ -370,6 +370,17 @@ class AgenticWriteWorkflow:
             task += pm.get("g.character_state_constraint").render_user(
                 character_constraints=character_constraints
             )
+
+        # ---- 设定台账硬约束（P0-1 补·2026-09-12）：world.md 自开书起零回写，写作中
+        # 涌现的设定（阵盘/镇灵符/导引纹……）只存在于正文，Writer 隔几章就重新发明一遍
+        # → 章间设定矛盾 → 连贯性/设定一致硬指标长期不达标（43 次体检仅 1 次通过）。
+        # m5_context 已渲染 setting_canon，但此前**无任何调用点消费**（哑火接线）；
+        # 此处接入生产入口（agentic_write），与 character_constraints 同位、同语义。
+        setting_constraints = (ctx.get("setting_canon") or "").strip()
+        if setting_constraints:
+            task += pm.get("g.setting_canon_constraint").render_user(
+                setting_constraints=setting_constraints
+            )
         return task
 
     def _build_beat_ban(self, ctx: dict[str, Any]) -> str:
@@ -522,8 +533,16 @@ class AgenticWriteWorkflow:
             # P-4/P-8（提示词改进）：质检校验角色硬约束 + 细纲情节点覆盖（数据缺省为空）
             hard_constraints=ctx.get("character_constraints", ""),
             plot_points=ctx.get("plot_points", ""),
-            # P-9（提示词改进）：事实对照卡 = 连续性账本投影（≤800 字，规则 6 逐条对照）
-            fact_card=str(ctx.get("continuity_projection", "") or "")[:800],
+            # P-9（提示词改进）：事实对照卡 = 连续性账本投影 + 设定台账（≤800 字，规则 6 逐条对照）
+            # P0-1 补：同时带上已确立设定与已知冲突，让质检能直接抓「重新发明设定」
+            fact_card=(
+                str(ctx.get("continuity_projection", "") or "")
+                + (
+                    "\n【设定台账】\n" + str(ctx.get("setting_canon", ""))
+                    if ctx.get("setting_canon")
+                    else ""
+                )
+            )[:800],
             chapter_text=cleaned,
         )
         try:

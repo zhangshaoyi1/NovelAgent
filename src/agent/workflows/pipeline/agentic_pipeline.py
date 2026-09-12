@@ -32,6 +32,7 @@ from agent.client.gateway_adapter import create_gateway
 from llmagent.gateway import Gateway
 from agent.core.base.exceptions import is_fatal_provider_error
 from agent.core.engine.state_machine import Event, State, StateMachine, TRANSITIONS
+from agent.core.infra.degrade import degrade
 from agent.core.story.setting_manager import SettingManager
 from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.core.engine.workflow_registry import workflow
@@ -143,6 +144,9 @@ class AgenticPipelineWorkflow(
         self.eval_enabled = eval_enabled
         self.rollback_window = rollback_window
         self.max_rollback_attempts = max_rollback_attempts
+        # P1（2026-09-12）：滚动体检熔断原因。非空 ⇒ 本批已因「修复未收敛」停批，
+        # 最终结果必须 escalated 上报人工（否则外层会再起一批盲写，回退死循环）。
+        self._rolling_escalation_reason: str = ""
         self.guardrails = guardrails
         self.gate_mode = gate_mode
         self.strict_review = strict_review
@@ -630,18 +634,9 @@ class AgenticPipelineWorkflow(
             # ---- G9：评测开始事件 ----
             self._emit_event("evaluating")
             evaluator = self._ensure_evaluator()
-
-            def rewriter(chapter_nums: list[int]) -> None:
-                # 回退后逐章重写（writer.run 按进度写下一章）。
-                # 把上一轮体检失败项编译成针对性提示传入，避免盲目重写反复不达标。
-                w = self._ensure_writer()
-                ev = self._ensure_evaluator()
-                hint = build_rewrite_hint(getattr(ev, "last_failed_report", None), chapter_nums)
-                for ch in chapter_nums:
-                    try:
-                        w.run(rewrite_hint=hint)
-                    except Exception as e:  # noqa: BLE001
-                        raise RuntimeError(f"重写第 {ch} 章失败：{e}")
+            # P1（2026-09-12）：回退后定向重写回调收口到 _make_rewriter，
+            # 与滚动体检检查点共用同一实现（此前检查点只回退不重写）。
+            rewriter = self._make_rewriter()
 
             try:
                 report = evaluator.evaluate_with_repair(rewriter)
@@ -677,6 +672,27 @@ class AgenticPipelineWorkflow(
                     pass  # noqa: SILENT_DEGRADE
                 result.escalated = report.escalated
                 result.escalated_reason = report.escalated_reason
+                # ---- P1（2026-09-12）：跨批回退预算 ----
+                # 批末体检同样计入持久化计数：通过即归零；发生回退即 +1，连续超上限
+                # 则强制 escalated（旧实现只靠单次循环内的 max_rollback_attempts，
+                # 每批新建 Evaluator 即归零 → 31 次回退也没人上报人工）。
+                try:
+                    budget = self._rollback_budget()
+                    if report.overall_pass:
+                        budget.reset()
+                    elif getattr(report, "rolled_back", False):
+                        budget.bump(
+                            self._last_rollback_target(report),
+                            "批末体检不达标触发回退",
+                        )
+                        if budget.tripped() and not result.escalated:
+                            result.escalated = True
+                            result.escalated_reason = budget.reason_text()
+                            self._emit_failure(
+                                "eval", result.escalated_reason, severity="block"
+                            )
+                except Exception as e:  # noqa: BLE001 - 预算是护栏，读写异常不阻断收尾
+                    degrade("pipeline.rollback_budget", "回退预算读写异常，跳过熔断上报", e)
                 # ---- G9：failure 事件（上报人工，warn）----
                 if result.escalated:
                     self._emit_failure("eval", result.escalated_reason, severity="warn")
@@ -685,6 +701,13 @@ class AgenticPipelineWorkflow(
                     self.memory.log("eval", "全书体检完成", report.to_dict())
                 except Exception:  # noqa: BLE001
                     pass  # noqa: SILENT_DEGRADE
+
+        # ---- P1（2026-09-12）：滚动体检熔断（修复未收敛）必须上报人工 ----
+        # 检查点已就地定向重写并复评，仍不达标 → 停批。这里把原因带到最终结果，
+        # 外层（compose / autowrite）据此以 escalated 收尾，不再无限重起新批盲写。
+        if self._rolling_escalation_reason and not result.escalated:
+            result.escalated = True
+            result.escalated_reason = self._rolling_escalation_reason
 
         # ---- G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）----
         self._finalize_cost(result)

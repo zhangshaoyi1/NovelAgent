@@ -8,7 +8,14 @@
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+from agent.core.infra.degrade import degrade
+from agent.workflows.pipeline.agentic_pipeline_types import build_rewrite_hint
+
+if TYPE_CHECKING:  # pragma: no cover - 仅类型标注
+    from agent.core.quality.rollback_budget import RollbackBudget
+
 
 class _PipelineAgentsMixin:
     def _ensure_planner(self) -> PlannerLike:
@@ -164,15 +171,24 @@ class _PipelineAgentsMixin:
         return 100
 
     def _rolling_eval_checkpoint(self) -> bool:
-        """B1（2026-09-10）：滚动体检检查点——写满 N 章就地体检一次。
+        """B1（2026-09-10）+ P1（2026-09-12）：滚动体检检查点——写满 N 章就地体检**并就地修复**。
 
         Returns:
-            True = 达标（或体检无法执行时保守放行继续写）；False = 不达标，应中断本批。
+            True = 达标（或体检无法执行时保守放行继续写）；False = 不达标且修复未收敛，应中断本批。
 
         设计动机：原体检只在写章循环**结束后**执行一次。web 端续写按钮把批次翻译成
         「绝对目标章数」（如 --chapters 190），只要目标未写满或中途被 task-stop 打断，
         体检就永远不会触发（2026-09-10 事故：ch156-178 共 23 章零体检记录）。
         改为循环内周期体检后，长批次也能滚动体检、及时刹车。
+
+        P1 变更（2026-09-12，五灵破归档 31 次回退复盘）：
+        - 由 ``evaluate()`` 改为 ``evaluate_with_repair(self._make_rewriter())``。
+          原实现在硬指标不达标时**只回退、不带失败明细重写**，把修复推给外层
+          「再起一批、盲写同样 5 章」——同样章间矛盾、再次回退，是死循环的直接原因。
+          现在检查点内就带 ``build_rewrite_hint`` 逐章定向重写并复评。
+        - 回退次数经 :class:`RollbackBudget` **跨批持久化**（旧计数只活在单次
+          ``evaluate_with_repair`` 循环里、每批新建 Evaluator 即归零），连续超限或
+          评测器自身已 escalate → 置 ``_rolling_escalation_reason`` 停批上报人工。
 
         失败降级：体检抛异常（LLM 不可用等）时**放行**——体检是质量闸门，
         不应因基础设施抖动而中断写作（与既有 `evaluate_with_repair` 的异常处理一致）。
@@ -181,7 +197,7 @@ class _PipelineAgentsMixin:
         self._emit_event("evaluating")
         try:
             evaluator = self._ensure_evaluator()
-            report = evaluator.evaluate()
+            report = evaluator.evaluate_with_repair(self._make_rewriter())
         except Exception as e:  # noqa: BLE001
             self.console.print(f"[yellow]⚠ 滚动体检执行失败（{e}），放行继续[/yellow]")
             self._emit_failure("eval", str(e), severity="warn")
@@ -207,11 +223,33 @@ class _PipelineAgentsMixin:
             f"{d.label}={d.value}" for d in failed[:6]
         ) or "见报告"
         if gate == "pass":
+            self._rollback_budget().reset()  # P1：连续回退计数归零（通过即翻篇）
             self.console.print(f"[green]✓ 滚动体检通过（得分 {score}）[/green]")
             return True
         if gate == "block":
+            # ---- P1：回退计数跨批持久化 + 熔断上报人工 ----
+            budget = self._rollback_budget()
+            target = self._last_rollback_target(report)
+            budget.bump(target, fail_txt)
+            evaluator_gave_up = bool(getattr(report, "escalated", False))
+            if budget.tripped() or evaluator_gave_up:
+                reason = (
+                    budget.reason_text()
+                    if budget.tripped()
+                    else (getattr(report, "escalated_reason", "") or
+                          f"滚动体检不达标且定向重写未收敛：{fail_txt}")
+                )
+                self._rolling_escalation_reason = reason
+                self.console.print(
+                    f"[red]✗ 滚动体检不达标且修复未收敛（得分 {score}）：{fail_txt}\n"
+                    f"  {reason}\n  中断本批并上报人工（不再无限重试）。[/red]"
+                )
+                self._emit_failure("eval", reason, severity="block")
+                return False
             self.console.print(
-                f"[yellow]⚠ 滚动体检未达标（硬指标，得分 {score}）：{fail_txt}，中断本批[/yellow]"
+                f"[yellow]⚠ 滚动体检未达标（硬指标，得分 {score}）：{fail_txt}；"
+                f"已就地定向重写并复评，仍未达标 → 中断本批"
+                f"（连续第 {budget.consecutive} 次，上限 {budget.limit}）[/yellow]"
             )
             return False
         if gate == "recheck":
@@ -231,4 +269,40 @@ class _PipelineAgentsMixin:
         )
         self._emit_failure("eval", f"滚动体检软维度告警：{soft_txt}", severity="warn")
         return True
+
+    def _rollback_budget(self) -> "RollbackBudget":
+        """P1：读取跨批回退预算（.state/rollback_budget.json），缺省按上限 3 起算。"""
+        from agent.core.quality.rollback_budget import RollbackBudget
+
+        return RollbackBudget.load(
+            self.project_dir, getattr(self, "max_rollback_attempts", 3)
+        )
+
+    @staticmethod
+    def _last_rollback_target(report: Any) -> int:
+        """取本次回退的目标章（用于识别「同一窗口反复翻车」）。"""
+        plan = getattr(report, "repair", None)
+        try:
+            return int(getattr(plan, "target_chapter", 0) or 0)
+        except (TypeError, ValueError) as e:
+            degrade("pipeline.last_rollback_target", "回退目标章不可解析，按 0 计", e)
+            return 0
+
+    def _make_rewriter(self) -> Any:
+        """P1：构造「回退后定向重写」回调——把上一轮失败维度编译成针对性提示。
+
+        检查点与批末体检**共用同一实现**。此前只有批末有这条路径，滚动检查点只回退不重写。
+        """
+
+        def rewriter(chapter_nums: list[int]) -> None:
+            w = self._ensure_writer()
+            ev = self._ensure_evaluator()
+            hint = build_rewrite_hint(getattr(ev, "last_failed_report", None), chapter_nums)
+            for ch in chapter_nums:
+                try:
+                    w.run(rewrite_hint=hint)
+                except Exception as e:  # noqa: BLE001
+                    raise RuntimeError(f"重写第 {ch} 章失败：{e}")
+
+        return rewriter
 

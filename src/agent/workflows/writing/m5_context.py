@@ -243,6 +243,7 @@ class M5ContextMixin:
             "characters_info": characters_info,
             "characters_fingerprint": characters_fingerprint,
             "character_constraints": character_constraints,  # P-C 修复：角色生死/时间线硬约束
+            "setting_canon": self._load_setting_canon(),  # P0-1 修复：已确立设定 + 已知冲突（禁止重新发明）
             "relations_info": relations_info,
             "foreshadow_task": foreshadow_task,
             "prev_chapter_summary": prev_summary,
@@ -584,6 +585,25 @@ class M5ContextMixin:
                     f"本章正文不可与上述状态/时间线矛盾（尤其角色生死、所处年代须一致）。"
                 )
         return "\n".join(parts)
+    def _load_setting_canon(self) -> str:
+        """P0-1（2026-09-12）：把已确立的设定台账 + 已知冲突渲染成写前硬约束。
+
+        与 ``character_constraints``（角色生死/时间线）互补：这一条管的是
+        **世界观与道具的定义性约束**（阵盘是喂食还是封印、镇魔符水属性是净化还是封固……）。
+        没有它，Writer 看不到此前确立的设定，只能靠 RAG 碰运气，隔几章就重新发明一遍。
+
+        台账缺失或读取失败 → 返回空串，不阻断写章。
+        """
+        try:
+            from agent.core.story.setting_canon import SettingCanon
+
+            canon = SettingCanon.load(self.project_dir)
+        except Exception as e:  # noqa: BLE001 - 台账不可用时退化为无硬约束，不阻断写章
+            degrade("m5_context.setting_canon", "设定台账不可用，退化为无硬约束", e)
+            return ""
+        parts = [canon.render_for_prompt(), canon.render_conflicts()]
+        return "\n".join(p for p in parts if p)
+
     def _load_foreshadow_task(self, progress: dict[str, Any]) -> str:
         """读取 foreshadows.md，检查本章是否需埋/回收伏笔"""
         f_file = self.project_dir / "foreshadows.md"
