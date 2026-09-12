@@ -347,7 +347,18 @@ class M5ContextMixin:
 
             degrade("m5.context.disposition", "心性账本注入失败，降级为空", e)
             disp = ""
-        return "\n".join(b for b in (base, disp) if b)
+        # 关系网轨迹（对手戏必须符合当前状态与事件链；损坏/空 → 空段）
+        try:
+            from agent.core.story.relation_ledger import RelationLedgerStore
+
+            names = self._extract_character_names(subline_data)
+            rel = RelationLedgerStore(self.project_dir).load().render_for_prompt(
+                list(dict.fromkeys(["主角", *names]))
+            )
+        except Exception as e:  # noqa: BLE001
+            degrade("m5.context.relation", "关系网账本注入失败，降级为空", e)
+            rel = ""
+        return "\n".join(b for b in (base, disp, rel) if b)
 
     def _load_closure_text(self) -> str:
         """完本收束清单注入文本（.state/closure_plan.json）；缺失/空 → ""。"""

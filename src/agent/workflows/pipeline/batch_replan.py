@@ -111,14 +111,33 @@ def maybe_replan(
 
     try:
         from agent.agents.planner import PlannerAgent
+        from agent.core.story.plan_managers import audit_plan, save_audit_report
 
         planner = PlannerAgent(project_dir, console=console)
         summary = build_batch_summary(project_dir)
-        planner.replan_batch(current, summary, decide=decide)
-        console.print(
-            f"[cyan]Planner 批间复规划完成（第 {current} 章后剩余弧线已重排，"
-            f"下一批裁决落盘 .state/batch_directive.json）[/cyan]"
-        )
+        plan = planner.replan_batch(current, summary, decide=decide)
+
+        # ---- 四管理者确定性审计（§7）：规划不被信任，BLOCK 打回重排 1 次 ----
+        report = audit_plan(project_dir, plan.episode_tree, current)
+        if not report.passed:
+            feedback = "上一版规划未通过管理者审计，必须修复以下问题后重新给出全部弧线：\n" + "\n".join(
+                f"- [{f.level}/{f.manager}] {f.message}" for f in report.findings
+            )
+            plan = planner.replan_batch(current, summary + "\n\n【管理者审计反馈】\n" + feedback, decide=decide)
+            report = audit_plan(project_dir, plan.episode_tree, current)
+            report.retried = True
+        save_audit_report(project_dir, report)
+
+        if report.passed:
+            console.print(
+                f"[cyan]Planner 批间复规划完成（第 {current} 章后剩余弧线已重排，"
+                f"管理者审计{'通过' if not report.warns else f'通过，WARN {len(report.warns)} 条留痕'}，"
+                f"下一批裁决落盘 .state/batch_directive.json）[/cyan]"
+            )
+        else:
+            # 打回重排后仍 BLOCK：保留计划但显性上报（人工可查 plan_audit.json）
+            console.print(f"[red]✗ 批间复规划审计仍未通过（BLOCK {len(report.blocks)} 条），"
+                          f"计划已保留但需人工复核 .state/plan_audit.json[/red]")
         return True
     except Exception as e:  # noqa: BLE001 - 显性降级：规划者缺席时状态机兜底继续写
         degrade("autowrite.batch_replan", "批间复规划失败，本批沿用既有计划继续写", e)
