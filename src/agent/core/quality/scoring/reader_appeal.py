@@ -705,6 +705,84 @@ def gate_chapter(
     )
 
 
+def _golden_cache_path(project_dir: str | Path) -> Path:
+    return Path(project_dir) / ".state" / "golden_score_cache.json"
+
+
+def _golden_fingerprint(project_dir: str | Path, n: int) -> str:
+    """前 n 章内容指纹：正文任一字节变化即失效（重写前三章 → 自动重评）。"""
+    import hashlib
+
+    try:
+        texts = read_chapters_text(project_dir, side="first", n=n)
+    except Exception:  # noqa: BLE001 - 指纹计算失败仅放弃缓存，不阻断评分
+        return ""
+    return hashlib.sha256("\n\n".join(texts).encode("utf-8")).hexdigest()
+
+
+def _load_golden_cache(project_dir: str | Path, fingerprint: str) -> "ReaderAppealReport | None":
+    """命中且指纹一致且上次为真实 LLM 评分 → 返回缓存报告；否则 None。"""
+    if not fingerprint:
+        return None
+    path = _golden_cache_path(project_dir)
+    try:
+        import json
+
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if data.get("fingerprint") != fingerprint:
+        return None
+    rep = data.get("report") or {}
+    if not rep.get("llm_used") or rep.get("source") != "llm":
+        return None  # 离线占位/异常报告不缓存不复用
+    try:
+        return ReaderAppealReport(
+            dimensions=dict(rep["dimensions"]),
+            total_score=int(rep["total_score"]),
+            one_liner=str(rep.get("one_liner", "")),
+            suggestions=list(rep.get("suggestions", [])),
+            llm_used=True,
+            error="",
+            source="llm",
+            chapters_scored=int(rep.get("chapters_scored", 1)),
+            fallback=bool(rep.get("fallback", False)),
+            summary_lines=list(rep.get("summary_lines", [])),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
+def _save_golden_cache(project_dir: str | Path, fingerprint: str, report: "ReaderAppealReport") -> None:
+    """只缓存真实 LLM 评分（llm_used=True 且无 error），失败静默放弃（G3）。"""
+    if not fingerprint or not report.llm_used or report.error:
+        return
+    import json
+    from datetime import datetime, timezone
+
+    payload = {
+        "fingerprint": fingerprint,
+        "ts": datetime.now(timezone.utc).isoformat(),
+        "report": {
+            "dimensions": report.dimensions,
+            "total_score": report.total_score,
+            "one_liner": report.one_liner,
+            "suggestions": report.suggestions,
+            "chapters_scored": report.chapters_scored,
+            "fallback": report.fallback,
+            "summary_lines": report.summary_lines,
+            "llm_used": True,
+            "source": "llm",
+        },
+    }
+    try:
+        path = _golden_cache_path(project_dir)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        pass  # noqa: SILENT_DEGRADE
+
+
 def gate_first_chapters(
     scorer: "ReaderAppealScorer",
     project_dir: str | Path,
@@ -723,6 +801,11 @@ def gate_first_chapters(
       total_score 取 min，llm_used = 任一在线（all 在线才 True），并置 fallback=True。
     离线（LLM 不可用）时各次 score_chapter 返回 llm_used=False 占位，由 Evaluator 短路为通过。
     无章节可评返回 llm_used=False 占位（不抛异常，仿 gate_chapter 行 403-413）。
+
+    跨批缓存（2026-09-12）：前 n 章内容指纹未变时直接复用上次真实 LLM 评分
+    （落盘 .state/golden_score_cache.json）。前三章一经写完通常不再变动，
+    缓存避免每批评估都重评 6 维（每批 6 次 LLM 调用白烧），也避免同一
+    低分开局反复触发金三熔断；重写前三章后指纹变化自动失效重评。
     """
     files = take_chapter_files(list_chapter_files(project_dir), side="first", n=n)
     if not files:
@@ -731,12 +814,18 @@ def gate_first_chapters(
             total_score=0, one_liner="无章节可评", suggestions=[],
             llm_used=False, error="no chapters dir", source="offline",
         )
+    fingerprint = _golden_fingerprint(project_dir, n)
+    cached = _load_golden_cache(project_dir, fingerprint)
+    if cached is not None:
+        return cached
+
     texts = read_chapters_text(project_dir, side="first", n=n)
     joined = "\n\n".join(texts)
 
     if len(joined) <= GOLDEN_JOIN_CHAR_LIMIT:
         report = scorer.score_chapter(joined, title=title, genre=genre, synopsis=synopsis)
         report.chapters_scored = 1
+        _save_golden_cache(project_dir, fingerprint, report)
         return report
 
     # fallback：超长 → 每章独立评分取最差（拍板 #3）
@@ -750,7 +839,7 @@ def gate_first_chapters(
         for k in APPEAL_DIMENSIONS:
             worst[k] = min(worst.get(k, 100), r.dimensions.get(k, 0))
         worst_total = min(worst_total, r.total_score)
-    return ReaderAppealReport(
+    report = ReaderAppealReport(
         dimensions=worst,
         total_score=worst_total,
         one_liner="三章拼接超长，已按每章独立评分取最差",
@@ -760,3 +849,5 @@ def gate_first_chapters(
         chapters_scored=n,
         fallback=True,
     )
+    _save_golden_cache(project_dir, fingerprint, report)
+    return report
