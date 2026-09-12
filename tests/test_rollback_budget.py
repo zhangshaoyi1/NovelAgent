@@ -86,13 +86,17 @@ class _Plan:
 
 
 class _Report:
-    def __init__(self, gate: str, escalated: bool = False, target: int = 180) -> None:
+    def __init__(self, gate: str, escalated: bool = False, target: int = 180,
+                 rolled_back: bool = True) -> None:
         self.dimensions = [_Dim("连贯性", 35.0, gate == "pass")]
         self.score = 67.83
         self._gate = gate
         self.escalated = escalated
         self.escalated_reason = "评测器已放弃自动处置" if escalated else ""
         self.repair = _Plan(target)
+        # P1 修正（2026-09-12）：只有真实回退才 bump；默认 True 对应假评测器
+        # 在 evaluate_with_repair 里确实触发了定向重写的场景。
+        self.rolled_back = rolled_back
 
     def gate_decision(self) -> str:
         return self._gate
@@ -180,11 +184,13 @@ def test_checkpoint_trips_and_escalates_after_limit(tmp_path: Path) -> None:
 
 
 def test_checkpoint_propagates_evaluator_escalation(tmp_path: Path) -> None:
-    """评测器自身已放弃（escalated）→ 检查点不得当作「再试一次」，直接上报人工。"""
-    pipe = _FakePipeline(tmp_path, _Report("block", escalated=True), limit=9)
+    """评测器自身已放弃（escalated，未回退）→ 检查点不得当作「再试一次」，直接上报人工。"""
+    pipe = _FakePipeline(tmp_path, _Report("block", escalated=True, rolled_back=False), limit=9)
     assert pipe._rolling_eval_checkpoint() is False
     assert pipe._rolling_escalation_reason
     assert "评测器已放弃" in pipe._rolling_escalation_reason
+    # 未真回退不得计数（与 agentic_pipeline_agents 的新判据一致）
+    assert RollbackBudget.load(tmp_path, limit=9).consecutive == 0
 
 
 def test_checkpoint_warn_soft_dimension_continues(tmp_path: Path) -> None:
