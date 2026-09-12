@@ -5,9 +5,8 @@
 ``# system`` / ``# user`` 二级标题切分两段、Jinja2 渲染、按题材（``genre``）覆盖。
 
 关键属性：
-- **零回归**：``get`` 找不到 md 时回退到 ``LEGACY_MAP`` 里登记的原始代码常量，
-  调用点不会因"提示词缺失"而崩；阶段 C 起 ``agent.prompts`` 已删除，29 个全量迁移键以
-  ``prompts/*.md`` 为单一真源，仅 8 个阶段 A 内联兜底键仍在 ``LEGACY_MAP`` 登记。
+- **单一真源**：``get`` 只读 ``prompts/*.md``，找不到即抛 ``KeyError``（失败显性化，
+  不再有代码常量兜底——阶段 A/B/C 迁移期遗留的 ``LEGACY_MAP`` 已于 F-3 清零删除）。
 - **热重载**：默认按文件 mtime 比对，CLI 短进程/Web 长驻进程都能"改即生效"。
 - **与 §6 同源**：frontmatter 的 ``validation:`` 块直接编译成 ``ValidationSpec``，
   调用方可 ``llm.chat(msgs, validators=p.validation)`` 一处收口。
@@ -22,7 +21,7 @@ import re
 import threading
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable
+from typing import Any
 
 import jinja2
 import yaml
@@ -125,7 +124,7 @@ class PromptDef:
     user_template: str = ""
     validation: list[ValidationSpec] = field(default_factory=list)
     _user_j2: jinja2.Template = field(default="", repr=False)
-    source: str = "md"  # "md" | "legacy"
+    source: str = "md"
     # 中文描述（frontmatter description/purpose），供 Web 版本面板显示人类可读名称
     description: str = ""
 
@@ -161,50 +160,6 @@ class PromptDef:
 
 def _has_jinja(s: str) -> bool:
     return "{{" in s or "{%" in s or "{#" in s
-
-
-# ============================================================================
-# 迁移期 legacy 回退：name -> 返回 (system, user_template) 的惰性函数。
-# 仅登记"本次已迁到 md、但 md 万一缺失也要用原文本"的提示词，保证零回归。
-# 各函数惰性 import，避免模块加载时的重依赖/循环依赖。
-# ============================================================================
-LEGACY_MAP: dict[str, Callable[[], tuple[str, str]]] = {}
-
-
-def _register(name: str, module: str, system_attr: str | None, user_attr: str | None = None) -> None:
-    def _loader() -> tuple[str, str]:
-        import importlib
-
-        mod = importlib.import_module(module)
-        system = getattr(mod, system_attr) if system_attr else ""
-        user = getattr(mod, user_attr) if user_attr else ""
-        return system, user
-
-    LEGACY_MAP[name] = _loader
-
-
-_register("agents.planner", "agent.agents.planner", "_PLANNER_SYSTEM")
-_register("agents.writer_retry", "agent.agents.writer_agent", "_RETRY_JSON_PROMPT")
-_register(
-    "quality.bad_point_scan",
-    "agent.core.quality.scan.bad_point_scanner",
-    "_LLM_SCAN_SYSTEM_PROMPT",
-    "_LLM_SCAN_USER_TEMPLATE",
-)
-_register("quality.reader_appeal_eval", "agent.core.quality.scoring.reader_appeal", "_EVAL_SYSTEM_PROMPT")
-_register("quality.reader_appeal", "agent.core.quality.scoring.reader_appeal", "_APPEAL_SYSTEM_PROMPT")
-_register(
-    "quality.rewrite",
-    "agent.core.quality.rewrite.feedback_rewriter",
-    "_REWRITE_SYSTEM_PROMPT",
-    "_REWRITE_USER_TEMPLATE",
-)
-_register("budget.branch", "agent.workflows.pipeline.budget_planner", "_SYSTEM_PROMPT")
-# 注：以上 8 个键（agents.planner / agents.writer_retry / quality.* / budget.branch）的兜底常量
-# 仍保留在各自原模块（下划线前缀命名，如 ``_PLANNER_SYSTEM``），md 缺失时回退。
-# 阶段 B 全量迁移的 29 个键（m1.world / m2..m_d / e / g* 等）现已 100% 由 prompts/*.md 承载，
-# 不再登记 legacy 兜底（``agent.prompts`` 已于阶段 C 删除）；md 为单一真源。
-
 
 
 class PromptManager:
@@ -265,39 +220,12 @@ class PromptManager:
             description=str(meta.get("description") or meta.get("purpose") or ""),
         )
 
-    def _legacy(self, name: str) -> PromptDef | None:
-        loader = LEGACY_MAP.get(name)
-        if loader is None:
-            return None
-        # F-1/F-3：legacy 兜底命中即告警（使用即告警，限期移除）
-        try:
-            from agent.core.infra.degrade import degrade
-
-            degrade(
-                "prompt_manager.legacy",
-                f"提示词 {name} 命中 LEGACY_MAP 兜底（md 单一真源缺失，双源漂移风险）",
-                event="degrade.legacy_prompt",
-                payload={"prompt_name": name},
-            )
-        except Exception:  # noqa: BLE001, SILENT_DEGRADE - 告警本身失败不影响回退
-            pass  # noqa: SILENT_DEGRADE
-        system, user = loader()
-        return PromptDef(
-            name=name,
-            system=system,
-            user_template=user,
-            validation=[],
-            source="legacy",
-        )
-
     # ---- 对外 API ----
     def get(self, name: str, genre: str | None = None) -> PromptDef:
         path = self._path_for(name, genre)
         if path is None:
-            legacy = self._legacy(name)
-            if legacy is not None:
-                return legacy
-            raise KeyError(f"提示词未找到且无 legacy 回退：{name}（genre={genre}）")
+            # md 为单一真源，缺失即显性失败（F-3：LEGACY_MAP 兜底已清零）
+            raise KeyError(f"提示词未找到：{name}（genre={genre}）")
         mtime = path.stat().st_mtime
         cached = self._cache.get(name)
         if cached is not None and (not self.hot_reload or cached[0] == mtime):
@@ -394,4 +322,4 @@ class PromptManager:
 pm = PromptManager()
 
 
-__all__ = ["PromptManager", "PromptDef", "pm", "PROMPTS_DIR", "LEGACY_MAP"]
+__all__ = ["PromptManager", "PromptDef", "pm", "PROMPTS_DIR"]

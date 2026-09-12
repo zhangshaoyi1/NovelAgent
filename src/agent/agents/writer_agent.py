@@ -86,23 +86,6 @@ _WRITER_BASE = (
     "自检字数 / 自评质量；准备好后，把 action 设为 'finish' 并在 draft 中提交**完整章节正文**。"
 )
 
-# 结构化解析失败后的强制 JSON 回退指令：模型常把「正文当纯文本」而非 JSON 信封输出，
-# 或输出合法 JSON 但漏掉必填字段 action（弱 schema 遵从度 provider，2026-09-07 事故）。
-# 首次失败后追加该指令（+ 真实校验错误详情）重试一次。符合 G4 / M14 既定约定
-# 「解析失败重试一次，两次均失败则明确报错」。
-_RETRY_JSON_PROMPT = (
-    "\n\n【输出格式硬约束】上一次输出不满足 JSON Schema 校验（可能是无法解析，"
-    "或解析成功但缺必填字段）。此条必须只输出一个合法 JSON 对象："
-    "禁止任何解释文字、禁止 ```json 代码围栏、禁止把章节正文直接作为纯文本输出，"
-    "必填字段一个都不能少。JSON 结构如下（字段名必须逐字一致）：\n"
-    '{"think": "简短思考", "action": "finish 或 tool_call", '
-    '"tool": null, "args": {}, "draft": "完整章节正文或工具参数"}'
-    "\n关键规则：\"action\" 是必填字段，值只能是 \"finish\" 或 \"tool_call\"——"
-    "只输出 {think,tool,args} 而漏掉 action 是无效的；"
-    "若 action 为 tool_call，则填 tool/args 并把 draft 置为 null；"
-    "若为 finish，则 draft 填完整章节正文。"
-)
-
 # 各 tier 的最大起草次数（含首稿；修订次数 = 起草次数 - 1）
 TIER_MAX_DRAFTS: dict[str, int] = {
     "light": 1,  # 仅首稿 + 单次自检，不修订

@@ -1,18 +1,16 @@
 #!/usr/bin/env python3
-"""保留 legacy 条目的零回归 + 删除断言。
+"""prompts 单一真源的删除断言（遗留逐字比对已随 F-3 退役）。
 
 阶段 C 删除 ``agent/prompts.py`` 后，阶段 B 全量迁移的 29 个键已无代码常量可比对
-（md 为单一真源）；本脚本仅校验**仍登记 legacy 兜底**的 8 个键——它们的原始常量
-保留在各原模块（下划线前缀命名，如 ``_PLANNER_SYSTEM``），md 渲染需与之一致：
+（md 为单一真源）。F-3（2026-09-12）起 ``LEGACY_MAP`` 及其 7 个兜底常量已清零删除，
+逐字比对阶段自然结束；本脚本保留两项职责：
 
-- 对每条 ``_register`` 条目：取原模块中的 system / user 常量值；
-- 用合成 dummy 变量分别渲染：原始 ``.format()``（容忍字面 JSON 双括号）+ md（``pm.get``）；
-- 逐字比对 system、user。
+- 断言 ``agent.prompts`` 不再暴露任何已迁移常量（防 prompts.py 回潮，denylist 见
+  ``lint_prompts.MIGRATED``）；
+- 若未来重新出现 ``_register(...)`` 登记（不鼓励），自动恢复逐字比对。
 
-并显式断言 ``import agent.prompts`` 抛 ``ModuleNotFoundError``——即阶段 C 删除成功。
-
-与 `lint_prompts.py` 互补：后者防"新增内联残留"，本脚本防"md 与原始常量漂移" +
-防"误重新引入 prompts.py"。两者都应纳入 CI。
+与 `lint_prompts.py` 互补：后者防"新增内联残留"，本脚本防"误重新引入 prompts.py"。
+两者都应纳入 CI。
 
 注意：本脚本**不硬编码任何已迁移常量名**——(key, 模块, 属性名) 全部在运行时解析
 prompt_manager.py 的 ``_register(...)`` 得到，因此本文件本身不会被 `lint_prompts.py`
@@ -118,6 +116,9 @@ def main() -> int:
         return 1
 
     entries = collect_entries()
+    if not entries:
+        print("LEGACY_MAP 已清零（F-3）：无 _register 条目，逐字比对阶段自然结束；"
+              "仅保留 agent.prompts 常量泄漏断言。新增提示词请直接以 prompts/*.md 为单一真源。")
     mgr = PromptManager(root=str(SRC / "agent" / "prompts"), hot_reload=False)
     fails = []
     for key, module, sc, uc in entries:

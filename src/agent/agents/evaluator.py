@@ -145,7 +145,7 @@ class EvaluatorAgent(
             "character_stability_high": float(qt.get("character_stability_high", 0)),
             "setting_consistency_high": float(qt.get("setting_consistency_high", 0)),
             "foreshadow_recycle_rate": float(qt.get("foreshadow_recycle_rate", 0.90)),
-            # G2 收紧 80→85 / 75→80（与 planner_agent.QualityTargets 默认、_PLANNER_SYSTEM 三处同步）
+            # G2 收紧 80→85 / 75→80（与 planner_agent.QualityTargets 默认两处同步）
             "coherence": float(qt.get("coherence", 85.0)),
             "readability": float(qt.get("readability", 80.0)),
             "pacing_abnormal": float(qt.get("pacing_abnormal", 0.03)),
