@@ -537,7 +537,9 @@ class PlannerAgent:
                 ),
             },
         ]
-        out = ReplanOutput(**decide(messages))
+        out_data = decide(messages)
+        # chat_structured 可能直接返回 ReplanOutput 实例（而非 dict），两者都接受
+        out = out_data if isinstance(out_data, ReplanOutput) else ReplanOutput(**out_data)
 
         # 合并：保留已完结弧线（chapter_end <= 当前进度），替换剩余部分
         keep = [a for a in plan.episode_tree if a.chapter_end <= current_chapter]
