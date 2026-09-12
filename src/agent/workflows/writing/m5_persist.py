@@ -505,22 +505,25 @@ class M5PersistMixin:
             logger.debug("[continuity] 章后归档失败，已降级", exc_info=True)
 
         # P1-5 收尾：LLM delta 结算——补充确定性抽取抓不到的信息差变化与开环
-        # 推进/闭环（独立 try，失败 degrade 不阻断写章，账本保持确定性提交状态）
-        try:
-            from agent.workflows.writing.ledger_delta_producer import produce_and_apply_delta
+        # 推进/闭环（独立 try，失败 degrade 不阻断写章，账本保持确定性提交状态）。
+        # 无 llm 的实例（测试桩/独立混用）无结算能力，静默跳过——确定性抽取
+        # 通道已提交本章事实，缺 LLM 结算不构成失败、不应触发 degrade 告警。
+        if getattr(self, "llm", None) is not None:
+            try:
+                from agent.workflows.writing.ledger_delta_producer import produce_and_apply_delta
 
-            produce_and_apply_delta(
-                str(self.project_dir),
-                self.llm,
-                chapter_num=int(ctx["chapter_num"]),
-                chapter_title=chapter_title,
-                # 独立重算正文（不依赖上方归档 try 的局部变量；缺省回读落盘文件）
-                chapter_text=_chapter_body_text(
-                    int(ctx["chapter_num"]), chapter_text, self.chapters_dir
-                ),
-            )
-        except Exception as e:  # noqa: BLE001 - 结算失败降级不阻断
-            degrade("m5_persist.ledger_delta", "章后 LLM 账本结算异常", e)
+                produce_and_apply_delta(
+                    str(self.project_dir),
+                    self.llm,
+                    chapter_num=int(ctx["chapter_num"]),
+                    chapter_title=chapter_title,
+                    # 独立重算正文（不依赖上方归档 try 的局部变量；缺省回读落盘文件）
+                    chapter_text=_chapter_body_text(
+                        int(ctx["chapter_num"]), chapter_text, self.chapters_dir
+                    ),
+                )
+            except Exception as e:  # noqa: BLE001 - 结算失败降级不阻断
+                degrade("m5_persist.ledger_delta", "章后 LLM 账本结算异常", e)
 
     def _sync_setting_canon(self, chapter_num: int, body: str, ctx: dict[str, Any]) -> None:
         """P0-1（2026-09-12）：设定回写通道——把本章涌现的定义性约束沉淀进台账并回写 world.md。

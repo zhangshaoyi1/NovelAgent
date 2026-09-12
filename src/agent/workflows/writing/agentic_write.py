@@ -757,7 +757,22 @@ class AgenticWriteWorkflow:
         title = m5._ensure_unique_title(ctx["chapter_num"], title, text)
 
         # ---- P0 去AI味：质量门禁通过后、落盘前（轻度规则/中重 LLM；失败降级原文）----
+        pre_deslop_text = text
         text = self._run_deslop(text, ctx)
+        # ---- deslop 复检（2026-09-12）：deslop 的 LLM 改写发生在九项质检之后、
+        # 落盘之前，改写结果此前不过任何门禁——可能把字数改穿硬门下限（其内置
+        # 护栏只要求 ≥ 原文一半，远低于门禁下限）。确定性复检：字数跌破门禁
+        # 下限 → 弃用改写稿、回退质检通过的原文落盘（显性告警，不阻断）。----
+        _deslop_len = _count_cjk(M5WriteChapterWorkflow._clean_chapter_body(text))
+        _deslop_floor = resolve_min_cjk_words(
+            int(ctx["world_info"].get("chapter_length") or 3000)
+        )
+        if _deslop_len < _deslop_floor:
+            self.console.print(
+                f"[yellow]⚠ deslop 复检未过：改写稿仅 {_deslop_len} 字"
+                f"（门禁下限 {_deslop_floor}），回退为质检通过的原文落盘[/yellow]"
+            )
+            text = pre_deslop_text
 
         # ---- 缺口 B（2026-09-06）：canonical body 成文管线 ----
         # 与 M5 同链：落盘 / 门禁 / 指纹消费同一产物（_save_chapter 内部幂等兜底）。
