@@ -133,13 +133,28 @@ def record_batch_reflection(
     try:
         if chat_fn is None:
             from agent.client.gateway_adapter import chat_structured, create_gateway
+            from agent.core.base.structured_output import StructuredOutputError
 
             llm = create_gateway()
 
             def chat_fn(messages):  # noqa: F811
-                return chat_structured(llm, messages, ReflectionOutput,
-                                       use="utility", temperature=0.4,
-                                       max_tokens=2048, enable_thinking=False)
+                # 2026-09-13 实弹：长现象文本在 2048 处截断致 JSON 解析失败——
+                # 放宽到 3072，仍失败则附错误重试一次（对齐质检门禁重试约定）
+                try:
+                    return chat_structured(llm, messages, ReflectionOutput,
+                                           use="utility", temperature=0.4,
+                                           max_tokens=3072, enable_thinking=False)
+                except StructuredOutputError as first_e:
+                    retry_messages = messages[:-1] + [{
+                        "role": "user",
+                        "content": messages[-1]["content"]
+                        + "\n\n【上次输出解析失败原因，务必修正】请只输出一个合法 JSON 对象，"
+                          "现象/定位/对策各字段控制在 80 字以内，不要包含 ```json 标记：\n"
+                        + str(first_e),
+                    }]
+                    return chat_structured(llm, retry_messages, ReflectionOutput,
+                                           use="utility", temperature=0.4,
+                                           max_tokens=3072, enable_thinking=False)
 
         evidence = build_reflection_input(project_dir)
         # 已有上批反思 → 注入验证闭环（对策是否兑现）
