@@ -140,7 +140,8 @@ def produce_and_apply_delta(
                 delta = LedgerDelta(**parsed)  # extra="forbid"，幻觉字段在此显式报错
                 delta_dict = delta.model_dump()
                 break
-            except (ValueError, TypeError) as e:
+            except (ValueError, TypeError) as e:  # 重试处理器：last_err 收口，最终失败统一 degrade
+                logger.debug("[ledger_delta] 结算输出第 %d 次校验失败: %s", attempt + 1, e)
                 last_err = e
 
         if delta_dict is None:

@@ -430,6 +430,11 @@ class AgenticPipelineWorkflow(
                 edit = editor.review(ch_text)
             except Exception as e:  # noqa: BLE001 - 失明显性化：降级放行但计入连续熔断
                 edit = None
+                degrade(
+                    "pipeline.gate_blind.editor_review",
+                    "Editor 一致性审查调用异常，本章放行（计连续失明）",
+                    e,
+                )
                 self._note_gate_blind("editor_review", e)
             if edit is not None:
                 block_conflicts = [c for c in edit.conflicts if c.severity == "block"]
@@ -454,6 +459,11 @@ class AgenticPipelineWorkflow(
                             try:
                                 gr_joint = self.guardrails.gate(ch_text, mode="block")
                             except Exception as g_e:  # noqa: BLE001 - 失明计入熔断
+                                degrade(
+                                    "pipeline.gate_blind.guardrails_joint_recheck",
+                                    "联合复检 Guardrails 调用异常，本章放行（计连续失明）",
+                                    g_e,
+                                )
                                 self._note_gate_blind("guardrails_joint_recheck", g_e)
                             else:
                                 for v in gr_joint.violations:
@@ -540,6 +550,11 @@ class AgenticPipelineWorkflow(
                                             if c.severity == "block"
                                         ]
                                 except Exception as e_j:  # noqa: BLE001 - 失明计入熔断
+                                    degrade(
+                                        "pipeline.gate_blind.editor_joint_recheck",
+                                        "联合复检 Editor 调用异常，本章放行（计连续失明）",
+                                        e_j,
+                                    )
                                     self._note_gate_blind("editor_joint_recheck", e_j)
                                 if gr2.passed and not still_editor:
                                     self.console.print(
@@ -579,6 +594,11 @@ class AgenticPipelineWorkflow(
                                     "message": v.message,
                                 })
                 except Exception as e:  # noqa: BLE001 - 失明显性化：降级放行但计入连续熔断
+                    degrade(
+                        "pipeline.gate_blind.guardrails_gate",
+                        "Guardrails 门禁调用异常，本章放行（计连续失明）",
+                        e,
+                    )
                     self._note_gate_blind("guardrails_gate", e)
 
             # ---- 章级门禁计数复位：本章未被标记告警 → 连续告警清零；门禁正常

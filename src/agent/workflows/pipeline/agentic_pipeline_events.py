@@ -20,17 +20,15 @@ GATE_ESCALATION_LIMIT = 3
 
 class _PipelineEventsMixin:
     def _note_gate_blind(self, where: str, err: Exception) -> None:
-        """门禁失明计数：质检环节调用异常被降级为放行时调用（显性化 + 连续熔断）。"""
+        """门禁失明计数：质检环节调用异常被降级为放行时调用（连续熔断判定）。
+
+        仅负责计数与熔断置位；degrade 显性记录由各调用点在 except 块内完成
+        （架构红线要求 except 块直接可见 degrade/logging，且豁免棘轮只减不增）。
+        """
         if not hasattr(self, "_gate_blind_streak"):
             self._gate_blind_streak = 0
             self._consecutive_flagged = 0
             self._gate_escalation_reason = ""
-        try:
-            from agent.core.infra.degrade import degrade
-
-            degrade(f"pipeline.gate_blind.{where}", "质检门禁调用异常，本章放行（计连续失明）", err)
-        except Exception:  # noqa: BLE001 - degrade 不可用时至少 console 可见
-            pass  # noqa: SILENT_DEGRADE
         self._gate_blind_streak += 1
         if self._gate_blind_streak >= GATE_ESCALATION_LIMIT and not self._gate_escalation_reason:
             self._gate_escalation_reason = (

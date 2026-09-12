@@ -130,9 +130,19 @@ class _FakePipeline(_PipelineAgentsMixin):
         self.console = Console()
         self.max_rollback_attempts = limit
         self._rolling_escalation_reason = ""
+        # 门禁可观测性计数（2026-09-12）：检查点失明/复位回调依赖
+        self._gate_blind_streak = 0
+        self._consecutive_flagged = 0
+        self._gate_escalation_reason = ""
         self.calls: list[Any] = []
         self.failures: list[tuple[str, str, str]] = []
         self._report = report
+
+    def _note_gate_blind(self, where: str, err: Exception) -> None:  # noqa: D102
+        self._gate_blind_streak += 1
+
+    def _note_gate_ok(self) -> None:  # noqa: D102
+        self._gate_blind_streak = 0
 
     def _emit_progress(self, *a: Any, **k: Any) -> None:  # noqa: D102
         pass
