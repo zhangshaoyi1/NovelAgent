@@ -459,16 +459,18 @@ class M1ConfigWorkflow:
             user_prompt += qa_text
 
         system_prompt = _p.system
+        last_err: ValueError | None = None
         # 注意：dots3-note-prev 等模型在紧预算下会把长结构化输出截断/返回空，
-        # 故采用「充足预算 + 递增重试 + 纯 JSON 强化」的重试策略。
+        # 故采用「充足预算 + 递增重试 + 纯 JSON 强化 + 错误详情回传」的重试策略。
         _budgets = (16384, 16384, 20480)
         for attempt in range(len(_budgets)):
             if attempt > 0:
-                # 重试：强化「纯 JSON」约束，规避截断/多余文本导致的解析失败
+                # 重试：强化「纯 JSON」约束并回传上次具体失败原因，规避截断/多余文本导致的解析失败
                 system_prompt = (
                     _p.system
                     + "\n\n【重要】请只输出一个合法的 JSON 对象，"
-                    "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                    "不要包含 ```json 代码块标记，不要输出任何解释性文字。\n\n"
+                    f"【上次解析失败原因，务必修正】\n{last_err}"
                 )
             resp = chat_creative(
                 self.llm,
@@ -482,7 +484,8 @@ class M1ConfigWorkflow:
             )
             try:
                 return parse_llm_json(resp)
-            except ValueError:
+            except ValueError as e:
+                last_err = e
                 if attempt == len(_budgets) - 1:
                     raise RuntimeError(
                         "世界观生成结果无法解析为 JSON（可能被截断或格式异常），"

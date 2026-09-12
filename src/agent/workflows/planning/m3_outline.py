@@ -307,19 +307,20 @@ class M3OutlineWorkflow:
                 if not data.get("sublines"):
                     data["sublines"] = [self._empty_subline("未命名支线")]
                 return data
-            except ValueError:
+            except ValueError as e:
                 if attempt == len(_budgets) - 1:
                     raise RuntimeError(
                         "大纲生成结果无法解析为 JSON（可能被截断或格式异常），"
                         f"请重试。原始输出片段：{last_text[:200]}"
                     )
                 self.console.print(
-                    "[yellow]⚠ 大纲 JSON 解析失败，自动重试一次...[/yellow]"
+                    f"[yellow]⚠ 大纲 JSON 解析失败（{e}），自动重试一次...[/yellow]"
                 )
                 system_prompt = (
                     pm.get("m3.outline").render_system(genre=world_info.get("genre_label", ""))
                     + "\n\n【重要】请只输出一个合法的 JSON 对象，"
-                    "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                    "不要包含 ```json 代码块标记，不要输出任何解释性文字。\n\n"
+                    f"【上次解析失败原因，务必修正】\n{e}"
                 )  # noqa: SILENT_DEGRADE
         raise RuntimeError(
             "大纲生成结果无法解析为 JSON（可能被截断或格式异常），"

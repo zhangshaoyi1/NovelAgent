@@ -264,12 +264,14 @@ class BadPointScanner:
         )
         try:
             data = parse_llm_json(resp.text)
-        except ValueError:
-            # 首败后追加「强制纯 JSON」重试一次（项目惯例，减少重复解析失败）
+        except ValueError as first_err:
+            # 首败后追加「强制纯 JSON + 上次失败原因」重试一次（项目惯例，减少重复解析失败）
             retry = chat_utility(self.llm,
                 messages=[
-                    {"role": "system", "content": system + "\n铁律：只输出合法 JSON，禁止任何 ``` 标记或解释文字。"},
-                    {"role": "user", "content": "请重新扫描并严格只输出 JSON：" + user},
+                    {"role": "system", "content": system
+                     + "\n铁律：只输出合法 JSON，禁止任何 ``` 标记或解释文字。"},
+                    {"role": "user", "content": "请重新扫描并严格只输出 JSON："
+                     + f"\n\n【上次解析失败原因，务必修正】\n{first_err}\n\n" + user},
                 ],
                 temperature=0.1,
                 max_tokens=2000,

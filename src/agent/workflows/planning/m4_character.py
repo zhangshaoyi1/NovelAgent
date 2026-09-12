@@ -350,16 +350,17 @@ class M4CharacterWorkflow:
                 if not route.get("nodes"):
                     raise ValueError("protagonist_route.nodes 缺失或为空")
                 return data
-            except ValueError:
+            except ValueError as e:
                 if attempt == 0:
                     self.console.print(
-                        "[yellow]⚠ 角色设计 JSON 解析失败，自动重试一次...[/yellow]"
+                        f"[yellow]⚠ 角色设计 JSON 解析失败（{e}），自动重试一次...[/yellow]"
                     )
                     system_prompt = (
                         pm.get("m4.character").render_system(genre=world_info.get("genre_label", ""))
                         + "\n\n【重要】请只输出一个合法的 JSON 对象，必须包含 "
                         "protagonist_route（含 nodes）与 characters（至少 1 名角色），"
-                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。\n\n"
+                        f"【上次解析失败原因，务必修正】\n{e}"
                     )
                     raw = chat_creative(
                         self.llm,

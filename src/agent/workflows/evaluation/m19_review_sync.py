@@ -255,15 +255,16 @@ class M19ReviewSyncWorkflow:
                 findings = [ReviewFinding.from_dict(f) for f in (data.get("findings") or [])]
                 summary = str(data.get("summary", ""))
                 return findings, summary
-            except ValueError:
+            except ValueError as e:
                 if attempt == 0:
                     self.console.print(
-                        "[yellow]⚠ 复核 JSON 解析失败，自动重试一次...[/yellow]"
+                        f"[yellow]⚠ 复核 JSON 解析失败（{e}），自动重试一次...[/yellow]"
                     )
                     system_prompt = (
                         pm.get("m19.review").system
                         + "\n\n【重要】请只输出一个合法的 JSON 对象，"
-                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。"
+                        "不要包含 ```json 代码块标记，不要输出任何解释性文字。\n\n"
+                        f"【上次解析失败原因，务必修正】\n{e}"
                     )  # noqa: SILENT_DEGRADE
         # 两次均失败：明确提示，绝不把 LLM 原始文本塞进 summary（否则前端会显示乱码）。
         self.console.print(
