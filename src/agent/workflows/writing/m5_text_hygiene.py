@@ -438,3 +438,43 @@ class M5TextHygieneMixin:
             return text
         head_text = "\n\n".join(blocks[:best_r]).rstrip()
         return head_text
+
+
+# ============================================================
+# L1 高置信 AI 腔短语：确定性硬拦截（2026-09-13 批间反思驱动）
+# 此前这些词只有 LLM 门禁（ai_flavor）告警 + deslop 软处理，批间反思实证
+# 三批对策均未兑现（命中复发）——改为生成后立即正则替换 + 二次校验循环。
+# 只收「高置信组合式短语」，不收单字高频词，防误杀（与 guardrails 词表口径一致）。
+# ============================================================
+L1_AI_PHRASES: dict[str, str] = {
+    "喃喃自语": "低声说",
+    "心中一动": "忽然想到",
+    "若有所思": "沉默片刻",
+    "眸光微动": "目光一变",
+    "眸子微缩": "眯起眼",
+    "嘴角微微上扬": "笑了笑",
+    "心头一颤": "心里一沉",
+}
+
+
+def scan_ai_phrases(text: str) -> dict[str, int]:
+    """统计 L1 禁词命中（词 → 次数）。"""
+    return {p: text.count(p) for p in L1_AI_PHRASES if p in text}
+
+
+def hard_replace_ai_phrases(text: str, max_iterations: int = 3) -> tuple[str, list[str]]:
+    """L1 禁词确定性替换 + 二次校验循环（最多 max_iterations 轮）。
+
+    Returns:
+        (替换后文本, 替换轨迹列表，如 "喃喃自语×2→低声说"；未命中为空)。
+    """
+    replaced: list[str] = []
+    for _ in range(max(1, max_iterations)):
+        hits = scan_ai_phrases(text)
+        if not hits:
+            break
+        for phrase, count in hits.items():
+            rep = L1_AI_PHRASES[phrase]
+            text = text.replace(phrase, rep)
+            replaced.append(f"{phrase}×{count}→{rep}")
+    return text, replaced

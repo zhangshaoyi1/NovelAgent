@@ -203,3 +203,21 @@ def test_d_supplement_merge_and_off(tmp_path: Path) -> None:
     wf.strict_review = True
     block = wf._d_supplement()
     assert "d_issues" in block and "rule_id" in block and "审查维度" in block
+
+
+# ---------------------------------------------------------------- L1 禁词硬拦截
+def test_scan_and_replace_ai_phrases() -> None:
+    from agent.workflows.writing.m5_text_hygiene import (
+        hard_replace_ai_phrases,
+        scan_ai_phrases,
+    )
+
+    text = "他喃喃自语，心中一动。她若有所思。"
+    assert scan_ai_phrases(text) == {"喃喃自语": 1, "心中一动": 1, "若有所思": 1}
+    new, traj = hard_replace_ai_phrases(text)
+    assert "喃喃自语" not in new and "心中一动" not in new
+    assert "低声说" in new and "沉默片刻" in new
+    assert len(traj) == 3
+    # 幂等：二次扫描为空
+    assert scan_ai_phrases(new) == {}
+    assert hard_replace_ai_phrases(new)[1] == []

@@ -262,6 +262,21 @@ class M5WriteChapterWorkflow(
         """
         if not self.deslop_enabled:
             return text
+        # ---- L1 禁词硬拦截（批间反思驱动 2026-09-13）：确定性替换 + 二次校验
+        # 循环，先于 LLM deslop 执行（零成本）；失败降级原文不阻断。----
+        try:
+            from agent.workflows.writing.m5_text_hygiene import (
+                hard_replace_ai_phrases,
+                scan_ai_phrases,
+            )
+
+            text, _l1_replaced = hard_replace_ai_phrases(text)
+            if _l1_replaced and getattr(self, "console", None) is not None:
+                self.console.print(
+                    f"[cyan]L1 禁词硬拦截：{len(_l1_replaced)} 类替换（{_l1_replaced[:3]}…）[/cyan]"
+                )
+        except Exception:  # noqa: BLE001 - 硬拦截失败降级原文
+            pass
         try:
             from agent.core.anti_ai.rewriter import DeslopRewriter
 
