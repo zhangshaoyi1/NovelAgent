@@ -138,8 +138,30 @@ class M5QualityGateMixin:
                 resp, last_d_issues = self._check_parallel(text, ctx, check_prompt)
                 try:
                     report = parse_llm_json(resp)
-                except ValueError:
-                    report = {"overall_pass": True, "rules": [], "suggestions": "校验解析失败，默认通过"}  # noqa: SILENT_DEGRADE
+                except ValueError as e:
+                    # 解析失败多为截断（H4），可修复：附错误详情重试一次（对齐 G4 约定），
+                    # 重试仍失败才按 G3 降级放行（显性 degrade，不静默）
+                    try:
+                        retry = chat_utility(
+                            self.llm,
+                            messages=[
+                                {"role": "system", "content": pm.get("m5.quality_check").system},
+                                {"role": "user", "content": check_prompt
+                                 + f"\n\n【上次质检输出解析失败原因，务必修正】"
+                                   f"请只输出一个合法的 JSON 对象，不要包含 ```json 标记：\n{e}"},
+                            ],
+                            max_tokens=4096,
+                            enable_thinking=False,
+                        )
+                        report = parse_llm_json(retry)
+                        logger.info("[m5] 质检 JSON 解析失败后带错误重试成功: %s", e)
+                    except ValueError as e2:
+                        from agent.core.infra.degrade import degrade
+                        degrade(
+                            "m5.quality_gate.parse",
+                            f"质检 JSON 解析失败且带错重试仍失败，默认通过（不阻断出章）：{e2}",
+                        )
+                        report = {"overall_pass": True, "rules": [], "suggestions": "校验解析失败，重试后降级通过"}
 
                 # D：多维 LLM 质量审查（仅当 strict_review 开启；并入同一 revise_loop 预算）
                 # 维度 blocking 视为本章未通过、触发既有修订循环。
