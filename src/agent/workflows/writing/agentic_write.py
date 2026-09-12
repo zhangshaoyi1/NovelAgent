@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from agent.core.infra.prompt_manager import pm
 from agent.core.infra.degrade import degrade
+import logging
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -338,6 +339,42 @@ class AgenticWriteWorkflow:
             else:
                 task += pm.get("g8.ending_fallback_instruction").render_user()
 
+            # ---- 收尾缺口数字注入（2026-09-12 风险 5）：给 writer 可执行的余量 ——
+            # 未回收伏笔数（附前几条 F-id）+ 主线支线访问进度，让收尾章知道
+            # "还欠多少、欠什么"，而不是只靠批末验收后人工兜底。确定性读取，
+            # 失败降级为空（不影响既有 ending 指令）。----
+            try:
+                _gap_lines: list[str] = []
+                _fs_file = Path(self.project_dir) / "foreshadows.md"
+                if _fs_file.exists():
+                    _open: list[str] = []
+                    for _line in _fs_file.read_text(encoding="utf-8").splitlines():
+                        if _line.startswith("| F-"):
+                            _cells = [c.strip() for c in _line.split("|")]
+                            if len(_cells) >= 6 and _cells[5] in ("未埋", "已埋"):
+                                _open.append(f"{_cells[1]}（{_cells[2][:20]}）")
+                    if _open:
+                        _gap_lines.append(
+                            f"未回收伏笔 {len(_open)} 条，优先安排：{'、'.join(_open[:3])}"
+                        )
+                _ml_file = Path(self.project_dir) / ".state" / "mainline.json"
+                if _ml_file.exists():
+                    import json as _json
+
+                    _ml = _json.loads(_ml_file.read_text(encoding="utf-8"))
+                    _visited = _ml.get("mainline_visited") or []
+                    _total = len(_ml.get("sublines") or _visited) or 0
+                    if _total:
+                        _gap_lines.append(
+                            f"主线支线已访问 {len(_visited)}/{_total}"
+                        )
+                if _gap_lines:
+                    task += "\n\n【收尾缺口（本章应推进偿还）】\n" + "\n".join(
+                        f"- {g}" for g in _gap_lines
+                    )
+            except Exception as e:  # noqa: BLE001 - 缺口读取失败不阻断
+                degrade("agentic_write.ending_gap", "收尾缺口读取失败，本章无缺口注入", e)
+
         # ---- G11：风格指引注入（style.md 存在即注入；缺失/关闭 → 与 G10 输出逐字节一致）----
         style_guide = (ctx.get("style_guide") or "").strip()
         if style_guide:
@@ -476,6 +513,44 @@ class AgenticWriteWorkflow:
             return text[:400] if text else ""
         except Exception:  # noqa: BLE001 - 教训读取失败不影响质检
             return ""  # noqa: SILENT_DEGRADE
+
+    def _record_gate_skipped(self, ctx: Any, reason: str) -> None:
+        """gate_skipped 登记（2026-09-12 风险 3 收口）：写时门禁因基础设施故障
+        放行时，把该章写入 .state/chapter_quality_flags.json（violations 带
+        "gate_skipped" 前缀），供批末/人工扫描补检——不允许"未经门禁"静默滑过。
+        落盘失败仅留日志（同 pipeline _flag_chapter_quality 的降级语义）。"""
+        try:
+            import json as _json
+
+            ch = ctx.get("chapter_num") if isinstance(ctx, dict) else None
+            if ch is None:
+                return
+            qf_path = Path(self.project_dir) / ".state" / "chapter_quality_flags.json"
+            qf_path.parent.mkdir(parents=True, exist_ok=True)
+            existing: list[dict[str, Any]] = []
+            if qf_path.exists():
+                try:
+                    existing = _json.loads(qf_path.read_text(encoding="utf-8")).get("flags", [])
+                except Exception as e:  # noqa: BLE001 - 旧文件损坏视为空，显性留痕
+                    degrade(
+                        "agentic_write.gate_skipped_log",
+                        "chapter_quality_flags.json 解析失败，按空表处理（旧 flag 丢失）",
+                        e, level=logging.DEBUG,
+                    )
+                    existing = []
+            existing.append({
+                "chapter": ch,
+                "violations": [f"gate_skipped: {reason}"],
+                "flagged_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
+            })
+            tmp = qf_path.with_suffix(".json.tmp")
+            tmp.write_text(
+                _json.dumps({"flags": existing}, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
+            tmp.replace(qf_path)
+        except Exception as e:  # noqa: BLE001 - 登记失败不阻断写章，degrade 留痕
+            degrade("agentic_write.gate_skipped_log", "gate_skipped 登记落盘失败", e)
 
     def _llm_quality_gate(self, text: str, ctx: Any) -> tuple[bool, dict[str, Any]]:
         wi = ctx["world_info"]
@@ -670,6 +745,56 @@ class AgenticWriteWorkflow:
             if _cwarn:
                 _hygiene_warn.extend(_cwarn)  # 与文体卫生 warning 同路透出
 
+        # ---- 伏笔回收写时验证（2026-09-12 风险 6，窄口径防误杀）----
+        # 仅当本章被分配**强制**回收任务（结局阶段"本章强制回收 ≥1"或十位章
+        # "强制回收 ≥1 旧伏笔"）时启用：至少一条被列出的伏笔内容在正文中留下
+        # 痕迹（4 字窗口命中）；完全无痕迹 = 回收任务被无视 → blocking 打回。
+        # 非强制的"可回收"建议不拦（避免误杀）。
+        _fs_task = str(ctx.get("foreshadow_task") or "")
+        if ("强制回收" in _fs_task) or ("强制埋 ≥1" in _fs_task):
+            try:
+                _fs_file = Path(self.project_dir) / "foreshadows.md"
+                _fs_content: dict[str, str] = {}
+                if _fs_file.exists():
+                    for _line in _fs_file.read_text(encoding="utf-8").splitlines():
+                        if _line.startswith("| F-"):
+                            _cells = [c.strip() for c in _line.split("|")]
+                            if len(_cells) >= 4:
+                                _fs_content[_cells[1]] = _cells[2]
+                # 收集任务行中列出的候选回收 F-id（"可回收 F-xx" / "强制回收 ≥1"）
+                _cand_ids = re.findall(r"F-\d+", _fs_task)
+                _has_evidence = False
+                for _fid in dict.fromkeys(_cand_ids):
+                    _content = _fs_content.get(_fid, "")
+                    # 4 字滑动窗口（剔除纯标点/数字窗口），任一命中即算有痕迹
+                    for _w in (_content[_k:_k + 4] for _k in range(len(_content) - 3)):
+                        if _w and re.search(r"[\u4e00-\u9fff]{3}", _w) and _w in cleaned:
+                            _has_evidence = True
+                            break
+                    if _has_evidence:
+                        break
+                if _cand_ids and not _has_evidence:
+                    return False, {
+                        "overall_pass": False,
+                        "rules": [],
+                        "issues": [
+                            {
+                                "rule_id": "foreshadow_recycle_missing",
+                                "severity": "blocking",
+                                "description": (
+                                    "本章被分配伏笔回收任务（强制回收 ≥1），但正文未出现"
+                                    f"任何候选伏笔（{'、'.join(dict.fromkeys(_cand_ids)[:5])}）"
+                                    "的内容痕迹。请把至少一条伏笔的回收写成**具体场景**"
+                                    "——有可观察的动作/事件/对话、至少 60 字，让读者"
+                                    "\"看见\"兑现；仅在内心独白里提及不算回收。"
+                                ),
+                            }
+                        ],
+                        "suggestions": "伏笔回收必须落在具体场景中；从候选列表选一条与本章情节最相关的，织入一个兑现场景。",
+                    }
+            except Exception as e:  # noqa: BLE001 - 伏笔验证异常不阻断（批末维度仍会评）
+                degrade("agentic_write.foreshadow_check", "伏笔回收验证失败，本轮跳过", e)
+
         check_prompt = pm.get("m5.quality_check").render_user(
             tone=wi["tone"],
             chapter_length=wi["chapter_length"],
@@ -707,12 +832,54 @@ class AgenticWriteWorkflow:
                 max_tokens=4096,
                 enable_thinking=False,
             )
-            report = parse_llm_json(resp)
-            passed = bool(report.get("overall_pass", True))
-        except Exception as e:  # noqa: BLE001 - 质检失败降级为通过，不阻断出章
-            degrade("agentic_write.quality_gate", "LLM 质检失败，降级为通过（本章未经质量门禁）", e)
-            report = {"overall_pass": True, "rules": [], "suggestions": "门禁解析失败，默认通过"}
-            passed = True
+            try:
+                report = parse_llm_json(resp)
+            except ValueError as e:
+                # fail-open 收口（2026-09-12 风险 3）：解析失败多为截断，可修复——
+                # 附错误详情重试一次（对齐 G4 约定）；仍失败才降级放行并写显性 flag。
+                try:
+                    resp = chat_utility(
+                        self.llm,
+                        messages=[
+                            {"role": "system", "content": pm.get("m5.quality_check").system},
+                            {"role": "user", "content": check_prompt
+                             + f"\n\n【上次质检输出解析失败原因，务必修正】"
+                               f"请只输出一个合法的 JSON 对象，不要包含 ```json 标记：\n{e}"},
+                        ],
+                        max_tokens=4096,
+                        enable_thinking=False,
+                    )
+                    report = parse_llm_json(resp)
+                except ValueError as e2:
+                    degrade(
+                        "agentic_write.quality_gate",
+                        "LLM 质检解析失败且带错重试仍失败，降级为通过（已登记 gate_skipped，"
+                        "本章未经质量门禁，批末体检查漏）",
+                        e2,
+                    )
+                    self._record_gate_skipped(ctx, f"九项质检解析失败：{e2}")
+                    report = {"overall_pass": True, "rules": [], "suggestions": "门禁解析失败，重试后降级通过"}
+        except Exception as e:  # noqa: BLE001 - 质检调用异常：重试一次后降级放行并显性登记
+            try:
+                resp = chat_utility(
+                    self.llm,
+                    messages=[
+                        {"role": "system", "content": pm.get("m5.quality_check").system},
+                        {"role": "user", "content": check_prompt},
+                    ],
+                    max_tokens=4096,
+                    enable_thinking=False,
+                )
+                report = parse_llm_json(resp)
+            except Exception as e2:  # noqa: BLE001
+                degrade(
+                    "agentic_write.quality_gate",
+                    "LLM 质检调用异常且重试仍失败，降级为通过（已登记 gate_skipped）",
+                    e2,
+                )
+                self._record_gate_skipped(ctx, f"九项质检调用异常：{e2}")
+                report = {"overall_pass": True, "rules": [], "suggestions": "门禁异常，重试后降级通过"}
+        passed = bool(report.get("overall_pass", True))
 
         # 文体卫生/登场连续性 warning 随报告透出（不阻断，供 Writer 复查与台账追溯）
         if _hygiene_warn:
@@ -754,13 +921,19 @@ class AgenticWriteWorkflow:
 
                 if getattr(self, "_golden_scorer", None) is None:
                     self._golden_scorer = ReaderAppealScorer(self.llm, self.console)
-                _gr = self._golden_scorer.score_chapter(cleaned)
-            except Exception as e:  # noqa: BLE001 - 评分器异常降级放行（G3），批末仍会把关
+                try:
+                    _gr = self._golden_scorer.score_chapter(cleaned)
+                except Exception as e:  # 评分异常重试一次（网络/截断多为瞬时）
+                    degrade("agentic_write.golden_gate_retry", "金三写时评分异常，重试一次", e, level=logging.DEBUG)
+                    _gr = self._golden_scorer.score_chapter(cleaned)
+            except Exception as e:  # noqa: BLE001 - 重试仍异常降级放行（G3），显性登记供批末查漏
                 degrade(
                     "agentic_write.golden_gate",
-                    "金三写时评分失败，本轮放行（批末金三门禁仍会把关）",
+                    "金三写时评分失败且重试仍失败，本轮放行（已登记 gate_skipped；"
+                    "批末金三门禁仍会把关）",
                     e,
                 )
+                self._record_gate_skipped(ctx, f"金三写时评分失败：{e}")
                 _gr = None
             if _gr is not None and _gr.llm_used:
                 _failing = [
@@ -976,16 +1149,41 @@ class AgenticWriteWorkflow:
         text = self._run_deslop(text, ctx)
         # ---- deslop 复检（2026-09-12）：deslop 的 LLM 改写发生在九项质检之后、
         # 落盘之前，改写结果此前不过任何门禁——可能把字数改穿硬门下限（其内置
-        # 护栏只要求 ≥ 原文一半，远低于门禁下限）。确定性复检：字数跌破门禁
-        # 下限 → 弃用改写稿、回退质检通过的原文落盘（显性告警，不阻断）。----
+        # 护栏只要求 ≥ 原文一半，远低于门禁下限），也可能引入新的文体卫生缺陷。
+        # 确定性复检：① 字数跌破门禁下限；② hygiene 出现原文没有的 blocking 项
+        # → 弃用改写稿、回退质检通过的原文落盘（显性告警，不阻断）。----
         _deslop_len = _count_cjk(M5WriteChapterWorkflow._clean_chapter_body(text))
         _deslop_floor = resolve_min_cjk_words(
             int(ctx["world_info"].get("chapter_length") or 3000)
         )
+        _revert_reason = ""
         if _deslop_len < _deslop_floor:
+            _revert_reason = (
+                f"改写稿仅 {_deslop_len} 字（门禁下限 {_deslop_floor}）"
+            )
+        else:
+            try:
+                from agent.core.quality.text_hygiene import hygiene_issues, split_issues
+
+                _pre_block = {
+                    i.get("rule_id") for i in split_issues(hygiene_issues(
+                        M5WriteChapterWorkflow._clean_chapter_body(pre_deslop_text)
+                    ))[0]
+                }
+                _post_block = {
+                    i.get("rule_id") for i in split_issues(hygiene_issues(
+                        M5WriteChapterWorkflow._clean_chapter_body(text)
+                    ))[0]
+                }
+                _new_block = _post_block - _pre_block
+                if _new_block:
+                    _revert_reason = f"改写稿新引入文体卫生 blocking：{sorted(_new_block)}"
+            except Exception as e:  # noqa: BLE001 - 复检异常不回退，交批末体检
+                degrade("agentic_write.deslop_recheck", "deslop 卫生复检失败，跳过", e)
+        if _revert_reason:
             self.console.print(
-                f"[yellow]⚠ deslop 复检未过：改写稿仅 {_deslop_len} 字"
-                f"（门禁下限 {_deslop_floor}），回退为质检通过的原文落盘[/yellow]"
+                f"[yellow]⚠ deslop 复检未过：{_revert_reason}，"
+                "回退为质检通过的原文落盘[/yellow]"
             )
             text = pre_deslop_text
 
