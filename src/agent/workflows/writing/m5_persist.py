@@ -496,8 +496,13 @@ class M5PersistMixin:
                 store.save(threads)
 
             self._sync_setting_canon(chapter_num, body, ctx)
-        except Exception:  # noqa: BLE001 - 归档失败降级不阻断
-            logger.debug("[continuity] 章后归档失败，已降级（不影响本章产出）", exc_info=True)
+        except Exception as e:  # noqa: BLE001 - 归档失败降级不阻断
+            degrade(
+                "m5_persist.archive_chapter",
+                "章后归档失败（连续性账本/伏笔标记），不影响本章产出",
+                e,
+            )
+            logger.debug("[continuity] 章后归档失败，已降级", exc_info=True)
 
     def _sync_setting_canon(self, chapter_num: int, body: str, ctx: dict[str, Any]) -> None:
         """P0-1（2026-09-12）：设定回写通道——把本章涌现的定义性约束沉淀进台账并回写 world.md。
