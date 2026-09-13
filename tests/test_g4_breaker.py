@@ -78,7 +78,7 @@ def _set_tracer_totals(tokens_total: int) -> None:
     set_tracer(store)
 
 
-def _patch_round_usage(monkeypatch, *, tokens: int = 2_000_000) -> None:
+def _patch_round_usage(monkeypatch, *, tokens: int = 3_000_000) -> None:
     """模拟「本轮新增 tokens」——把某轮真实消耗注入预算判定链路。
 
     F-8（2026-09-07）起，预算判定口径是「本轮窗口用量」：
@@ -121,10 +121,10 @@ def test_check_budget_exceeds_token_limit(tmp_path: Path, monkeypatch) -> None:
     """Token 超限：已用 token > 基线 × margin → _check_budget 返回 True。"""
     p = _make_pipeline(tmp_path)
     p._start_time = time.monotonic()
-    # balanced 12 章基线 high = 640k；注入 2M 远超上限
+    # balanced 12 章基线 high = 2.16M；注入 3M 远超上限
     monkeypatch.setattr(
         "agent.core.llmops.trace.get_tracer",
-        lambda: SimpleNamespace(totals=lambda: {"tokens_total": 2_000_000}),
+        lambda: SimpleNamespace(totals=lambda: {"tokens_total": 3_000_000}),
     )
     assert p._check_budget("test_token") is True, "Token 超限应触发熔断（返回 True）"
 
@@ -133,7 +133,7 @@ def test_breaker_tripped_flag_set_on_token_exceed(tmp_path: Path, monkeypatch) -
     """Token 超限熔断：run() 写章前触发后 result.tripped==True（设计：trip 仅置 tripped）。"""
     p = _make_pipeline(tmp_path, skip_planning=True)
     p._start_time = time.monotonic()
-    _patch_round_usage(monkeypatch)  # 本轮烧掉 2M，远超 balanced 12 章上限 0.64M
+    _patch_round_usage(monkeypatch)  # 本轮烧掉 3M，远超 balanced 12 章上限 2.16M
     result = p.run()
     assert result.tripped is True, "Token 超限后 result.tripped 应为 True"
     assert "熔断" in result.block_reason, (
@@ -261,14 +261,14 @@ def test_breaker_budget_margin_allows_more(tmp_path: Path, monkeypatch) -> None:
 
 
 def test_breaker_budget_margin_1_triggers(tmp_path: Path, monkeypatch) -> None:
-    """budget_margin=1.0 时，1M token 超过 640k 上限触发熔断。"""
+    """budget_margin=1.0 时，3M token 超过 2.16M 上限触发熔断。"""
     p = _make_pipeline(tmp_path)
     p._start_time = time.monotonic()
     monkeypatch.setattr(
         "agent.core.llmops.trace.get_tracer",
-        lambda: SimpleNamespace(totals=lambda: {"tokens_total": 1_000_000}),
+        lambda: SimpleNamespace(totals=lambda: {"tokens_total": 3_000_000}),
     )
-    assert p._check_budget("test") is True, "budget_margin=1.0 时 1M token 应超限"
+    assert p._check_budget("test") is True, "budget_margin=1.0 时 3M token 应超限"
 
 
 # ============================================================

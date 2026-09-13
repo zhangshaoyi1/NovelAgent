@@ -16,15 +16,20 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-# 档位策略（§1.4）：以 300 章为基准的整本 token 消耗区间（输入+输出混合）。
+# 档位基线（2026-09-13 校准，优化登记 20260913_质检调用合并与预算基数修正）：
+# 以 300 章为基准的整本 token 消耗区间（输入+输出混合）。
+# 旧值系质检扩容前口径（单章 33k–53k）；灵荒薪传实测（balanced，含质检三连/
+# 修订轮）单章 ~150k tokens，合并质检后估 120k–180k。该基线同时决定写中熔断
+# 上限（_check_budget = baseline × 章数比例 × budget_margin），基数偏低会导致
+# 长篇中途预算耗尽被迫降档（灵荒薪传 20 章任务 1.1M 写到第 5 章耗尽实证）。
 TIER_BASELINE_TOKENS_300: dict[str, tuple[float, float]] = {
-    "economy": (6_000_000, 9_000_000),     # 经济档
-    "balanced": (10_000_000, 16_000_000),  # 均衡档（默认）
-    "quality": (18_000_000, 30_000_000),   # 质量档
+    "economy": (24_000_000, 36_000_000),   # 经济档
+    "balanced": (36_000_000, 54_000_000),  # 均衡档（默认）
+    "quality": (54_000_000, 84_000_000),   # 质量档
 }
 
-# 单章粗估（§1.4）：25k–35k tokens。
-CHAPTER_TOKENS: tuple[float, float] = (25_000, 35_000)
+# 单章粗估（与 balanced 基线同口径：300 章 × 单章 = 整本区间）。
+CHAPTER_TOKENS: tuple[float, float] = (120_000, 180_000)
 
 # 模型单价（每 1M token 的 USD 估算，占位；真实值在配置中覆盖）。
 DEFAULT_MODEL_PRICES: dict[str, dict[str, float]] = {

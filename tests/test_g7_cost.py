@@ -59,9 +59,9 @@ def test_build_cost_summary_totals(monkeypatch, tmp_path: Path) -> None:
     assert cost["failures"] == 1
     assert cost["avg_latency_ms"] == 123.45
     assert cost["cost"] == 0.0
-    # balanced 12 章基线：10M/300*12=400k low，16M/300*12=640k high
-    assert cost["baseline_low"] == pytest.approx(400_000)
-    assert cost["baseline_high"] == pytest.approx(640_000)
+    # balanced 12 章基线：36M/300*12=1.44M low，54M/300*12=2.16M high
+    assert cost["baseline_low"] == pytest.approx(1_440_000)
+    assert cost["baseline_high"] == pytest.approx(2_160_000)
     assert cost["alert"] is None, "1500 tokens 远低于基线，不应告警"
 
 
@@ -69,7 +69,7 @@ def test_build_cost_summary_alert(monkeypatch, tmp_path: Path) -> None:
     from agent.core.llmops.cost import build_cost_summary
 
     totals = {
-        "calls": 1, "tokens_in": 0, "tokens_out": 2_000_000, "tokens_total": 2_000_000,
+        "calls": 1, "tokens_in": 0, "tokens_out": 3_000_000, "tokens_total": 3_000_000,
         "failures": 0, "avg_latency_ms": 0.0, "cost": 0.0,
     }
     monkeypatch.setattr(
@@ -77,7 +77,7 @@ def test_build_cost_summary_alert(monkeypatch, tmp_path: Path) -> None:
         lambda: SimpleNamespace(totals=lambda: totals),
     )
     cost = build_cost_summary(str(tmp_path), "balanced", 12)
-    assert cost["alert"] is not None, "2M tokens 超过 640k 基线上限应告警"
+    assert cost["alert"] is not None, "3M tokens 超过 2.16M 基线上限应告警"
     assert "成本告警" in cost["alert"]
 
 
@@ -89,16 +89,16 @@ def test_build_cost_summary_chapters_default_from_files(tmp_path: Path) -> None:
               "failures": 0, "avg_latency_ms": 0.0, "cost": 0.0}
     with patch("agent.core.llmops.trace.get_tracer",
                lambda: SimpleNamespace(totals=lambda: totals)):
-        # 无章节 → 300 章基线：low=10M, high=16M
+        # 无章节 → 300 章基线：low=36M, high=54M
         cost = build_cost_summary(str(tmp_path), "balanced", None)
-        assert cost["baseline_low"] == pytest.approx(10_000_000)
-        assert cost["baseline_high"] == pytest.approx(16_000_000)
+        assert cost["baseline_low"] == pytest.approx(36_000_000)
+        assert cost["baseline_high"] == pytest.approx(54_000_000)
 
-        # 有 3 章 → 3 章基线：low=100k, high=160k
+        # 有 3 章 → 3 章基线：low=360k, high=540k
         d = make_project(tmp_path, n_chapters=3)
         cost3 = build_cost_summary(str(d), "balanced", None)
-        assert cost3["baseline_low"] == pytest.approx(100_000)
-        assert cost3["baseline_high"] == pytest.approx(160_000)
+        assert cost3["baseline_low"] == pytest.approx(360_000)
+        assert cost3["baseline_high"] == pytest.approx(540_000)
 
 
 # ============================================================
@@ -141,15 +141,15 @@ def test_build_cost_summary_exception_degraded(tmp_path: Path) -> None:
 def test_build_cost_summary_same_source_as_g4_breaker(tmp_path: Path, monkeypatch) -> None:
     from agent.core.llmops.cost import build_cost_summary
 
-    totals = {"calls": 3, "tokens_in": 700_000, "tokens_out": 0, "tokens_total": 700_000,
+    totals = {"calls": 3, "tokens_in": 3_000_000, "tokens_out": 0, "tokens_total": 3_000_000,
               "failures": 0, "avg_latency_ms": 1.0, "cost": 0.0}
     monkeypatch.setattr(
         "agent.core.llmops.trace.get_tracer",
         lambda: SimpleNamespace(totals=lambda: totals),
     )
     cost = build_cost_summary(str(tmp_path), "balanced", 12)
-    assert cost["tokens_total"] == 700_000
-    assert cost["alert"] is not None, "700k > 640k 基线上限应告警"
+    assert cost["tokens_total"] == 3_000_000
+    assert cost["alert"] is not None, "3M > 2.16M 基线上限应告警"
 
     p = AgenticPipelineWorkflow(
         project_dir=tmp_path, cost_tier="balanced", target_chapters=12,

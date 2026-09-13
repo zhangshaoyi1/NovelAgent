@@ -66,25 +66,25 @@ def test_trace_store_persist(tmp_path):
 def test_cost_model_baseline_scaling():
     cm = CostModel()
     low, high = cm.baseline_tokens("balanced", 300)
-    assert (low, high) == (10_000_000, 16_000_000)
+    assert (low, high) == (36_000_000, 54_000_000)
     # 缩放
     low2, high2 = cm.baseline_tokens("balanced", 600)
-    assert abs(low2 - 20_000_000) < 1 and abs(high2 - 32_000_000) < 1
+    assert abs(low2 - 72_000_000) < 1 and abs(high2 - 108_000_000) < 1
 
 
 def test_cost_model_alert():
     cm = CostModel()
     # 在基线上限内
     assert cm.alert_if_over(10_000_000, "balanced", 300) is None
-    # 超出上限（16M）
-    alert = cm.alert_if_over(20_000_000, "balanced", 300)
+    # 超出上限（54M）
+    alert = cm.alert_if_over(60_000_000, "balanced", 300)
     assert alert is not None and "成本告警" in alert
 
 
 def test_cost_model_estimate_chapter():
     cm = CostModel()
     est = cm.estimate_chapter()
-    assert est.tokens_low == 25_000 and est.tokens_high == 35_000
+    assert est.tokens_low == 120_000 and est.tokens_high == 180_000
 
 
 # ============================================================
