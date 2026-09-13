@@ -119,3 +119,60 @@ def test_gate_first_chapters_far_from_borderline_single_sample(monkeypatch, tmp_
     assert report.one_liner != "贴线二次采样复核：首评 80/复核 80，取逐维均值"
     assert len(report.one_liner) >= 0
     assert "复核" not in report.one_liner
+
+
+def test_gate_first_chapters_cached_borderline_gets_recheck(monkeypatch, tmp_path) -> None:
+    """缓存命中且贴线（59）→ 追加一次采样取均值并刷新缓存（灵荒薪传 59/60 缓存复用二次熔断实证）。"""
+    texts = ["第一章内容" * 200]
+    cached_report = {
+        "dimensions": {k: 59 for k in APPEAL_DIMENSIONS},
+        "total_score": 59,
+        "one_liner": "首评",
+        "suggestions": [],
+        "chapters_scored": 1,
+        "fallback": False,
+        "summary_lines": [],
+        "llm_used": True,
+        "source": "llm",
+    }
+    import agent.core.quality.scoring.reader_appeal as m
+
+    saved: dict = {}
+
+    monkeypatch.setattr(m, "list_chapter_files", lambda d: [Path("ch001.md")])
+    monkeypatch.setattr(m, "read_chapters_text", lambda d, side, n: texts)
+    monkeypatch.setattr(m, "_golden_fingerprint", lambda d, n: "fp-test")
+    monkeypatch.setattr(m, "_load_golden_cache", lambda d, fp: m.ReaderAppealReport(**{
+        "dimensions": cached_report["dimensions"], "total_score": 59,
+        "one_liner": "首评", "suggestions": [], "llm_used": True,
+        "source": "llm", "chapters_scored": 1, "fallback": False,
+    }))
+    monkeypatch.setattr(m, "_save_golden_cache",
+                        lambda d, fp, r: saved.update(total=r.total_score))
+    # 复核采样返回 65 → 均值 (59+65)/2 = 62
+    llm = _FakeLLM([_dims(_appeal(65))])
+    scorer = _make_scorer(monkeypatch, llm)
+    report = gate_first_chapters(scorer, tmp_path, 1, threshold=60)
+    assert report.total_score == 62
+    assert "复核" in report.one_liner
+    assert saved.get("total") == 62, "刷新后的缓存应写回复核均值"
+
+
+def test_gate_first_chapters_cached_decisive_kept(monkeypatch, tmp_path) -> None:
+    """缓存命中且远离贴线带（80）→ 维持缓存零成本，不追加采样。"""
+    texts = ["第一章内容" * 200]
+    import agent.core.quality.scoring.reader_appeal as m
+
+    monkeypatch.setattr(m, "list_chapter_files", lambda d: [Path("ch001.md")])
+    monkeypatch.setattr(m, "read_chapters_text", lambda d, side, n: texts)
+    monkeypatch.setattr(m, "_golden_fingerprint", lambda d, n: "fp-test")
+    monkeypatch.setattr(m, "_load_golden_cache", lambda d, fp: m.ReaderAppealReport(
+        dimensions={k: 80 for k in APPEAL_DIMENSIONS}, total_score=80,
+        one_liner="首评", suggestions=[], llm_used=True, source="llm",
+        chapters_scored=1, fallback=False,
+    ))
+    llm = _FakeLLM([])  # 若触发采样会因 responses 为空解析失败 → 用于断言未发生
+    scorer = _make_scorer(monkeypatch, llm)
+    report = gate_first_chapters(scorer, tmp_path, 1, threshold=60)
+    assert report.total_score == 80
+    assert "复核" not in report.one_liner

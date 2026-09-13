@@ -848,10 +848,6 @@ def gate_first_chapters(
             llm_used=False, error="no chapters dir", source="offline",
         )
     fingerprint = _golden_fingerprint(project_dir, n)
-    cached = _load_golden_cache(project_dir, fingerprint)
-    if cached is not None:
-        return cached
-
     texts = read_chapters_text(project_dir, side="first", n=n)
     joined = "\n\n".join(texts)
 
@@ -875,6 +871,60 @@ def gate_first_chapters(
             worst_total = min(worst_total, r.total_score)
         return worst, worst_total, any_online, []
 
+    def _borderline(total: int, online: bool) -> bool:
+        """综合分是否落在达标线 ±GOLDEN_BORDERLINE_BAND 的贴线带内（且在线）"""
+        return (
+            online
+            and (threshold - GOLDEN_BORDERLINE_BAND) <= total <= (threshold + GOLDEN_BORDERLINE_BAND)
+        )
+
+    def _avg_report(
+        dims1: dict[str, int], total1: int, sugg1: list[str],
+        chapters_scored: int, fallback: bool,
+    ) -> "ReaderAppealReport | None":
+        """追加一次采样并与 (dims1, total1) 取逐维均值；离线/异常返回 None（保留首评）。"""
+        try:
+            dims2, total2, online2, _ = _score_sample()
+            if not online2:
+                return None
+            merged = {
+                k: int(round((dims1.get(k, 0) + dims2.get(k, 0)) / 2))
+                for k in APPEAL_DIMENSIONS
+            }
+            new_total = ReaderAppealReport._compute_total(merged)
+            return ReaderAppealReport(
+                dimensions=merged,
+                total_score=new_total,
+                one_liner=f"贴线二次采样复核：首评 {total1}/复核 {total2}，取逐维均值",
+                suggestions=sugg1,
+                llm_used=True,
+                source="llm",
+                chapters_scored=chapters_scored,
+                fallback=fallback,
+            )
+        except Exception as e:  # noqa: BLE001 - 复核异常保留首评（复核是方差抑制，不是新门禁）
+            degrade(
+                "reader_appeal.gate_first_chapters.recheck",
+                "金三贴线二次采样复核失败，保留首评",
+                e,
+            )
+            return None
+
+    cached = _load_golden_cache(project_dir, fingerprint)
+    if cached is not None:
+        # 贴线缓存复核（优化登记 20260913 补丁，灵荒薪传 59/60 缓存复用二次熔断实证）：
+        # 缓存命中会短路与贴线复核叠加——一次贴线波动被缓存永久固化，每批重复熔断。
+        # 缓存分落在贴线带内时追加一次采样取均值并刷新缓存；远离贴线带维持缓存零成本。
+        if _borderline(cached.total_score, bool(cached.llm_used)):
+            _re = _avg_report(
+                dict(cached.dimensions), cached.total_score,
+                list(cached.suggestions), cached.chapters_scored, bool(cached.fallback),
+            )
+            if _re is not None:
+                _save_golden_cache(project_dir, fingerprint, _re)
+                return _re
+        return cached
+
     fallback = len(joined) > GOLDEN_JOIN_CHAR_LIMIT
     dims1, total1, online1, sugg1 = _score_sample()
     report = ReaderAppealReport(
@@ -892,36 +942,10 @@ def gate_first_chapters(
     # 首评落在达标线 ±GOLDEN_BORDERLINE_BAND 且在线时，再采一次取逐维均值——
     # 单样本 LLM 评分在 60 线附近方差足以"1 分之差"误熔断整本书
     # （灵荒薪传 59/60 熔断，同文本重评 65/64/74 实证）。复核失败保留首评不阻断。
-    if (
-        online1
-        and (threshold - GOLDEN_BORDERLINE_BAND) <= total1 <= (threshold + GOLDEN_BORDERLINE_BAND)
-    ):
-        try:
-            dims2, total2, online2, _ = _score_sample()
-            if online2:
-                merged = {
-                    k: int(round((dims1.get(k, 0) + dims2.get(k, 0)) / 2))
-                    for k in APPEAL_DIMENSIONS
-                }
-                new_total = ReaderAppealReport._compute_total(merged)
-                report = ReaderAppealReport(
-                    dimensions=merged,
-                    total_score=new_total,
-                    one_liner=(
-                        f"贴线二次采样复核：首评 {total1}/复核 {total2}，取逐维均值"
-                    ),
-                    suggestions=sugg1,
-                    llm_used=True,
-                    source="llm",
-                    chapters_scored=report.chapters_scored,
-                    fallback=fallback,
-                )
-        except Exception as e2:  # noqa: BLE001 - 复核异常保留首评（复核是方差抑制，不是新门禁）
-            degrade(
-                "reader_appeal.gate_first_chapters.recheck",
-                "金三贴线二次采样复核失败，保留首评",
-                e2,
-            )
+    if _borderline(total1, online1):
+        _re = _avg_report(dims1, total1, sugg1, report.chapters_scored, fallback)
+        if _re is not None:
+            report = _re
 
     _save_golden_cache(project_dir, fingerprint, report)
     return report
