@@ -286,14 +286,18 @@ class M5WriteChapterWorkflow(
                             "replaced": _l1_replaced,
                             "ts": _datetime.now(_tz.utc).isoformat(timespec="seconds"),
                         }, ensure_ascii=False) + chr(10))
-                except Exception:  # noqa: BLE001 - 留痕失败不影响拦截本身
-                    pass
+                except Exception as trace_e:  # noqa: BLE001 - 留痕失败不影响拦截，但必须显性
+                    from agent.core.infra.degrade import degrade
+
+                    degrade("m5.l1_trace", "L1 替换轨迹落盘失败，本批执行记录缺失", trace_e)
                 if getattr(self, "console", None) is not None:
                     self.console.print(
                         f"[cyan]L1 禁词硬拦截：{len(_l1_replaced)} 类替换（{_l1_replaced[:3]}…）[/cyan]"
                     )
-        except Exception:  # noqa: BLE001 - 硬拦截失败降级原文
-            pass
+        except Exception as hyg_e:  # noqa: BLE001 - 硬拦截失败降级原文，但必须显性
+            from agent.core.infra.degrade import degrade
+
+            degrade("m5.l1_block", "L1 禁词硬拦截执行失败，本章回退为仅 LLM 门禁", hyg_e)
         try:
             from agent.core.anti_ai.rewriter import DeslopRewriter
 
