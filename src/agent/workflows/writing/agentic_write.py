@@ -54,6 +54,7 @@ from agent.workflows.writing.m5_quality_gate import (
     GOLDEN_WRITE_GATE_FIRST_N,
     GOLDEN_WRITE_GATE_TOTAL,
 )
+from agent.workflows.writing.m5_text_hygiene import scan_hard_pollutions
 from agent.core.story.evidence_chain import EvidenceChain
 from agent.core.infra.prompt_helpers import format_open_debts, format_rag_context
 
@@ -642,6 +643,28 @@ class AgenticWriteWorkflow:
                 if golden_on
                 else "skip"
             )
+            # C 部分评分参照信息（2026-09-13）：与独立评分路径同口径注入设定真源/
+            # 前情成长/本章意图，杜绝合并路径金三裸评（character_arc/world_novelty
+            # 等上下文依赖维度被系统性低估）。
+            golden_context = "（无额外参照信息，按正文独立判断）"
+            if golden_on:
+                try:
+                    from agent.core.quality.scoring.reader_appeal import (
+                        build_score_chapter_kwargs_from_ctx,
+                    )
+
+                    _gk = build_score_chapter_kwargs_from_ctx(ctx)
+                    if _gk:
+                        golden_context = "\n".join(
+                            f"- 【{k}】{str(v)[:200]}" for k, v in _gk.items()
+                        )[:1200]
+                except Exception as e:  # noqa: BLE001 - 参照信息组装失败退化为裸评
+                    degrade(
+                        "agentic_write.golden_context",
+                        "金三评分参照信息组装失败，按正文独立判断",
+                        e,
+                    )
+                    golden_context = "（无额外参照信息，按正文独立判断）"
             prompt = pm.get("m5.quality_check_combined")
             resp = chat_utility(
                 self.llm,
@@ -671,6 +694,7 @@ class AgenticWriteWorkflow:
                             recheck_focus=self._lessons_focus(),
                             dimensions=dimensions_block or "skip",
                             golden_dims=golden_dims_block,
+                            golden_context=golden_context,
                             chapter_text=cleaned,
                         ),
                     },
@@ -1013,6 +1037,28 @@ class AgenticWriteWorkflow:
         else:
             report = self._nine_item_review(cleaned, ctx, wi, is_climax)
         passed = bool(report.get("overall_pass", True))
+
+        # ---- L2：生成残留硬污染硬关卡（2026-09-13，标题重复/AI指令泄漏/占位符/AI承接词）----
+        # 与 m5_quality_gate 同族确定性扫描；agentic 路径此前未接入，导致
+        # 「你别说，」「【下一章预告：…】」等残留漏网落盘（灵荒薪传 ch001/ch017 实证）。
+        _hard_poll = scan_hard_pollutions(cleaned)
+        if _hard_poll:
+            passed = False
+            report["overall_pass"] = False
+            report.setdefault("issues", []).append(
+                {
+                    "rule_id": "hard_pollution",
+                    "severity": "blocking",
+                    "description": "生成残留硬污染：" + "；".join(_hard_poll),
+                }
+            )
+            report["suggestions"] = (
+                str(report.get("suggestions", ""))
+                + "\n生成残留硬污染："
+                + "；".join(_hard_poll)
+                + "。删除上述残留（标题重复只保留落盘统一标题；【…】指令文本必须删除；"
+                "占位符/AI 承接词替换为自然叙事），保持情节/人物/设定不变，直接输出完整正文。"
+            )
 
         # 文体卫生/登场连续性 warning 随报告透出（不阻断，供 Writer 复查与台账追溯）
         if _hygiene_warn:
