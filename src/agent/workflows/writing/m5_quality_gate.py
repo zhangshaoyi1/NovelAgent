@@ -20,6 +20,7 @@ from agent.workflows.writing.m5_text_hygiene import (
     _ENGLISH_REPLACE_GUIDE,
     hard_replace_english,
     scan_english_contamination,
+    scan_hard_pollutions,
 )
 
 logger = logging.getLogger(__name__)
@@ -266,6 +267,35 @@ class M5QualityGateMixin:
                         "可适当精简冗余描写，使其更紧凑。"
                     )
 
+            # ---- L2：生成残留硬污染硬关卡（2026-09-13，标题重复/AI指令泄漏/占位符/AI承接词）----
+            # 灵荒薪传 ch001 实证：标题重复两遍 + 「【下一章预告：…】」指令混入正文，
+            # LLM 质检（钩子/爽点等情感类规则）无感，必须确定性拦截。
+            hard_poll = scan_hard_pollutions(text)
+            if hard_poll:
+                report["overall_pass"] = False
+                report.setdefault("rules", []).append(
+                    {
+                        "rule": "hard_pollution",
+                        "pass": False,
+                        "issue": "生成残留硬污染：" + "；".join(hard_poll),
+                    }
+                )
+                report["suggestions"] = (
+                    report.get("suggestions", "")
+                    + "\n生成残留硬污染："
+                    + "；".join(hard_poll)
+                    + "。删除上述残留（标题重复只保留落盘统一标题；【…】指令文本必须删除；"
+                    "占位符/AI 承接词替换为自然叙事），保持情节/人物/设定不变，直接输出完整正文。"
+                )
+                # 把明确清理指令塞进修订提示词，确保 LLM 知道删什么
+                quality_report_text = (
+                    quality_report_text
+                    + "\n\n# 硬性清理指令（必须执行，否则本章不通过）\n"
+                    + "；".join(hard_poll)
+                    + "。删除这些生成残留（标题重复只保留一个；【…】预告/大纲指令整段删除；"
+                    "占位符与 AI 承接词替换为自然叙事），保持情节/人物/对话完全不变，直接输出完整正文。"
+                )
+
             # ---- 金三写时门禁（第 1~N 章专属）：读者吸引力六维不达标不得落盘 ----
             if (
                 int(ctx.get("chapter_num", 0) or 0) <= GOLDEN_WRITE_GATE_FIRST_N
@@ -423,11 +453,25 @@ class M5QualityGateMixin:
         report.setdefault("golden_write_gate", {"applied": False})
         report.pop("golden_gate_instruction", None)  # 防止上一轮指令残留到本轮
         try:
-            from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
+            from agent.core.quality.scoring.reader_appeal import (
+                ReaderAppealScorer,
+                build_score_chapter_kwargs_from_ctx,
+                recheck_borderline,
+            )
 
             if getattr(self, "_golden_scorer", None) is None:
                 self._golden_scorer = ReaderAppealScorer(self.llm, self.console)
-            gr = self._golden_scorer.score_chapter(text)
+            # 信息校准（2026-09-13）：注入设定真源/前情/本章意图，杜绝裸评——
+            # 此前只传正文，character_arc/world_novelty 等上下文依赖型维度被系统性低估。
+            _g_kwargs = build_score_chapter_kwargs_from_ctx(ctx)
+            gr = self._golden_scorer.score_chapter(text, **_g_kwargs)
+            # 贴线带二次采样复核（方差抑制）：单样本在 60 线附近 1 分之差即可误熔断。
+            _re = recheck_borderline(
+                self._golden_scorer, text, gr,
+                threshold=GOLDEN_WRITE_GATE_TOTAL, band=5, kwargs=_g_kwargs,
+            )
+            if _re is not None:
+                gr = _re
         except Exception as e:  # noqa: BLE001 - 评分器异常降级放行（G3）
             from agent.core.infra.degrade import degrade
 

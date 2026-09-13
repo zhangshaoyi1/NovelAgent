@@ -1061,15 +1061,29 @@ class AgenticWriteWorkflow:
                 _gr = _combined_golden
             else:
                 try:
-                    from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
+                    from agent.core.quality.scoring.reader_appeal import (
+                        ReaderAppealScorer,
+                        build_score_chapter_kwargs_from_ctx,
+                        recheck_borderline,
+                    )
 
                     if getattr(self, "_golden_scorer", None) is None:
                         self._golden_scorer = ReaderAppealScorer(self.llm, self.console)
+                    # 信息校准（2026-09-13）：与 M5 写时门禁同口径注入设定真源/前情/本章意图。
+                    _g_kwargs = build_score_chapter_kwargs_from_ctx(ctx)
                     try:
-                        _gr = self._golden_scorer.score_chapter(cleaned)
+                        _gr = self._golden_scorer.score_chapter(cleaned, **_g_kwargs)
+                        _gr = recheck_borderline(
+                            self._golden_scorer, cleaned, _gr,
+                            threshold=GOLDEN_WRITE_GATE_TOTAL, band=5, kwargs=_g_kwargs,
+                        ) or _gr
                     except Exception as e:  # 评分异常重试一次（网络/截断多为瞬时）
                         degrade("agentic_write.golden_gate_retry", "金三写时评分异常，重试一次", e, level=logging.DEBUG)
-                        _gr = self._golden_scorer.score_chapter(cleaned)
+                        _gr = self._golden_scorer.score_chapter(cleaned, **_g_kwargs)
+                        _gr = recheck_borderline(
+                            self._golden_scorer, cleaned, _gr,
+                            threshold=GOLDEN_WRITE_GATE_TOTAL, band=5, kwargs=_g_kwargs,
+                        ) or _gr
                 except Exception as e:  # noqa: BLE001 - 重试仍异常降级放行（G3），显性登记供批末查漏
                     degrade(
                         "agentic_write.golden_gate",

@@ -550,8 +550,20 @@ class ReaderAppealScorer:
         title: str = "",
         genre: str = "",
         synopsis: str = "",
+        setting_canon: str = "",
+        character_growth: str = "",
+        prev_handoff: str = "",
+        chapter_intent: str = "",
     ) -> ReaderAppealReport:
-        """作者侧独立评分：迷爱看 6 维。LLM 不可用返回占位报告。"""
+        """作者侧独立评分：迷爱看 6 维。LLM 不可用返回占位报告。
+
+        信息校准（2026-09-13，灵荒薪传 59/60 裸评熔断复盘）：
+        此前仅传正文 + 300 字简介，`character_arc`/`world_novelty` 等
+        「纯上下文依赖型」维度被 LLM 凭单章文本自由裁量 → 系统性低估 +
+        大方差（同文本重评 59/65/64/74 实证）。现支持注入设定真源、
+        前情成长、上一章交接、本章细纲意图，并明示评分参照口径。
+        全部可选、缺省空串，向后兼容旧调用点。
+        """
         context = ""
         if title:
             context += f"【章节标题】{title}\n"
@@ -559,6 +571,29 @@ class ReaderAppealScorer:
             context += f"【题材】{genre}\n"
         if synopsis:
             context += f"【世界观简介】{synopsis[:300]}\n"
+        if setting_canon:
+            context += (
+                f"【设定真源】以下为既定设定（境界/金手指/角色状态），"
+                f"正文与之**冲突**才算设定问题；设定允许的内容不算新颖度低分。"
+                f"\n{setting_canon[:1200]}\n"
+            )
+        if character_growth:
+            context += (
+                f"【前情与角色成长】本章之前已发生的剧情与角色状态轨迹"
+                f"（判断人物弧光时以此为准，单章信息不足不得直接否定弧光）。"
+                f"\n{character_growth[:800]}\n"
+            )
+        if prev_handoff:
+            context += (
+                f"【上一章交接（最小事实集）】本章承接的权威状态。"
+                f"\n{prev_handoff[:500]}\n"
+            )
+        if chapter_intent:
+            context += (
+                f"【本章细纲意图】本章大纲设计的钩子/情节点目标"
+                f"（判断钩子强度/爽点密度时参照此意图评估达成度）。"
+                f"\n{chapter_intent[:600]}\n"
+            )
         user_prompt = (
             f"{context}\n【本章正文】\n{chapter_text[:10000]}"
         )
@@ -949,3 +984,142 @@ def gate_first_chapters(
 
     _save_golden_cache(project_dir, fingerprint, report)
     return report
+
+
+# ============================================================
+# 写时金三门禁共享辅助（2026-09-13，灵荒薪传 59/60 裸评熔断复盘）
+# 1) build_score_chapter_kwargs_from_ctx：从写章 ctx 组装评分上下文——
+#    解决写时门禁「裸评」问题（此前只传正文，character_arc/world_novelty
+#    等上下文依赖型维度被系统性低估）。
+# 2) recheck_borderline：贴线带二次采样取均值——单样本 LLM 评分在合格线
+#    附近方差足以「1 分之差」误熔断整本书（同文本重评 59/65/64/74 实证）。
+# ============================================================
+_SCORE_CTX_FIELDS = (
+    "setting_canon",       # P0-1 设定台账（境界/金手指/已知冲突）
+    "characters_info",     # 出场角色档案摘要
+    "character_constraints",  # 角色生死/时间线硬约束
+    "prev_chapter_summary",   # 上一章全文/头中尾采样
+    "continuity_projection",  # 连续性账本投影（事实清单）
+    "chapter_hooks",       # 细纲章节钩子设计
+    "plot_points",         # 细纲情节点序列
+    "route_main_title",    # 路线节点主分支标题
+    "route_main_result",   # 路线节点结果
+    "route_main_growth",   # 路线节点成长
+    "subline_goal",        # 支线目标
+)
+
+
+def build_score_chapter_kwargs_from_ctx(ctx: dict[str, Any] | None) -> dict[str, str]:
+    """从写章 ctx 提取评分器所需的上下文参数（缺省字段空串，绝不抛异常）。
+
+    供 m5_quality_gate._apply_golden_write_gate 与 agentic_write 写时门禁共用，
+    保证两条路径的评分上下文口径一致。ctx 为 None / 字段缺失 → 空串（等价裸评，
+    与旧行为一致，不阻断评分）。
+    """
+    ctx = ctx or {}
+    kwargs: dict[str, str] = {}
+
+    wi = ctx.get("world_info")
+    if isinstance(wi, dict):
+        kwargs["genre"] = str(wi.get("genre") or wi.get("genre_label") or "")[:60]
+        kwargs["synopsis"] = str(wi.get("synopsis") or "")[:300]
+
+    # 设定真源：写侧已有 setting_canon 台账（P0-1）；缺失时兜底拼接角色约束。
+    canon_parts: list[str] = []
+    sc = str(ctx.get("setting_canon") or "")
+    if sc:
+        canon_parts.append(sc)
+    cc = str(ctx.get("character_constraints") or "")
+    if cc:
+        canon_parts.append("【角色状态硬约束】" + cc)
+    kwargs["setting_canon"] = "\n".join(p for p in canon_parts if p)[:1200]
+
+    # 前情与角色成长：上一章全文/摘要 + 连续性账本投影 + 角色档案 + 路线成长
+    growth_parts: list[str] = []
+    prev = str(ctx.get("prev_chapter_summary") or "")
+    if prev:
+        growth_parts.append("【上一章】" + prev)
+    proj = str(ctx.get("continuity_projection") or "")
+    if proj:
+        growth_parts.append("【连续性账本投影】" + proj)
+    ci = str(ctx.get("characters_info") or "")
+    if ci and "无角色信息" not in ci:
+        growth_parts.append("【角色档案】" + ci)
+    rg = str(ctx.get("route_main_growth") or "")
+    if rg:
+        growth_parts.append(f"【主角成长目标】{rg}")
+    kwargs["character_growth"] = "\n\n".join(growth_parts)[:800]
+
+    # 上一章交接：m12 summary handoff 已并入 prev_chapter_summary，不单独取。
+
+    # 本章细纲意图：钩子设计 + 情节点序列 + 路线节点标题/结果 + 支线目标
+    intent_parts: list[str] = []
+    hooks = str(ctx.get("chapter_hooks") or "")
+    if hooks:
+        intent_parts.append("【本章钩子设计】" + hooks)
+    pts = str(ctx.get("plot_points") or "")
+    if pts:
+        intent_parts.append("【本章情节点】" + pts)
+    rt = str(ctx.get("route_main_title") or "")
+    rr = str(ctx.get("route_main_result") or "")
+    if rt or rr:
+        intent_parts.append(f"【路线节点】{rt}：{rr}")
+    sg = str(ctx.get("subline_goal") or "")
+    if sg:
+        intent_parts.append("【支线目标】" + sg)
+    kwargs["chapter_intent"] = "\n\n".join(intent_parts)[:600]
+
+    # 只保留有值的键（空串不参与拼装）
+    return {k: v for k, v in kwargs.items() if v}
+
+
+def recheck_borderline(
+    scorer: "ReaderAppealScorer",
+    chapter_text: str,
+    base_report: "ReaderAppealReport",
+    *,
+    threshold: int = APPEAL_PASS_LINE,
+    band: int = 5,
+    kwargs: dict[str, str] | None = None,
+) -> "ReaderAppealReport | None":
+    """贴线带二次采样复核：综合分落在 [threshold-band, threshold+band] 时再评一次取逐维均值。
+
+    单样本 LLM 评分在合格线附近方差足以「1 分之差」误熔断（灵荒薪传 59/60，
+    同文本重评 65/64/74 实证）。复核失败/离线 → 返回 None（调用方保留首评，
+    复核是方差抑制，不是新门禁，绝不引入二次熔断）。语义与批末
+    gate_first_chapters._avg_report 一致（逐维取整均值后重算综合分）。
+
+    Returns:
+        复核后的合并报告；非贴线/异常/离线返回 None（保留首评）。
+    """
+    if base_report is None or not base_report.llm_used:
+        return None
+    if not (threshold - band) <= base_report.total_score <= (threshold + band):
+        return None
+    kwargs = kwargs or {}
+    try:
+        r2 = scorer.score_chapter(chapter_text, **kwargs)
+    except Exception as e:  # noqa: BLE001 - 复核异常保留首评
+        degrade(
+            "reader_appeal.recheck_borderline",
+            "写时金三贴线二次采样复核失败，保留首评",
+            e,
+        )
+        return None
+    if not r2.llm_used:
+        return None
+    merged = {
+        k: int(round((base_report.dimensions.get(k, 0) + r2.dimensions.get(k, 0)) / 2))
+        for k in APPEAL_DIMENSIONS
+    }
+    new_total = ReaderAppealReport._compute_total(merged)
+    return ReaderAppealReport(
+        dimensions=merged,
+        total_score=new_total,
+        one_liner=f"贴线二次采样复核：首评 {base_report.total_score}/复核 {r2.total_score}，取逐维均值",
+        suggestions=list(base_report.suggestions),
+        llm_used=True,
+        source="llm",
+        chapters_scored=base_report.chapters_scored,
+        fallback=base_report.fallback,
+    )
