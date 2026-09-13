@@ -911,6 +911,10 @@ class AgenticWriteWorkflow:
                     else ""
                 )
             )[:800],
+            # T2（2026-09-13）：上一章原文尾部随质检透传——规则 13 跨章复述
+            # 对照的依据；纸条归属式矛盾此前对 gate 不可见（writer 看得到
+            # 上一章全文，审稿人看不到，复述错了也没人拦）。
+            prev_chapter_excerpt=(str(ctx.get("prev_chapter_summary") or "")[-1500:]),
             chapter_text=cleaned,
         )
         try:

@@ -116,6 +116,8 @@ class M5QualityGateMixin:
                     plot_points=ctx.get("plot_points", ""),
                     # P-9（提示词改进）：事实对照卡 = 连续性账本投影（≤800 字，规则 6 逐条对照）
                     fact_card=str(ctx.get("continuity_projection", "") or "")[:800],
+                    # T2（2026-09-13）：规则 13 跨章复述对照依据（与 agentic_write 同步透传）
+                    prev_chapter_excerpt=(str(ctx.get("prev_chapter_summary") or "")[-1500:]),
                     chapter_text=text,
                 )
 
