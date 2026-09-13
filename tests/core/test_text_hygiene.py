@@ -123,3 +123,35 @@ def test_clean_text_passes():
 def test_empty_and_short_safe():
     assert hygiene_issues("") == []
     assert split_issues(hygiene_issues("短文本")) == ([], [])
+
+
+# ---------------------------------------------------------------- 2026-09-13 灵荒炉火点评实证回填
+def test_filler_phrase_variants():
+    # ch020/021/022/024/030/033 残留："话说回来 / 你别说 / 说起来"
+    for filler in ("话说回来", "你别说", "说起来"):
+        text = f"{filler}，他想起那个小瓶。" + "正文填充。" * 60
+        _, warning = split_issues(hygiene_issues(text))
+        assert "filler_phrase" in _ids(warning), filler
+
+
+def test_idiom_gabuzhi_wrong():
+    # ch033 实证："声音戛不过止"（应为"戛然而止"）
+    text = "钟声戛不过止，众人面面相觑。" + "正文填充。" * 60
+    blocking, _ = split_issues(hygiene_issues(text))
+    assert any(
+        i["rule_id"] == "idiom_misuse" and "戛然而止" in i["description"]
+        for i in blocking
+    )
+
+
+def test_traditional_char_warning():
+    # ch025「一個」/ ch026「王執事」实证
+    text = "凌晨时分，他做了一個梦。" + "正文填充。" * 60
+    _, warning = split_issues(hygiene_issues(text))
+    assert "traditional_char" in _ids(warning)
+
+
+def test_traditional_char_clean_text_not_flagged():
+    # 简体常用字（里/后/云/面/发）不误报
+    text = "他从屋里走出来，面朝云海，风吹乱了头发。" + "正文填充。" * 60
+    assert "traditional_char" not in _ids(hygiene_issues(text))
