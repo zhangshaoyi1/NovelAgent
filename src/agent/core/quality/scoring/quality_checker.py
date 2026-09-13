@@ -328,10 +328,16 @@ class LLMBackedChecker:
             data = parse_llm_json(result)
         except Exception:  # noqa: BLE001 - 解析失败降级为空
             return []
+        return self.map_issues(llm_rules, data)
 
+    @staticmethod
+    def map_issues(
+        llm_rules: list["LLMQualityRule"], data: dict[str, Any]
+    ) -> list[Issue]:
+        """合并 JSON → 各维度 Issue（供 run_rules 与合并质检路径共用，映射语义一致）"""
         issues: list[Issue] = []
         for r in llm_rules:
-            dim = data.get(r.dimension)
+            dim = data.get(r.dimension) if isinstance(data, dict) else None
             if not isinstance(dim, dict):
                 continue
             if dim.get("pass", True) and not dim.get("blocking", False):

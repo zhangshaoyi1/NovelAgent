@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from agent.core.infra.prompt_manager import pm
 from agent.core.infra.degrade import degrade
+import json
 import logging
 import re
 from dataclasses import dataclass, field
@@ -604,6 +605,119 @@ class AgenticWriteWorkflow:
         except Exception as e:  # noqa: BLE001 - 登记失败不阻断写章，degrade 留痕
             degrade("agentic_write.gate_skipped_log", "gate_skipped 登记落盘失败", e)
 
+    # ------------------------------------------------------------------
+    # 合并质检（优化登记 20260913_质检调用合并与预算基数修正）
+    # ------------------------------------------------------------------
+    def _combined_quality_gate(
+        self, cleaned: str, ctx: Any, wi: dict[str, Any], is_climax: bool
+    ) -> tuple[dict[str, Any], list[dict[str, str]] | None, Any] | None:
+        """十三项审稿 + D 多维 + 金三六维合并为单次 LLM 调用（省 2 次全章正文输入）。
+
+        Returns:
+            (九项 report, D issues dict 列表或 None, 金三 ReaderAppealReport 或 None)；
+            任一环节失败/缺段返回 None，调用方回退独立调用路径（判定语义不变，
+            绝不因合并失败降级放行）。各段判定标准与独立模板逐字一致
+            （prompts/m5/quality_check_combined.md）。
+        """
+        if self.llm is None:
+            return None
+        strict = self.strict_review
+        golden_on = int(ctx.get("chapter_num", 0) or 0) <= GOLDEN_WRITE_GATE_FIRST_N
+        if not strict and not golden_on:
+            return None
+        try:
+            dimensions_block = ""
+            _rules: list = []
+            if strict:
+                from agent.core.quality.scoring import QualityChecker
+
+                _rules = QualityChecker(self.project_dir, self.llm).llm_rules
+                dimensions_block = "\n".join(
+                    f"- {r.dimension}（{r.name}）：{r.prompt_template}" for r in _rules
+                )
+            golden_dims_block = (
+                "六个维度（0-100）：hook_strength 开篇钩子 / payoff_density 爽点密度 / "
+                "immersion 代入感 / character_arc 人物弧光 / world_novelty 世界观新颖度 / "
+                "emotion_curve 情绪曲线"
+                if golden_on
+                else "skip"
+            )
+            prompt = pm.get("m5.quality_check_combined")
+            resp = chat_utility(
+                self.llm,
+                messages=[
+                    {"role": "system", "content": prompt.system},
+                    {
+                        "role": "user",
+                        "content": prompt.render_user(
+                            tone=wi["tone"],
+                            chapter_length=wi["chapter_length"],
+                            characters_fingerprint=ctx.get("characters_fingerprint", ""),
+                            hard_constraints=ctx.get("character_constraints", ""),
+                            plot_points=ctx.get("plot_points", ""),
+                            fact_card=(
+                                str(ctx.get("continuity_projection", "") or "")
+                                + (
+                                    "\n【设定台账】\n" + str(ctx.get("setting_canon", ""))
+                                    if ctx.get("setting_canon")
+                                    else ""
+                                )
+                            )[:800],
+                            prev_chapter_excerpt=(
+                                str(ctx.get("prev_chapter_summary") or "")[-1500:]
+                            ),
+                            is_climax="是" if is_climax else "否",
+                            stage_calibration=M5WriteChapterWorkflow._stage_calibration(ctx, 0),
+                            recheck_focus=self._lessons_focus(),
+                            dimensions=dimensions_block or "skip",
+                            golden_dims=golden_dims_block,
+                            chapter_text=cleaned,
+                        ),
+                    },
+                ],
+                # 三段合并输出（九项 JSON + D 四维 + 金三六维），4096 会截断走回退
+                max_tokens=8192,
+                enable_thinking=False,
+            )
+            data = parse_llm_json(resp)
+            nine = data.get("nine_item")
+            if not isinstance(nine, dict) or "overall_pass" not in nine:
+                return None
+            d_issues: list[dict[str, str]] | None = None
+            if strict:
+                d_raw = data.get("d_review")
+                if not isinstance(d_raw, dict):
+                    return None  # 缺段 → 整体回退，不缺斤短两
+                from agent.core.quality.scoring import LLMBackedChecker
+
+                d_issues = [
+                    {
+                        "rule_id": i.rule_id,
+                        "severity": i.severity.value,
+                        "description": i.description,
+                    }
+                    for i in LLMBackedChecker.map_issues(_rules, d_raw)
+                ]
+            golden_rep: Any = None
+            if golden_on:
+                g_raw = data.get("golden")
+                if not isinstance(g_raw, dict) or "dimensions" not in g_raw:
+                    return None
+                from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
+
+                if getattr(self, "_golden_scorer", None) is None:
+                    self._golden_scorer = ReaderAppealScorer(self.llm, self.console)
+                # 复用独立评分的同一解析/校验（缺维度/全 0 形状异常 → 抛错回退）
+                golden_rep = self._golden_scorer._parse_appeal(
+                    json.dumps(g_raw, ensure_ascii=False)
+                )
+                if not golden_rep.llm_used:
+                    return None
+            return nine, d_issues, golden_rep
+        except Exception as e:  # noqa: BLE001 - 合并路径任何失败回退独立调用（不降级放行）
+            degrade("agentic_write.combined_quality_gate", "合并质检失败，回退独立调用", e)
+            return None
+
     def _llm_quality_gate(self, text: str, ctx: Any) -> tuple[bool, dict[str, Any]]:
         wi = ctx["world_info"]
         is_climax = ctx.get("pressure_stage") == "高潮"
@@ -888,6 +1002,121 @@ class AgenticWriteWorkflow:
             except Exception as e:  # noqa: BLE001 - 伏笔验证异常不阻断（批末维度仍会评）
                 degrade("agentic_write.foreshadow_check", "伏笔回收验证失败，本轮跳过", e)
 
+        # ---- 合并质检优先（优化登记 20260913_质检调用合并与预算基数修正）----
+        # 十三项审稿 + D 多维 + 金三六维合并为单次调用，省 2 次全章正文输入；
+        # 合并路径任何失败/缺段回退下方独立调用路径，判定语义不变、绝不降级放行。
+        _combined = self._combined_quality_gate(cleaned, ctx, wi, is_climax)
+        _combined_d_issues: list[dict[str, str]] | None = None
+        _combined_golden: Any = None
+        if _combined is not None:
+            report, _combined_d_issues, _combined_golden = _combined
+        else:
+            report = self._nine_item_review(cleaned, ctx, wi, is_climax)
+        passed = bool(report.get("overall_pass", True))
+
+        # 文体卫生/登场连续性 warning 随报告透出（不阻断，供 Writer 复查与台账追溯）
+        if _hygiene_warn:
+            report["issues"] = list(report.get("issues") or []) + _hygiene_warn
+
+        # F-11：D 多维审查（爽点/OOC/连贯/追读力，strict_review 开启时执行；
+        # BLOCK 级视为未通过触发修订——与 M5 语义一致；失败降级不阻断九项质检）
+        if self.strict_review:
+            try:
+                from agent.core.quality.scoring import Severity
+
+                if _combined_d_issues is not None:
+                    # 合并质检已产出 D 维度结果，直接复用（不再单独调用）
+                    _d = _combined_d_issues
+                else:
+                    from agent.core.quality.scoring import LLMBackedChecker, QualityChecker
+
+                    _qc = QualityChecker(self.project_dir, self.llm)
+                    _checker = LLMBackedChecker(self.llm)
+                    _issues = _checker.run_rules(_qc.llm_rules, cleaned, ctx)
+                    _d = [
+                        {
+                            "rule_id": i.rule_id,
+                            "severity": i.severity.value,
+                            "description": i.description,
+                        }
+                        for i in _issues
+                    ]
+                report["d_issues"] = _d
+                report["d_blocking"] = any(
+                    i.get("severity") == Severity.BLOCK.value for i in _d
+                )
+                if report["d_blocking"]:
+                    passed = False
+                    report["overall_pass"] = False
+            except Exception as e:  # noqa: BLE001 - D 审查失败降级为空，不影响九项质检
+                degrade("agentic_write.d_review", "D 多维审查失败，降级为空", e)
+
+        # ---- 金三写时门禁（2026-09-12）：前三章吸引力六维不达标 → blocking，禁止落盘 ----
+        # 此前金三只在批末评估，写时九项审稿无吸引力维度，低质量开局照样兜底落盘，
+        # 批末金三评估必然熔断且回溯修不到开头（五灵破 19+7 次 escalated 实证）。
+        if int(ctx.get("chapter_num", 0) or 0) <= GOLDEN_WRITE_GATE_FIRST_N:
+            _gr = None
+            if _combined_golden is not None:
+                # 合并质检已产出金三六维评分，直接复用（不再单独调用）
+                _gr = _combined_golden
+            else:
+                try:
+                    from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
+
+                    if getattr(self, "_golden_scorer", None) is None:
+                        self._golden_scorer = ReaderAppealScorer(self.llm, self.console)
+                    try:
+                        _gr = self._golden_scorer.score_chapter(cleaned)
+                    except Exception as e:  # 评分异常重试一次（网络/截断多为瞬时）
+                        degrade("agentic_write.golden_gate_retry", "金三写时评分异常，重试一次", e, level=logging.DEBUG)
+                        _gr = self._golden_scorer.score_chapter(cleaned)
+                except Exception as e:  # noqa: BLE001 - 重试仍异常降级放行（G3），显性登记供批末查漏
+                    degrade(
+                        "agentic_write.golden_gate",
+                        "金三写时评分失败且重试仍失败，本轮放行（已登记 gate_skipped；"
+                        "批末金三门禁仍会把关）",
+                        e,
+                    )
+                    self._record_gate_skipped(ctx, f"金三写时评分失败：{e}")
+                    _gr = None
+            if _gr is not None and _gr.llm_used:
+                _failing = [
+                    f"{k}={v}（触底线 {GOLDEN_WRITE_GATE_FLOOR}）"
+                    for k, v in _gr.dimensions.items()
+                    if v < GOLDEN_WRITE_GATE_FLOOR
+                ]
+                if _gr.total_score < GOLDEN_WRITE_GATE_TOTAL or _failing:
+                    passed = False
+                    report["overall_pass"] = False
+                    report["golden_gate_failed"] = True
+                    report.setdefault("issues", []).append(
+                        {
+                            "rule_id": "golden_gate",
+                            "severity": "blocking",
+                            "description": (
+                                f"金三门禁未达标：读者吸引力综合分 {_gr.total_score}/"
+                                f"{GOLDEN_WRITE_GATE_TOTAL}"
+                                + (f"；触底维度：{'、'.join(_failing)}" if _failing else "")
+                                + "。本章为开篇前三章，不达标不得落盘。"
+                                "定向强化：世界观新颖度低→给设定独特记忆点/代价/异象；"
+                                "人物弧光弱→给主角一次主动选择或小胜利，而非纯被动；"
+                                "爽点密度低→压缩压抑段、提前兑现一个具体爽点节拍；"
+                                "情绪曲线平→制造明显起伏；代入感弱→收紧视角、增加可感细节；"
+                                "钩子弱→章末悬念更具体。保持情节/人物/设定不变，只提升写法。"
+                            ),
+                        }
+                    )
+                    report["suggestions"] = (
+                        str(report.get("suggestions", ""))
+                        + "\n金三门禁："
+                        + ("；".join(_gr.suggestions[:3]) if _gr.suggestions else "见触底维度")
+                    )
+        return passed, report
+
+    def _nine_item_review(
+        self, cleaned: str, ctx: Any, wi: dict[str, Any], is_climax: bool
+    ) -> dict[str, Any]:
+        """十三项审稿独立调用路径（合并质检失败时的兜底；逻辑与历史版本逐字一致）"""
         check_prompt = pm.get("m5.quality_check").render_user(
             tone=wi["tone"],
             chapter_length=wi["chapter_length"],
@@ -976,95 +1205,7 @@ class AgenticWriteWorkflow:
                 )
                 self._record_gate_skipped(ctx, f"九项质检调用异常：{e2}")
                 report = {"overall_pass": True, "rules": [], "suggestions": "门禁异常，重试后降级通过"}
-        passed = bool(report.get("overall_pass", True))
-
-        # 文体卫生/登场连续性 warning 随报告透出（不阻断，供 Writer 复查与台账追溯）
-        if _hygiene_warn:
-            report["issues"] = list(report.get("issues") or []) + _hygiene_warn
-
-        # F-11：D 多维审查（爽点/OOC/连贯/追读力，strict_review 开启时执行；
-        # BLOCK 级视为未通过触发修订——与 M5 语义一致；失败降级不阻断九项质检）
-        if self.strict_review:
-            try:
-                from agent.core.quality.scoring import LLMBackedChecker, QualityChecker, Severity
-
-                _qc = QualityChecker(self.project_dir, self.llm)
-                _checker = LLMBackedChecker(self.llm)
-                _issues = _checker.run_rules(_qc.llm_rules, cleaned, ctx)
-                _d = [
-                    {
-                        "rule_id": i.rule_id,
-                        "severity": i.severity.value,
-                        "description": i.description,
-                    }
-                    for i in _issues
-                ]
-                report["d_issues"] = _d
-                report["d_blocking"] = any(
-                    i.get("severity") == Severity.BLOCK.value for i in _d
-                )
-                if report["d_blocking"]:
-                    passed = False
-                    report["overall_pass"] = False
-            except Exception as e:  # noqa: BLE001 - D 审查失败降级为空，不影响九项质检
-                degrade("agentic_write.d_review", "D 多维审查失败，降级为空", e)
-
-        # ---- 金三写时门禁（2026-09-12）：前三章吸引力六维不达标 → blocking，禁止落盘 ----
-        # 此前金三只在批末评估，写时九项审稿无吸引力维度，低质量开局照样兜底落盘，
-        # 批末金三评估必然熔断且回溯修不到开头（五灵破 19+7 次 escalated 实证）。
-        if int(ctx.get("chapter_num", 0) or 0) <= GOLDEN_WRITE_GATE_FIRST_N:
-            try:
-                from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
-
-                if getattr(self, "_golden_scorer", None) is None:
-                    self._golden_scorer = ReaderAppealScorer(self.llm, self.console)
-                try:
-                    _gr = self._golden_scorer.score_chapter(cleaned)
-                except Exception as e:  # 评分异常重试一次（网络/截断多为瞬时）
-                    degrade("agentic_write.golden_gate_retry", "金三写时评分异常，重试一次", e, level=logging.DEBUG)
-                    _gr = self._golden_scorer.score_chapter(cleaned)
-            except Exception as e:  # noqa: BLE001 - 重试仍异常降级放行（G3），显性登记供批末查漏
-                degrade(
-                    "agentic_write.golden_gate",
-                    "金三写时评分失败且重试仍失败，本轮放行（已登记 gate_skipped；"
-                    "批末金三门禁仍会把关）",
-                    e,
-                )
-                self._record_gate_skipped(ctx, f"金三写时评分失败：{e}")
-                _gr = None
-            if _gr is not None and _gr.llm_used:
-                _failing = [
-                    f"{k}={v}（触底线 {GOLDEN_WRITE_GATE_FLOOR}）"
-                    for k, v in _gr.dimensions.items()
-                    if v < GOLDEN_WRITE_GATE_FLOOR
-                ]
-                if _gr.total_score < GOLDEN_WRITE_GATE_TOTAL or _failing:
-                    passed = False
-                    report["overall_pass"] = False
-                    report["golden_gate_failed"] = True
-                    report.setdefault("issues", []).append(
-                        {
-                            "rule_id": "golden_gate",
-                            "severity": "blocking",
-                            "description": (
-                                f"金三门禁未达标：读者吸引力综合分 {_gr.total_score}/"
-                                f"{GOLDEN_WRITE_GATE_TOTAL}"
-                                + (f"；触底维度：{'、'.join(_failing)}" if _failing else "")
-                                + "。本章为开篇前三章，不达标不得落盘。"
-                                "定向强化：世界观新颖度低→给设定独特记忆点/代价/异象；"
-                                "人物弧光弱→给主角一次主动选择或小胜利，而非纯被动；"
-                                "爽点密度低→压缩压抑段、提前兑现一个具体爽点节拍；"
-                                "情绪曲线平→制造明显起伏；代入感弱→收紧视角、增加可感细节；"
-                                "钩子弱→章末悬念更具体。保持情节/人物/设定不变，只提升写法。"
-                            ),
-                        }
-                    )
-                    report["suggestions"] = (
-                        str(report.get("suggestions", ""))
-                        + "\n金三门禁："
-                        + ("；".join(_gr.suggestions[:3]) if _gr.suggestions else "见触底维度")
-                    )
-        return passed, report
+        return report
 
     # ------------------------------------------------------------------
     # 主入口
