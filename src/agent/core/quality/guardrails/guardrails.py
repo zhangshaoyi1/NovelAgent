@@ -103,6 +103,14 @@ _META_LEAK_RE = re.compile(
     r"|本章原文字数|扩写了.{0,20}场景"
 )
 
+# ---- G14 结构层（2026-09-13 类级升级）：章末结构化清单块 ----
+# 词表只覆盖已知措辞；编号/要点清单是元信息的结构指纹，与措辞无关。
+# 阈值偏保守（≥3 行）防误杀：叙事正文偶见的"其一…其二…"不用行首编号格式。
+_META_LEAK_TAIL_LINES = 12
+_META_LEAK_LIST_MIN_LINES = 3
+_NUMBERED_LIST_RE = re.compile(r"^\d{1,2}[.、）)]\s*\S")
+_BULLET_LIST_RE = re.compile(r"^(?:[-*•]|-\s*\*\*)\s*\S")
+
 # ---- P2（竞品优化方案 2.2）：第五类确定性检查——叙事越界（narrative_tell，对标 inkos
 # post-write-validator）。三类高置信 AI 腔/旁白模式，warn 级标红不阻断（防误杀，全禁
 # 是 inkos 的反面教训）；实际模式可经 .state/guardrails.json 覆盖。
@@ -610,6 +618,12 @@ class Guardrails:
     def _check_meta_leak(self, text: str) -> str | None:
         """写作元指令泄漏检测：章末悬念/章节钩子/内部章节号等指令被写入正文。
 
+        两层检测（2026-09-13 无灵 ch166/176/206/260 事故复盘后升级）：
+          1. 词表层：``_META_LEAK_RE``——已知泄漏短语/句式，命中即报；
+          2. 结构层（类级，词表追不上的变体兜底）：章末出现**结构化清单块**
+             （连续编号行 / 连续 Markdown 要点行）。小说正文以叙事段落组织，
+             章末挂编号/要点清单几乎必然是 LLM 的自查报告/扩写汇报/修订
+             尾注——与具体措辞无关，故能拦住词表外的未来变体。
         先剥离 YAML frontmatter（含 chapter/created_at 等非正文字段），仅扫正文。
         """
         body = re.sub(r"^---[\s\S]*?---", "", text, flags=re.MULTILINE)  # 去 frontmatter
@@ -618,6 +632,27 @@ class Guardrails:
             return (
                 f"检测到写作元指令泄漏：正文出现标记「{m.group(0)}」"
                 f"（章末悬念/钩子/内部章节号是 agent→LLM 的指令，不得写入交付正文）"
+            )
+        return self._check_tail_structured_list(body)
+
+    def _check_tail_structured_list(self, body: str) -> str | None:
+        """结构层：正文末尾的结构化清单块检测（与措辞无关的类级指纹）。"""
+        lines = [ln.strip() for ln in body.rstrip().splitlines() if ln.strip()]
+        if not lines:
+            return None
+        tail = lines[-_META_LEAK_TAIL_LINES:]
+        numbered = sum(1 for ln in tail if _NUMBERED_LIST_RE.match(ln))
+        bullets = sum(1 for ln in tail if _BULLET_LIST_RE.match(ln))
+        if numbered >= _META_LEAK_LIST_MIN_LINES:
+            return (
+                f"章末出现编号清单块（末 {_META_LEAK_TAIL_LINES} 行内 {numbered} 行编号列表）"
+                "——小说正文不应以编号清单收尾，疑似 LLM 自查报告/扩写汇报/修订"
+                "尾注混入交付正文（无灵 ch166/176/260 同类事故），请删除或改写。"
+            )
+        if bullets >= _META_LEAK_LIST_MIN_LINES:
+            return (
+                f"章末出现要点列表块（末 {_META_LEAK_TAIL_LINES} 行内 {bullets} 行要点列表）"
+                "——疑似 LLM 修改记录混入交付正文（无灵 ch206 同类事故），请删除或改写。"
             )
         return None
 

@@ -86,3 +86,26 @@ def test_meta_leak_clean_text_passes() -> None:
         "他在风中站了很久，直到天黑。",
     ):
         assert _META_LEAK_RE.search(s) is None, f"误报：{s}"
+
+
+def test_meta_leak_structural_tail_list() -> None:
+    # 2026-09-13 类级升级（T24）：词表外的措辞变体由结构层兜底——
+    # 章末编号/要点清单块是 LLM 自查报告的结构指纹，与措辞无关
+    g = Guardrails()
+    novel_variants = (
+        "正文。\n\n1. 开场画面重绘：以晨雾替代夜色\n2. 节奏调整：前段放缓后段收紧\n3. 章末张力：新增远处号角声",
+        "正文。\n\n- **氛围强化**：在铁山冲锋段补充沙尘细节\n- **战斗收束**：删减冗余招式描写\n- **伏笔埋设**：战后陆渊掌纹异变",
+    )
+    for s in novel_variants:
+        assert g._check_meta_leak(s) is not None, f"结构层漏检：{s[:30]}"
+
+
+def test_meta_leak_structural_clean_narrative_passes() -> None:
+    g = Guardrails()
+    for s in (
+        # 对白里的"第一/第二/第三"不是行首编号清单
+        "「第一，守阵；第二，断粮；第三，等援。」林凡说。\n众人领命而去。",
+        # 行首数字但是叙事（非清单块）
+        "3个时辰后，天黑了。\n风停了。",
+    ):
+        assert g._check_meta_leak(s) is None, f"结构层误报：{s[:30]}"
