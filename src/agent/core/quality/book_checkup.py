@@ -514,6 +514,145 @@ def check_entity_drift(
     }
 
 
+# ---------------------------------------------------------------------------
+# 指标 9/10：人名漂移（T1 离线子集二，2026-09-13 灵荒炉火点评实证）
+# 案例细节：楚寒烟的师父前半书叫「沈长风」（characters/ 已注册），ch031 起
+# 同一人物无任何交代地变成「沈清舟」——注册角色绝迹 + 同姓新名接棒，是
+# 改名漂移的确定性指纹（rename handoff）；另有大量 recurring 配角从未注册
+# （周长老/王执事/苏清雪/赵铁/孙小豆），对话归属语是高置信人名信号。
+# 局限（显性声明）：归属语/姓氏窗均为窄口径，漏检可能，但报出即可信。
+# ---------------------------------------------------------------------------
+_ATTR_VERB_RE = re.compile(
+    r"(?:说道|说[：:，。」]|开口[道说]?|问道|冷笑[道]?|低声道|沉声道|喝道|笑道"
+    r"|叹道|答道|喃喃|追问|喊道|骂道|嘀咕)"
+)
+#: 说话人候选尾字/内含字噪声（副词化动词尾、代词等）
+_SPEAKER_TAIL_NOISE = set("声地然于着了续是再别想要去来过得头")
+_SPEAKER_CONTAIN_NOISE = set("你别是否或者虽然居然竟然既然")
+_SPEAKER_GENERIC = frozenset(
+    {"老者", "年轻人", "执事", "黑衣人", "黑袍人", "灰袍人", "黑影", "那人",
+     "有人", "他们", "她们", "众人", "长老", "管事", "少女", "男子", "女子",
+     "少年", "老人", "孩子", "中年", "青年", "自己", "个声音", "的声音",
+     "弟子", "散修", "修士", "太监", "宫女"}
+)
+
+
+def _iter_chapter_bodies(chapters: list[dict[str, Any]]):
+    """yield (chapter_no, body)。"""
+    for c in chapters:
+        yield c["chapter"], c["body"]
+
+
+def check_rename_drift(
+    project_dir: Path, chapters: list[dict[str, Any]], min_chapters: int = 3
+) -> dict[str, Any]:
+    """指标 9：改名漂移——注册角色绝迹后同姓新名接棒（rename handoff）。
+
+    对每个注册角色 R（姓 = 首字），扫描正文「姓+1~2 字」且 ≠ R 的 token：
+    若该 token 覆盖 ≥min_chapters 章且其首章晚于 R 的末章（-2 宽限），
+    判定疑似中途改名。右边界约束（token 后紧跟标点/的/说/道等）压制
+    「林凡站」式名动粘连。
+    """
+    chars_dir = project_dir / "characters"
+    registered = [p.stem for p in chars_dir.glob("*.md")] if chars_dir.is_dir() else []
+    canon = _load_org_canon(project_dir)
+    #: 称谓词：token 含这些字是头衔/称呼（"沈师父/沈执事"），不是名字漂移
+    _APPELLATION = "长老执事师父师尊师兄师姐师叔师伯公子姑娘兄弟大哥大姐先生大人夫人小姐掌柜管事阁下大人老"
+    _RIGHT_BOUND = (
+        r"(?=[$，。！？；：、""''\s]|$|的|说|道|在|也|都|是|和|与|没|不|却|便)"
+    )
+    suspects: list[dict[str, Any]] = []
+    for reg_name in registered:
+        if len(reg_name) < 2:
+            continue
+        surname = reg_name[0]
+        # R 的逐章出现（含正文任意位置）
+        present = {ch: bool(reg_name in body) for ch, body in _iter_chapter_bodies(chapters)}
+        chapters_with_r = [ch for ch, ok in present.items() if ok]
+        if not chapters_with_r:
+            continue
+        last_r = max(chapters_with_r)
+        # 同姓候选 token（右边界约束）
+        token_chapters: dict[str, set[int]] = {}
+        for ch, body in _iter_chapter_bodies(chapters):
+            for m in re.finditer(surname + r"[\u4e00-\u9fa5]{1,2}" + _RIGHT_BOUND, body):
+                token = m.group(0)
+                if token == reg_name:
+                    continue
+                if any(app in token for app in _APPELLATION):
+                    continue
+                token_chapters.setdefault(token, set()).add(ch)
+        for token, chs in token_chapters.items():
+            if len(chs) < min_chapters:
+                continue
+            first_t = min(chs)
+            if first_t > last_r - 2:  # 接棒：注册名绝迹后新名才出现
+                # 注意：不因别名已在 world.md 而抑制——灵荒炉火实证 world.md
+                # 可能被漂移本身污染（沈清舟已写入正典），两名并行正是要报的
+                suspects.append(
+                    {
+                        "registered": reg_name,
+                        "alias": token,
+                        "alias_chapters": sorted(chs)[:10],
+                        "last_registered_chapter": last_r,
+                        "alias_in_canon": token in canon,
+                        "detail": f"「{reg_name}」末见于 ch{last_r:03d}，「{token}」自 ch{first_t:03d} 接棒出现 {len(chs)} 章——疑似中途改名未交代"
+                        + ("（⚠ 别名已渗入正典，正典与角色册两名并行）" if token in canon else ""),
+                    }
+                )
+    suspects.sort(key=lambda s: s["alias_chapters"][0])
+    return {
+        "metric": "rename_drift",
+        "label": "改名漂移",
+        "registered": len(registered),
+        "suspects": suspects,
+    }
+
+
+def check_speaker_registry(
+    project_dir: Path, chapters: list[dict[str, Any]], min_chapters: int = 2
+) -> dict[str, Any]:
+    """指标 10：未注册说话人——对话归属语抽取的 recurring 角色。
+
+    「……」X 说/道/开口 中的 X 是高置信人名信号（无需分词）。跨
+    ≥min_chapters 章出现却不在 characters/ 登记簿与正典中的说话人 =
+    配角漏登记（差评实证：周长老/王执事/苏清雪/赵铁/孙小豆）。
+    """
+    chars_dir = project_dir / "characters"
+    registered = {p.stem for p in chars_dir.glob("*.md")} if chars_dir.is_dir() else set()
+    canon = _load_org_canon(project_dir)
+    # 正典中出现过的归属名也算已知（relations 里的周长老等）
+    known = registered | set(
+        re.findall(r"[\u4e00-\u9fa5]{2,3}(?=" + _ATTR_VERB_RE.pattern + r")", canon)
+    )
+    speakers: dict[str, set[int]] = {}
+    for ch, body in _iter_chapter_bodies(chapters):
+        for m in re.finditer(r"([\u4e00-\u9fa5]{2,3})(?=" + _ATTR_VERB_RE.pattern + r")", body):
+            n = m.group(1)
+            while len(n) > 2 and n[0] in "着他她它那这或就还但和与跟对把被让等又便才只却都已然突倏随继接竟":
+                n = n[1:]
+            if len(n) < 2 or n in known or n in _SPEAKER_GENERIC:
+                continue
+            if n[-1] in _SPEAKER_TAIL_NOISE or any(z in n for z in _SPEAKER_CONTAIN_NOISE):
+                continue
+            speakers.setdefault(n, set()).add(ch)
+    unregistered = [
+        {
+            "speaker": n,
+            "chapters": sorted(c)[:10],
+            "detail": f"「{n}」在 {len(c)} 章有对话归属但未登记 characters/",
+        }
+        for n, c in sorted(speakers.items(), key=lambda x: -len(x[1]))
+        if len(c) >= min_chapters
+    ]
+    return {
+        "metric": "speaker_registry",
+        "label": "未注册说话人",
+        "registered": len(registered),
+        "unregistered": unregistered,
+    }
+
+
 def run_book_checkup(
     project_dir: Path,
     *,
@@ -544,6 +683,8 @@ def run_book_checkup(
         check_ending_hooks(chapters, hook_similarity),
         check_ending_cliche(chapters),
         check_entity_drift(project_dir, chapters),
+        check_rename_drift(project_dir, chapters),
+        check_speaker_registry(project_dir, chapters),
         check_word_count(chapters, min_chapter_chars),
     ]
 
@@ -595,6 +736,16 @@ def run_book_checkup(
                     "detail": f"「{v['entity']}」出现 {v['count']} 次（{','.join(v['chapters'][:6])}），不在 world/route/sublines 正典中",
                 }
                 for v in m["unknown"]
+            ]
+        elif m["metric"] == "rename_drift":
+            issues += [
+                {"metric": m["metric"], "detail": v["detail"]}
+                for v in m["suspects"]
+            ]
+        elif m["metric"] == "speaker_registry":
+            issues += [
+                {"metric": m["metric"], "detail": v["detail"]}
+                for v in m["unregistered"][:10]
             ]
         elif m["metric"] == "word_count":
             issues += [{"metric": m["metric"], "detail": f"ch{v['chapter']:03d} 正文 {v['chars']} 字，{v['detail']}"} for v in m["undersized"]]

@@ -218,3 +218,76 @@ def test_entity_drift_verb_contamination_suppressed_by_tail(tmp_path: Path) -> N
     report = run_book_checkup(tmp_path)
     ed = next(m for m in report["metrics"] if m["metric"] == "entity_drift")
     assert ed["unknown"] == [], f"动宾污染误报：{ed['unknown']}"
+
+
+def _make_character(tmp_path: Path, name: str) -> None:
+    (tmp_path / "characters" / f"{name}.md").write_text(
+        f"---\nname: \"{name}\"\nrole: \"support\"\n---\n\n# {name}\n", encoding="utf-8"
+    )
+
+
+def test_rename_drift_handoff_flagged(tmp_path: Path) -> None:
+    # 回归样本：灵荒炉火 沈长风(ch1-30)→沈清舟(ch31起) 无交代改名
+    _make_project(tmp_path, {i: "沈长风在授业。" * 100 for i in range(1, 6)})
+    _make_character(tmp_path, "沈长风")
+    # ch5 末注册名绝迹，ch6 起新名接棒
+    (tmp_path / "chapters" / "ch005.md").write_text(
+        "---\nchapter: 5\npressure_stage: 铺垫\n---\n\n" + "沈长风在授业。" * 100 + "结尾。",
+        encoding="utf-8",
+    )
+    for i in (6, 7, 8):
+        (tmp_path / "chapters" / f"ch00{i}.md").write_text(
+            f"---\nchapter: {i}\npressure_stage: 铺垫\n---\n\n" + "沈清舟没有说话。" * 100,
+            encoding="utf-8",
+        )
+    report = run_book_checkup(tmp_path)
+    rd = next(m for m in report["metrics"] if m["metric"] == "rename_drift")
+    assert any(s["registered"] == "沈长风" and s["alias"] == "沈清舟" for s in rd["suspects"])
+
+
+def test_rename_drift_appellation_not_flagged(tmp_path: Path) -> None:
+    # "沈师父/沈执事"是称谓不是改名
+    _make_project(tmp_path, {i: "沈长风在授业。沈师父点头。" * 100 for i in range(1, 6)})
+    _make_character(tmp_path, "沈长风")
+    for i in (6, 7, 8):
+        (tmp_path / "chapters" / f"ch00{i}.md").write_text(
+            f"---\nchapter: {i}\npressure_stage: 铺垫\n---\n\n" + "沈执事来了。" * 100,
+            encoding="utf-8",
+        )
+    report = run_book_checkup(tmp_path)
+    rd = next(m for m in report["metrics"] if m["metric"] == "rename_drift")
+    assert rd["suspects"] == []
+
+
+def test_rename_drift_alias_in_canon_still_flagged(tmp_path: Path) -> None:
+    # 灵荒炉火实证：world.md 已被漂移污染（沈清舟写入正典），不得据此抑制
+    _make_project(tmp_path, {i: "沈长风在授业。" * 100 for i in range(1, 6)})
+    _make_character(tmp_path, "沈长风")
+    (tmp_path / "world.md").write_text(
+        "---\nfrozen_fields: []\n---\n\n# 世界观\n\n沈清舟为执事堂七号执事。\n",
+        encoding="utf-8",
+    )
+    for i in (6, 7, 8):
+        (tmp_path / "chapters" / f"ch00{i}.md").write_text(
+            f"---\nchapter: {i}\npressure_stage: 铺垫\n---\n\n" + "沈清舟没有说话。" * 100,
+            encoding="utf-8",
+        )
+    report = run_book_checkup(tmp_path)
+    rd = next(m for m in report["metrics"] if m["metric"] == "rename_drift")
+    assert any(s["alias"] == "沈清舟" and s["alias_in_canon"] for s in rd["suspects"])
+
+
+def test_speaker_registry_flags_recurring_unregistered(tmp_path: Path) -> None:
+    # 回归样本：周长老/王执事 recurring 却从未注册
+    _make_project(tmp_path, {i: "「来了。」周长老说道。王执事喝道：\"站住！\"" * 60 for i in range(1, 5)})
+    report = run_book_checkup(tmp_path)
+    sr = next(m for m in report["metrics"] if m["metric"] == "speaker_registry")
+    names = {u["speaker"] for u in sr["unregistered"]}
+    assert {"周长老", "王执事"} <= names
+
+
+def test_speaker_registry_registered_passes(tmp_path: Path) -> None:
+    _make_project(tmp_path, {i: "「来了。」石莽说道。" * 100 for i in range(1, 4)})
+    report = run_book_checkup(tmp_path)
+    sr = next(m for m in report["metrics"] if m["metric"] == "speaker_registry")
+    assert sr["unregistered"] == []

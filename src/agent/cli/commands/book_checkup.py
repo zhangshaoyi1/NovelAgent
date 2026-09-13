@@ -123,6 +123,18 @@ def _render(result: dict) -> None:
                 f"正典外实体 {len(m['unknown'])} 个"
                 + (f"（{', '.join(u['entity'] for u in m['unknown'][:4])}）" if m["unknown"] else ""),
             )
+        elif m["metric"] == "rename_drift":
+            table.add_row(
+                m["label"],
+                f"疑似改名 {len(m['suspects'])} 处"
+                + (f"（{', '.join(s['registered'] + '→' + s['alias'] for s in m['suspects'][:3])}）" if m["suspects"] else ""),
+            )
+        elif m["metric"] == "speaker_registry":
+            table.add_row(
+                m["label"],
+                f"未登记 recurring 说话人 {len(m['unregistered'])} 个"
+                + (f"（{', '.join(u['speaker'] for u in m['unregistered'][:4])}）" if m["unregistered"] else ""),
+            )
         elif m["metric"] == "word_count":
             if m.get("count"):
                 table.add_row(
