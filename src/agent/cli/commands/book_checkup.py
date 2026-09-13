@@ -117,6 +117,12 @@ def _render(result: dict) -> None:
             table.add_row(
                 m["label"], f"套话命中 {m['hit_count']} 章（末 {m['tail_lines']} 行窗口）"
             )
+        elif m["metric"] == "entity_drift":
+            table.add_row(
+                m["label"],
+                f"正典外实体 {len(m['unknown'])} 个"
+                + (f"（{', '.join(u['entity'] for u in m['unknown'][:4])}）" if m["unknown"] else ""),
+            )
         elif m["metric"] == "word_count":
             if m.get("count"):
                 table.add_row(

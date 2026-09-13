@@ -14,6 +14,7 @@
   5. 章末钩子句式重复度（近重复结尾聚类 = 读者可归纳的公式化钩子）
   6. 章节字数分布（抖动与超短章）
   7. 章尾套话短语命中（风暴预告/倒计时式固定清单，与 5 互补抓措辞变体）
+  8. 实体漂移（宗派/组织名出现于正典之外——灵渊宗/玄天宗类硬伤）
 
 只读：绝不修改任何项目文件。失败显性化——单项指标解析失败会记入
 ``degraded``，不会被解读为通过。
@@ -410,6 +411,109 @@ def check_ending_cliche(chapters: list[dict[str, Any]]) -> dict[str, Any]:
     }
 
 
+# ---------------------------------------------------------------------------
+# 指标 8：实体漂移（T1 的全书确定性子集）
+# 2026-09-13 灵荒炉火《全维度点评》实证：ch031/032 连续冒出设定外宗门
+# 「灵渊宗」6 处（一句内与天剑宗并存），沈长风中途改名沈清舟——
+# 单章事实卡查不到（实体不在登记簿，无"对照物"），必须全书视野反查。
+# 本指标只做高置信子集：宗派/组织名（X宗/X殿/X盟）。
+#
+# 算法（对称尾式抑制，2026-09-13 在三本小说上实测调参）：
+#   1. 对正典（world/route/foreshadows/relations/sublines，刻意不含
+#      characters/——角色档案可能被漂移本身污染）做同样的后缀锚定提取，
+#      并把每个命中形式的所有后缀锚定短尾并入已知集（"与仙宗"贡献
+#      "仙宗"，从而抑制正文"告诉仙宗/冲向仙宗"这类动宾污染）；
+#   2. 正文候选用同一正则提取，经首字噪声剥离（"于天剑宗"→"天剑宗"）、
+#      名部污染检查（"藏经阁偏殿"/"简和卷宗"）、泛称表过滤后，
+#      任一尾式命中已知集即抑制，否则计数；
+#   3. 同一候选出现 ≥3 章才上报（切句噪声）。
+# 局限（显性声明）：人名改名漂移（沈清舟类）无法用后缀法覆盖，待 T1 完整版。
+# ---------------------------------------------------------------------------
+_ORG_CAND_RE = re.compile(r"[\u4e00-\u9fa5]{1,3}(?:宗|殿|盟)")
+#: 实体名部（后缀前的字）出现这些字符即弃：后缀字重叠（"藏经阁偏殿"）或动宾/虚词污染（"简和卷宗"）
+_ORG_NAME_CONTAMINATION = set("宗殿盟阁府派教堂楼坊会门入出回离来去在是了之的和")
+#: 常见泛指词（非专名）
+_ORG_GENERIC = frozenset(
+    {"宗门", "本宗", "山门", "掌门", "魔宗", "正宗", "同门", "门派", "宗派",
+     "殿下", "宫殿", "殿后", "联盟", "盟友", "仙宗", "宗主", "外门", "内门",
+     "护宗", "大宗", "入宗", "凡骨"}
+)
+#: 候选首字噪声，逐字剥离（"于天剑宗"→"天剑宗"、"是青云宗"→"青云宗"）
+_ORG_LEADING_NOISE = set(
+    "一二几整全每了在去到从向把被和与跟或但就说等对着往回进出让个这那有没不"
+    "还又也都而便才刚正想看着走得地之他她它你谁的于即将欲份各诸众是最远近垂"
+)
+
+
+def _org_tail_forms(form: str) -> set[str]:
+    """后缀锚定短尾：'与仙宗' → {'与仙宗', '仙宗'}（含自身）。"""
+    return {form[i:] for i in range(len(form) - 1)}
+
+
+def _load_org_canon(project_dir: Path) -> str:
+    """汇总组织名正典来源文本（不含 characters/，防漂移自证）。"""
+    sources: list[Path] = [
+        project_dir / "world.md",
+        project_dir / "protagonist_route.md",
+        project_dir / "foreshadows.md",
+        project_dir / "relations" / "graph.md",
+        *sorted(project_dir.glob("sublines/*/subline.md")),
+    ]
+    return "".join(
+        p.read_text(encoding="utf-8", errors="replace") for p in sources if p.is_file()
+    )
+
+
+def check_entity_drift(
+    project_dir: Path, chapters: list[dict[str, Any]], min_count: int = 3
+) -> dict[str, Any]:
+    """指标 8：实体漂移——正文出现正典之外的宗派/组织名。
+
+    ``min_count`` 为同一候选的最低出现次数（<3 视为切句噪声）。已知集由
+    正典做对称尾式展开（见模块 docstring）；人名漂移不在本指标范围。
+    """
+    canon = _load_org_canon(project_dir)
+    known = set(_ORG_GENERIC)
+    for form in _ORG_CAND_RE.findall(canon):
+        known |= _org_tail_forms(form)
+
+    occurrences: dict[str, list[str]] = {}
+    for c in chapters:
+        for m in _ORG_CAND_RE.finditer(c["body"]):
+            w = m.group(0)
+            if len(w) < 3:  # 名部 1 字的短形（"仙宗"）由泛称表/尾式兜底
+                continue
+            core = w
+            while len(core) > 2 and core[0] in _ORG_LEADING_NOISE:
+                core = core[1:]
+            if len(core) < 3:  # 剥完只剩后缀 → 泛指
+                continue
+            name_part = core[:-1]
+            if any(ch in _ORG_NAME_CONTAMINATION for ch in name_part):
+                continue
+            if any(t in known for t in _org_tail_forms(core)):
+                continue
+            occurrences.setdefault(core, []).append(c["path"])
+
+    unknown: list[dict[str, Any]] = []
+    for core, files in occurrences.items():
+        if len(files) < min_count:
+            continue
+        unknown.append(
+            {
+                "entity": core,
+                "count": len(files),
+                "chapters": sorted(set(files))[:10],
+            }
+        )
+    unknown.sort(key=lambda x: -x["count"])
+    return {
+        "metric": "entity_drift",
+        "label": "实体漂移（宗派/组织）",
+        "unknown": unknown,
+    }
+
+
 def run_book_checkup(
     project_dir: Path,
     *,
@@ -439,6 +543,7 @@ def run_book_checkup(
         check_realm_progression(chapters),
         check_ending_hooks(chapters, hook_similarity),
         check_ending_cliche(chapters),
+        check_entity_drift(project_dir, chapters),
         check_word_count(chapters, min_chapter_chars),
     ]
 
@@ -483,6 +588,14 @@ def run_book_checkup(
                         "detail": f"{m['hit_count']}/{len(chapters)} 个章末命中套话短语清单（风暴预告/倒计时/才刚刚开始式）",
                     }
                 )
+        elif m["metric"] == "entity_drift":
+            issues += [
+                {
+                    "metric": m["metric"],
+                    "detail": f"「{v['entity']}」出现 {v['count']} 次（{','.join(v['chapters'][:6])}），不在 world/route/sublines 正典中",
+                }
+                for v in m["unknown"]
+            ]
         elif m["metric"] == "word_count":
             issues += [{"metric": m["metric"], "detail": f"ch{v['chapter']:03d} 正文 {v['chars']} 字，{v['detail']}"} for v in m["undersized"]]
 

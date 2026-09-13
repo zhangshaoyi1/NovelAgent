@@ -157,3 +157,64 @@ def test_meta_error_degrades_not_passes(tmp_path: Path) -> None:
     assert report["success"] is True
     assert report["degraded"], "缺 frontmatter 必须显性降级"
     assert report["passed"] is False, "降级不能被解读为通过"
+
+
+# ---------------------------------------------------------------- T1 子集：实体漂移
+def _make_canon(tmp_path: Path) -> None:
+    (tmp_path / "world.md").write_text(
+        "---\nfrozen_fields: []\n---\n\n# 世界观\n\n天剑宗是正道魁首，万魔殿为暗敌。\n",
+        encoding="utf-8",
+    )
+
+
+def test_entity_drift_flags_out_of_canon_org(tmp_path: Path) -> None:
+    # 回归样本：灵荒炉火 ch031/032 设定外宗门「灵渊宗」
+    _make_project(tmp_path, {i: "灵渊宗的弟子又出现了。" * 100 for i in range(1, 4)})
+    _make_canon(tmp_path)
+    report = run_book_checkup(tmp_path)
+    ed = next(m for m in report["metrics"] if m["metric"] == "entity_drift")
+    entities = [u["entity"] for u in ed["unknown"]]
+    assert "灵渊宗" in entities, "设定外宗门必须命中"
+
+
+def test_entity_drift_canon_org_not_flagged(tmp_path: Path) -> None:
+    _make_project(tmp_path, {i: "天剑宗的钟声响起，万魔殿在暗处窥伺。" * 100 for i in range(1, 4)})
+    _make_canon(tmp_path)
+    report = run_book_checkup(tmp_path)
+    ed = next(m for m in report["metrics"] if m["metric"] == "entity_drift")
+    assert ed["unknown"] == [], "正典实体不得误报"
+
+
+def test_entity_drift_noise_filtered(tmp_path: Path) -> None:
+    # 动宾污染（今夜入宗）/低频切句噪声/后缀字重叠（藏经阁偏殿）均不得命中
+    bodies = {
+        1: "众人今夜入宗。藏经阁偏殿着火了。一份卷宗摆在案上。" * 100,
+        2: "他们今夜入宗。藏经阁偏殿烧毁。简和卷宗散落一地。" * 100,
+        3: "约好今夜入宗。偏殿在烧。卷宗没有了。" * 100,
+    }
+    _make_project(tmp_path, bodies)
+    _make_canon(tmp_path)
+    report = run_book_checkup(tmp_path)
+    ed = next(m for m in report["metrics"] if m["metric"] == "entity_drift")
+    assert ed["unknown"] == [], f"噪声误报：{ed['unknown']}"
+
+
+def test_entity_drift_low_frequency_below_threshold(tmp_path: Path) -> None:
+    _make_project(tmp_path, {1: "灵渊宗出现了一次。", 2: "天剑宗日常。", 3: "天剑宗日常。"})
+    _make_canon(tmp_path)
+    report = run_book_checkup(tmp_path)
+    ed = next(m for m in report["metrics"] if m["metric"] == "entity_drift")
+    assert ed["unknown"] == [], "低于 min_count 的候选视为噪声"
+
+
+def test_entity_drift_verb_contamination_suppressed_by_tail(tmp_path: Path) -> None:
+    # "告诉万魔殿/冲向万魔殿"这类动宾污染由尾式抑制（万魔殿在正典），
+    # 这是 2026-09-13 五灵/无灵实测调参的关键回归
+    _make_project(
+        tmp_path,
+        {i: "他告诉万魔殿，又冲向万魔殿，最后归顺万魔殿。" * 100 for i in range(1, 4)},
+    )
+    _make_canon(tmp_path)
+    report = run_book_checkup(tmp_path)
+    ed = next(m for m in report["metrics"] if m["metric"] == "entity_drift")
+    assert ed["unknown"] == [], f"动宾污染误报：{ed['unknown']}"
