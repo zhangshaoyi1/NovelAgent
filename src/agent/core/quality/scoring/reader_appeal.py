@@ -43,6 +43,7 @@ from agent.client.gateway_adapter import (
     create_gateway,
 )
 from agent.core.infra.prompt_manager import pm
+from agent.core.infra.degrade import degrade
 from agent.core.quality.dimension_registry import clamp_value, safe_default_for
 from agent.core.quality.eval_evidence import EvalEvidence, build_evidence, build_degraded_evidence
 
@@ -133,6 +134,7 @@ APPEAL_LABELS: dict[str, str] = {     # 短中文标签（展示 + is_pass 失�
 
 # ---- G6：黄金三章门禁常量（主理人拍板 #3：复用 G5 阈值 60/40，可被 CLI 覆盖）----
 GOLDEN_PASS_LINE: int = 60          # 三章拼接综合分合格线（--golden-three-threshold 覆盖）
+GOLDEN_BORDERLINE_BAND: int = 5     # 贴线复核带宽：首评落在 threshold±5 触发二次采样（优化登记 20260913）
 GOLDEN_DIM_FLOOR: int = 40          # 单维触底线（--golden-three-floor 覆盖）
 GOLDEN_GATE_PREFIX: str = "golden_" # golden_* DimensionResult 名前缀
 GOLDEN_JOIN_CHAR_LIMIT: int = 10000 # 与 score_chapter 截断（行 315）对齐；超长 fallback 每章独立评分
@@ -576,7 +578,37 @@ class ReaderAppealScorer:
                 max_tokens=8192,
             )
             return self._parse_appeal(getattr(resp, "text", "") or "")
-        except Exception as e:  # noqa: BLE001 - LLM 不可达：降级占位报告
+        except Exception as e:  # noqa: BLE001 - 见下：区分形状异常与网络故障
+            # 形状异常（缺维度/不可解析/全 0，_parse_appeal 抛 ValueError）可修复：
+            # 附错误详情重试一次（对齐九项质检 fail-open 收口，优化登记
+            # 20260913_金三评分降级重试与贴线复核）。此前形状异常直接降级离线占位
+            # → 写时金三门禁短路放行，开头章免检落盘（灵荒薪传 ch003 实证）。
+            if isinstance(e, ValueError):
+                try:
+                    resp = _chat_with_eval_backoff(
+                        self.llm,
+                        messages=[
+                            {"role": "system", "content": pm.get("quality.reader_appeal").system},
+                            {"role": "user", "content": user_prompt
+                             + f"\n\n【上次评分输出解析失败原因，务必修正】{e}"
+                               "请只输出一个合法的 JSON 对象：必须包含全部六个维度键"
+                               "（hook_strength/payoff_density/immersion/character_arc/"
+                               "world_novelty/emotion_curve），不要包含 ```json 标记。"},
+                        ],
+                        dimension="appeal_six",
+                        console=self.console,
+                        temperature=0.3,
+                        max_tokens=8192,
+                    )
+                    return self._parse_appeal(getattr(resp, "text", "") or "")
+                except Exception as e2:  # noqa: BLE001 - 重试仍失败才降级（显性登记后走下方占位）
+                    degrade(
+                        "reader_appeal.score_chapter.retry",
+                        "迷爱看评分带错重试仍失败，降级离线占位（门禁短路放行）",
+                        e2,
+                    )
+                    e = e2
+            # 网络类故障（_chat_with_eval_backoff 已长退避）或重试仍失败：降级占位报告
             if self.console is not None:
                 self.console.print(f"[yellow]⚠ 迷爱看评分降级（LLM 不可用）：{e}[/yellow]")
             return ReaderAppealReport(
@@ -791,6 +823,7 @@ def gate_first_chapters(
     title: str = "",
     genre: str = "",
     synopsis: str = "",
+    threshold: int = GOLDEN_PASS_LINE,
 ) -> "ReaderAppealReport":
     """B4 黄金三章门禁评分：读前 n 章（默认 3）正文。
 
@@ -822,32 +855,73 @@ def gate_first_chapters(
     texts = read_chapters_text(project_dir, side="first", n=n)
     joined = "\n\n".join(texts)
 
-    if len(joined) <= GOLDEN_JOIN_CHAR_LIMIT:
-        report = scorer.score_chapter(joined, title=title, genre=genre, synopsis=synopsis)
-        report.chapters_scored = 1
-        _save_golden_cache(project_dir, fingerprint, report)
-        return report
+    def _score_sample() -> tuple[dict[str, int], int, bool, list[str]]:
+        """一次完整采样：拼接路径评一次；超长回退逐章评分逐维取最差（拍板 #3）。
 
-    # fallback：超长 → 每章独立评分取最差（拍板 #3）
-    worst: dict[str, int] = {k: 100 for k in APPEAL_DIMENSIONS}
-    worst_total = 100
-    any_online = False
-    for t in texts:
-        r = scorer.score_chapter(t, title=title, genre=genre, synopsis=synopsis)
-        if r.llm_used:
-            any_online = True
-        for k in APPEAL_DIMENSIONS:
-            worst[k] = min(worst.get(k, 100), r.dimensions.get(k, 0))
-        worst_total = min(worst_total, r.total_score)
+        Returns: (逐维得分, 综合分, 是否在线, suggestions)
+        """
+        if len(joined) <= GOLDEN_JOIN_CHAR_LIMIT:
+            r = scorer.score_chapter(joined, title=title, genre=genre, synopsis=synopsis)
+            return dict(r.dimensions), r.total_score, r.llm_used, list(r.suggestions)
+        worst: dict[str, int] = {k: 100 for k in APPEAL_DIMENSIONS}
+        worst_total = 100
+        any_online = False
+        for t in texts:
+            r = scorer.score_chapter(t, title=title, genre=genre, synopsis=synopsis)
+            if r.llm_used:
+                any_online = True
+            for k in APPEAL_DIMENSIONS:
+                worst[k] = min(worst.get(k, 100), r.dimensions.get(k, 0))
+            worst_total = min(worst_total, r.total_score)
+        return worst, worst_total, any_online, []
+
+    fallback = len(joined) > GOLDEN_JOIN_CHAR_LIMIT
+    dims1, total1, online1, sugg1 = _score_sample()
     report = ReaderAppealReport(
-        dimensions=worst,
-        total_score=worst_total,
-        one_liner="三章拼接超长，已按每章独立评分取最差",
-        suggestions=[],
-        llm_used=any_online,
-        source="llm" if any_online else "offline",
-        chapters_scored=n,
-        fallback=True,
+        dimensions=dims1,
+        total_score=total1,
+        one_liner="三章拼接超长，已按每章独立评分取最差" if fallback else "",
+        suggestions=sugg1,
+        llm_used=online1,
+        source="llm" if online1 else "offline",
+        chapters_scored=n if fallback else 1,
+        fallback=fallback,
     )
+
+    # 贴线二次采样复核（优化登记 20260913_金三评分降级重试与贴线复核）：
+    # 首评落在达标线 ±GOLDEN_BORDERLINE_BAND 且在线时，再采一次取逐维均值——
+    # 单样本 LLM 评分在 60 线附近方差足以"1 分之差"误熔断整本书
+    # （灵荒薪传 59/60 熔断，同文本重评 65/64/74 实证）。复核失败保留首评不阻断。
+    if (
+        online1
+        and (threshold - GOLDEN_BORDERLINE_BAND) <= total1 <= (threshold + GOLDEN_BORDERLINE_BAND)
+    ):
+        try:
+            dims2, total2, online2, _ = _score_sample()
+            if online2:
+                merged = {
+                    k: int(round((dims1.get(k, 0) + dims2.get(k, 0)) / 2))
+                    for k in APPEAL_DIMENSIONS
+                }
+                new_total = ReaderAppealReport._compute_total(merged)
+                report = ReaderAppealReport(
+                    dimensions=merged,
+                    total_score=new_total,
+                    one_liner=(
+                        f"贴线二次采样复核：首评 {total1}/复核 {total2}，取逐维均值"
+                    ),
+                    suggestions=sugg1,
+                    llm_used=True,
+                    source="llm",
+                    chapters_scored=report.chapters_scored,
+                    fallback=fallback,
+                )
+        except Exception as e2:  # noqa: BLE001 - 复核异常保留首评（复核是方差抑制，不是新门禁）
+            degrade(
+                "reader_appeal.gate_first_chapters.recheck",
+                "金三贴线二次采样复核失败，保留首评",
+                e2,
+            )
+
     _save_golden_cache(project_dir, fingerprint, report)
     return report

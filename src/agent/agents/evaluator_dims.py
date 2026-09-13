@@ -257,6 +257,8 @@ class _EvaluatorDimensionsMixin:
                 _gr = gate_first_chapters(
                     self.golden_scorer, self.project_dir, 3,
                     title="", genre="", synopsis="",
+                    # 贴线复核带以 CLI 覆盖后的达标线为中心（优化登记 20260913）
+                    threshold=int(self.golden_three_threshold),
                 )
                 self._last_golden_report = _gr
                 if not _gr.llm_used:
