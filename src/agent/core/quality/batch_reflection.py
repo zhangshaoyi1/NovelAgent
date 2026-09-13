@@ -121,6 +121,37 @@ def build_reflection_input(project_dir: str | Path, since_ch: int = 0) -> str:
     except Exception as e:  # noqa: BLE001
         degrade("batch_reflection.input.lessons", "体检教训读取失败，反思输入缺该段", e)
 
+
+    # ---- 对策执行记录 → 门禁回归证据（对策→执行记录→门禁回归→销账 闭环）----
+    l1_lines: list[str] = []
+    new_hits = 0
+    try:
+        trace_p = project_dir / ".state" / "l1_trace.jsonl"
+        if trace_p.exists():
+            for line in trace_p.read_text(encoding="utf-8").splitlines():
+                if not line.strip():
+                    continue
+                rec = json.loads(line)
+                ch = int(rec.get("ch", 0) or 0)
+                if since_ch and ch <= since_ch:
+                    continue
+                l1_lines.append(f"- 第{ch}章替换：{'；'.join(rec.get('replaced', []))}")
+    except Exception as e:  # noqa: BLE001
+        degrade("batch_reflection.input.l1", "L1 执行轨迹读取失败，缺该段", e)
+    try:
+        new_hits = len([
+            f for f in _load_flags(project_dir)
+            if not since_ch or int(f.get("chapter", 0) or 0) > since_ch
+        ])
+    except Exception as e:  # noqa: BLE001
+        degrade("batch_reflection.input.regress", "门禁回归统计失败", e)
+    if l1_lines or since_ch:
+        verdict = "（对策已兑现）" if (new_hits == 0 and l1_lines) else ("（仍有命中，对策未完全兑现）" if new_hits else "")
+        parts.append(
+            "【L1 禁词对策：执行记录 → 门禁回归（硬证据）】\n"
+            + ("\n".join(l1_lines) if l1_lines else "- 本批无替换执行（生成侧零命中）")
+            + f"\n- 门禁回归：自第{since_ch or 0}章后新增命中 {new_hits} 处" + verdict
+        )
     return "\n\n".join(parts) if parts else "（本批无生产侧异常证据——质量态势平稳）"
 
 

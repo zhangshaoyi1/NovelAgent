@@ -271,10 +271,27 @@ class M5WriteChapterWorkflow(
             )
 
             text, _l1_replaced = hard_replace_ai_phrases(text)
-            if _l1_replaced and getattr(self, "console", None) is not None:
-                self.console.print(
-                    f"[cyan]L1 禁词硬拦截：{len(_l1_replaced)} 类替换（{_l1_replaced[:3]}…）[/cyan]"
-                )
+            if _l1_replaced:
+                # 对策执行留痕（批间反思"对策→执行记录→门禁回归→销账"闭环）：
+                # 替换轨迹落盘 .state/l1_trace.jsonl，供批末反思作执行/回归证据
+                try:
+                    import json as _json
+                    from datetime import datetime as _datetime, timezone as _tz
+
+                    _trace = self.project_dir / ".state" / "l1_trace.jsonl"
+                    _trace.parent.mkdir(parents=True, exist_ok=True)
+                    with _trace.open("a", encoding="utf-8") as _f:
+                        _f.write(_json.dumps({
+                            "ch": int(ctx.get("chapter_num", 0) or 0),
+                            "replaced": _l1_replaced,
+                            "ts": _datetime.now(_tz.utc).isoformat(timespec="seconds"),
+                        }, ensure_ascii=False) + chr(10))
+                except Exception:  # noqa: BLE001 - 留痕失败不影响拦截本身
+                    pass
+                if getattr(self, "console", None) is not None:
+                    self.console.print(
+                        f"[cyan]L1 禁词硬拦截：{len(_l1_replaced)} 类替换（{_l1_replaced[:3]}…）[/cyan]"
+                    )
         except Exception:  # noqa: BLE001 - 硬拦截失败降级原文
             pass
         try:

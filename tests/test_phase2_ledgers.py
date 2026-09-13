@@ -221,3 +221,20 @@ def test_scan_and_replace_ai_phrases() -> None:
     # 幂等：二次扫描为空
     assert scan_ai_phrases(new) == {}
     assert hard_replace_ai_phrases(new)[1] == []
+
+
+def test_reflection_input_includes_l1_evidence(tmp_path: Path) -> None:
+    # 执行记录 → 门禁回归硬证据（对策闭环）
+    proj = _build_minimal_project(tmp_path)
+    p = proj / ".state" / "l1_trace.jsonl"
+    p.parent.mkdir(parents=True, exist_ok=True)
+    p.write_text(
+        json.dumps({"ch": 20, "replaced": ["喃喃自语×2→低声说"]}, ensure_ascii=False) + "\n"
+        + json.dumps({"ch": 21, "replaced": []}, ensure_ascii=False) + "\n",
+        encoding="utf-8",
+    )
+    inp = build_reflection_input(proj, since_ch=19)
+    assert "执行记录" in inp and "喃喃自语×2" in inp and "新增命中 0 处" in inp
+    # 时效过滤：since 之后无轨迹则显示零执行
+    inp2 = build_reflection_input(proj, since_ch=25)
+    assert "本批无替换执行" in inp2
