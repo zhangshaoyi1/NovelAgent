@@ -118,6 +118,32 @@ def test_word_count_undersized_flagged(tmp_path: Path) -> None:
     assert [u["chapter"] for u in wc["undersized"]] == [2]
 
 
+def test_ending_cliche_catches_variant_phrases(tmp_path: Path) -> None:
+    # 相似度聚类抓不到的措辞变体，套话清单必须兜住（点评实证：三本 101 个章尾命中）
+    bodies = {
+        1: "林凡刻符。" * 300 + "\n真正的风暴，才刚刚开始。",
+        2: "林凡刻符。" * 300 + "\n距离下一个十五，还有二十九天。",
+        3: "林凡刻符。" * 300 + "\n他握紧了拳头，风暴正在酝酿。",
+    }
+    _make_project(tmp_path, bodies)
+    report = run_book_checkup(tmp_path)
+    cl = next(m for m in report["metrics"] if m["metric"] == "ending_cliche")
+    assert cl["hit_count"] == 3, "三个变体章尾必须全部命中"
+    issues = [i for i in report["issues"] if i["metric"] == "ending_cliche"]
+    assert issues, "章尾套话必须进入问题清单"
+
+
+def test_ending_cliche_clean_endings_pass(tmp_path: Path) -> None:
+    bodies = {
+        1: "林凡刻符。" * 300 + "\n他吹灭了灯。",
+        2: "林凡刻符。" * 300 + "\n老者约他三日后一叙。",
+    }
+    _make_project(tmp_path, bodies)
+    report = run_book_checkup(tmp_path)
+    cl = next(m for m in report["metrics"] if m["metric"] == "ending_cliche")
+    assert cl["hit_count"] == 0
+
+
 def test_missing_chapters_dir_fails_explicitly(tmp_path: Path) -> None:
     report = run_book_checkup(tmp_path)
     assert report["success"] is False

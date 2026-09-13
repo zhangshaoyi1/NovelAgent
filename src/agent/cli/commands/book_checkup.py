@@ -113,6 +113,10 @@ def _render(result: dict) -> None:
             table.add_row(
                 m["label"], f"近重复结尾簇 {len(m['clusters'])} 个 · 涉及 {total} 章（阈值 {m['similarity']}）"
             )
+        elif m["metric"] == "ending_cliche":
+            table.add_row(
+                m["label"], f"套话命中 {m['hit_count']} 章（末 {m['tail_lines']} 行窗口）"
+            )
         elif m["metric"] == "word_count":
             if m.get("count"):
                 table.add_row(

@@ -13,6 +13,7 @@
   4. 境界推进速率（突破事件间隔 = 战力停滞检测）
   5. 章末钩子句式重复度（近重复结尾聚类 = 读者可归纳的公式化钩子）
   6. 章节字数分布（抖动与超短章）
+  7. 章尾套话短语命中（风暴预告/倒计时式固定清单，与 5 互补抓措辞变体）
 
 只读：绝不修改任何项目文件。失败显性化——单项指标解析失败会记入
 ``degraded``，不会被解读为通过。
@@ -35,6 +36,21 @@ DEFAULT_HOOK_SIMILARITY = 0.85
 DEFAULT_FORESHADOW_GRACE = 10
 #: 超短章阈值（正文字符数）
 DEFAULT_MIN_CHAPTER_CHARS = 1500
+
+#: 章尾套话短语清单（差评实证：三本书 101 个章尾命中"风暴/倒计时"式预告）。
+#: 相似度聚类抓不到措辞变体（"真正的风暴，才刚刚开始" vs "风暴正在酝酿"），
+#: 固定短语清单是必要补充。命中位置限正文最后 N 行（章末钩子位）。
+ENDING_CLICHE_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
+    re.compile(p)
+    for p in (
+        r"风暴.{0,6}(才刚刚开始|即将来临|正在酝酿|将至|将至未至|正在逼近)|真正的风暴",
+        r"倒计时|还剩[一二三四五六七八九十\d]+天|距离.{0,8}(十五|期限|之约).{0,6}(还有|只剩)",
+        r"(一切|好戏|故事)(才)?(刚刚|才)开始",
+        r"握紧了拳头|目光(变得)?(更加)?(锐利|坚定)起来",
+    )
+)
+#: 套话检测窗口：正文最后 N 个非空行
+ENDING_CLICHE_TAIL_LINES = 5
 
 #: 突破/进阶事件关键词（确定性匹配，不做语义判断）
 _ADVANCE_RE = re.compile(
@@ -372,6 +388,28 @@ def check_word_count(
     }
 
 
+def check_ending_cliche(chapters: list[dict[str, Any]]) -> dict[str, Any]:
+    """指标 7：章尾套话短语命中（ENDING_CLICHE_PATTERNS 清单匹配）。
+
+    检测窗口为正文最后 ``ENDING_CLICHE_TAIL_LINES`` 个非空行（章末钩子位）。
+    与指标 5 的相似度聚类互补：聚类抓同构句式，清单抓措辞变体。
+    """
+    hits: list[dict[str, Any]] = []
+    for c in chapters:
+        lines = [ln.strip() for ln in c["body"].splitlines() if ln.strip()]
+        tail = "\n".join(lines[-ENDING_CLICHE_TAIL_LINES:])
+        matched = [p.pattern for p in ENDING_CLICHE_PATTERNS if p.search(tail)]
+        if matched:
+            hits.append({"chapter": c["chapter"], "patterns": matched, "sample": lines[-1][:40]})
+    return {
+        "metric": "ending_cliche",
+        "label": "章尾套话",
+        "tail_lines": ENDING_CLICHE_TAIL_LINES,
+        "hit_count": len(hits),
+        "hits": hits,
+    }
+
+
 def run_book_checkup(
     project_dir: Path,
     *,
@@ -400,6 +438,7 @@ def run_book_checkup(
         check_character_stagnation(project_dir, chapters, char_streak_limit),
         check_realm_progression(chapters),
         check_ending_hooks(chapters, hook_similarity),
+        check_ending_cliche(chapters),
         check_word_count(chapters, min_chapter_chars),
     ]
 
@@ -436,6 +475,14 @@ def run_book_checkup(
                 }
                 for c in m["clusters"]
             ]
+        elif m["metric"] == "ending_cliche":
+            if m["hit_count"]:
+                issues.append(
+                    {
+                        "metric": m["metric"],
+                        "detail": f"{m['hit_count']}/{len(chapters)} 个章末命中套话短语清单（风暴预告/倒计时/才刚刚开始式）",
+                    }
+                )
         elif m["metric"] == "word_count":
             issues += [{"metric": m["metric"], "detail": f"ch{v['chapter']:03d} 正文 {v['chars']} 字，{v['detail']}"} for v in m["undersized"]]
 
