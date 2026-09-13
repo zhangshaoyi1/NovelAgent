@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from agent.core.quality.book_checkup import run_book_checkup
+from agent.core.quality.book_checkup import run_book_checkup, write_time_entity_check
 
 
 def _make_project(tmp_path: Path, chapters: dict[int, str]) -> Path:
@@ -291,3 +291,37 @@ def test_speaker_registry_registered_passes(tmp_path: Path) -> None:
     report = run_book_checkup(tmp_path)
     sr = next(m for m in report["metrics"] if m["metric"] == "speaker_registry")
     assert sr["unregistered"] == []
+
+
+# ---------------------------------------------------------------- T1 写时化：write_time_entity_check
+def test_write_time_entity_check_blocks_new_org(tmp_path: Path) -> None:
+    # 回归场景：灵荒炉火 ch031「灵渊宗」首现 → 出章门禁必须拦下
+    _make_project(tmp_path, {i: "天剑宗日常。" * 200 for i in range(1, 4)})
+    _make_canon(tmp_path)
+    result = write_time_entity_check(tmp_path, 4, "灵渊宗的弟子围了上来。" * 50)
+    assert result["blocking"], "设定外组织名首现必须 blocking"
+    assert any("灵渊宗" in d for d in result["blocking"])
+
+
+def test_write_time_entity_check_known_org_passes(tmp_path: Path) -> None:
+    _make_project(tmp_path, {i: "天剑宗日常。" * 200 for i in range(1, 4)})
+    _make_canon(tmp_path)
+    result = write_time_entity_check(tmp_path, 4, "天剑宗的钟声响起。" * 50)
+    assert result["blocking"] == []
+
+
+def test_write_time_entity_check_renames_block(tmp_path: Path) -> None:
+    # 接棒发生时：注册名绝迹 + 本章起同姓新名 → blocking
+    _make_project(tmp_path, {i: "沈长风在授业。" * 100 for i in range(1, 6)})
+    _make_character(tmp_path, "沈长风")
+    result = write_time_entity_check(tmp_path, 6, "沈清舟没有说话。" * 100)
+    assert any("改名" in d or "接棒" in d for d in result["blocking"]), result
+
+
+def test_write_time_entity_check_speaker_warn_only(tmp_path: Path) -> None:
+    # 配角漏登记是 warning 不是 blocking（配角可合法暂缓注册）
+    _make_project(tmp_path, {i: "天剑宗日常。" * 200 for i in range(1, 4)})
+    _make_canon(tmp_path)
+    result = write_time_entity_check(tmp_path, 4, "「来了。」周长老说道。" * 50)
+    assert result["blocking"] == []
+    assert any("周长老" in d for d in result["warnings"])

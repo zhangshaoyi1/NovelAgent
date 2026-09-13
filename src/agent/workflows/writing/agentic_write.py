@@ -797,6 +797,47 @@ class AgenticWriteWorkflow:
             if _cwarn:
                 _hygiene_warn.extend(_cwarn)  # 与文体卫生 warning 同路透出
 
+        # ---- 实体/人名一致性写时前置（T1 写时化，2026-09-13）----
+        # 正典外组织名在本章首现 / 注册角色被同姓新名接棒 → blocking（在漂移
+        # 诞生那一刻拦住，灵荒炉火「灵渊宗」「沈长风→沈清舟」类硬伤）；
+        # 沿用旧漂移、配角漏登记 → warning 显性透出。
+        try:
+            from agent.core.quality.book_checkup import write_time_entity_check
+
+            _ent = write_time_entity_check(
+                Path(self.project_dir), int(ctx.get("chapter_num") or 0), cleaned
+            )
+        except Exception as e:  # noqa: BLE001 - 实体检查异常不阻断（全书体检仍会覆盖）
+            _ent = None
+            degrade("agentic_write.entity_check", "实体/人名检查失败，本轮跳过", e)
+        if _ent:
+            if _ent["blocking"]:
+                return False, {
+                    "overall_pass": False,
+                    "rules": [],
+                    "issues": [
+                        {"rule_id": "entity_consistency", "severity": "blocking", "description": d}
+                        for d in _ent["blocking"]
+                    ]
+                    + [
+                        {"rule_id": "entity_consistency", "severity": "warning", "description": d}
+                        for d in _ent["warnings"]
+                    ],
+                    "suggestions": (
+                        "实体一致性修复：① 设定外组织名——改用 world.md 既有的宗门/组织名，"
+                        "或先走设定更新流程登记 world.md 再写；② 人物改名——沿用 characters/"
+                        " 既登记的名字；确需新名/新组织，先更新真源（characters/*.md、"
+                        "world.md）再重写本章。"
+                    ),
+                }
+            if _ent["warnings"]:
+                _hygiene_warn.extend(
+                    [
+                        {"rule_id": "entity_consistency", "severity": "warning", "description": d}
+                        for d in _ent["warnings"]
+                    ]
+                )
+
         # ---- 伏笔回收写时验证（2026-09-12 风险 6，窄口径防误杀）----
         # 仅当本章被分配**强制**回收任务（结局阶段"本章强制回收 ≥1"或十位章
         # "强制回收 ≥1 旧伏笔"）时启用：至少一条被列出的伏笔内容在正文中留下

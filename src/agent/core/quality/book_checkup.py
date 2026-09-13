@@ -503,6 +503,7 @@ def check_entity_drift(
             {
                 "entity": core,
                 "count": len(files),
+                "first_seen": min(files),
                 "chapters": sorted(set(files))[:10],
             }
         )
@@ -593,6 +594,7 @@ def check_rename_drift(
                     {
                         "registered": reg_name,
                         "alias": token,
+                        "first_chapter": first_t,
                         "alias_chapters": sorted(chs)[:10],
                         "last_registered_chapter": last_r,
                         "alias_in_canon": token in canon,
@@ -651,6 +653,80 @@ def check_speaker_registry(
         "registered": len(registered),
         "unregistered": unregistered,
     }
+
+
+def write_time_entity_check(
+    project_dir: Path, chapter_num: int, chapter_text: str
+) -> dict[str, Any]:
+    """写时实体/人名一致性检查（T1 写时化，供出章门禁调用）。
+
+    以磁盘上已发布章节 + **待检新章** 组成临时全书，重跑三个确定性指标：
+      - 实体漂移：正典外组织名在**本章首次出现** → blocking（灵渊宗类硬伤
+        在诞生那一刻拦住；此前章节已存在的漂移本章改不动 → warning）；
+      - 改名漂移：接棒嫌疑的别名章落在**本章** → blocking（沈清舟类）；
+      - 未注册说话人：本章新出现的归属名 → warning（配角可合法暂缓注册，
+        但显性提醒，连续多章出现即应由规划层补档）。
+
+    纯确定性、零 LLM。异常由调用方按 degrade() 惯例处理。
+    """
+    project_dir = Path(project_dir)
+    chapters = _load_chapters(project_dir)
+    chapters = [c for c in chapters if c["chapter"] != chapter_num]
+    current = {
+        "chapter": chapter_num,
+        "path": f"ch{chapter_num:03d}.md(current)",
+        "pressure_stage": None,
+        "route_node": None,
+        "word_count": None,
+        "meta_error": None,
+        "body": chapter_text,
+    }
+    full = chapters + [current]
+
+    blocking: list[str] = []
+    warnings: list[str] = []
+
+    ed = check_entity_drift(project_dir, full, min_count=2)
+    for u in ed["unknown"]:
+        if u.get("first_seen", "").endswith("(current)"):
+            blocking.append(
+                f"设定外组织名「{u['entity']}」在本章首次出现，"
+                "不在 world/route/sublines 正典中——若为新设定请先登记 world.md，"
+                "否则改用既有宗门/组织名（灵渊宗/玄天宗类硬伤）。"
+            )
+        elif u["entity"] in chapter_text:  # 只对本章实际沿用的漂移报 warning
+            warnings.append(
+                f"组织名「{u['entity']}」沿用了此前章节的漂移用法（累计 "
+                f"{u['count']} 次，最早见 {u['first_seen']}），建议在全书体检中定位首次漂移章修订。"
+            )
+
+    rd = check_rename_drift(project_dir, full, min_chapters=1)
+    prev_chapters = {c["chapter"] for c in chapters}
+    for s in rd["suspects"]:
+        # 接棒语义收紧（写时）：
+        #   ① 别名首现章 == 本章（历史章里从未出现过，才有"就在此刻接棒"可言）；
+        #   ② 注册名在本章正文中确已绝迹（"林寻伏在…"这类名动粘连不算——
+        #      注册名仍在场就不是改名）；
+        #   ③ 必须存在历史章（全书首章无历史，不存在接棒）。
+        if s.get("first_chapter") != chapter_num:
+            continue
+        if not prev_chapters:
+            continue
+        if s["registered"] in chapter_text:
+            continue
+        blocking.append(
+            s["detail"] + " 若确需改名，必须先更新 characters/*.md 与 world.md 再写。"
+        )
+
+    sr = check_speaker_registry(project_dir, full, min_chapters=1)
+    for u in sr["unregistered"]:
+        if chapter_num in u["chapters"]:
+            warnings.append(
+                f"说话人「{u['speaker']}」未登记 characters/（已出现于 {len(u['chapters'])} 章）——"
+                "recurring 配角应补档，避免工具人化与名实漂移。"
+            )
+
+    return {"blocking": blocking, "warnings": warnings}
 
 
 def run_book_checkup(
