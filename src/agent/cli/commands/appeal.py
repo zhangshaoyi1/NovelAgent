@@ -109,13 +109,21 @@ def appeal(
     scorer = ReaderAppealScorer(llm_client=traced_llm, console=workflow_console)   # 改：裸 GatewayAdapter → traced_llm
     # 2026-09-14：与写时/批末同口径注入评分上下文（设定真源/前情/意图），
     # 杜绝手动评分裸评（character_arc/world_novelty 等上下文依赖维度系统性低估）。
+    from agent.core.infra.degrade import degrade
+
     _ctx: dict[str, str] = {}
     if not file and chapter > 0:
         try:
             from agent.core.quality.scoring.reader_appeal import _load_eval_appeal_kwargs
 
             _ctx = _load_eval_appeal_kwargs(project_path, chapter_start=chapter)
-        except Exception:  # noqa: BLE001 - 上下文装载失败退化为旧行为（裸评）
+        except Exception as e:  # noqa: BLE001 - 上下文装载失败降级为裸评（须可见，勿悄悄退化）
+            degrade(
+                "cli.appeal.load_ctx",
+                "评分上下文装载失败，降级为裸评"
+                "（character_arc/world_novelty 等上下文依赖维度将系统性低估）",
+                e,
+            )
             _ctx = {}
     report = scorer.score_chapter(
         text, title=str(title), genre=str(genre), synopsis=str(synopsis), **_ctx

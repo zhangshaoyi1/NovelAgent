@@ -101,6 +101,8 @@ def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None
     """
     if chapters and int(chapters) > 0:
         return int(chapters)
+    from agent.core.infra.degrade import degrade
+
     proj = Path(project_dir)
     # 1) MasterPlan：.state/plan.json 的 total_chapters
     try:
@@ -110,8 +112,8 @@ def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None
             n = int((data or {}).get("total_chapters", 0) or 0)
             if n > 0:
                 return n
-    except Exception:  # noqa: BLE001 - plan 读取失败走下一级缺省
-        pass  # noqa: SILENT_DEGRADE
+    except Exception as e:  # noqa: BLE001 - plan 损坏不阻断写作，回退下一级缺省
+        degrade("payoff.resolve.plan", "plan.json 读取失败，回退下一级目标章数缺省", e)
     # 2) 状态机已写章数
     try:
         from agent.core.engine.state_machine import StateMachine
@@ -121,8 +123,8 @@ def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None
         n = int((sm.progress or {}).get("total_written", 0) or 0)
         if n > 0:
             return n
-    except Exception:  # noqa: BLE001 - state 读取失败走下一级缺省
-        pass  # noqa: SILENT_DEGRADE
+    except Exception as e:  # noqa: BLE001 - state 损坏不阻断写作，回退下一级缺省
+        degrade("payoff.resolve.state", "state.json 读取失败，回退下一级目标章数缺省", e)
     # 3) 当前 chapters/ 下已有章数
     try:
         from agent.core.story.chapters import list_chapter_files
@@ -130,8 +132,8 @@ def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None
         n = len(list_chapter_files(proj))
         if n > 0:
             return n
-    except Exception:  # noqa: BLE001 - 章节列举失败走兜底
-        pass  # noqa: SILENT_DEGRADE
+    except Exception as e:  # noqa: BLE001 - 章节列举失败不阻断写作，走兜底
+        degrade("payoff.resolve.chapters", "chapters/ 列举失败，回退兜底目标章数", e)
     return 300
 
 
