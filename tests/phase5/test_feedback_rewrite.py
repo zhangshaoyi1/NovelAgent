@@ -103,7 +103,9 @@ def test_rewrite_advisory_allows_with_warning(tmp_path):
     assert res.blocked is False
     assert res.guardrail_passed is False  # advisory：带告警仍落盘
     ch_file = d / "chapters" / "ch002.md"
-    assert "{{leak}}" in ch_file.read_text(encoding="utf-8")
+    # 2026-09-14：L2 落盘兜底把占位符/模板泄漏清除（{{leak}} 属可安全删除项），
+    # 与写章路径 clean_hard_pollutions 同口径——告警仍透出，但垃圾不再落盘。
+    assert "{{leak}}" not in ch_file.read_text(encoding="utf-8")
 
 
 def test_rewrite_llm_failure_degrade(tmp_path):

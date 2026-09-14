@@ -850,13 +850,15 @@ def gate_chapter(
             degrade("reader_appeal.gate_chapter.context", "批末评分上下文装载失败，按正文独立判断", e)
             context_kwargs = {}
 
-    return scorer.score_chapter(
-        chapter_text,
-        title=title,
-        genre=genre,
-        synopsis=synopsis,
-        **context_kwargs,
+    _full_kwargs = {"title": title, "genre": genre, "synopsis": synopsis, **context_kwargs}
+    _rep = scorer.score_chapter(chapter_text, **_full_kwargs)
+    # 2026-09-14：贴线带二次采样复核（与写时/B4 同口径方差抑制）——
+    # 单样本在 60 线附近 1 分之差即可误判（灵荒薪传批末 59/60 实证）。
+    _re = recheck_borderline(
+        scorer, chapter_text, _rep,
+        threshold=APPEAL_PASS_LINE, band=5, kwargs=_full_kwargs,
     )
+    return _re if _re is not None else _rep
 
 
 def _golden_cache_path(project_dir: str | Path) -> Path:

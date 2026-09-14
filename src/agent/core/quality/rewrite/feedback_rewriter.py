@@ -211,6 +211,38 @@ class FeedbackRewriter:
         # 3. 护栏校验
         gr = self.guardrails.check(new_text)
         passed = gr.passed
+        # ---- L2：生成残留硬污染确定性扫描（2026-09-14，rewrite 路径补缺）----
+        # 写章路径（agentic/m5）已接入 scan_hard_pollutions 硬关卡，rewrite 此前
+        # 只靠 LLM 护栏（G14）→「你别说」「【下一章预告：…】」标题重复等低级硬伤
+        # 在重写产物里漏网（灵荒薪传 ch001 双标题 + 预告泄漏实证）。
+        from agent.workflows.writing.m5_text_hygiene import scan_hard_pollutions
+
+        hard_poll = scan_hard_pollutions(new_text)
+        if hard_poll:
+            _hp_txt = "；".join(hard_poll)
+            if gate == GateMode.BLOCK:
+                self.console.print(
+                    f"[red]✗ BLOCK 门禁：第 {chapter_num} 章改写产物含生成残留硬污染"
+                    f"（{_hp_txt}），拒绝落盘（原章保留）。[/red]"
+                )
+                return RewriteResult(
+                    chapter_file=chapter_file,
+                    chapter_num=chapter_num,
+                    old_word_count=old_wc,
+                    new_word_count=old_wc,
+                    new_text=old_text,
+                    changed_summary="（BLOCK 门禁拦截：生成残留硬污染，未落盘）",
+                    guardrail_passed=passed,
+                    guardrail_report=gr.to_dict(),
+                    backup_file=None,
+                    blocked=True,
+                    llm_used=llm_used,
+                    error="hard_pollution_blocked",
+                )
+            self.console.print(
+                f"[yellow]⚠ 生成残留硬污染告警（advisory）：{_hp_txt}；"
+                f"落盘前将自动清理可安全删除项[/yellow]"
+            )
         if gate == GateMode.BLOCK and not passed:
             self.console.print(
                 f"[red]✗ BLOCK 门禁：第 {chapter_num} 章改写产物未通过合规校验，"
@@ -399,11 +431,20 @@ class FeedbackRewriter:
         meta["last_rewrite_feedback"] = feedback
         meta["last_rewrite_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         meta["revision_count"] = int(meta.get("revision_count", 0) or 0) + 1
-        # 标题保持一致（从首行推断）
-        first = new_text.strip().split("\n", 1)[0].strip()
-        first = re.sub(r"^#+\s*", "", first)
+        # ---- L2 落盘兜底（2026-09-14）：rewrite 与写章同口径——删【…】指令/去重标题/清占位符 ----
+        from agent.workflows.writing.m5_text_hygiene import clean_hard_pollutions
+
+        body_text, _poll = clean_hard_pollutions(new_text)
+        # 去掉 LLM 自报标题行（防与落盘统一标题重复——ch001 双标题根因：
+        # 旧逻辑把带标题的 new_text 直接拼进 body，标题重复两遍）
+        lines = body_text.split("\n")
+        while lines and (not lines[0].strip() or lines[0].lstrip().startswith("#")):
+            lines.pop(0)
+        body_text = "\n".join(lines).strip()
+        # 标题保持一致（从首行推断；去标题行后的首行才是真实正文首行）
+        first = body_text.strip().split("\n", 1)[0].strip() if body_text.strip() else ""
         if first and not first.startswith("第") and len(first) <= 30:
             meta["title"] = first
-        body = f"# 第 {meta.get('chapter', '?')} 章 · {meta.get('title', '')}\n\n{new_text}"
+        body = f"# 第 {meta.get('chapter', '?')} 章 · {meta.get('title', '')}\n\n{body_text}"
         new_post = frontmatter.Post(body, **meta)
         chapter_file.write_text(frontmatter.dumps(new_post), encoding="utf-8")
