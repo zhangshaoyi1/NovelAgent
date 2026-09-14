@@ -724,6 +724,76 @@ def is_pass(
     return passed, failed_dims
 
 
+def _load_eval_appeal_kwargs(
+    project_dir: str | Path,
+    *,
+    chapter_start: int = 1,
+) -> dict[str, str]:
+    """批末评估用评分上下文（2026-09-14，灵荒薪传批末 59/60 复盘）。
+
+    写时门禁已通过 build_score_chapter_kwargs_from_ctx 注入设定真源/前情/意图；
+    但批末 Evaluator（G5 gate_chapter / B4 gate_first_chapters）此前仍裸评——
+    同一批开头章节写时评 70 分、批末裸评 59/60，1 分之差反复熔断任务
+    （同文本重评 59/65/64/74 实证）。此处从 project_dir 装载与写时同口径的
+    评分上下文，消除批末裸评。全部降级为空串，绝不阻断评估。
+
+    Args:
+        project_dir: 项目目录。
+        chapter_start: 被评章节的起始章号（前情取其前一章的权威接续状态；
+            1 表示开头无前情）。
+    """
+    d = Path(project_dir)
+    kw: dict[str, str] = {}
+
+    # 1) 设定真源：P0-1 设定台账（境界/金手指/已知冲突）——world_novelty 参照口径
+    try:
+        from agent.core.story.setting_canon import SettingCanon
+
+        canon = SettingCanon.load(d)
+        parts = [canon.render_for_prompt(limit=40), canon.render_conflicts(limit=10)]
+        text = "\n".join(p for p in parts if p)
+        if text:
+            kw["setting_canon"] = text[:1200]
+    except Exception as e:  # noqa: BLE001 - 台账缺失降级为空
+        degrade("reader_appeal.eval_setting_canon", "批末评估设定台账装载失败，降级为空", e)
+
+    # 2) 前情：被评章节的前一章正文尾部（权威接续状态）——character_arc 参照口径
+    if chapter_start > 1:
+        try:
+            prev_file = d / "chapters" / f"ch{chapter_start - 1:03d}.md"
+            if prev_file.exists():
+                text = prev_file.read_text(encoding="utf-8")
+                text = strip_frontmatter(text)
+                body = re.sub(r"\s*\n\s*", "\n", text).strip()
+                if body:
+                    kw["character_growth"] = (
+                        f"【前情（第{chapter_start - 1}章接续状态，本章弧光/成长以此为准）】\n"
+                        f"{body[-800:]}"
+                    )[:800]
+        except Exception as e:  # noqa: BLE001 - 前情缺失降级为空
+            degrade("reader_appeal.eval_prev", "批末评估前情装载失败，降级为空", e)
+
+    # 3) 本章意图：当前支线细纲的「情节点序列」段——hook/payoff 达成度参照口径
+    try:
+        import glob
+
+        sub_files = sorted(glob.glob(str(d / "sublines" / "*" / "subline.md")))
+        for sf in sub_files:
+            content = Path(sf).read_text(encoding="utf-8")
+            m = re.search(
+                r"##\s*情节点序列\s*\n(.*?)(?=\n##\s|\Z)",
+                content,
+                re.S,
+            )
+            if m and m.group(1).strip():
+                kw["chapter_intent"] = f"【支线细纲情节点序列】\n{m.group(1).strip()[:500]}"
+                break
+    except Exception as e:  # noqa: BLE001 - 细纲缺失降级为空
+        degrade("reader_appeal.eval_intent", "批末评估本章意图装载失败，降级为空", e)
+
+    return kw
+
+
 def gate_chapter(
     scorer: "ReaderAppealScorer",
     project_dir: str | Path,
@@ -732,6 +802,7 @@ def gate_chapter(
     title: str = "",
     genre: str = "",
     synopsis: str = "",
+    context_kwargs: dict[str, str] | None = None,
 ) -> "ReaderAppealReport":
     """读末 window 章正文拼接，调 scorer.score_chapter 得迷爱看报告。
 
@@ -739,6 +810,8 @@ def gate_chapter(
     synopsis 为空时尝试从 project_dir/world.md 的『## 故事简介』段提取
     （复用 _gather_for_eval 风格）。章节文件匹配 ch*.md，去 frontmatter
     （以 '---' 开头则切掉首段）。G6：读取改走公共 helper（行为零变化）。
+    2026-09-14：context_kwargs 未传时自动装载批末评分上下文（设定真源/前情/意图），
+    与写时门禁同口径，杜绝批末裸评（灵荒薪传 59/60 复盘）。
     """
     d = Path(project_dir)
     if not list_chapter_files(project_dir):
@@ -767,8 +840,22 @@ def gate_chapter(
             except OSError:
                 pass  # noqa: SILENT_DEGRADE
 
+    if context_kwargs is None:
+        try:
+            total = len(list_chapter_files(project_dir))
+            context_kwargs = _load_eval_appeal_kwargs(
+                project_dir, chapter_start=max(1, total - window + 1)
+            )
+        except Exception as e:  # noqa: BLE001 - 上下文装载失败退化为裸评（旧行为）
+            degrade("reader_appeal.gate_chapter.context", "批末评分上下文装载失败，按正文独立判断", e)
+            context_kwargs = {}
+
     return scorer.score_chapter(
-        chapter_text, title=title, genre=genre, synopsis=synopsis
+        chapter_text,
+        title=title,
+        genre=genre,
+        synopsis=synopsis,
+        **context_kwargs,
     )
 
 
@@ -859,6 +946,7 @@ def gate_first_chapters(
     genre: str = "",
     synopsis: str = "",
     threshold: int = GOLDEN_PASS_LINE,
+    context_kwargs: dict[str, str] | None = None,
 ) -> "ReaderAppealReport":
     """B4 黄金三章门禁评分：读前 n 章（默认 3）正文。
 
@@ -886,19 +974,36 @@ def gate_first_chapters(
     texts = read_chapters_text(project_dir, side="first", n=n)
     joined = "\n\n".join(texts)
 
+    # 2026-09-14：批末金三同样注入评分上下文（设定真源/前情/意图），杜绝裸评——
+    # 此前 B4 调用传 title/genre/synopsis 全空，同一批开头章节写时 70 分、批末裸评 59/60。
+    if context_kwargs is None:
+        try:
+            context_kwargs = _load_eval_appeal_kwargs(project_dir, chapter_start=1)
+        except Exception as e:  # noqa: BLE001 - 上下文装载失败退化为裸评（旧行为）
+            degrade(
+                "reader_appeal.gate_first_chapters.context",
+                "批末金三评分上下文装载失败，按正文独立判断",
+                e,
+            )
+            context_kwargs = {}
+
     def _score_sample() -> tuple[dict[str, int], int, bool, list[str]]:
         """一次完整采样：拼接路径评一次；超长回退逐章评分逐维取最差（拍板 #3）。
 
         Returns: (逐维得分, 综合分, 是否在线, suggestions)
         """
         if len(joined) <= GOLDEN_JOIN_CHAR_LIMIT:
-            r = scorer.score_chapter(joined, title=title, genre=genre, synopsis=synopsis)
+            r = scorer.score_chapter(
+                joined, title=title, genre=genre, synopsis=synopsis, **context_kwargs
+            )
             return dict(r.dimensions), r.total_score, r.llm_used, list(r.suggestions)
         worst: dict[str, int] = {k: 100 for k in APPEAL_DIMENSIONS}
         worst_total = 100
         any_online = False
         for t in texts:
-            r = scorer.score_chapter(t, title=title, genre=genre, synopsis=synopsis)
+            r = scorer.score_chapter(
+                t, title=title, genre=genre, synopsis=synopsis, **context_kwargs
+            )
             if r.llm_used:
                 any_online = True
             for k in APPEAL_DIMENSIONS:
