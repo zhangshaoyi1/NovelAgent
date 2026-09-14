@@ -5,13 +5,49 @@ function sanitize(name) {
 }
 
 /* ---------- 统一弹窗辅助：Esc / 点击遮罩关闭 ---------- */
-/* 静默期（2026-09-14 修复「弹窗一闪而过」）：
+/* 遮罩误关防护（2026-09-14 两次修复「弹窗一闪而过，模型下拉没机会选」）：
    触发按钮多在页面底部，而弹窗是居中全屏遮罩——弹窗一出现，按钮原位置就被遮罩盖住。
-   用户双击 / 连点 / 没点准时的第二次点击会落在遮罩上，导致刚打开的弹窗被立刻关闭
-   （实测第二次 mousedown 距打开仅 55ms）。故打开后的 MODAL_GRACE_MS 内忽略遮罩关闭。
-   同时把关闭判定从 mousedown 改为 click：按下后拖出遮罩再松开不应算作「点了遮罩」。 */
-const MODAL_GRACE_MS = 350;
+   用户双击 / 连点 / 第一下没点准再补一下，第二次点击就落在遮罩上，刚打开的弹窗被立刻
+   关闭（实测第二次点击距打开仅 55ms）。关闭判定已从 mousedown 改为 click（按下后拖出
+   遮罩再松开不算点遮罩，也避免 mousedown 提前隐藏遮罩导致 click 穿透到下层元素）。
+
+   只看时间不够：首版静默期取 350ms，实测「慢双击」（间隔 550ms）仍会被误关——系统双击
+   间隔 Windows 默认 500ms 且可调更高。故改为**双条件分层防护**，不再依赖单个魔法数字：
+     1) 时间：打开后 MODAL_GRACE_MS 内，遮罩点击一律忽略；
+     2) 位置：打开后 ORIGIN_GUARD_MS 内，若点击点仍落在「触发弹窗的那个元素」的屏幕矩形
+        上（含容差），判为「指针原地重复点击」，同样忽略——因为想关闭背景的用户是"移到
+        空白处再点"，不会精准点回触发按钮所在的那一小块像素。
+   两个窗口都只作用于「刚打开」的时间段，弹窗打开久了（或非 showAnyModal 打开的浮层）
+   自然放行，无状态残留。 */
+const MODAL_GRACE_MS = 600;     // 打开后的完全静默期（需高于系统双击间隔默认 500ms）
+const ORIGIN_GUARD_MS = 2500;   // 打开后这段时间内，点回触发点原位置也算误触
+const ORIGIN_GUARD_PAD_PX = 8;  // 手抖容差
 let _modalOpenedAt = 0;
+let _modalOriginRect = null;
+
+/* 记录最近一次按下的元素：弹窗打开时用它拿到「触发按钮的屏幕位置」 */
+let _lastPointerDown = null;
+document.addEventListener('pointerdown', (e) => {
+  _lastPointerDown = { el: e.target, at: Date.now() };
+}, true);
+
+function _originRectFrom(entry) {
+  if (!entry || !entry.el || !entry.el.getBoundingClientRect) return null;
+  if (Date.now() - entry.at > 1500) return null;   // 陈旧的按下记录不用
+  try {
+    const r = entry.el.getBoundingClientRect();
+    return (r && r.width && r.height) ? r : null;
+  } catch (err) {
+    return null;
+  }
+}
+function _hitOriginRect(e) {
+  const r = _modalOriginRect;
+  if (!r) return false;
+  const p = ORIGIN_GUARD_PAD_PX;
+  return e.clientX >= r.left - p && e.clientX <= r.right + p
+      && e.clientY >= r.top - p && e.clientY <= r.bottom + p;
+}
 
 function closeAnyModal(el) {
   if (!el) return;
@@ -22,7 +58,8 @@ function showAnyModal(el) {
   if (!el) return;
   el.hidden = false;
   el.style.display = 'flex';
-  _modalOpenedAt = Date.now();   // 记打开时刻：静默期内不响应遮罩关闭
+  _modalOpenedAt = Date.now();                    // 记打开时刻：静默期内不响应遮罩关闭
+  _modalOriginRect = _originRectFrom(_lastPointerDown);   // 记触发点位置：原地重复点击不算点背景
 }
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
@@ -33,7 +70,9 @@ document.addEventListener('keydown', (e) => {
 });
 document.addEventListener('click', (e) => {
   if (!e.target.classList || !e.target.classList.contains('modal-overlay')) return;
-  if (Date.now() - _modalOpenedAt < MODAL_GRACE_MS) return;  // 刚打开：双击/连点误触，不关
+  const sinceOpen = Date.now() - _modalOpenedAt;
+  if (sinceOpen < MODAL_GRACE_MS) return;                       // 刚打开：连点误触，不关
+  if (sinceOpen < ORIGIN_GUARD_MS && _hitOriginRect(e)) return;  // 点回触发按钮原位置：同上
   closeAnyModal(e.target);
 });
 
