@@ -5,6 +5,14 @@ function sanitize(name) {
 }
 
 /* ---------- 统一弹窗辅助：Esc / 点击遮罩关闭 ---------- */
+/* 静默期（2026-09-14 修复「弹窗一闪而过」）：
+   触发按钮多在页面底部，而弹窗是居中全屏遮罩——弹窗一出现，按钮原位置就被遮罩盖住。
+   用户双击 / 连点 / 没点准时的第二次点击会落在遮罩上，导致刚打开的弹窗被立刻关闭
+   （实测第二次 mousedown 距打开仅 55ms）。故打开后的 MODAL_GRACE_MS 内忽略遮罩关闭。
+   同时把关闭判定从 mousedown 改为 click：按下后拖出遮罩再松开不应算作「点了遮罩」。 */
+const MODAL_GRACE_MS = 350;
+let _modalOpenedAt = 0;
+
 function closeAnyModal(el) {
   if (!el) return;
   el.hidden = true;          // 模板弹窗用 hidden 属性
@@ -14,6 +22,7 @@ function showAnyModal(el) {
   if (!el) return;
   el.hidden = false;
   el.style.display = 'flex';
+  _modalOpenedAt = Date.now();   // 记打开时刻：静默期内不响应遮罩关闭
 }
 document.addEventListener('keydown', (e) => {
   if (e.key !== 'Escape') return;
@@ -22,8 +31,10 @@ document.addEventListener('keydown', (e) => {
   closeReviewChecklist();
   document.querySelectorAll('.modal-overlay:not([hidden])').forEach(closeAnyModal);
 });
-document.addEventListener('mousedown', (e) => {
-  if (e.target.classList && e.target.classList.contains('modal-overlay')) closeAnyModal(e.target);
+document.addEventListener('click', (e) => {
+  if (!e.target.classList || !e.target.classList.contains('modal-overlay')) return;
+  if (Date.now() - _modalOpenedAt < MODAL_GRACE_MS) return;  // 刚打开：双击/连点误触，不关
+  closeAnyModal(e.target);
 });
 
 /* 打开一个运行控制台浮层，返回内部元素句柄。

@@ -143,9 +143,9 @@
     });
   });
 
-  /* ---------- 弹窗开关 ---------- */
-  function openWriterModal(id) { const m = document.getElementById(id); m.hidden = false; m.style.display = ''; }
-  function closeWriterModal(id) { document.getElementById(id).hidden = true; }
+  /* ---------- 弹窗开关（复用 app.js 统一实现，自动获得「打开后静默期」防误关） ---------- */
+  function openWriterModal(id) { showAnyModal(document.getElementById(id)); }
+  function closeWriterModal(id) { closeAnyModal(document.getElementById(id)); }
   function openWriteModal() { openWriterModal('write-modal'); }
   function openAutoWriteModal() { syncAutoWriteNote(); openWriterModal('autowrite-modal'); }
   function syncAutoWriteNote() {
@@ -189,7 +189,12 @@
       .join('');
     for (const id of ['w-model', 'aw-model']) {
       const el = document.getElementById(id);
-      if (el) el.innerHTML = html;
+      if (!el) continue;
+      // 只在内容真的变化时重建：重建 <option> 会强制收起用户已展开的下拉（列表「一闪而过」）。
+      if (el.innerHTML === html) continue;
+      // 正在操作这个下拉时（已展开）绝不重建，避免打断选择。
+      if (document.activeElement === el) continue;
+      el.innerHTML = html;
     }
   }
 
