@@ -123,8 +123,12 @@ def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None
         n = int((sm.progress or {}).get("total_written", 0) or 0)
         if n > 0:
             return n
-    except Exception as e:  # noqa: BLE001 - state 损坏不阻断写作，回退下一级缺省
-        degrade("payoff.resolve.state", "state.json 读取失败，回退下一级目标章数缺省", e)
+    except Exception as e:  # noqa: BLE001 - 状态损坏不阻断写作，回退下一级缺省
+        degrade(
+            "payoff.resolve.state",
+            "项目状态读取失败（经 StateMachine），回退下一级目标章数缺省",
+            e,
+        )
     # 3) 当前 chapters/ 下已有章数
     try:
         from agent.core.story.chapters import list_chapter_files
