@@ -92,6 +92,49 @@ def build_payoff_script(total_chapters: int, ending_ratio: float = 0.25) -> list
     return chapters
 
 
+def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None) -> int:
+    """目标章数缺省链（MasterPlan → state → 当前章数 → 300）。
+
+    core 层实现：直接读 `.state/plan.json`，**不依赖 agents 层**（R6 分层白名单：
+    core 仅可 import agent.base / agent.client / agent.core）。
+    CLI `payoff-plan` 从这里 re-export，保证两条路径语义一致。
+    """
+    if chapters and int(chapters) > 0:
+        return int(chapters)
+    proj = Path(project_dir)
+    # 1) MasterPlan：.state/plan.json 的 total_chapters
+    try:
+        plan_file = proj / ".state" / "plan.json"
+        if plan_file.exists():
+            data = json.loads(plan_file.read_text(encoding="utf-8"))
+            n = int((data or {}).get("total_chapters", 0) or 0)
+            if n > 0:
+                return n
+    except Exception:  # noqa: BLE001 - plan 读取失败走下一级缺省
+        pass  # noqa: SILENT_DEGRADE
+    # 2) 状态机已写章数
+    try:
+        from agent.core.engine.state_machine import StateMachine
+
+        sm = StateMachine(proj)
+        sm.load()
+        n = int((sm.progress or {}).get("total_written", 0) or 0)
+        if n > 0:
+            return n
+    except Exception:  # noqa: BLE001 - state 读取失败走下一级缺省
+        pass  # noqa: SILENT_DEGRADE
+    # 3) 当前 chapters/ 下已有章数
+    try:
+        from agent.core.story.chapters import list_chapter_files
+
+        n = len(list_chapter_files(proj))
+        if n > 0:
+            return n
+    except Exception:  # noqa: BLE001 - 章节列举失败走兜底
+        pass  # noqa: SILENT_DEGRADE
+    return 300
+
+
 def load_payoff_script(
     project_dir: str | Path, enabled: bool = True
 ) -> dict[str, Any]:
@@ -125,6 +168,25 @@ def save_payoff_script(project_dir: str | Path, chapters: list[dict[str, Any]]) 
     tmp.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
     tmp.replace(target)
     return target
+
+
+def ensure_payoff_script(
+    project_dir: str | Path, enabled: bool = True, autogen: bool = True
+) -> dict[str, Any]:
+    """读取剧本；**为空时按目标章数确定性懒生成并落盘**（零 LLM、幂等）。
+
+    背景：G12 爽点注入默认开启，但剧本原只由手动 `payoff-plan` 生成 →
+    从未跑过该命令的项目「开关假开启、注入静默空转」（登记 20260914_爽点剧本懒生成）。
+    此处在主链路上补自动初始化，用户手编的剧本**不覆盖**（非空即返回）。
+
+    异常不吞：调用方须 try/except 并 `degrade()`，禁止把生成失败解读为"无需爽点"。
+    """
+    script = load_payoff_script(project_dir, enabled=enabled)
+    if not enabled or not autogen or (script.get("chapters") or []):
+        return script
+    n = resolve_target_chapters(project_dir)
+    save_payoff_script(project_dir, build_payoff_script(n))
+    return load_payoff_script(project_dir, enabled=enabled)
 
 
 def chapter_payoff(script: dict[str, Any], chapter: int) -> tuple[str, str]:

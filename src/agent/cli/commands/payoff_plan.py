@@ -26,36 +26,14 @@ def _cli_value(v: Any, default: Any) -> Any:
 
 
 def resolve_target_chapters(project_dir: str | Path, chapters: int | None = None) -> int:
-    """章节数缺省链（对齐 cost_plan.resolve_book_chapters 语义：MasterPlan→state→章数→300）。"""
-    if chapters and int(chapters) > 0:
-        return int(chapters)
-    try:
-        from agent.agents.planner import PlannerAgent
+    """章节数缺省链：MasterPlan→state→章数→300。
 
-        plan = PlannerAgent(project_dir, llm_client=None).load_plan()
-        if plan is not None and getattr(plan, "total_chapters", 0):
-            return int(plan.total_chapters)
-    except Exception:  # noqa: BLE001
-        pass  # noqa: SILENT_DEGRADE
-    try:
-        from agent.core.engine.state_machine import StateMachine
+    实现下沉到 core（`agent.core.story.payoff_script.resolve_target_chapters`），
+    因业务层不得依赖 agents 层（R6）；此处 re-export 保持 CLI 与写作主链路语义一致。
+    """
+    from agent.core.story.payoff_script import resolve_target_chapters as _resolve
 
-        sm = StateMachine(project_dir)
-        sm.load()
-        n = int((sm.progress or {}).get("total_written", 0) or 0)
-        if n > 0:
-            return n
-    except Exception:  # noqa: BLE001
-        pass  # noqa: SILENT_DEGRADE
-    try:
-        from agent.core.story.chapters import list_chapter_files
-
-        n = len(list_chapter_files(project_dir))
-        if n > 0:
-            return n
-    except Exception:  # noqa: BLE001
-        pass  # noqa: SILENT_DEGRADE
-    return 300
+    return _resolve(project_dir, chapters)
 
 
 def build_plan(project_dir: str | Path, chapters: int | None = None) -> dict[str, Any]:

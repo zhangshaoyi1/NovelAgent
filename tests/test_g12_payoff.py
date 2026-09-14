@@ -15,7 +15,9 @@ from agent.core.story.payoff_script import (
     PAYOFF_TYPE_POOL,
     build_payoff_script,
     chapter_payoff,
+    ensure_payoff_script,
     load_payoff_script,
+    resolve_target_chapters,
     save_payoff_script,
 )
 
@@ -139,6 +141,78 @@ def test_generate_chapter_injects_payoff() -> None:
     system = llm.messages[0]["content"]
     assert "# 爽点剧本" in system and "揭密" in system
     assert "# 情绪目标" in system and "燃（张力 5/5）" in system
+
+
+# ---------------------------------------------------------------- 懒生成（登记 20260914）
+def _script_file(proj: Path) -> Path:
+    return proj / ".state" / "payoff_script.json"
+
+
+def test_ensure_autogen_when_missing(tmp_path: Path) -> None:
+    """剧本缺失 → 懒生成并落盘（消除「开关假开启、注入静默空转」）。"""
+    proj = tmp_path / "novel"
+    proj.mkdir()
+    assert not _script_file(proj).exists()
+    script = ensure_payoff_script(proj, enabled=True)
+    assert _script_file(proj).exists()
+    assert len(script["chapters"]) == 300  # 无 plan/state/章数 → 兜底 300
+
+
+def test_ensure_idempotent(tmp_path: Path) -> None:
+    """确定性生成：二次调用产物字节一致。"""
+    proj = tmp_path / "novel"
+    proj.mkdir()
+    ensure_payoff_script(proj, enabled=True)
+    first = _script_file(proj).read_bytes()
+    ensure_payoff_script(proj, enabled=True)
+    assert _script_file(proj).read_bytes() == first
+
+
+def test_ensure_preserves_handcrafted(tmp_path: Path) -> None:
+    """用户手编剧本优先，不被懒生成覆盖。"""
+    proj = tmp_path / "novel"
+    (proj / ".state").mkdir(parents=True)
+    _script_file(proj).write_text(
+        '{"chapters": [{"chapter": 1, "payoff_type": "自定义", "intensity": 9, '
+        '"emotion": "冷", "tension": 2, "note": "手编"}]}',
+        encoding="utf-8",
+    )
+    script = ensure_payoff_script(proj, enabled=True)
+    assert script["chapters"][0]["payoff_type"] == "自定义"
+
+
+def test_ensure_respects_plan_total(tmp_path: Path) -> None:
+    """按 MasterPlan total_chapters 生成（core 层直读 plan.json，不依赖 agents 层）。"""
+    proj = tmp_path / "novel"
+    (proj / ".state").mkdir(parents=True)
+    (proj / ".state" / "plan.json").write_text('{"total_chapters": 42}', encoding="utf-8")
+    assert resolve_target_chapters(proj) == 42
+    assert len(ensure_payoff_script(proj, enabled=True)["chapters"]) == 42
+
+
+def test_ensure_disabled_writes_nothing(tmp_path: Path) -> None:
+    proj = tmp_path / "novel"
+    proj.mkdir()
+    assert ensure_payoff_script(proj, enabled=False)["chapters"] == []
+    assert not _script_file(proj).exists()
+
+
+def test_m5_autogen_no_silent_empty(tmp_path: Path) -> None:
+    """主链路红线：未跑过 payoff-plan 的项目，写章上下文必须拿到非空爽点剧本。
+
+    回归 20260914 —— 曾出现「注入默认开、剧本永远为空」的静默空转（12/12 项目命中）。
+    """
+    from tests.conftest import _build_minimal_project
+
+    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
+
+    proj = _build_minimal_project(tmp_path)
+    assert not _script_file(proj).exists()  # 前置：确实没有剧本
+    wf = M5WriteChapterWorkflow(proj, llm_client=None, pre_validate=False)
+    ctx = wf._load_context()
+    assert ctx.get("payoff_task"), "懒生成未接线：上下文仍为空爽点剧本（静默空转复现）"
+    assert ctx.get("emotion_target")
+    assert _script_file(proj).exists(), "懒生成未落盘，下章将重复生成"
 
 
 def test_payoff_disabled_ctx(tmp_path: Path) -> None:

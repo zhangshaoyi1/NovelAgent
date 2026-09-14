@@ -36,7 +36,14 @@ from agent.core.story.tension_curve import (
     ArcPhase,
 )
 from agent.core.story.pacing_store import PacingStore, Debt
-from agent.core.story.payoff_script import build_payoff_script, load_payoff_script, chapter_payoff
+from agent.core.story.payoff_script import (
+    build_payoff_script,
+    chapter_payoff,
+    ensure_payoff_script,
+    load_payoff_script,
+    resolve_target_chapters,
+    save_payoff_script,
+)
 from agent.core.story.injected_trope_store import InjectedTropeStore
 from agent.core.story.learning_store import LearningStore
 from agent.core.story.foresight import (
@@ -97,6 +104,9 @@ __all__ = [
     "build_payoff_script",
     "load_payoff_script",
     "chapter_payoff",
+    "ensure_payoff_script",
+    "resolve_target_chapters",
+    "save_payoff_script",
     "InjectedTropeStore",
     "LearningStore",
     "load_style_guide",

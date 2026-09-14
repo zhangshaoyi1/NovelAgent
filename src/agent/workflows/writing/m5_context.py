@@ -221,16 +221,25 @@ class M5ContextMixin:
             continuity_projection = ""
             continuity_loops = []
 
-        # ---- G12：本章爽点剧本 + 情绪目标（缺失/损坏/关闭 → ""）----
+        # ---- G12：本章爽点剧本 + 情绪目标（缺失 → 确定性懒生成；损坏/关闭/失败 → ""）----
         _payoff_task, _emotion_target = "", ""
         if getattr(self, "payoff_enabled", True):  # 默认开；--no-payoff 关闭
             try:
-                from agent.core.story.payoff_script import chapter_payoff, load_payoff_script
+                from agent.core.story.payoff_script import chapter_payoff, ensure_payoff_script
 
-                _script = load_payoff_script(self.project_dir, enabled=True)
+                _script: dict = {"chapters": []}
+                try:
+                    # 消除「静默空转」（登记 20260914_爽点剧本懒生成）：剧本为空时按
+                    # 目标章数确定性生成并落盘（零 LLM、幂等）；已有手编剧本不覆盖。
+                    _script = ensure_payoff_script(self.project_dir, enabled=True)
+                except Exception as e:  # noqa: BLE001 - 懒生成失败显性化，不得解读为"无需爽点"
+                    degrade(
+                        "m5.context.payoff_autogen",
+                        "爽点剧本懒生成失败，本章无爽点剧本（非『本章无需爽点』）",
+                        e,
+                    )
                 _payoff_task, _emotion_target = chapter_payoff(_script, chapter_num)
-                # P2-3（2026-09-11）：爽点注入默认开，但剧本只由手动 `payoff-plan` 生成
-                # → 未跑过该命令的项目上「静默空转」。此处告警**一次**（类级去重防刷屏）。
+                # 走到这里仍为空 = 剧本缺失且懒生成也失败 → 告警**一次**（类级去重防刷屏）。
                 if not (_script.get("chapters") or []):
                     _cls = type(self)
                     if not getattr(_cls, "_payoff_empty_warned", False):
@@ -240,8 +249,8 @@ class M5ContextMixin:
                             if _c is not None:
                                 _c.print(
                                     "[yellow]⚠ 爽点注入已开启，但 .state/payoff_script.json "
-                                    "为空/缺失 —— 本章无爽点剧本（静默空转）。如需启用请运行 "
-                                    "novel-agent payoff-plan[/yellow]"
+                                    "仍为空（自动生成失败）—— 本章无爽点剧本。"
+                                    "请检查 .state 写权限，或手动运行 novel-agent payoff-plan[/yellow]"
                                 )
                         except Exception:  # noqa: BLE001 - 告警失败不影响写作
                             pass  # noqa: SILENT_DEGRADE
