@@ -216,6 +216,23 @@ class ParagraphRewriter:
                 error="llm_empty_output",
             )
 
+        # ---- L2（2026-09-14）：重写段落硬污染兜底（与全章写改路径同口径）----
+        # 单段重写产物同样可能混入【…】指令/占位符/AI 承接词，落盘前扫描+清理。
+        from agent.core.story.text_hygiene import (
+            clean_hard_pollutions,
+            scan_hard_pollutions,
+        )
+
+        _hp = scan_hard_pollutions(new_paragraph)
+        if _hp:
+            if self.console is not None:
+                self.console.print(
+                    f"[yellow]⚠ 重写段落含生成残留硬污染（{'；'.join(_hp)}）；"
+                    f"落盘前自动清理可安全删除项[/yellow]"
+                )
+            new_paragraph, _ = clean_hard_pollutions(new_paragraph)
+            new_paragraph = new_paragraph.strip()
+
         diff = make_diff(old_paragraph, new_paragraph)
         backup_file: Path | None = None
         if backup:

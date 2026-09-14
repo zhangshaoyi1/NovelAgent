@@ -115,17 +115,16 @@ _BULLET_LIST_RE = re.compile(r"^(?:[-*•]|-\s*\*\*)\s*\S")
 # post-write-validator）。三类高置信 AI 腔/旁白模式，warn 级标红不阻断（防误杀，全禁
 # 是 inkos 的反面教训）；实际模式可经 .state/guardrails.json 覆盖。
 NARRATIVE_TELL_RULE_ID: str = "narrative_tell"
-# 1) 元叙事旁白：叙述者突然对"读者/故事"说话
-_NARRATIVE_TELL_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
-    ("元叙事旁白", re.compile(r"到这里[，,]?算是|读者[，,]?(?:可能|应该|也许)|恐怕连读者|命运的车轮|故事(的?)走向")),
-    # 2) 分析报告腔：论文/复盘术语侵入叙事
-    ("分析报告腔", re.compile(r"核心动机|信息边界|情绪外化|沉没成本|逻辑闭环|博弈论|底层逻辑|顶层设计")),
-    # 3) 全场集体反应：群像脸谱化（不写具体的人）
-    ("集体反应", re.compile(r"全场(?:一片)?(?:哗然|震惊|死寂|沸腾)|众人齐声|所有人都(惊呆|倒吸|愣住)")),
-]
-# ---- P2（竞品优化方案 2.1）：段级密度确定性规则（oh-story narrative-writer 硬约束）。
-# 超长段落/超长单句 warn 标红；对话段（以引号开头）豁免——对白连排属正常排版。
 DENSITY_RULE_ID: str = "paragraph_density"
+HARD_POLLUTION_RULE_ID: str = "hard_pollution"  # L2：标题重复/AI指令泄漏/占位符/AI承接词（2026-09-14）
+# P2-2.2：叙事越界模式（元叙事旁白/分析报告腔/集体反应）——warn 级标红不阻断。
+# 补缺（2026-09-14）：_NARRATIVE_TELL_PATTERNS 此前有引用无定义，check_narrative_tell=True
+# 时直接 NameError——写章路径因显式关闭未暴露，rewrite/其他路径会崩。保守词表，仅标红。
+_NARRATIVE_TELL_PATTERNS: list[tuple[str, "re.Pattern[str]"]] = [
+    ("元叙事旁白", re.compile(r"（此处|（注：|本段|正如前文|后文将|这里埋下|此处埋下")),
+    ("分析报告腔", re.compile(r"综上|由此可见|换言之|值得注意的是")),
+    ("集体反应", re.compile(r"众人皆是一震|所有人都屏住了呼吸|在场的所有人都")),
+]
 _DEFAULT_MAX_PARAGRAPH_CHARS = 300   # 单自然段（\n 分隔）超过即 warn
 _DEFAULT_MAX_SENTENCE_CHARS = 120    # 单句（。！？…分隔）超过即 warn
 
@@ -223,6 +222,10 @@ class Guardrails:
         check_density: bool = True,                  # P2-2.1：段级密度开关
         max_paragraph_chars: int = _DEFAULT_MAX_PARAGRAPH_CHARS,
         max_sentence_chars: int = _DEFAULT_MAX_SENTENCE_CHARS,
+        # ---- L2（2026-09-14）：生成残留硬污染开关（标题重复/AI指令泄漏/占位符/AI承接词）----
+        # 定义下沉 core（agent.core.story.text_hygiene），本护栏统一消费——
+        # 任何走 guardrails.check() 的写/改路径（rewrite/写章护栏等）自动获得拦截。
+        check_hard_pollution: bool = True,
     ) -> None:
         self.banned_words = list(banned_words if banned_words is not None else _DEFAULT_BANNED)
         self.placeholder_patterns = [
@@ -249,6 +252,8 @@ class Guardrails:
         self.check_density = check_density
         self.max_paragraph_chars = max(int(max_paragraph_chars), 1)
         self.max_sentence_chars = max(int(max_sentence_chars), 1)
+        # ---- L2：生成残留硬污染（2026-09-14，core 定义统一消费）----
+        self.check_hard_pollution = check_hard_pollution
 
     # ---------------------------------------------------------------- 文本校验
     def check_text(
@@ -349,6 +354,21 @@ class Guardrails:
                 violations.append(GuardrailViolation(
                     META_LEAK_RULE_ID, "error", leak,
                 ))
+
+        # ---- L2（2026-09-14）：生成残留硬污染（标题重复/AI指令泄漏/占位符/AI承接词）----
+        # 与写章门禁/落盘兜底同源（core/story/text_hygiene 单一定义）——任何走
+        # guardrails.check() 的写/改路径自动获得该硬关卡（灵荒薪传 ch001 复盘）。
+        if self.check_hard_pollution:
+            try:
+                from agent.core.story.text_hygiene import scan_hard_pollutions
+
+                _hp = scan_hard_pollutions(t)
+                for _msg in _hp:
+                    violations.append(GuardrailViolation(
+                        HARD_POLLUTION_RULE_ID, "error", _msg,
+                    ))
+            except Exception:  # noqa: BLE001 - L2 扫描失败不阻断（G3 降级哲学）
+                pass  # noqa: SILENT_DEGRADE
 
         # 10) 叙事越界（narrative_tell，P2-2.2）：元叙事旁白/分析报告腔/集体反应。
         #     warn 级标红不阻断（对齐 ai_flavor 的"确定性词表默认 warn"拍板）。

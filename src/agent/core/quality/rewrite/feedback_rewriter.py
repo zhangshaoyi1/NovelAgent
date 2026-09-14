@@ -215,7 +215,7 @@ class FeedbackRewriter:
         # 写章路径（agentic/m5）已接入 scan_hard_pollutions 硬关卡，rewrite 此前
         # 只靠 LLM 护栏（G14）→「你别说」「【下一章预告：…】」标题重复等低级硬伤
         # 在重写产物里漏网（灵荒薪传 ch001 双标题 + 预告泄漏实证）。
-        from agent.workflows.writing.m5_text_hygiene import scan_hard_pollutions
+        from agent.core.story.text_hygiene import scan_hard_pollutions
 
         hard_poll = scan_hard_pollutions(new_text)
         if hard_poll:
@@ -432,15 +432,15 @@ class FeedbackRewriter:
         meta["last_rewrite_at"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         meta["revision_count"] = int(meta.get("revision_count", 0) or 0) + 1
         # ---- L2 落盘兜底（2026-09-14）：rewrite 与写章同口径——删【…】指令/去重标题/清占位符 ----
-        from agent.workflows.writing.m5_text_hygiene import clean_hard_pollutions
+        from agent.core.story.text_hygiene import (
+            clean_hard_pollutions,
+            strip_leading_headings,
+        )
 
         body_text, _poll = clean_hard_pollutions(new_text)
         # 去掉 LLM 自报标题行（防与落盘统一标题重复——ch001 双标题根因：
         # 旧逻辑把带标题的 new_text 直接拼进 body，标题重复两遍）
-        lines = body_text.split("\n")
-        while lines and (not lines[0].strip() or lines[0].lstrip().startswith("#")):
-            lines.pop(0)
-        body_text = "\n".join(lines).strip()
+        body_text = strip_leading_headings(body_text)
         # 标题保持一致（从首行推断；去标题行后的首行才是真实正文首行）
         first = body_text.strip().split("\n", 1)[0].strip() if body_text.strip() else ""
         if first and not first.startswith("第") and len(first) <= 30:
