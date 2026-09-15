@@ -7,11 +7,43 @@
 - 新增静默降级（无 degrade、无豁免、非 raise/return）→ FAIL。
 
 目的：杜绝"悄悄不工作"（deslop/预算/legacy 路径等静默失效的复发）。
+
+────────────────────────────────────────────────────────────────
+判据升级（2026-09-15，监管回溯缺口 G2 的处置）
+────────────────────────────────────────────────────────────────
+**旧判据** ``text.count("SILENT_DEGRADE")`` 数**任意位置的字符串出现次数**，
+包括 docstring / 日志文案。实测该线本来就基本准确（390 次里仅 1 处噪声，
+来自 ``core/infra/degrade.py`` 自己的文档串），但**判据与语义不匹配**这一点
+与 ``test_state_ownership`` 同源（同一类缺陷，两个显影）。
+
+**新判据**：``tokenize`` 逐 token 扫描，**只数 COMMENT token** ——
+豁免的本质就是「except 上的注释标记」，语义对齐后不再可能被文案污染。
+
+★ 换判据时**挖出了一个更严重的存量问题**：旧写法
+``except (SyntaxError, UnicodeDecodeError, OSError): continue`` 在遇到
+**BOM 文件**时 ``ast.parse`` 抛 ``invalid non-printable character U+FEFF``
+→ **整个文件被静默跳过**。``src/`` 下正好有 **5 个 BOM 文件**，
+其中 4 个藏了 **9 处从未被审过的静默降级**：
+``feedback_rewriter.py`` / ``m12_audit.py``(×3) / ``m20_analyze.py``(×3) /
+``budget_planner.py``(×2)。**红线对它们失明了整整一段历史。**
+
+处置（2026-09-15）：6 处真实失败接入 ``degrade()``；3 处属「预期跳过 / 重试循环
+（最终由 for-else raise 上报）」转正为显式豁免并写明理由。
+
+基线随之重定：390（旧判据，看不全）→ 399（新判据，含 BOM 文件）
+→ **402**（+3 处转正豁免）。⚠ 这是**判据纠正后的一次性重定基，不是放宽**：
+6 处真实静默降级已接 ``degrade()``（不计豁免）。此后棘轮纪律不变：只减不增。
+
+⚠ BOM 同样要处理：未按 ``utf-8-sig`` 读取会让 ``tokenize``/``ast`` 失败 →
+若静默 ``continue`` 则该文件对红线失明。故解析失败**必须 FAIL 并列出文件名**
+（见 ``test_all_sources_parseable``）。
 """
 
 from __future__ import annotations
 
 import ast
+import io
+import tokenize
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[2] / "src"
@@ -49,15 +81,65 @@ def _body_has_visible_handling(body: list[ast.stmt]) -> bool:
     return False
 
 
+def comment_lines(text: str) -> set[int]:
+    """返回含 ``SILENT_DEGRADE`` 的 **COMMENT token** 所在行号集合。
+
+    只认注释 —— docstring / 字符串字面量里出现该字样**不算**豁免
+    （那是「对齐判据而非对齐语义」的旧病，见模块 docstring）。
+    """
+    out: set[int] = set()
+    try:
+        for tok in tokenize.generate_tokens(io.StringIO(text.removeprefix("\ufeff")).readline):
+            if tok.type == tokenize.COMMENT and _EXEMPT_MARK in tok.string:
+                out.add(tok.start[0])
+    except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+        raise
+    return out
+
+
+def _read_sources() -> tuple[dict[str, str], list[str]]:
+    """读取全部源文件（utf-8-sig），返回 (相对路径->文本, 读取失败清单)。"""
+    texts: dict[str, str] = {}
+    failed: list[str] = []
+    for py in sorted(SRC.rglob("*.py")):
+        rel = py.relative_to(SRC).as_posix()
+        try:
+            texts[rel] = py.read_text(encoding="utf-8-sig")
+        except (UnicodeDecodeError, OSError) as exc:
+            failed.append(f"{rel}: 读取失败 {type(exc).__name__}")
+    return texts, failed
+
+
+def count_exemptions() -> dict[str, int]:
+    """统计每个源文件中**注释形式**的 SILENT_DEGRADE 豁免标记数。
+
+    解析失败的文件不计入（由 test_all_sources_parseable 显性失败兜底）。
+    """
+    counts: dict[str, int] = {}
+    texts, _ = _read_sources()
+    for rel, text in texts.items():
+        try:
+            n = len(comment_lines(text))
+        except Exception:
+            continue
+        if n:
+            counts[rel] = n
+    return counts
+
+
 def find_violations() -> list[tuple[str, int, str]]:
     """返回违规清单 [(文件相对路径, 行号, except 行文本)]。"""
     out: list[tuple[str, int, str]] = []
-    for py in sorted(SRC.rglob("*.py")):
+    texts, _ = _read_sources()
+    for rel, text in texts.items():
         try:
-            text = py.read_text(encoding="utf-8")
-            tree = ast.parse(text, filename=str(py))
-        except (SyntaxError, UnicodeDecodeError, OSError):
-            continue  # 语法/编码问题由其他测试负责
+            tree = ast.parse(text, filename=rel)
+        except (SyntaxError, ValueError):
+            continue  # 由 test_all_sources_parseable 显性失败
+        try:
+            exempt_ln = comment_lines(text)
+        except Exception:
+            exempt_ln = set()
         lines = text.splitlines()
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
@@ -66,15 +148,44 @@ def find_violations() -> list[tuple[str, int, str]]:
                 continue
             if _body_has_visible_handling(node.body):
                 continue
-            # 检查 except 语句区间（lineno..end_lineno）内**任何一行**含豁免标记：
+            # 检查 except 语句区间（lineno..end_lineno）内**任何注释行**含豁免标记：
             # ExceptHandler.end_lineno 是块尾（body 末行），标记通常加在 except 头行；
             # 多行 except 标记可能加在最后物理行——区间扫描兜底两者。
             head = max(1, node.lineno)
             tail = min(len(lines), node.end_lineno or node.lineno)
-            if any(_EXEMPT_MARK in lines[i - 1] for i in range(head, tail + 1)):
+            if any(ln in exempt_ln for ln in range(head, tail + 1)):
                 continue
-            out.append((str(py.relative_to(SRC)), node.lineno, lines[node.lineno - 1].strip()[:90]))
+            out.append((rel, node.lineno, lines[node.lineno - 1].strip()[:90]))
     return out
+
+
+class TestJudgementIsSemantic:
+    """判据本身的行为（防退化回字符串计数）。"""
+
+    def test_mark_in_comment_is_exemption(self) -> None:
+        src = 'try:\n    pass\nexcept Exception:  # noqa: SILENT_DEGRADE - 存量\n    pass\n'
+        assert comment_lines(src) == {3}
+
+    def test_mark_in_docstring_is_not_exemption(self) -> None:
+        """docstring 里提到 SILENT_DEGRADE 不算豁免（旧判据会误计）。"""
+        src = '"""说明：本模块的 except 需标注 # noqa: SILENT_DEGRADE。"""\n'
+        assert comment_lines(src) == set()
+
+    def test_mark_in_message_is_not_exemption(self) -> None:
+        src = 'x = "SILENT_DEGRADE 是豁免标记"\n'
+        assert comment_lines(src) == set()
+
+    def test_comment_count_matches_expectation(self) -> None:
+        src = (
+            "# SILENT_DEGRADE\n"
+            'y = 1  # SILENT_DEGRADE - 理由\n'
+            'z = "SILENT_DEGRADE"  # 不是标记\n'
+        )
+        assert comment_lines(src) == {1, 2}
+
+    def test_bom_is_tolerated(self) -> None:
+        src = '\ufeffx = 1  # SILENT_DEGRADE\n'
+        assert comment_lines(src) == {1}
 
 
 def test_no_silent_degrades() -> None:
@@ -93,11 +204,35 @@ def test_degrade_tool_exists() -> None:
     assert tool.exists(), "agent/core/infra/degrade.py 缺失（F-1 统一降级出口）"
 
 
+def test_all_sources_parseable() -> None:
+    """任何源码不可解析都必须显性失败（不得静默跳过 → 红线失明）。"""
+    texts, failed = _read_sources()
+    unparseable = list(failed)
+    for rel, text in texts.items():
+        try:
+            ast.parse(text, filename=rel)
+            comment_lines(text)
+        except (SyntaxError, ValueError, tokenize.TokenError, IndentationError) as exc:
+            unparseable.append(f"{rel}: 解析失败 {type(exc).__name__}")
+    assert not unparseable, (
+        f"{len(unparseable)} 个源文件无法解析 —— 红线对它们会永久失明，必须先修"
+        "（常见原因：BOM 未按 utf-8-sig 读取 / 语法错误）：\n"
+        + "\n".join(f"  {u}" for u in unparseable[:20])
+    )
+
+
 # ── F-1 豁免棘轮（2026-09-12 建立）────────────────────────────────
 # 背景：存量 405 处豁免此前「只增不减」——没有任何机制推动清偿，于是同一份
 # 架构文档里出现双标：R6 分层矩阵零豁免（真红线），降级可见化 405 豁免（装饰性红线）。
 # 这里冻结基线并强制单调递减：清偿一批就下调一批，新增降级点必须接 degrade()。
-DEGRADE_EXEMPTION_BUDGET = 400
+#
+# 2026-09-15 判据由「文本出现次数」改为「COMMENT token 数」，并首次真正扫到 5 个 BOM 文件
+# （旧写法 `except SyntaxError: continue` 把它们永久静默跳过 → 红线对这些文件失明）：
+#     390（旧判据，看不见 BOM 文件）→ 399（新判据，含 5 个 BOM 文件）
+#     → 402（其中 3 处「预期跳过 / 重试循环」转正为有理由的显式豁免）
+# ⚠ 本次上调是**判据纠正后的一次性重定基**，不是放宽：另 6 处真实静默降级已接入
+#   degrade()（不计入豁免）。此后棘轮纪律不变 —— 只减不增。
+DEGRADE_EXEMPTION_BUDGET = 402
 
 # 主链路重点清偿对象（写作 / 评估 / 流水线）：单独设上限，
 # 防止「总量在降、关键路径却在涨」被总数掩盖。
@@ -108,20 +243,6 @@ DEGRADE_EXEMPTION_BUDGET_BY_FILE = {
     "agent/agents/evaluator_dims.py": 9,
     "agent/cli/commands/autowrite.py": 11,
 }
-
-
-def count_exemptions() -> dict[str, int]:
-    """统计每个源文件中的 SILENT_DEGRADE 豁免标记数。"""
-    counts: dict[str, int] = {}
-    for py in sorted(SRC.rglob("*.py")):
-        try:
-            text = py.read_text(encoding="utf-8")
-        except (UnicodeDecodeError, OSError):
-            continue
-        n = text.count(_EXEMPT_MARK)
-        if n:
-            counts[py.relative_to(SRC).as_posix()] = n
-    return counts
 
 
 def test_exemption_budget_never_grows() -> None:

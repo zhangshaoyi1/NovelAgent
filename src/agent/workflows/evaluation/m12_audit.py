@@ -21,6 +21,7 @@ F12.3 上下文分层加载
 from __future__ import annotations
 
 from agent.core.infra.prompt_manager import pm
+from agent.core.infra.degrade import degrade
 import json
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -402,7 +403,7 @@ class ChapterSummarizer:
             try:
                 num = int(f.stem[2:])
                 nums.append(num)
-            except ValueError:
+            except ValueError:  # noqa: SILENT_DEGRADE - chNNN 之外的命名（如 .bak/README）跳过属预期，非错误
                 continue
         return sorted(nums)
 
@@ -642,7 +643,12 @@ class ContextLoader:
                     result["rag_context"] = Retriever(self.project_dir).retrieve(
                         f"第{chapter_num}章 上下文 设定 角色 伏笔", top_k=5
                     )
-                except Exception:  # noqa: BLE001 - RAG 失败不阻断审核
+                except Exception as e:  # noqa: BLE001 - RAG 失败不阻断审核
+                    degrade(
+                        "m12.audit.rag",
+                        "RAG 检索失败，降级为空上下文，不阻断审核",
+                        e,
+                    )
                     result["rag_context"] = []
 
         return result
@@ -663,7 +669,12 @@ class ContextLoader:
                 lines.append(f"### 第 {n} 章 {post.metadata.get('chapter_title', '')}")
                 lines.append(post.content[:200] + "...")
                 lines.append("")
-            except Exception:
+            except Exception as e:
+                degrade(
+                    "m12.audit.recent_fallback",
+                    "回退读取章节片段失败，跳过该章（不阻断审核）",
+                    e,
+                )
                 continue
         return "\n".join(lines)
 

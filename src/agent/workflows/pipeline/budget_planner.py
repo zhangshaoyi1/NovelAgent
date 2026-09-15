@@ -25,6 +25,7 @@
 
 from __future__ import annotations
 from agent.core.infra.prompt_manager import pm
+from agent.core.infra.degrade import degrade
 
 import json
 from pathlib import Path
@@ -172,7 +173,7 @@ class BudgetPlanner:
         progress = self._read_progress()
         try:
             written = int(progress.get("total_written") or 0)
-        except (TypeError, ValueError):
+        except (TypeError, ValueError):  # noqa: SILENT_DEGRADE - progress 缺失/脏值走缺省 0，属既有三级缺省链，非错误
             written = 0
         if written <= 0:
             return share
@@ -392,8 +393,12 @@ class BudgetPlanner:
             name = (md.get("metadata") or {}).get("subline_name")
             if name:
                 return str(name)
-        except Exception:  # noqa: BLE001
-            pass
+        except Exception as e:  # noqa: BLE001 - 支线主题为装饰性信息，读取失败回退 ID 拆分
+            degrade(
+                "budget_planner.subline_title",
+                "支线主题读取失败，回退为 ID 拆分（不影响预算规划）",
+                e,
+            )
         # fallback：S01_过去秘密揭露 -> 过去秘密揭露
         return subline_id.split("_", 1)[-1] if "_" in subline_id else subline_id
 

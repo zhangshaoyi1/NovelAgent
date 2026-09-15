@@ -30,6 +30,7 @@ from rich.console import Console
 from agent.client.gateway_adapter import create_gateway, chat_creative, chat_utility
 from llmagent.gateway import Gateway
 from agent.core.infra.prompt_manager import pm
+from agent.core.infra.degrade import degrade
 from agent.utils import parse_llm_json
 
 # ============================================================
@@ -342,6 +343,11 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
                 progress.stages[s] = "done"
                 result.completed_stages.append(s)
             except Exception as e:  # noqa: BLE001 - 部分失败容忍，记录并继续
+                degrade(
+                    "m20.analyze.stage",
+                    f"阶段 {s}（{STAGE_NAMES[s]}）失败，记入 failures 后继续后续阶段",
+                    e,
+                )
                 progress.stages[s] = "failed"
                 progress.failures.append(
                     {
@@ -518,7 +524,7 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
             try:
                 data = parse_llm_json(resp)
                 break
-            except ValueError as e:
+            except ValueError as e:  # noqa: SILENT_DEGRADE - 重试循环体内，两轮仍失败由下方 for-else 抛 RuntimeError 显性上报，非静默
                 last_err = e
                 if attempt == 0:
                     self._write("分析日志/outline_parse_retry.log",
@@ -685,6 +691,11 @@ class M20AnalyzeWorkflow:  # noqa: F811 - 下方用装饰器包装，无冲突
                 progress.completed_chapters = done
                 progress.last_chapter = n
             except Exception as e:  # noqa: BLE001 - 单章失败记录不阻断
+                degrade(
+                    "m20.analyze.summary",
+                    f"第{n}章摘要生成失败，记入 failures 后继续后续章节",
+                    e,
+                )
                 progress.failures.append(
                     {
                         "type": "summary",

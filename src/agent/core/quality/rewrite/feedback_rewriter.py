@@ -34,6 +34,7 @@ from llmagent.gateway import Gateway
 from agent.client.gateway_adapter import chat_creative
 from agent.core.quality.guardrails import GateMode, Guardrails, build_guardrails
 from agent.core.story.setting_manager import SettingManager
+from agent.core.infra.degrade import degrade
 from agent.core.infra.prompt_manager import pm
 
 
@@ -396,8 +397,12 @@ class FeedbackRewriter:
                 text=f"第{chapter_num}章反馈「{feedback}」→ {summary}",
                 source_chapters=[chapter_num],
             )
-        except Exception:  # noqa: BLE001 - 偏好沉淀失败不影响改写交付
-            pass
+        except Exception as e:  # noqa: BLE001 - 偏好沉淀失败不影响改写交付
+            degrade(
+                "rewrite.pref.accumulate",
+                "偏好沉淀失败，不影响本次改写交付（偏好学习本轮落空）",
+                e,
+            )
 
     # ---------------------------------------------------------- 内部：文件
     @staticmethod
