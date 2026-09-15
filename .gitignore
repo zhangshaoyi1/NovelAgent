@@ -57,11 +57,13 @@ _debug_safe_remove.py
 
 # 辅助/生成产物（运行日志、提交说明临时文件、一次性脚本，不入库）
 .events/
-# scripts/ 下默认全忽略（一次性调试/恢复脚本），但 githooks/ 是提交关卡，
-# 必须受版本控制——否则换机器即失效，关卡等于没装。
+# scripts/ 下默认全忽略（一次性调试/恢复脚本），但以下**可复用工具**必须受版本控制：
+#   - githooks/          提交关卡，换机器即失效 → 必须入库
+#   - baseline_diff.py   基线归因工具，AGENTS.md 第 13 条指定入口
 # ⚠ 不能写 "scripts/"：git 不会进入被忽略的目录，负向规则也无效。
 scripts/*
 !scripts/githooks/
+!scripts/baseline_diff.py
 _final_commit_msg.txt
 
 # 一次性调试/恢复脚本统一放入 scripts/，不写在根目录
