@@ -30,6 +30,7 @@ import argparse
 import ast
 import subprocess
 import sys
+from datetime import date
 from pathlib import Path
 
 SCRIPT = Path(__file__).resolve()
@@ -88,8 +89,39 @@ def load_registry(name: str) -> dict[str, dict[str, str]]:
     raise SystemExit(f"{FAIL} 在 {REGISTRY_SOURCE} 中找不到 {name} 定义")
 
 
-def load_registries() -> tuple[dict[str, dict[str, str]], dict[str, dict[str, str]]]:
-    return load_registry("SIBLING_WORKTREES"), load_registry("ROOT_SCRIPT_REGISTRY")
+def load_registries() -> tuple[
+    dict[str, dict[str, str]],
+    dict[str, dict[str, str]],
+    dict[str, dict[str, str]],
+]:
+    return (
+        load_registry("SIBLING_WORKTREES"),
+        load_registry("ROOT_SCRIPT_REGISTRY"),
+        load_registry("NESTED_REPO_ALLOWLIST"),
+    )
+
+
+def real_repo_roots(root: Path) -> list[Path]:
+    """工作区内的真仓根（`.git` 是目录）；linked worktree（`.git` 是文件）由第 2 节管。"""
+    return sorted(e for e in root.iterdir() if e.is_dir() and (e / ".git").is_dir())
+
+
+def nested_repos(repo_root: Path) -> list[str]:
+    """仓内嵌套的独立仓（相对仓根 posix 路径）。"""
+    found: list[str] = []
+    stack = [repo_root]
+    while stack:
+        current = stack.pop()
+        for entry in current.iterdir():
+            if not entry.is_dir():
+                continue
+            if entry.name == ".git":
+                if entry.parent != repo_root:
+                    found.append(entry.parent.relative_to(repo_root).as_posix())
+                continue
+            if entry.name not in {".venv", "venv", "__pycache__", "node_modules", ".pytest_cache", "site-packages", "dist", "build"}:
+                stack.append(entry)
+    return sorted(found)
 
 
 def dir_size(path: Path) -> str:
@@ -176,6 +208,37 @@ def audit_worktrees(root: Path, registry: dict[str, dict[str, str]], deep: bool)
     return problems
 
 
+def audit_nested_repos(root: Path, allowlist: dict[str, dict[str, str]]) -> list[str]:
+    section("4. 嵌套仓库（住在本仓内的独立 git 仓）")
+    problems: list[str] = []
+    seen: set[str] = set()
+    for repo in real_repo_roots(root):
+        for rel in nested_repos(repo):
+            key = f"{repo.name}/{rel}"
+            seen.add(key)
+            meta = allowlist.get(key)
+            if meta:
+                print(f"  {WARN} {key}  已登记（待处置）")
+                print(f"        理由：{meta.get('reason', '?')} | remove_by={meta.get('remove_by', '—')}")
+            else:
+                print(f"  {FAIL} {key}  ★ 未登记 —— 该子树对父仓完全不可见")
+                problems.append(f"未登记的嵌套仓：{key}")
+
+    for key, meta in sorted(allowlist.items()):
+        if key not in seen:
+            print(f"  {FAIL} 登记表僵尸条目：{key}")
+            problems.append(f"嵌套仓登记表僵尸条目：{key}")
+            continue
+        deadline = meta.get("remove_by")
+        if deadline and date.today() > date.fromisoformat(deadline):
+            print(f"  {FAIL} {key}  已过 remove_by={deadline}")
+            problems.append(f"嵌套仓超过清偿期限：{key}")
+
+    if not seen:
+        print(f"  {OK}  两个仓内均无嵌套独立仓")
+    return problems
+
+
 def audit_blind_docs(repo_root: Path) -> list[str]:
     section("3. 版本控制失明（仓内文档是否被 git 看见）")
     problems: list[str] = []
@@ -213,7 +276,7 @@ def main() -> int:
     args = parser.parse_args()
 
     root = Path(args.root).resolve() if args.root else REPO_ROOT.parent
-    registry, scripts = load_registries()
+    registry, scripts, nested = load_registries()
 
     print("=" * 66)
     print("单一真源巡检 SSOT audit")
@@ -228,6 +291,7 @@ def main() -> int:
     problems += audit_root(root, registry, scripts)
     problems += audit_worktrees(root, registry, args.deep)
     problems += audit_blind_docs(REPO_ROOT)
+    problems += audit_nested_repos(root, nested)
 
     section("结论")
     if problems:
@@ -235,7 +299,7 @@ def main() -> int:
         for item in problems:
             print(f"  · {item}")
         return 1
-    print(f"{OK}  未发现单一真源问题：根目录无无主资产、worktree 全部登记、无失明文档。")
+    print(f"{OK}  未发现单一真源问题：根目录无无主资产、worktree 全部登记、无失明文档、无未登记嵌套仓。")
     return 0
 
 

@@ -148,6 +148,24 @@ ROOT_SCRIPT_REGISTRY: dict[str, dict[str, str]] = {
 ROOT_SCRIPT_SUFFIXES = (".py", ".bat", ".cmd", ".ps1")
 
 
+# ── M4 嵌套仓库 ───────────────────────────────────────────────────────────
+# 仓内出现**独立 git 仓**（子目录里有自己的 `.git` 目录）→ 该子树对父仓
+# 完全不可见（`git status` 只报一个 `?? path/`），内容漂移而改动无记录。
+# 第三方克隆尤其不该住在仓里。
+# 允许项必须登记 reason + remove_by（到期即 FAIL），与其他形态同一纪律。
+NESTED_REPO_ALLOWLIST: dict[str, dict[str, str]] = {
+    "项目文档/skill/skills": {
+        "reason": (
+            "🔴 待拍板：anthropics/skills 官方示例克隆（第三方，可重新克隆）+ "
+            "同级 `venom-reviewer/` 为用户自制 skill（毒蛇评审，有价值）—— "
+            "两者都不该住在文档仓内；建议 venom-reviewer 装到 ~/.workbuddy/skills/、"
+            "第三方克隆移出仓或删除"
+        ),
+        "remove_by": "2026-09-29",
+    },
+}
+
+
 # ── 判据（纯函数，便于单测）──────────────────────────────────────────────
 def workspace_root_of(repo_root: Path) -> Path | None:
     """返回工作区根目录；布局不符（如 CI 里的独立克隆）时返回 None。
@@ -233,6 +251,33 @@ def sibling_worktrees(root: Path) -> list[str]:
 def root_scripts(root: Path) -> list[str]:
     """根目录下的运行脚本名（不含子目录）。"""
     return sorted(e.name for e in root.iterdir() if e.is_file() and e.suffix.lower() in ROOT_SCRIPT_SUFFIXES)
+
+
+def real_repo_roots(root: Path) -> list[Path]:
+    """工作区内的**真仓根**（`.git` 是目录）。linked worktree（`.git` 是文件）不算 —— 它们由 M3 管。"""
+    return sorted(
+        e
+        for e in root.iterdir()
+        if e.is_dir() and (e / ".git").is_dir()
+    )
+
+
+def nested_repos(repo_root: Path) -> list[str]:
+    """仓内嵌套的独立仓（相对仓根的 posix 路径，已排除第三方/缓存目录）。"""
+    found: list[str] = []
+    stack = [repo_root]
+    while stack:
+        current = stack.pop()
+        for entry in current.iterdir():
+            if not entry.is_dir():
+                continue
+            if entry.name == ".git":
+                if entry.parent != repo_root:
+                    found.append(entry.parent.relative_to(repo_root).as_posix())
+                continue
+            if not ignored_dir(entry.name):
+                stack.append(entry)
+    return sorted(found)
 
 
 # ── 测试 ─────────────────────────────────────────────────────────────────
@@ -389,6 +434,80 @@ class TestSiblingWorktreesAreRegistered:
             + "\n处置二选一：(a) `git worktree remove <path>`（推荐，分支与提交不丢）；"
             "\n           (b) 确有用途则延长 remove_by 并在登记单写明理由。"
         )
+
+
+class TestNoNestedRepositories:
+    """M4：仓内不得有未登记的独立 git 仓（那棵子树对父仓完全不可见）。"""
+
+    def _existing(self, root: Path) -> set[str]:
+        return {
+            f"{repo.name}/{rel}"
+            for repo in real_repo_roots(root)
+            for rel in nested_repos(repo)
+        }
+
+    def test_no_unregistered_nested_repository(self) -> None:
+        root = workspace_root()
+        if root is None:
+            return
+        violations = [
+            f"  {root / key}（父仓 {key.split('/', 1)[0]}）"
+            for key in sorted(self._existing(root))
+            if key not in NESTED_REPO_ALLOWLIST
+        ]
+        assert not violations, (
+            "仓内出现未登记的独立 git 仓 —— 这棵子树对父仓完全不可见"
+            "（`git status` 只报一个 `?? path/`），内容漂移而改动无记录：\n"
+            + "\n".join(violations)
+            + "\n处置三选一：(a) 移出仓外（第三方克隆尤应如此）；"
+            "\n           (b) 移入版本控制（删除其 .git，作为普通文件入库）；"
+            "\n           (c) 登记进 NESTED_REPO_ALLOWLIST（须写 reason + remove_by）。"
+        )
+
+    def test_nested_repo_allowlist_has_no_zombies(self) -> None:
+        root = workspace_root()
+        if root is None:
+            return
+        existing = self._existing(root)
+        zombies = sorted(k for k in NESTED_REPO_ALLOWLIST if k not in existing)
+        assert not zombies, (
+            "NESTED_REPO_ALLOWLIST 存在僵尸条目（已不在仓内）—— 请同步删除登记：\n"
+            + "\n".join(f"  {k}" for k in zombies)
+        )
+
+    def test_nested_repo_allowlist_not_expired(self) -> None:
+        root = workspace_root()
+        if root is None:
+            return
+        existing = self._existing(root)
+        expired: list[str] = []
+        for key, meta in NESTED_REPO_ALLOWLIST.items():
+            if key not in existing:
+                continue
+            if not meta.get("reason") or not meta.get("remove_by"):
+                expired.append(f"  {key}: 条目必须写 reason 与 remove_by")
+                continue
+            if date.today() > date.fromisoformat(meta["remove_by"]):
+                expired.append(f"  {key}: remove_by={meta['remove_by']} 已过期，仍住在仓内")
+        assert not expired, (
+            "嵌套仓已过清偿期限 —— 「暂缓移出」正在永久化：\n"
+            + "\n".join(expired)
+            + "\n处置：移出仓外 / 纳入版本控制 / 延长 remove_by 并说明理由。"
+        )
+
+    def test_nested_repo_judge_fires(self, tmp_path: Path) -> None:
+        repo = tmp_path / "repo"
+        (repo / ".git").mkdir(parents=True)
+        assert nested_repos(repo) == []
+        (repo / "vendor" / "lib" / ".git").mkdir(parents=True)
+        assert nested_repos(repo) == ["vendor/lib"]
+
+    def test_real_repo_roots_skips_worktrees(self, tmp_path: Path) -> None:
+        (tmp_path / "real").mkdir()
+        (tmp_path / "real" / ".git").mkdir()
+        (tmp_path / "linked").mkdir()
+        (tmp_path / "linked" / ".git").write_text("gitdir: /x", encoding="utf-8")
+        assert [p.name for p in real_repo_roots(tmp_path)] == ["real"]
 
 
 class TestJudgementIsSemantic:

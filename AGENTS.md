@@ -203,7 +203,7 @@ agent/
 | `test_state_ownership.py` | 状态所有权：**路径→业主**成员契约（`STATE_OWNERSHIP`）；旁路须在 `STATE_OWNERSHIP_TOLERATED` 具名登记（reason+target）；引用次数降为看板 |
 | `test_degrade_visibility.py` | F-1 降级可见化：静默点清零；豁免须写 `reason=<枚举>[ ref=<登记单>]`，未引用 reason 者棘轮只减不增 |
 | `test_degrade_contract.py` | 降级命名空间契约：`degrade(where,...)` 的 where 必须在 `core/infra/degrade_registry.py` 登记；双向差集（未登记/僵尸条目均 FAIL） |
-| `test_single_source_of_truth.py` | 单一真源：根目录不得有权威副本（M1）；根目录脚本须在 `ROOT_SCRIPT_REGISTRY` 在册（M1b）；兄弟 worktree 须在 `SIBLING_WORKTREES` 在册且**到期即 FAIL**（M3）；仓内 `AGENTS/README/TEMPLATE` 必须被 git 跟踪 |
+| `test_single_source_of_truth.py` | 单一真源：根目录不得有权威副本（M1）；根目录脚本须在 `ROOT_SCRIPT_REGISTRY` 在册（M1b）；兄弟 worktree 须在 `SIBLING_WORKTREES` 在册且**到期即 FAIL**（M3）；仓内独立嵌套仓须在 `NESTED_REPO_ALLOWLIST` 在册（M4）；仓内 `AGENTS/README/TEMPLATE` 必须被 git 跟踪 |
 | `test_capability_parity.py` | 能力对账：接口对账 + 副作用 hook 对账（差集真机制，勿改白名单） |
 | `test_hostile_delete_env.py` | 宿主敌意：safe-delete 护栏免疫，删除路径不被 SystemExit 逃逸 |
 | R4 方向矩阵 | cli↔web 循环依赖已拆除：web→cli 仅命令注册副作用，禁止反向 |
@@ -275,6 +275,7 @@ agent/
       · **M1 仓外副本**：根目录不得出现 `AGENTS.md` / `CLAUDE.md` / `README.md` / `pyproject.toml` / `models.json` / `.agents` / `src` / `tests` 等同名条目。**真源**：规则→`agent/AGENTS.md`；决策记录→`agent/.agents/notes/`。
       · **M1b 根目录脚本**：根目录 `*.py/*.bat/*.cmd/*.ps1` 必须在 `ROOT_SCRIPT_REGISTRY` 在册（写明 `purpose` + `blocker`）。**不可随意迁移**：它们被 Windows 计划任务 `NovelAgent_HourlyMonitor` 以**绝对路径**引用，且本沙箱 `schtasks` 被程序黑名单拦截（改了任务指向无法回滚）。
       · **M3 兄弟旧树**：根目录旁 `.git` 为**文件**的目录 = linked worktree，必须在 `SIBLING_WORKTREES` 在册；`status=deprecated-stale` 的必须带 `remove_by`，**到期即 FAIL**（把"临时容忍"变成"到期硬约束"）。
+      · **M4 嵌套仓库**：仓**内**出现独立 git 仓（子目录里有自己的 `.git`）→ 该子树对父仓**完全不可见**（`git status` 只报一个 `?? path/`）。必须在 `NESTED_REPO_ALLOWLIST` 在册（reason + `remove_by`，到期即 FAIL）。已实测：`项目文档/skill/skills` 是 `anthropics/skills` 的克隆，**449 个文件全对父仓不可见**。
     - ⚠ **`agent-repair/` 与 `docs-repair/` 是旧分支 `release/20260906` 的工作树**（普查时落后 master **163 个提交**；agent-repair **791 MB / 328 dirty**）。内含 4 份**严重过期**的同名权威文档与已被声明删除的旧文档。**只可读用于对照，禁止 cp 回主仓**（在册 3 次污染事故，代价是「测试全绿上线 NameError」）。
     - ⚠ **`scripts/*.md` 必须能被版本控制看见**（`.gitignore` 已加负向规则 `!scripts/*.md`）：`scripts/AGENTS.md` 曾被忽略规则**永久吞掉**，从未入库 = 改了没人知道。
     - 巡检入口：`python scripts/ssot_audit.py [--deep]`（登记表**从红线读取**，单一来源不复制）；退出码 1 = 存在无主资产 / 未登记项 / 失明文档。
