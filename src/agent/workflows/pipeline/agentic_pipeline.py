@@ -814,14 +814,29 @@ class AgenticPipelineWorkflow(
                         "count": len(ai_flavor_hits),
                     }
                 result.health_report = report.to_dict()
+                # ---- 基建级故障分层（2026-09-15）：全部 LLM 评分维降级 = 网关不可达，
+                # 不是内容不达标。"连不上网关"生成的失败明细一旦落盘，会被下一批当
+                # 「上轮教训」注入写作提示（错误放大）；回退预算也会被基建故障吃满。
+                _infra_down = bool(getattr(report, "eval_infra_unavailable", False))
+                if _infra_down:
+                    _infra_err = RuntimeError(
+                        getattr(report, "escalated_reason", "") or "全部 LLM 评分维降级"
+                    )
+                    self.console.print(
+                        "[yellow]⚠ 批末体检基建不可用（全部 LLM 评分维 confidence=0）："
+                        "本轮不计质量失败、不触发回退、不落失败教训（等待 LLM 网关恢复）"
+                        "[/yellow]"
+                    )
+                    self._note_gate_blind("batch_eval_infra", _infra_err)
                 # 体检教训落盘（反馈闭环·缺口2修复 2026-09-08）：失败明细持久化，
                 # 供下一轮**新章**写作注入「上轮教训」；体检通过时写空 failures 清零。
-                try:
-                    from agent.core.quality.eval_lessons import save_eval_lessons
+                if not _infra_down:
+                    try:
+                        from agent.core.quality.eval_lessons import save_eval_lessons
 
-                    save_eval_lessons(self.project_dir, report)
-                except Exception:  # noqa: BLE001 - 教训落盘失败不阻断
-                    pass  # noqa: SILENT_DEGRADE
+                        save_eval_lessons(self.project_dir, report)
+                    except Exception:  # noqa: BLE001 - 教训落盘失败不阻断
+                        pass  # noqa: SILENT_DEGRADE
                 result.escalated = report.escalated
                 result.escalated_reason = report.escalated_reason
                 # ---- P1（2026-09-12）：跨批回退预算 ----
@@ -832,7 +847,7 @@ class AgenticPipelineWorkflow(
                     budget = self._rollback_budget()
                     if report.overall_pass:
                         budget.reset()
-                    elif getattr(report, "rolled_back", False):
+                    elif not _infra_down and getattr(report, "rolled_back", False):
                         budget.bump(
                             self._last_rollback_target(report),
                             "批末体检不达标触发回退",

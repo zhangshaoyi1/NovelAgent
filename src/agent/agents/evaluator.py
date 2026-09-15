@@ -408,6 +408,9 @@ class EvaluatorAgent(
         """
         attempts = 0
         retry_used = False
+        # 2026-09-15：本轮回环内**真实发生过**的回退事实（跨 `report` 替换存活）
+        rolled_back_any = False
+        last_repair: RepairPlan | None = None
         report = self._evaluate_once()
         while not report.overall_pass:
             # 暴露当前失败报告，供 rewriter 编译针对性修正提示
@@ -419,12 +422,24 @@ class EvaluatorAgent(
             if plan.action is Action.RETRY_EVAL:
                 if retry_used:
                     report.escalated = True
-                    report.rollback_attempts = attempts
-                    report.escalated_reason = (
-                        "判定证据不可信（复评后仍未恢复可信），已停止自动处置，请人工核查。"
-                        "原因：" + plan.reason
+                    if getattr(report, "eval_infra_unavailable", False):
+                        # 2026-09-15 分层：全部 LLM 评分维降级 = **基建故障**（网关
+                        # 不可达/返回不可解析），不是内容不达标。原因表述必须与
+                        #「内容不达标」区分，否则基建故障会被当成质量结论落进失败
+                        # 教训、污染下一批写作（实测两书累计 190 次 confidence=0）。
+                        report.escalated_reason = (
+                            "评测基建不可用：全部 LLM 评分维降级（confidence=0），"
+                            "复评后仍未恢复。本轮结论**不代表内容质量**，"
+                            "请检查 LLM 网关连通性后重跑。原因：" + plan.reason
+                        )
+                    else:
+                        report.escalated_reason = (
+                            "判定证据不可信（复评后仍未恢复可信），已停止自动处置，请人工核查。"
+                            "原因：" + plan.reason
+                        )
+                    return self._finalize_result(
+                        report, attempts, rolled_back_any, last_repair
                     )
-                    return report
                 retry_used = True
                 report = self._evaluate_once()
                 continue
@@ -432,18 +447,20 @@ class EvaluatorAgent(
             # ---- 规则 ②③：开头 / 全局结构问题 → 上报人工（末窗回滚修不到）----
             if plan.action is Action.ESCALATE:
                 report.escalated = True
-                report.rollback_attempts = attempts
                 report.escalated_reason = plan.reason + "。明细：\n" + self._escalation_detail(plan)
-                return report
+                return self._finalize_result(
+                    report, attempts, rolled_back_any, last_repair
+                )
 
             if attempts >= self.max_rollback_attempts:
                 report.escalated = True
-                report.rollback_attempts = attempts
                 report.escalated_reason = (
                     f"回溯 {attempts} 次仍不达标，已超过上限 "
                     f"{self.max_rollback_attempts}，需人工介入。"
                 )
-                return report
+                return self._finalize_result(
+                    report, attempts, rolled_back_any, last_repair
+                )
 
             # ---- 规则 ④⑤：硬指标回滚 / 软指标定向修复 —— 过守门器 ----
             if plan.action is Action.LOCAL_REPAIR:
@@ -454,7 +471,9 @@ class EvaluatorAgent(
                 except Exception as e:  # noqa: BLE001
                     report.escalated = True
                     report.escalated_reason = f"定向修复失败：{e}"
-                    return report
+                    return self._finalize_result(
+                        report, attempts, rolled_back_any, last_repair
+                    )
                 attempts += 1
                 report = self._evaluate_once()
                 continue
@@ -468,28 +487,69 @@ class EvaluatorAgent(
             )
             if not auth.ok:
                 report.escalated = True
-                report.rollback_attempts = attempts
                 report.escalated_reason = f"处置被守门器拒绝：{auth.reason}"
-                return report
+                return self._finalize_result(
+                    report, attempts, rolled_back_any, last_repair
+                )
 
             plan_rollback = self.trigger_rollback()
             if plan_rollback is None or not plan_rollback.rolled_back:
                 report.escalated = True
                 report.escalated_reason = "无可回退章节，请人工检查设定/规划。"
-                return report
+                return self._finalize_result(
+                    report, attempts, rolled_back_any, last_repair
+                )
             report.rolled_back = True
             report.rollback_attempts = attempts + 1
+            report.repair = plan_rollback
+            rolled_back_any = True
+            last_repair = plan_rollback
             try:
                 rewriter(plan_rollback.chapters_to_rewrite)
             except Exception as e:  # noqa: BLE001
                 report.escalated = True
                 report.escalated_reason = f"重写失败：{e}"
-                return report
+                return self._finalize_result(
+                    report, attempts, rolled_back_any, last_repair
+                )
             attempts += 1
             report = self._evaluate_once()
         # 闭环成功收尾：把累计回溯次数回写到最终通过报告，便于审计/复盘
+        return self._finalize_result(
+            report, attempts, attempts > 0 or rolled_back_any, last_repair
+        )
+
+    @staticmethod
+    def _finalize_result(
+        report: "NovelHealthReport",
+        attempts: int,
+        rolled_back: bool,
+        repair: "RepairPlan | None" = None,
+    ) -> "NovelHealthReport":
+        """返回前的统一收尾：把**本轮回环内真实发生过**的回退事实带上报告。
+
+        2026-09-15 修正（灵荒薪传回退振荡无人熔断复盘）
+        --------------------------------------------
+        ``evaluate_with_repair`` 每轮回退后都把 ``report`` 换成新的
+        ``_evaluate_once()`` 结果，而 ``rolled_back`` 原先只在**闭环成功**的出口
+        赋值。于是走「重试上限 / 守门器拒绝 / 定向修复失败 / 重写失败」等升级
+        出口时，报告上的 ``rolled_back`` 恒为 ``False``：
+
+        - 上层 ``agentic_pipeline_agents`` 的 ``RollbackBudget.bump`` 条件正是
+          ``report.rolled_back`` → **永远不计数**（实测 ``rollback_budget.json``
+          停在 09-14 21:33，而 09-15 又回退了两次）；
+        - ``tripped()`` 因此永不成立 → 「连续回退超限 ⇒ 上报人工」的熔断护栏
+          形同虚设，回退循环可以无限进行。
+
+        ``repair`` 同理一并回写：上层的 ``_last_rollback_target`` 依赖它取回退
+        目标章（原先也只在 ``evaluate()`` 赋值 → 目标恒为 0，
+        ``same_target_streak`` 无从识别「同一窗口反复翻车」）。
+        """
         report.rollback_attempts = attempts
-        report.rolled_back = attempts > 0
+        if rolled_back:
+            report.rolled_back = True
+        if repair is not None and report.repair is None:
+            report.repair = repair
         return report
 
     def _escalation_detail(self, plan: "DispositionPlan") -> str:

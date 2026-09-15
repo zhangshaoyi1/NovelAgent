@@ -248,19 +248,62 @@ def _collect_mentions(chapter_text: str, index: dict[str, dict[str, Any]]) -> li
     return mentions
 
 
-def _nearest_mention(
-    a_start: int, a_end: int, mentions: list[tuple[str, int, int]], max_dist: int = 24
-) -> tuple[str, float] | None:
-    """返回离某断言最近的角色称呼 (name, dist) 或 None（避免把死亡断言张冠李戴）。"""
-    best: str | None = None
-    best_d: float | None = None
-    a_center = (a_start + a_end) / 2
-    for name, s, e in mentions:
-        d = abs(((s + e) / 2) - a_center)
-        if d <= max_dist and (best_d is None or d < best_d):
-            best_d = d
-            best = name
-    return (best, best_d) if best is not None else None
+#: 主体与「生死断言」之间允许出现的字符（连接词/副词/数量时间/标点）。
+#: 只要空隙里出现别的汉字，就说明真正的主语多半是**未被登记**的实体 —— 视为主体不明。
+_SUBJECT_FILLER: frozenset[str] = frozenset(
+    "，,。、：:；;！!？?…—～~　 \t\"'“”‘’()（）[]【】〈〉《》·"
+    "的了早就已经都也其此那人那位名是而且在当时候终于实原来看还才便即为因所被把"
+    "着过我你您谁全曾前后之内以间中上下里外更又再没有不无"
+    "零一二三四五六七八九十百千万两数半余多年月日天时分秒世纪载岁顿个"
+)
+#: 主体槽与断言之间的最大字符间距（超过即认定主体离得太远，不归因）。
+_SUBJECT_GAP_MAX: int = 8
+
+
+def _assertion_subject(
+    a_start: int,
+    mentions: list[tuple[str, int, int]],
+    text: str,
+    max_gap: int = _SUBJECT_GAP_MAX,
+) -> tuple[str, int] | None:
+    """把「生死断言」归因到**紧邻前置**的已登记角色；主体不明时返回 ``None``。
+
+    Args:
+        a_start: 断言匹配的起始下标。
+        mentions: ``(name, start, end)`` 列表（仅含**已登记**角色）。
+        text: 章节正文。
+        max_gap: 主体与断言之间允许的最大字符数。
+
+    Returns:
+        ``(角色名, 间距)``；找不到可信主体时 ``None``。
+
+    2026-09-15 主体锚定（灵荒薪传 ch017-024 假失败复盘）
+    --------------------------------------------------
+    旧实现用「24 字半径内找**最近**角色名」的方式归因，于是
+    「**周德顺**已经死了」（周德顺是配角、不在 ``characters/`` 索引里）的断言
+    被扣到附近**有名有姓**的角色头上 —— 活着的主角被判「已故」，还与其关系网
+    「合作」活跃边冲突，连报 ch17/18/19/21/24 五章，且**重写无法消除**
+    （新稿照样写「周德顺死了」）。
+
+    本函数把归因改成「主体槽」判定：断言之前必须有一个已登记角色，且两者之间
+    只允许出现连接词/副词/数量时间/标点。空隙里一旦出现其它汉字（多半正是那个
+    未登记配角的姓名），就判**主体不明**并放弃断言 ——
+    **宁可漏报，不可栽赃**（本规则产出的 BLOCK 会阻断落盘，误报代价远高于漏报）。
+    """
+    best: tuple[str, int] | None = None
+    for name, _s, e in mentions:
+        if e > a_start:
+            continue                       # 只认前置主体（中文「X已经死了」语序）
+        gap = text[e:a_start]
+        if len(gap) > max_gap:
+            continue
+        if any(ch not in _SUBJECT_FILLER for ch in gap):
+            continue                       # 空隙含实体性汉字 → 主体不是此人
+        if best is None or e > best[1]:
+            best = (name, e)               # 取**最近**的前置主体
+    if best is None:
+        return None
+    return (best[0], a_start - best[1])
 
 
 # ============================================================================
@@ -307,10 +350,10 @@ def _rule_timeline_conflict(ctx: dict[str, Any], checker: "ConsistencyChecker") 
     conflicts: list[Conflict] = []
     seen: set[tuple[str, str]] = set()
     for dm in _DEATH_ASSERTION.finditer(chapter_text):
-        near = _nearest_mention(dm.start(), dm.end(), mentions)
-        if near is None:
-            continue
-        name = near[0]
+        subject = _assertion_subject(dm.start(), mentions, chapter_text)
+        if subject is None:
+            continue  # 主体不明（多为未登记配角）→ 不下断言，避免栽赃在场角色
+        name = subject[0]
         status = index[name]["status"]
         if status in ("ALIVE", "ALIVE_THEN_DIES"):
             key = ("death", name)
@@ -332,10 +375,10 @@ def _rule_timeline_conflict(ctx: dict[str, Any], checker: "ConsistencyChecker") 
                 ],
             ))
     for am in _ALIVE_ASSERTION.finditer(chapter_text):
-        near = _nearest_mention(am.start(), am.end(), mentions)
-        if near is None:
-            continue
-        name = near[0]
+        subject = _assertion_subject(am.start(), mentions, chapter_text)
+        if subject is None:
+            continue  # 同死亡断言：主体不明则不下结论
+        name = subject[0]
         status = index[name]["status"]
         if status == "DEAD_AT_START":
             key = ("alive", name)
@@ -375,9 +418,9 @@ def _rule_relation_conflict(ctx: dict[str, Any], checker: "ConsistencyChecker") 
         return []
     dead_here: set[str] = set()
     for dm in _DEATH_ASSERTION.finditer(chapter_text):
-        near = _nearest_mention(dm.start(), dm.end(), mentions)
-        if near is not None:
-            dead_here.add(near[0])
+        subject = _assertion_subject(dm.start(), mentions, chapter_text)
+        if subject is not None:
+            dead_here.add(subject[0])
 
     if not dead_here:
         return []

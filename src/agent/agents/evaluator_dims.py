@@ -151,10 +151,22 @@ class _EvaluatorDimensionsMixin:
                     "节奏",
                     [
                         f"{it.get('chapter', '?')} 篇幅 {it.get('length', 0)} 字"
-                        f"偏离中位数 {pstat.get('median', 0)}（疑似注水/赶进度）"
+                        f"偏离中位数 {pstat.get('median', 0)}（疑似注水/赶进度，"
+                        f"本轮回退窗口内可修）"
                         for it in (pstat.get("abnormal_chapters") or [])[:6]
+                    ]
+                    + [
+                        f"{it.get('chapter', '?')} 篇幅 {it.get('length', 0)} 字"
+                        f"偏离中位数 {pstat.get('median', 0)}"
+                        f"（**回退窗口之外**：本轮回退修不到，需人工拆分/压缩该章）"
+                        for it in (pstat.get("abnormal_chapters_out_of_window") or [])[:6]
                     ],
-                    rationale=f"异常章节 {pstat.get('abnormal', 0)}/{pstat.get('chapters', 0)} 章",
+                    rationale=(
+                        f"回退窗口内异常 {pstat.get('abnormal', 0)}/"
+                        f"{pstat.get('window', pstat.get('chapters', 0))} 章"
+                        f"（全书异常 {pstat.get('abnormal_total', 0)}/"
+                        f"{pstat.get('chapters', 0)} 章，中位数 {pstat.get('median', 0)} 字）"
+                    ),
                 ),
             ),
             DimensionResult(
@@ -426,8 +438,22 @@ class _EvaluatorDimensionsMixin:
             f"伏笔：到期回收 {fstat.get('due_resolved', fstat['resolved'])}/"
             f"{fstat.get('due', fstat['resolved'] + fstat['unresolved'])}"
             f"（全书已回收 {fstat['resolved']} / 未结 {fstat['unresolved']}）；"
-            f"节奏：{pstat['chapters']} 章中异常 {pstat['abnormal']} 章"
+            f"节奏：回退窗口内 {pstat.get('window', pstat['chapters'])} 章中异常 "
+            f"{pstat['abnormal']} 章（全书异常 {pstat.get('abnormal_total', pstat['abnormal'])} 章）"
         )
+        # ---- 窗口外节奏异常：显性告警，但**不**据此回退（回退修不到，属动作错配）----
+        # 2026-09-15：旧实现把窗口外异常章计入判定 → 判得对但永远修不好（灵荒薪传
+        # ch012 32520 字，同一批被回退 8 次仍失败）。此处保留可见性，交人工处置。
+        _pacing_out = pstat.get("abnormal_chapters_out_of_window") or []
+        if _pacing_out:
+            _detail = "、".join(
+                f"{it.get('chapter')}（{it.get('length')} 字）" for it in _pacing_out[:5]
+            )
+            self.console.print(
+                f"[yellow]⚠ 节奏异常·回退窗口之外 {len(_pacing_out)} 章：{_detail}"
+                f"（中位数 {pstat.get('median', 0)} 字）——末窗回退修不到，"
+                f"需人工拆分/压缩，本次不据此回退[/yellow]"
+            )
         if hard_failed:
             report.notes.append(
                 "硬指标不达标（不可放宽）：" + "、".join(d.label for d in hard_failed)

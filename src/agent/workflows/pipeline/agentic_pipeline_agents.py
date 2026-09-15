@@ -204,9 +204,28 @@ class _PipelineAgentsMixin:
             # 失明计数（2026-09-12）：体检基建连续故障达到阈值会触发门禁熔断停批
             self._note_gate_blind("rolling_eval", e)
             return True  # noqa: SILENT_DEGRADE - 体检基建失败不阻断写作
-        self._note_gate_ok()
         if report is None:
+            self._note_gate_ok()  # 无报告不做质量结论，但基建确实跑通了
             return True  # noqa: SILENT_DEGRADE - 无报告视为不可判定，放行
+        # ---- 基建级故障分层（2026-09-15）：全部 LLM 评分维降级 = 网关不可达，
+        # 不是内容不达标。此时**不计数回退、不下质量结论、不落失败教训**，
+        # 而是按"门禁失明"累计（连续多次由 _note_gate_blind 触发停批并上报
+        # 「质检基建持续故障」）。否则回退预算会被基建故障吃满，
+        # 且用"连不上网关"生成的失败明细去指导下一批写作。
+        if getattr(report, "eval_infra_unavailable", False):
+            _infra = RuntimeError(
+                getattr(report, "escalated_reason", "") or "全部 LLM 评分维降级"
+            )
+            self.console.print(
+                "[yellow]⚠ 滚动体检基建不可用（全部 LLM 评分维 confidence=0）："
+                "本轮不计质量失败、不触发回退，等待 LLM 网关恢复[/yellow]"
+            )
+            self._emit_failure(
+                "eval", f"滚动体检基建不可用：{_infra}", severity="warn"
+            )
+            self._note_gate_blind("rolling_eval_infra", _infra)
+            return True
+        self._note_gate_ok()
         # ---- 教训落盘（2026-09-12）：滚动检查点也要落盘，不能只靠批末——
         # 检查点不达标中断本批时批末 save 不会执行，失败明细丢失 → 重写轮盲写。
         # 通过时写空 failures 清零，语义与批末一致。

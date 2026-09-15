@@ -95,11 +95,38 @@ class TestRuleMapping:
         assert plan.action is Action.LOCAL_REPAIR
         assert plan.is_irreversible is False
 
-    def test_unregistered_ratio_falls_back_to_rollback(self):
-        """未登记的 RATIO 软维 → 兜底规则，保持旧语义（回滚重写）。"""
-        d = DimensionResult("some_ratio", "某比例", 0.1, 0.9, ">=", False, "computed")
+    def test_registered_ratio_soft_dim_is_local_repair(self):
+        """**已登记**的 RATIO 软维（pacing_abnormal 等）→ 定向修复，绝不回滚。
+
+        2026-09-15 修正（灵荒薪传 24 轮体检 0 通过复盘）：原 `_soft_score` 判据只认
+        ``SCORE_0_100``，同为 ``required=False`` 的 RATIO/COUNT 软维匹配不到本规则 →
+        跌进兜底规则；又因 ``ROLLBACK_REWRITE(2) > LOCAL_REPAIR(1)`` 被**升级**为
+        「销毁整窗 5 章」。实测 ``pacing_abnormal`` 23/24 轮不达标全部走这条路径。
+        量纲不是「软/硬」的判据，``required`` 才是。
+        """
+        cases = {
+            "pacing_abnormal": (0.9, 0.03, "<="),            # RATIO，越低越好
+            "foreshadow_recycle_rate": (0.1, 0.90, ">="),    # RATIO，越高越好
+            "debut_continuity": (3.0, 0.0, "<="),            # COUNT，缺陷条数
+        }
+        for name, (value, thr, direction) in cases.items():
+            d = DimensionResult(name, name, value, thr, direction, False, "computed")
+            plan = DispositionPolicy().plan([d])
+            assert plan.action is Action.LOCAL_REPAIR, name
+            assert plan.is_irreversible is False, name
+            assert "soft_dim" in plan.rule_names, name
+
+    def test_unregistered_dim_escalates_not_rollback(self):
+        """**未登记**维度 → 兜底规则上报人工，绝不销毁内容。
+
+        2026-09-15 修正（回退死循环复盘）：兜底原为 ``ROLLBACK_REWRITE``——
+        「未归类」默认销毁整窗，让 dimension_registry 的登记形同虚设
+        （漏登记 = 升级为最重处置）。不可逆动作必须由**显式规则**授权。
+        """
+        d = DimensionResult("some_unregistered_dim", "未登记维", 0.1, 0.9, ">=", False, "computed")
         plan = DispositionPolicy().plan([d])
-        assert plan.action is Action.ROLLBACK_REWRITE
+        assert plan.action is Action.ESCALATE
+        assert plan.is_irreversible is False
         assert "fallback" in plan.rule_names
 
     def test_empty_failure_continues(self):

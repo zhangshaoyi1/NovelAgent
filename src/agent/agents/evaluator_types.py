@@ -223,6 +223,31 @@ class NovelHealthReport:
         """可信地失败的硬指标（硬指标失败且证据可信）——回滚的充要条件。"""
         return [d for d in self.dimensions if d.required and d.credible_failed]
 
+    @property
+    def eval_infra_unavailable(self) -> bool:
+        """评测基建不可用：**全部** LLM 评分维都不可信（confidence=0）。
+
+        2026-09-15（灵荒薪传 / 五灵破归档累计 190 次 confidence=0 复盘）
+        --------------------------------------------------------------
+        LLM 网关不可达时 ``score_fn`` 对每个维度都抛错并降级 → 五个 LLM 评分维
+        全部 ``confidence=0``。此时报告表达的**不是内容质量**，而是"评测没跑起来"：
+
+        - 旧行为把它当「体检不通过 / 证据不可信」→ 先白烧一次复评（网关还挂着，
+          必然再失败），再记为一次质量失败，与内容问题混为一谈；
+        - 更糟的是失败明细会被 ``save_eval_lessons`` 落盘，污染注入下一批写作的
+          「上轮教训」——用基建故障去指导内容修改。
+
+        与 :attr:`trustworthy` 的区别：``trustworthy`` 只要**任一**失败维不可信即
+        为 False（单条可疑分数就够）；本属性要求**所有** LLM 维都不可信，即
+        基建级故障。单维不可信仍走既有 recheck 语义。
+        """
+        llm_dims = [
+            d for d in self.dimensions
+            if str(getattr(d, "source", "")).startswith("llm")
+            or str(getattr(d, "source", "")) == "degraded"
+        ]
+        return bool(llm_dims) and all(not d.trustworthy for d in llm_dims)
+
     def gate_decision(self) -> str:
         """闸门分级裁决（字符串常量，便于落盘/展示）：
 
@@ -262,6 +287,9 @@ class NovelHealthReport:
             # ---- HA-Eval L4 分级（只增不删）：闸门裁决 + 失败分类 ----
             "gate_decision": self.gate_decision(),
             "trustworthy": self.trustworthy,
+            # HA-Eval（2026-09-15）：基建级故障标记（全部 LLM 评分维降级）——
+            # 上游据此与「内容不达标」分层，不计回退、不写失败教训。
+            "eval_infra_unavailable": self.eval_infra_unavailable,
             "hard_failed": [d.name for d in self.hard_failed],
             "soft_failed": [d.name for d in self.soft_failed],
             "evidence_validation_failed": self.evidence_validation_failed,

@@ -182,10 +182,23 @@ class _EvaluatorMetricsMixin:
         return int(m.group(1))
 
     def _metric_pacing(self) -> tuple[float, dict[str, Any]]:
-        """确定性：异常章节比例（注水/赶进度）。G6：读取改走公共 helper（行为零变化）。
+        """确定性：**回退窗口内**异常章节比例（注水/赶进度）。
 
-        反馈闭环（2026-09-08）：新增 ``abnormal_chapters``（异常章号+篇幅明细），
-        供 evidence 编入 rewrite hint / 教训，让 Writer 知道具体哪些章失衡。
+        2026-09-15 作用域对齐（灵荒薪传 8 次回退同一批仍不达标复盘）：
+        旧实现把**全书**异常章数除以**全书**章数，而登记表声明
+        ``Scope.WINDOW``（"末窗回滚可修"），处置层能做的也只有回退最近
+        ``rollback_window`` 章。两者错配导致「判得对、但永远修不好」的死循环：
+        实测 25 章、篇幅中位数 4094 字，``ch012`` = 32520 字（794% 中位数），
+        ``1/25 = 0.04 > 阈值 0.03``；而 ch012 早已在回退窗口之外，
+        回退末 5 章**永远碰不到它** → 同一批（21-25）被回退 8 次仍必然失败。
+
+        现改为：**中位数仍取全书**（对离群章稳健，不被单章拉偏），
+        **异常章只统计回退窗口内**——即"本轮处置能影响到的那几章"。
+        窗口外的异常章仍在 stats/evidence 中显性列出（附
+        ``abnormal_chapters_out_of_window``），由调用方打印告警并交人工处理，
+        **不再**用它触发窗口回退（那是"判而不可修"的动作错配）。
+
+        同理先例见 :meth:`_metric_foreshadow_recycle` 的「到期口径」修正。
         """
         counts: list[tuple[str, int]] = []
         for f, text in iter_chapter_texts(self.project_dir):
@@ -196,16 +209,29 @@ class _EvaluatorMetricsMixin:
         median = statistics.median(lengths)
         if median <= 0:
             return 0.0, {"chapters": len(counts), "abnormal": 0, "abnormal_chapters": []}
-        abnormal_items = [
+        abnormal_all = [
             {"chapter": stem, "length": c}
             for stem, c in counts
             if c < 0.5 * median or c > 2.0 * median
         ]
-        return len(abnormal_items) / len(counts), {
+        # 回退窗口 = 末 N 章（N 与 EvaluatorAgent.rollback_window 同源）
+        window = max(1, int(getattr(self, "rollback_window", 5) or 5))
+        in_window = counts[-window:]
+        window_stems = {stem for stem, _ in in_window}
+        abnormal_in_window = [
+            it for it in abnormal_all if it["chapter"] in window_stems
+        ]
+        abnormal_outside = [
+            it for it in abnormal_all if it["chapter"] not in window_stems
+        ]
+        return len(abnormal_in_window) / len(in_window), {
             "chapters": len(counts),
-            "abnormal": len(abnormal_items),
+            "window": len(in_window),
+            "abnormal": len(abnormal_in_window),
             "median": median,
-            "abnormal_chapters": abnormal_items,
+            "abnormal_chapters": abnormal_in_window,
+            "abnormal_total": len(abnormal_all),
+            "abnormal_chapters_out_of_window": abnormal_outside,
         }
 
     # ---- G6：B6 防注水确定性指标（拍板 #5：重复度硬闸 + 信息密度软标红）----

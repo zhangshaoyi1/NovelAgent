@@ -30,7 +30,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Iterable, Sequence
 
-from agent.core.quality.dimension_registry import DimensionSpec, Scope, Unit
+from agent.core.quality.dimension_registry import DimensionSpec, Scope
 
 
 class Action(str, Enum):
@@ -96,16 +96,33 @@ def _scope_is(scope: Scope) -> Callable[[Any], bool]:
     return _m
 
 
-def _soft_score(d: Any) -> bool:
+def _soft_dim(d: Any) -> bool:
+    """软维：**未声明 required 的任何量纲**（评分/比例/计数）都只允许可逆的定向修复。
+
+    2026-09-15 修正（灵荒薪传 24 轮体检 0 通过复盘）：
+    原判据为 ``not required and unit is SCORE_0_100``——只覆盖评分型软维。
+    同为 ``required=False`` 的 ``pacing_abnormal`` / ``foreshadow_recycle_rate``
+    （``RATIO_0_1``）、``debut_continuity``（``COUNT``）匹配不到本规则，
+    跌进兜底规则；又因 ``ACTION_PRECEDENCE`` 中
+    ``ROLLBACK_REWRITE(2) > LOCAL_REPAIR(1)``，最终动作被**升级**为
+    「销毁整窗 5 章」。实测灵荒薪传 ``pacing_abnormal`` 23/24 轮不达标，
+    全部走这条路径 —— 与已拍板语义「软维度失败不触发回滚」直接冲突。
+
+    量纲不是「软/硬」的判据，``required`` 才是：登记表声明 ``required=False``
+    的维度即"可以不达标"，不该用不可逆动作回应。
+
+    未登记维度（``spec is None``）**不算软维**——无法推导修复范围，
+    应由兜底规则上报人工（见 :data:`DEFAULT_RULES` 的 fallback）。
+    """
     spec = _spec_of(d)
-    return (
-        spec is not None
-        and not spec.required
-        and spec.unit is Unit.SCORE_0_100
-    )
+    return spec is not None and not spec.required
 
 
 def _hard_gate(d: Any) -> bool:
+    """硬指标：以登记表为唯一真源（``DimensionSpec.required``），缺登记时退回结果自带字段。"""
+    spec = _spec_of(d)
+    if spec is not None:
+        return bool(spec.required)
     return bool(getattr(d, "required", False))
 
 
@@ -124,8 +141,8 @@ DEFAULT_RULES: tuple[DispositionRule, ...] = (
         "全局结构门禁不达标：支线推进/结局收敛是全局问题，末窗回滚修不到，上报人工",
     ),
     DispositionRule(
-        "soft_score_dim", _soft_score, Action.LOCAL_REPAIR,
-        "非硬指标评分维不达标：定向重写末章即可，无需销毁整窗",
+        "soft_dim", _soft_dim, Action.LOCAL_REPAIR,
+        "非硬指标（required=False）不达标：只做可逆的定向修复，无需销毁整窗",
         max_cost_tokens=200_000,
     ),
     DispositionRule(
@@ -134,13 +151,16 @@ DEFAULT_RULES: tuple[DispositionRule, ...] = (
         requires_double_evidence=True,
         max_cost_tokens=1_500_000,
     ),
-    # 兜底：未命中任何规则（如未登记的 RATIO 软维）→ 保持旧语义（回滚重写）
+    # 兜底：未命中任何规则（如未登记的新维度）→ **上报人工，不得销毁内容**。
+    # 2026-09-15 修正（灵荒薪传/五灵破归档回退死循环复盘）：原动作为
+    # ROLLBACK_REWRITE——「未归类」默认销毁整窗，与「不可逆动作必须由显式规则授权」
+    # 相悖，且让 dimension_registry 的登记形同虚设（漏登记 = 升级为最重处置）。
+    # 未登记维度无法推导 required/unit/scope，也就无法推导修复范围 ⇒ 交人工判断。
     # is_fallback=True：仅当**没有任何其它规则命中**时才生效，见 match_rules。
     DispositionRule(
-        "fallback", lambda d: True, Action.ROLLBACK_REWRITE,
-        "维度不达标（兜底规则）：回溯最近窗口并重写",
-        requires_double_evidence=True,
-        max_cost_tokens=1_500_000,
+        "fallback", lambda d: True, Action.ESCALATE,
+        "维度不达标但未在 dimension_registry 登记（无法推导修复范围）："
+        "不可逆动作须显式授权，此处上报人工而非销毁内容",
         is_fallback=True,
     ),
 )

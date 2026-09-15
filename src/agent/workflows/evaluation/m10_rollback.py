@@ -30,6 +30,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from agent.core.progress import next_chapter
+from agent.core.infra.degrade import degrade
 from pathlib import Path
 from typing import Any
 from agent.core.engine.workflow_registry import workflow
@@ -156,6 +157,12 @@ class M10RollbackWorkflow:
         # （幽灵召回），且 source 指向已不存在的文件。无索引时 no-op（自举由写章侧负责）。
         self._sync_rag_index(archived)
 
+        # ---- 2026-09-15：回滚同步章节指纹库（同族：辅助索引必须随内容失效）----
+        # 指纹库不清理时，重写同号章节会与「自己的上一版」命中，产生
+        # 「相似度 1.00 疑似跨章重复」假阳性（灵荒薪传 ch025 实证）→ 打回重写，
+        # 加剧回退振荡。无指纹库时 no-op。
+        self._sync_fingerprints(archived)
+
         return RollbackResult(
             success=True,
             target_chapter=target_chapter,
@@ -200,6 +207,46 @@ class M10RollbackWorkflow:
             self.console.print(
                 f"[yellow]⚠ RAG 索引同步失败（不影响回滚）：{e}[/yellow]"
             )  # noqa: SILENT_DEGRADE
+
+    def _sync_fingerprints(self, archived: list[str]) -> None:
+        """回滚后清除被归档章节的指纹（失败只告警，绝不阻断回滚）。
+
+        2026-09-15（灵荒薪传 ch025「相似度 1.00 跨章重复」假阳性复盘）：
+        ``.state/chapter_fingerprints.json`` 原先不随回滚清理，被归档章号的旧指纹
+        仍留在库里；重写同号章节时新稿会与**自己的上一版**比对命中，被判「跨章
+        重复」→ 打回重写 → 再回退，形成振荡（与 :meth:`_sync_rag_index` 同族：
+        **辅助索引必须随内容一起失效**，否则过期索引会产出假结论）。
+
+        Args:
+            archived: 已归档的章节文件名列表（chNNN.md）
+        """
+        nums = [n for n in (self._parse_chapter_num(f) for f in archived) if n]
+        if not nums:
+            return
+        fp_file = self.project_dir / ".state" / "chapter_fingerprints.json"
+        if not fp_file.exists():
+            return
+        try:
+            from agent.core.quality.guardrails import load_fingerprints, save_fingerprints
+
+            db = load_fingerprints(fp_file)
+            removed = 0
+            for n in nums:
+                for key in (str(n), f"ch{n:03d}", f"ch{n}"):
+                    if key in db:
+                        del db[key]
+                        removed += 1
+            if removed:
+                save_fingerprints(db, fp_file)
+                self.console.print(
+                    f"[dim]· 章节指纹已同步：清除 {removed} 章指纹[/dim]"
+                )
+        except Exception as e:  # noqa: BLE001 - 指纹同步失败不影响回滚本身
+            degrade(
+                "m10_rollback.sync_fingerprints",
+                "章节指纹库同步失败（不影响回滚），重写同号章节可能与旧指纹撞车",
+                e,
+            )
 
     def list_archived(self) -> list[Path]:
         """列出所有归档目录"""
