@@ -30,7 +30,6 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from agent.core.progress import next_chapter
-from agent.core.infra.degrade import degrade
 from pathlib import Path
 from typing import Any
 from agent.core.engine.workflow_registry import workflow
@@ -41,6 +40,7 @@ from rich.panel import Panel
 from rich.table import Table
 
 from agent.core.engine.state_machine import State, StateMachine
+from agent.core.story.chapter_invalidation import invalidate_chapters
 
 
 # ============================================================
@@ -152,16 +152,25 @@ class M10RollbackWorkflow:
         self.state_machine.progress = progress
         self.state_machine.save()
 
-        # ---- 2026-09-09：回滚同步 RAG 索引 ----
-        # 被归档章节的切片必须从索引中清除，否则重写时会召回已判废的旧版正文
-        # （幽灵召回），且 source 指向已不存在的文件。无索引时 no-op（自举由写章侧负责）。
-        self._sync_rag_index(archived)
-
-        # ---- 2026-09-15：回滚同步章节指纹库（同族：辅助索引必须随内容失效）----
-        # 指纹库不清理时，重写同号章节会与「自己的上一版」命中，产生
-        # 「相似度 1.00 疑似跨章重复」假阳性（灵荒薪传 ch025 实证）→ 打回重写，
-        # 加剧回退振荡。无指纹库时 no-op。
-        self._sync_fingerprints(archived)
+        # ---- 2026-09-15：章节变更 → 派生状态失效总线（统一入口）----
+        # 此前是两处**逐次手工追加**的钩子（_sync_rag_index 2026-09-09、
+        # _sync_fingerprints 2026-09-15），而带章节语义的派生状态有 10+ 个 →
+        # 每发现一个漏同步就补一个钩子，属于"打地鼠"。现收敛为一张声明式登记表：
+        # `core/story/chapter_invalidation.REGISTRY`，新增派生状态必须登记（红线棘轮）。
+        # 单条失效失败只降级不阻断（回滚是救命动作）。
+        archived_nums = [
+            n for n in (self._parse_chapter_num(f) for f in archived) if n
+        ]
+        report = invalidate_chapters(self.project_dir, archived_nums)
+        for item in report.changed:
+            self.console.print(
+                f"[dim]· {item.name} 已随章节变更失效：{item.count} 项[/dim]"
+            )
+        for item in report.stale:
+            self.console.print(
+                f"[yellow]⚠ {item.name} 有 {item.count} 项引用了被归档章节，"
+                f"无法机械失效（{item.note}），请人工确认[/yellow]"
+            )
 
         return RollbackResult(
             success=True,
@@ -184,68 +193,41 @@ class M10RollbackWorkflow:
         return None
 
     def _sync_rag_index(self, archived: list[str]) -> None:
-        """回滚后清除被归档章节的 RAG 切片（失败只告警，绝不阻断回滚）
+        """**Deprecated（2026-09-15）**：逻辑已并入
+        :mod:`agent.core.story.chapter_invalidation`（``rag_index`` 条目）。
 
-        Args:
-            archived: 已归档的章节文件名列表（chNNN.md）
+        保留该入口仅为兼容可能存在的旧调用；新代码请直接用
+        :func:`chapter_invalidation.invalidate_chapters`。
         """
-        rag_dir = self.project_dir / ".state" / "rag"
-        if not rag_dir.exists():
-            return
         nums = [n for n in (self._parse_chapter_num(f) for f in archived) if n]
         if not nums:
             return
-        try:
-            from agent.core.rag.indexer import Indexer
-
-            removed = Indexer(self.project_dir).drop_chapters(nums)
-            if removed:
-                self.console.print(
-                    f"[dim]· RAG 索引已同步：清除 {len(nums)} 章 / {removed} 切片[/dim]"
-                )
-        except Exception as e:  # noqa: BLE001 - 索引同步失败不影响回滚本身
+        report = invalidate_chapters(self.project_dir, nums, only=["rag_index"])
+        for item in report.changed:
             self.console.print(
-                f"[yellow]⚠ RAG 索引同步失败（不影响回滚）：{e}[/yellow]"
-            )  # noqa: SILENT_DEGRADE
+                f"[dim]· RAG 索引已同步：{item.count} 切片[/dim]"
+            )
+        for item in report.failed:
+            self.console.print(
+                f"[yellow]⚠ RAG 索引同步失败（不影响回滚）：{item.error}[/yellow]"
+            )
 
     def _sync_fingerprints(self, archived: list[str]) -> None:
-        """回滚后清除被归档章节的指纹（失败只告警，绝不阻断回滚）。
+        """**Deprecated（2026-09-15）**：逻辑已并入
+        :mod:`agent.core.story.chapter_invalidation`（``chapter_fingerprints`` 条目）。
 
-        2026-09-15（灵荒薪传 ch025「相似度 1.00 跨章重复」假阳性复盘）：
-        ``.state/chapter_fingerprints.json`` 原先不随回滚清理，被归档章号的旧指纹
-        仍留在库里；重写同号章节时新稿会与**自己的上一版**比对命中，被判「跨章
-        重复」→ 打回重写 → 再回退，形成振荡（与 :meth:`_sync_rag_index` 同族：
-        **辅助索引必须随内容一起失效**，否则过期索引会产出假结论）。
-
-        Args:
-            archived: 已归档的章节文件名列表（chNNN.md）
+        历史动机（灵荒薪传 ch025「相似度 1.00 跨章重复」假阳性）：指纹库不随回滚
+        清理时，重写同号章节会与**自己的上一版**比对命中 → 打回重写 → 再回退（振荡）。
         """
         nums = [n for n in (self._parse_chapter_num(f) for f in archived) if n]
         if not nums:
             return
-        fp_file = self.project_dir / ".state" / "chapter_fingerprints.json"
-        if not fp_file.exists():
-            return
-        try:
-            from agent.core.quality.guardrails import load_fingerprints, save_fingerprints
-
-            db = load_fingerprints(fp_file)
-            removed = 0
-            for n in nums:
-                for key in (str(n), f"ch{n:03d}", f"ch{n}"):
-                    if key in db:
-                        del db[key]
-                        removed += 1
-            if removed:
-                save_fingerprints(db, fp_file)
-                self.console.print(
-                    f"[dim]· 章节指纹已同步：清除 {removed} 章指纹[/dim]"
-                )
-        except Exception as e:  # noqa: BLE001 - 指纹同步失败不影响回滚本身
-            degrade(
-                "m10_rollback.sync_fingerprints",
-                "章节指纹库同步失败（不影响回滚），重写同号章节可能与旧指纹撞车",
-                e,
+        report = invalidate_chapters(
+            self.project_dir, nums, only=["chapter_fingerprints"]
+        )
+        for item in report.changed:
+            self.console.print(
+                f"[dim]· 章节指纹已同步：清除 {item.count} 章指纹[/dim]"
             )
 
     def list_archived(self) -> list[Path]:

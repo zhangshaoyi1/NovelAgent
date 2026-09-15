@@ -140,7 +140,7 @@ def _hard_gate_in_window(d: Any) -> bool:
     spec = _spec_of(d)
     if spec is None:
         return bool(getattr(d, "required", False))
-    return bool(spec.required) and spec.repairability is Repairability.WINDOW
+    return bool(spec.required) and _repair_is(Repairability.WINDOW)(d)
 
 
 def _soft_dim(d: Any) -> bool:
