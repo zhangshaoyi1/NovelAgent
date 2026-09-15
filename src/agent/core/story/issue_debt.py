@@ -179,6 +179,74 @@ def render_constraints(project_dir: str | Path, current_ch: int = 0) -> str:
     )
 
 
+#: 历史债务的规则标签格式（2026-09-12 起由 ``agentic_pipeline`` 固定拼装：
+#: ``f"第{ch}章一致性警告（{rule_id}）：{description}"``）。rule_id 本来就写在
+#: 文本里，只是没被结构化——回填只认这个**机器生成的固定格式**，不猜语义。
+_DEBT_RULE_TAG = re.compile(r"一致性警告（([a-z_][a-z0-9_]*)）")
+
+
+def backfill_rule_ids(project_dir: str | Path) -> int:
+    """给 ``rule_id`` 为空的历史债务回填来源规则（存量迁移，2026-09-15）。
+
+    只处理能**确定**出处的条目：
+    - ``constraint`` 命中 :data:`_DEBT_RULE_TAG`（登记时自动拼装的固定格式）；
+    - 标签里的规则名**当前真实存在**（在 ``ConsistencyChecker`` 的内置规则表里）。
+
+    其余保持 ``rule_id=""``（来源不可判定，交给 :func:`reverify` 记 skipped）。
+    返回本次回填条数；无变化不落盘。
+    """
+    from agent.core.quality.consistency.checker import ConsistencyChecker  # 延迟导入避免环
+
+    known = {r.id for r in ConsistencyChecker(project_dir)._builtin_rules()}
+    store = IssueDebtStore(project_dir).load()
+    n = 0
+    for d in store.debts:
+        if d.rule_id:
+            continue
+        m = _DEBT_RULE_TAG.search(d.constraint)
+        if m and m.group(1) in known:
+            d.rule_id = m.group(1)
+            n += 1
+    if n:
+        store.save()
+    return n
+
+
+#: 复查销账说明模板（主体已不再命中，见 :func:`_subject_still_hit`）。
+REVERIFY_NOTE_SUBJECT = (
+    "复查销账：来源规则 {rule_id} 仍命中，但第{ch}章所指主体「{subject}」已不再命中"
+)
+
+#: 从债务约束文本里取**主体名**（登记格式用「」包住角色名，如
+#: 「关系网(graph.md)显示「林凡」存在互动型关系…」）。
+_SUBJECT_TOKEN = re.compile(r"「([^」]+)」")
+
+
+def _subject_token(constraint: str) -> str:
+    """取约束文本里的第一个主体名；取不到返回空串。"""
+    m = _SUBJECT_TOKEN.search(constraint or "")
+    return m.group(1) if m else ""
+
+
+def _subject_still_hit(debt: "IssueDebt", hits: "list[Any]") -> "bool | None":
+    """本条债务所指的**具体主体**是否仍在命中列表里。
+
+    Returns:
+        ``True``  该主体仍被命中 ⇒ 债务有效；
+        ``False`` 规则命中的是别的对象 ⇒ 本条所指冲突已消失；
+        ``None``  约束文本里定位不到主体 ⇒ **保守**，由调用方按"仍有效"处理。
+
+    为什么需要它：只判"规则是否还命中任何东西"是不够的。实测 ch18 的死亡断言
+    在主体锚定修复后**归因换了人**（林凡 → 丹王衍），规则仍返回 1 条命中，
+    于是挂在账上的 3 条「林凡/沈长风」债务被误判为"继续有效"——写手每章仍被
+    提醒去规避一个不存在的矛盾。判据必须落到"同一条冲突"上，而不是"同一条规则"。
+    """
+    token = _subject_token(debt.constraint)
+    if not token:
+        return None
+    return any(token in str(getattr(c, "description", "")) for c in hits)
+
+
 #: 自动销账说明模板（:func:`reverify` 用）。必须写清"因何而销"——
 #: 销账是隐形的失效，理由不写等于把「复查通过」和「复查没做成」混为一谈。
 REVERIFY_NOTE = "复查销账：来源规则 {rule_id} 在登记章 ch{ch} 原文上已不再命中"
@@ -244,6 +312,19 @@ def reverify(
             ))
             continue
         if hits:
+            same = _subject_still_hit(d, hits)
+            if same is False:
+                # 规则仍命中，但命中的**主体换了人**：本条债务所指的具体冲突
+                # 已不存在（实测：ch18 的死亡断言修复后归因到「丹王衍」，
+                # 而挂在账上的 3 条是「林凡」/「沈长风」——留着就会每章继续
+                # 提醒写手规避一个不存在的矛盾）。
+                note = REVERIFY_NOTE_SUBJECT.format(
+                    rule_id=d.rule_id, ch=d.registered_ch,
+                    subject=_subject_token(d.constraint) or "?",
+                )
+                if store.resolve(d.id, note):
+                    report.resolved.append((d.id, note))
+                continue
             report.skipped.append((d.id, f"复查仍命中 {len(hits)} 项，债务继续有效"))
             continue
         note = REVERIFY_NOTE.format(rule_id=d.rule_id, ch=d.registered_ch)
@@ -260,6 +341,8 @@ __all__ = [
     "IssueDebtStore",
     "ReverifyReport",
     "REVERIFY_NOTE",
+    "REVERIFY_NOTE_SUBJECT",
+    "backfill_rule_ids",
     "render_constraints",
     "reverify",
     "KIND_PRESENCE_BAN",

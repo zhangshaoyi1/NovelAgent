@@ -193,3 +193,127 @@ def test_reverify_is_idempotent(tmp_path: Path, kind: str) -> None:
     again = reverify(proj)
     assert again.resolved == []
     assert again.skipped == []
+
+
+# ============================================================
+# 存量迁移：从约束文本回填 rule_id
+# ============================================================
+def test_backfill_reads_machine_generated_tag(tmp_path: Path) -> None:
+    """老条目把 rule_id 写在「一致性警告（<id>）：」里 —— 只认这个固定格式。"""
+    from agent.core.story.issue_debt import backfill_rule_ids
+
+    proj = _mk_project(tmp_path)
+    _add(
+        proj,
+        KIND_WATCH,
+        1,
+        rule_id="",
+        desc="第1章一致性警告（relation_conflict）：关系网显示「林凡」…已故",
+    )
+
+    assert backfill_rule_ids(proj) == 1
+    debt = IssueDebtStore(proj).load().open_items()[0]
+    assert debt.rule_id == "relation_conflict"
+    assert backfill_rule_ids(proj) == 0, "已有 rule_id ⇒ 不重复回填"
+
+
+def test_backfill_refuses_unknown_rule_name(tmp_path: Path) -> None:
+    """标签里的规则名已不存在 ⇒ 不回填（宁可留空，不要指向幽灵规则）。"""
+    from agent.core.story.issue_debt import backfill_rule_ids
+
+    proj = _mk_project(tmp_path)
+    _add(proj, KIND_WATCH, 1, rule_id="", desc="第1章一致性警告（ghost_rule）：…")
+
+    assert backfill_rule_ids(proj) == 0
+    assert IssueDebtStore(proj).load().open_items()[0].rule_id == ""
+
+
+def test_backfill_refuses_free_text(tmp_path: Path) -> None:
+    """人工写的自由文本（无固定标签）⇒ 不回填，不猜。"""
+    from agent.core.story.issue_debt import backfill_rule_ids
+
+    proj = _mk_project(tmp_path)
+    _add(proj, KIND_WATCH, 1, rule_id="", desc="感觉林凡的状态写得有点怪")
+
+    assert backfill_rule_ids(proj) == 0
+    assert IssueDebtStore(proj).load().open_items()[0].rule_id == ""
+
+
+def test_backfill_then_reverify_end_to_end(tmp_path: Path) -> None:
+    """存量迁移的真实链路：老误报债务 → 回填 → 复查 → 自动销账。"""
+    from agent.core.story.issue_debt import backfill_rule_ids
+
+    proj = _mk_project(tmp_path)
+    (proj / "chapters" / "ch001.md").write_text(FALSE_POSITIVE_CH, encoding="utf-8")
+    debt_id = _add(
+        proj,
+        KIND_WATCH,
+        1,
+        rule_id="",
+        desc="第1章一致性警告（relation_conflict）：关系网显示「林凡」存在互动型关系…",
+    )
+
+    assert backfill_rule_ids(proj) == 1
+    rep = reverify(proj)
+    assert [i for i, _ in rep.resolved] == [debt_id]
+
+
+# ============================================================
+# 主体比对：判据必须落到"同一条冲突"，而不是"同一条规则"
+# ============================================================
+_SUBJECT_CONSTRAINT = (
+    "第1章一致性警告（relation_conflict）：关系网(graph.md)显示「林凡」"
+    "存在互动型关系（合作，起于 S01），但本章称其已故，关系网一致性存疑。"
+)
+
+
+def test_rule_hits_other_subject_resolves_debt(tmp_path: Path) -> None:
+    """规则仍命中，但命中的**换人了** ⇒ 本条所指冲突已消失，销账。
+
+    实测原型：ch18 的主体锚定修复后，死亡断言归因从「林凡」变成「丹王衍」，
+    规则照旧返回 1 条命中，于是 3 条「林凡/沈长风」债务被误判为"继续有效"。
+    """
+    proj = _mk_project(tmp_path)
+    # 本章的死亡断言主体是「沈长风」，而债务指的是「林凡」——规则仍命中，人换了
+    (proj / "chapters" / "ch001.md").write_text("沈长风已经死了。\n", encoding="utf-8")
+    debt_id = _add(
+        proj, KIND_WATCH, 1, rule_id="relation_conflict", desc=_SUBJECT_CONSTRAINT
+    )
+
+    rep = reverify(proj)
+
+    assert [i for i, _ in rep.resolved] == [debt_id], "主体已不命中 ⇒ 不得继续挂着"
+    assert "「林凡」已不再命中" in rep.resolved[0][1]
+
+
+def test_rule_hits_same_subject_keeps_debt(tmp_path: Path) -> None:
+    """命中的正是本条主体 ⇒ 债务必须保留。"""
+    proj = _mk_project(tmp_path)
+    (proj / "chapters" / "ch001.md").write_text(TRUE_POSITIVE_CH, encoding="utf-8")
+    debt_id = _add(
+        proj,
+        KIND_WATCH,
+        1,
+        rule_id="relation_conflict",
+        desc=_SUBJECT_CONSTRAINT,
+    )
+
+    rep = reverify(proj)
+
+    assert rep.resolved == []
+    assert "仍命中" in rep.skipped[0][1]
+    assert [d.id for d in IssueDebtStore(proj).load().open_items()] == [debt_id]
+
+
+def test_unlocatable_subject_is_conservative(tmp_path: Path) -> None:
+    """约束里定位不到主体（无「」）⇒ 保守按"仍有效"处理，不销账。"""
+    proj = _mk_project(tmp_path)
+    (proj / "chapters" / "ch001.md").write_text(TRUE_POSITIVE_CH, encoding="utf-8")
+    debt_id = _add(
+        proj, KIND_WATCH, 1, rule_id="relation_conflict", desc="关系网一致性存疑"
+    )
+
+    rep = reverify(proj)
+
+    assert rep.resolved == [], "定位不到主体时不得擅自销账（宁可多留一条）"
+    assert [d.id for d in IssueDebtStore(proj).load().open_items()] == [debt_id]
