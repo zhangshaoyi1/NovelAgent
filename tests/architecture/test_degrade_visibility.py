@@ -45,6 +45,7 @@ import ast
 import io
 import re
 import tokenize
+import warnings
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[2] / "src"
@@ -233,10 +234,18 @@ def test_all_sources_parseable() -> None:
 #     → 402（其中 3 处「预期跳过 / 重试循环」转正为有理由的显式豁免）
 # ⚠ 本次上调是**判据纠正后的一次性重定基**，不是放宽：另 6 处真实静默降级已接入
 #   degrade()（不计入豁免）。此后棘轮纪律不变 —— 只减不增。
-DEGRADE_EXEMPTION_BUDGET = 402
+#
+# ⚠ 2026-09-15 二次变更（G2 件 D）：**总数/单文件预算从「闸门」降为「看板」**。
+# 原因：件 B 落地后，**带 reason=/ref= 的合规新豁免**与「总数 ≤ 402」直接冲突 ——
+# 一个合格的豁免会被配额误杀。约束的正确形态是**契约**（可追溯性），不是配额
+# （数量）。故：
+#   - 闸门 → `BARE_EXEMPTION_BUDGET`（未引用 reason 的豁免数，只减不增，
+#     见 test_new_exemptions_must_cite_reason）；
+#   - 看板 → 本节的 TOTAL / BY_FILE 预算，超出只 warnings.warn，**不 FAIL**。
+# 与件 C（state 所有权计数降为看板）同一决策：**契约取代配额**。
+DEGRADE_EXEMPTION_BUDGET = 402  # 看板软上限（不参与判定）
 
-# 主链路重点清偿对象（写作 / 评估 / 流水线）：单独设上限，
-# 防止「总量在降、关键路径却在涨」被总数掩盖。
+# 主链路重点盯盘对象（写作 / 评估 / 流水线）：本地告警，防"总量在降、关键路径在涨"。
 DEGRADE_EXEMPTION_BUDGET_BY_FILE = {
     "agent/workflows/writing/agentic_write.py": 19,
     "agent/workflows/pipeline/agentic_pipeline.py": 15,
@@ -246,28 +255,35 @@ DEGRADE_EXEMPTION_BUDGET_BY_FILE = {
 }
 
 
-def test_exemption_budget_never_grows() -> None:
-    """棘轮：豁免总数只减不增。"""
-    counts = count_exemptions()
-    total = sum(counts.values())
-    assert total <= DEGRADE_EXEMPTION_BUDGET, (
-        f"降级豁免总数 {total} 超过预算 {DEGRADE_EXEMPTION_BUDGET}（F-1 棘轮：只减不增）。\n"
-        f"新增降级点请接入 degrade()，不要新增 # noqa: {_EXEMPT_MARK}；"
-        f"清偿后请同步下调 DEGRADE_EXEMPTION_BUDGET。"
-    )
+def test_exemption_count_dashboard() -> None:
+    """**看板**：豁免总数超软上限只告警（不 FAIL）。
+
+    实际闸门是 BARE_EXEMPTION_BUDGET（件 B）：合规的新豁免（带 reason=/ref=）
+    允许让总数上升，配额不再是约束形态。
+    """
+    total = sum(count_exemptions().values())
+    if total > DEGRADE_EXEMPTION_BUDGET:
+        warnings.warn(
+            f"[看板] 降级豁免总数 {total} 超过软上限 {DEGRADE_EXEMPTION_BUDGET}"
+            "（不 FAIL，仅供清偿盯盘）",
+            stacklevel=1,
+        )
 
 
-def test_exemption_budget_by_file() -> None:
-    """主链路豁免不得在总量掩护下局部恶化。"""
+def test_main_path_exemption_dashboard() -> None:
+    """**看板**：主链路单文件豁免超预算只告警（不 FAIL）。"""
     counts = count_exemptions()
-    violations = [
-        f"  {f}: 当前 {counts.get(f, 0)} > 预算 {budget}"
+    over = [
+        f"{f}: {counts.get(f, 0)} > {budget}"
         for f, budget in DEGRADE_EXEMPTION_BUDGET_BY_FILE.items()
         if counts.get(f, 0) > budget
     ]
-    assert not violations, (
-        "主链路降级豁免超预算（写作/评估路径优先清偿）：\n" + "\n".join(violations)
-    )
+    if over:
+        warnings.warn(
+            "[看板] 主链路降级豁免超预算（写作/评估路径优先清偿，不 FAIL）：\n  "
+            + "\n  ".join(over),
+            stacklevel=1,
+        )
 
 
 # ══════════════════════════════════════════════════════════════════
