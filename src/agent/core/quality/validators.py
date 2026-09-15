@@ -136,9 +136,31 @@ class DimensionValidator:
             )
 
     def _check_score_floor(self, r: Any, evidence: Any) -> None:
-        """0-100 评分维低于可疑下限 → 判为解析异常或量纲串用。"""
+        """0-100 评分维低于可疑下限 → 判为解析异常或量纲串用。
+
+        2026-09-15 修正（190 次 ``confidence=0`` 复盘）
+        ---------------------------------------------
+        原实现把 value < 10 一律降级为「不可信」，实测后果是**方向搞反的一半**：
+
+        - 真·解析失败 ⇒ 降级正确；
+        - **真·低分**（差章节被 LLM 打 1~5 分）⇒ 也被判"不可信" ⇒ L4 走
+          ``RETRY_EVAL``（只复评不处置）⇒ **真实质量失败永远得不到修复**。
+          实测五灵破归档 44 次此类（coherence 5 / readability 1 / golden 0）。
+
+        现按「LLM 是否真的答了」分流：有完整响应 ⇒ 采信为真实低分（留痕不改
+        confidence）；无响应（解析失败/形状异常/无证据）⇒ 保持降级。
+        """
         value = float(getattr(r, "value", 0.0))
         if value >= self.score_suspect_floor:
+            return
+        if evidence is not None and getattr(evidence, "has_llm_response", False):
+            validation = getattr(evidence, "validation", None)
+            note = (
+                f"SCORE_VERY_LOW: 0-100 评分维实测 {value} < {self.score_suspect_floor}，"
+                f"但 LLM 有完整响应 ⇒ 采信为真实低分（不降级；这是内容问题而非数据问题）"
+            )
+            if isinstance(validation, list) and note not in validation:
+                validation.append(note)
             return
         self._degrade(
             r,

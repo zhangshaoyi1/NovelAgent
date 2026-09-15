@@ -14,6 +14,7 @@
 from __future__ import annotations
 
 from agent.core.infra.prompt_manager import pm
+from agent.core.infra.degrade import degrade
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -262,11 +263,21 @@ class LLMQualityRule(QualityRule):
                     {"role": "system", "content": pm.get("m_d.review").system},
                     {"role": "user", "content": user},
                 ],
-                max_tokens=2048,  # H4 关联：单维 issue 文本过长同样会截断 JSON 走 fail-open
+                # H4 残留（2026-09-15 复核）：单维 review 输出 issue 列表，2048 实测
+                # 被顶格截断（灵荒薪传/五灵破归档 trace 中各命中）→ 截断后 parse 失败
+                # 被静默吞成「该维无问题」，等于漏检。与另外两处调用点统一放宽到 4096。
+                max_tokens=4096,
                 enable_thinking=False,
             )
             data = parse_llm_json(resp_text)
-        except Exception:  # noqa: BLE001 - 单维度失败降级为空
+        except Exception as e:  # noqa: BLE001 - 单维度失败降级为「该维无问题」
+            # 2026-09-15：失败必须显性化——原实现静默 return []，把「LLM 没答上」
+            # 当成「该维零问题」，是"辅助信号失败被当成结论成立"的又一实例。
+            degrade(
+                f"quality_checker.check_dimension.{self.dimension}",
+                f"单维审稿调用/解析失败，该维按『无问题』放行（{self.dimension}）",
+                e,
+            )
             return []
         dim = data.get(self.dimension)
         if not isinstance(dim, dict):

@@ -57,6 +57,29 @@ class EvalEvidence:
     def degraded(self) -> bool:
         return self.confidence <= 0.0
 
+    @property
+    def has_llm_response(self) -> bool:
+        """LLM 是否**真的产出了内容**（区别于"根本没答上"的降级占位）。
+
+        2026-09-15 新增（190 次 ``confidence=0`` 复盘）。
+
+        动机：L3 校验器的「评分维下限」把 value < 10 一律判为"解析失败"，
+        但**真实低分**（差章节被 LLM 打 1~5 分）与**解析失败**都会表现为很小的
+        value，对处置的意义却相反：
+
+        - 解析失败 ⇒ 证据不可信 ⇒ 只复评（现行语义，正确）；
+        - 真实低分 ⇒ 是真实质量判定 ⇒ 应当采信并触发修复；若判成不可信，
+          真质量失败会被永久搁置在"复评"里，**永远修不到**。
+
+        判据：原始响应片段 / 结构化 issues / rationale 任一非空。
+        注意**不能**用 ``response_hash``——``hash_text("")`` 对空串也返回非空哈希。
+        """
+        return bool(
+            (self.raw_excerpt or "").strip()
+            or self.issues
+            or (self.rationale or "").strip()
+        )
+
     def degrade(self, reason: str) -> None:
         """降级为不可信并记录原因（幂等）。"""
         self.confidence = 0.0

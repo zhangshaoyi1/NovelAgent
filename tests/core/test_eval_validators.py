@@ -121,12 +121,41 @@ class TestCountConsistency:
 # 3. 评分维下限
 # ============================================================
 class TestScoreFloor:
-    def test_abnormally_low_score_degrades(self):
+    def test_abnormally_low_score_without_response_degrades(self):
+        """**没有** LLM 响应（解析失败/形状异常）的低分 → 降级为不可信。"""
         d = _dim("coherence", 3.0, direction=">=", required=False,
                  threshold=85.0, evidence=EvalEvidence())
         DimensionValidator().validate_one(d)
         assert d.confidence == 0.0
         assert any("SCORE_TOO_LOW" in v for v in d.evidence.validation)
+
+    def test_no_evidence_at_all_still_degrades(self):
+        """无证据对象（如 golden_* 缺键兜底 0）→ 仍降级，行为不变。"""
+        d = _dim("coherence", 0.0, direction=">=", required=False, threshold=85.0)
+        DimensionValidator().validate_one(d)
+        assert d.confidence == 0.0
+
+    def test_real_low_score_with_response_is_believed(self):
+        """**LLM 真的答了**低分 ⇒ 采信为真实低分，不得降级。
+
+        2026-09-15（190 次 confidence=0 复盘）：实测五灵破归档 44 次此类
+        （coherence 5 / readability 1）。旧行为把真质量失败判成"证据不可信"
+        → L4 只复评不处置 → **差章节永远修不到**。
+        """
+        ev = EvalEvidence(raw_excerpt='{"value": 1, "rationale": "通篇车轱辘话"}')
+        d = _dim("readability", 1.0, direction=">=", required=False,
+                 threshold=80.0, evidence=ev)
+        DimensionValidator().validate_one(d)
+        assert d.confidence == 1.0, "LLM 有完整响应时低分必须采信"
+        assert d.credible_failed is True, "真实低分应可触发修复"
+        assert any("SCORE_VERY_LOW" in v for v in ev.validation), "仍须留痕可审计"
+
+    def test_issues_only_response_counts_as_real(self):
+        ev = EvalEvidence(issues=[{"severity": "high", "desc": "开头重演"}])
+        d = _dim("readability", 5.0, direction=">=", required=False,
+                 threshold=80.0, evidence=ev)
+        DimensionValidator().validate_one(d)
+        assert d.confidence == 1.0
 
     def test_reasonable_score_passes(self):
         d = _dim("coherence", 72.0, direction=">=", required=False,
@@ -157,6 +186,14 @@ class TestEvalEvidence:
         a = build_evidence(messages=[{"role": "user", "content": f"人设稳定\n\n{body}"}])
         b = build_evidence(messages=[{"role": "user", "content": f"连贯性\n\n{body}"}])
         assert a.prompt_hash != b.prompt_hash
+
+    def test_has_llm_response_ignores_empty_hash(self):
+        """空响应不得被判为"有响应"——``hash_text('')`` 也返回非空哈希，不可作判据。"""
+        assert EvalEvidence().has_llm_response is False
+        assert EvalEvidence(response_hash="deadbeef").has_llm_response is False
+        assert EvalEvidence(raw_excerpt="{}").has_llm_response is True
+        assert EvalEvidence(rationale="模型说明").has_llm_response is True
+        assert EvalEvidence(issues=[{"severity": "mid"}]).has_llm_response is True
 
     def test_response_hash_same_for_same_text(self):
         a = build_evidence(raw_response='{"value": 3}')
