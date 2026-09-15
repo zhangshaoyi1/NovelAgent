@@ -30,7 +30,12 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Iterable, Sequence
 
-from agent.core.quality.dimension_registry import DimensionSpec, Scope
+from agent.core.quality.dimension_registry import (
+    DimensionSpec,
+    EvalTiming,
+    Repairability,
+    Scope,
+)
 
 
 class Action(str, Enum):
@@ -90,10 +95,52 @@ def _untrusted(d: Any) -> bool:
 
 
 def _scope_is(scope: Scope) -> Callable[[Any], bool]:
+    """按兼容视图 ``scope`` 匹配（保留给外部自定义规则；内置规则已改用两根轴）。"""
     def _m(d: Any) -> bool:
         spec = _spec_of(d)
         return spec is not None and spec.scope is scope
     return _m
+
+
+def _timing_is(timing: EvalTiming) -> Callable[[Any], bool]:
+    def _m(d: Any) -> bool:
+        spec = _spec_of(d)
+        return spec is not None and spec.eval_timing is timing
+    return _m
+
+
+def _repair_is(r: Repairability) -> Callable[[Any], bool]:
+    def _m(d: Any) -> bool:
+        spec = _spec_of(d)
+        return spec is not None and spec.repairability is r
+    return _m
+
+
+def _hard_gate_out_of_window(d: Any) -> bool:
+    """硬指标，但**修复范围不是末窗**（``repairability != WINDOW``）。
+
+    2026-09-15 新增（登记单 §八："所有全书级统计量都可能被窗口回退判而不可修"）。
+
+    语义：``required=True`` 只说明"必须达标"，不说明"回退末 N 章就能达标"。
+    若该维度的修复范围是全书（``GLOBAL``）或开头（``HEAD``），则
+    ``hard_gate`` 规则授权的那次删章重写**结构上不可能**让它达标 ⇒ 同一批
+    会被反复回退直到预算熔断。此时正确的动作是**上报人工**，而不是销毁内容。
+
+    与 :func:`_soft_dim` 的区别：软维是"可以不达标"，本规则是"必须达标但
+    本次修复动作无能为力"——两者都不能用不可逆动作回应。
+    """
+    spec = _spec_of(d)
+    if spec is None:
+        return False
+    return bool(spec.required) and spec.repairability is not Repairability.WINDOW
+
+
+def _hard_gate_in_window(d: Any) -> bool:
+    """硬指标**且**修复范围就是末窗——唯一授权 ``ROLLBACK_REWRITE`` 的形态。"""
+    spec = _spec_of(d)
+    if spec is None:
+        return bool(getattr(d, "required", False))
+    return bool(spec.required) and spec.repairability is Repairability.WINDOW
 
 
 def _soft_dim(d: Any) -> bool:
@@ -133,12 +180,21 @@ DEFAULT_RULES: tuple[DispositionRule, ...] = (
         "判定证据不可信（疑似缓存碰撞/解析异常），禁止据此处置，需复评确认",
     ),
     DispositionRule(
-        "first_chapters_scope", _scope_is(Scope.FIRST_CHAPTERS), Action.ESCALATE,
+        "first_chapters_timing", _timing_is(EvalTiming.FIRST_CHAPTERS), Action.ESCALATE,
         "开头若干章不达标：回溯窗口只覆盖末 N 章，修不到开头，上报人工重写",
     ),
     DispositionRule(
-        "book_ending_scope", _scope_is(Scope.BOOK_ENDING), Action.ESCALATE,
+        "book_ending_timing", _timing_is(EvalTiming.BOOK_ENDING), Action.ESCALATE,
         "全局结构门禁不达标：支线推进/结局收敛是全局问题，末窗回滚修不到，上报人工",
+    ),
+    # 2026-09-15 新增（登记单 §八）：硬指标 ≠ 可回退修好。
+    # 「必须达标」（required）与「回退末 N 章能达标」（repairability）是两件事——
+    # 修复范围不在窗口内的硬指标，回滚结构上就修不好，只能上报人工。
+    # 少了这条，硬闸作用域错配就会演变成删章死循环（本项的存在即由该复盘而来）。
+    DispositionRule(
+        "hard_gate_out_of_scope", _hard_gate_out_of_window, Action.ESCALATE,
+        "硬指标但修复范围不在回退窗口内（全书级/开头）：末窗回滚结构上修不好，"
+        "上报人工，禁止销毁内容",
     ),
     DispositionRule(
         "soft_dim", _soft_dim, Action.LOCAL_REPAIR,
@@ -146,8 +202,8 @@ DEFAULT_RULES: tuple[DispositionRule, ...] = (
         max_cost_tokens=200_000,
     ),
     DispositionRule(
-        "hard_gate", _hard_gate, Action.ROLLBACK_REWRITE,
-        "硬指标不达标：回溯最近窗口并重写",
+        "hard_gate", _hard_gate_in_window, Action.ROLLBACK_REWRITE,
+        "硬指标不达标**且**修复范围就在回退窗口内：回溯最近窗口并重写",
         requires_double_evidence=True,
         max_cost_tokens=1_500_000,
     ),

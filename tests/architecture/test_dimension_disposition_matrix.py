@@ -31,14 +31,31 @@
       ⇒ 动作必须是 ROLLBACK_REWRITE（硬指标不达标不可只告警）。
 - M5  **兜底动作不得不可逆**：不可逆动作必须由显式规则授权
       （「未归类」不能默认销毁内容）。
-- M6  **登记表字段完整**：``unit`` 必须是 ``Unit`` 枚举值，``scope`` 已声明，
-      阈值/方向合法——新增维度必须同时声明四个语义维度。
+- M6  **登记表字段完整**：``unit`` 必须是 ``Unit`` 枚举值，``eval_timing`` /
+      ``repairability`` / ``stat_scope`` 已声明，阈值/方向合法。
+- M7  **硬闸修不到 ⇒ 上报人工**：``required=True`` 但 ``repairability != WINDOW``
+      ⇒ 动作必须是 ESCALATE（不得 ROLLBACK_REWRITE）。这是 2026-09-15
+      复盘中"硬闸作用域错配 = 删章死循环"（Q6）的可执行形式。
+- M8  **统计口径与动作相容**：`dimension_registry.audit_axis_consistency()`（S1–S4）
+      在真实登记表上零违规。
 """
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 from agent.agents.evaluator_types import DimensionResult
-from agent.core.quality.dimension_registry import DIMENSIONS, Direction, Scope, Unit
+from agent.core.quality.dimension_registry import (
+    DIMENSIONS,
+    Direction,
+    DimensionSpec,
+    EvalTiming,
+    Repairability,
+    Scope,
+    StatScope,
+    Unit,
+    audit_axis_consistency,
+)
 from agent.core.quality.disposition import (
     DEFAULT_RULES,
     IRREVERSIBLE_ACTIONS,
@@ -95,6 +112,23 @@ def _plan_for(name: str):
     return DispositionPolicy().plan([_failing_dim(name)])
 
 
+def _hard_gate_out_of_window_probe() -> SimpleNamespace:
+    """构造「硬指标 + 修复范围不在回退窗口」的形态，探 ``hard_gate_out_of_scope``。
+
+    当前登记表里没有这种维度（正是本次收紧的结果），但规则必须**可达且有效**——
+    它是防御未来误声明的兜底闸。故用合成 spec 直接探测，而不是等真实维度出现。
+    """
+    spec = DimensionSpec(
+        name="__probe_hard_global__", label="探针·硬闸但全局",
+        unit=Unit.COUNT, direction=Direction.LOWER_BETTER, default_threshold=0.0,
+        required=True, repairability=Repairability.GLOBAL, stat_scope=StatScope.BOOK,
+    )
+    return SimpleNamespace(
+        spec=spec, required=True, confidence=1.0,
+        name=spec.name, label=spec.label,
+    )
+
+
 class TestM1EveryRegisteredDimIsClassified:
     def test_no_registered_dim_falls_through_to_fallback(self) -> None:
         offenders = [n for n in DIMENSIONS if "fallback" in _plan_for(n).rule_names]
@@ -110,8 +144,11 @@ class TestM1EveryRegisteredDimIsClassified:
         matched: set[str] = set()
         for name in DIMENSIONS:
             matched.update(_plan_for(name).rule_names)
-        # 证据不可信规则只由降级维度命中，需单独探针。
+        # 只由特殊形态命中的规则，需单独探针（已在登记表里不可复现）。
         matched.update(DispositionPolicy().plan([_degraded_probe()]).rule_names)
+        matched.update(
+            DispositionPolicy().plan([_hard_gate_out_of_window_probe()]).rule_names
+        )
         declared = {r.name for r in DEFAULT_RULES if not r.is_fallback}
         unreachable = sorted(declared - matched)
         assert unreachable == [], (
@@ -175,7 +212,13 @@ class TestM6RegistryFieldsAreDeclared:
             if not isinstance(spec.unit, Unit):
                 problems.append(f"{name}: unit 未声明（{spec.unit!r}）")
             if not isinstance(spec.scope, Scope):
-                problems.append(f"{name}: scope 未声明（{spec.scope!r}）")
+                problems.append(f"{name}: scope 视图异常（{spec.scope!r}）")
+            if not isinstance(spec.eval_timing, EvalTiming):
+                problems.append(f"{name}: eval_timing 未声明（{spec.eval_timing!r}）")
+            if not isinstance(spec.repairability, Repairability):
+                problems.append(f"{name}: repairability 未声明（{spec.repairability!r}）")
+            if spec.source.value == "computed" and not isinstance(spec.stat_scope, StatScope):
+                problems.append(f"{name}: COMPUTED 维未声明 stat_scope（{spec.stat_scope!r}）")
             if not isinstance(spec.direction, Direction):
                 problems.append(f"{name}: direction 未声明（{spec.direction!r}）")
             if not spec.label:
@@ -184,3 +227,52 @@ class TestM6RegistryFieldsAreDeclared:
             if not (lo <= spec.default_threshold <= hi):
                 problems.append(f"{name}: 阈值 {spec.default_threshold} 超出量纲值域")
         assert problems == [], "维度契约字段不完整：\n" + "\n".join(problems)
+
+
+class TestM7HardGateOutOfScopeEscalates:
+    """Q6 红线：硬闸但修复范围不在回退窗口 ⇒ 上报人工，**不得**删章重写。
+
+    2026-09-15 复盘（登记单 §八）：「required=True」只说明"必须达标"，不说明
+    "回退末 N 章就能达标"。两者混同的后果就是"判得对、但永远修不好"的删章死循环
+    —— ``padding_repetition_abnormal`` 曾以"硬闸 + 全书口径"的形态存活，
+    被母登记单 §二 的阈值取字段名脚本 bug 误判为无问题而漏过。
+    """
+
+    def test_probe_hard_gate_global_scope_escalates(self) -> None:
+        plan = DispositionPolicy().plan([_hard_gate_out_of_window_probe()])
+        assert plan.action is Action.ESCALATE, (
+            f"硬指标但修复范围不在窗口内必须上报人工，实测 {plan.action.value}"
+        )
+        assert plan.is_irreversible is False
+        assert "hard_gate_out_of_scope" in plan.rule_names
+
+    def test_no_registered_dim_is_hard_gate_out_of_window(self) -> None:
+        """当前登记表里不应存在"硬闸 + 非窗口修复范围"的维度（收紧后的现状）。"""
+        offenders = [
+            n for n, s in DIMENSIONS.items()
+            if s.required and s.repairability is not Repairability.WINDOW
+        ]
+        assert offenders == [], (
+            f"以下硬指标授权不了回退修复，动作会变成上报人工：{offenders}"
+            f"——若确为有意设计请同步本条红线"
+        )
+
+
+class TestM8StatisticScopeMatchesAction:
+    """S1–S4：统计口径必须落在动作能触及的范围内（`audit_axis_consistency`）。"""
+
+    def test_no_axis_violations(self) -> None:
+        problems = audit_axis_consistency()
+        assert problems == [], "契约轴不一致：\n" + "\n".join(problems)
+
+    def test_window_repairable_dims_measure_within_window(self) -> None:
+        offenders = [
+            (n, s.stat_scope.value if s.stat_scope else None)
+            for n, s in DIMENSIONS.items()
+            if s.repairability is Repairability.WINDOW
+            and s.stat_scope not in (StatScope.CHAPTER, StatScope.WINDOW)
+        ]
+        assert offenders == [], (
+            f"授权了末窗回滚（repairability=WINDOW）但统计口径超出窗口的维度："
+            f"{offenders}——这正是『判得对、但永远修不好』的形态"
+        )

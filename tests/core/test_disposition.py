@@ -75,13 +75,13 @@ class TestRuleMapping:
     def test_first_chapters_escalates(self):
         plan = DispositionPolicy().plan([_golden_dim()])
         assert plan.action is Action.ESCALATE
-        assert "first_chapters_scope" in plan.rule_names
+        assert "first_chapters_timing" in plan.rule_names
 
     def test_book_ending_escalates(self):
         for d in (_mainline_dim(), _ending_dim()):
             plan = DispositionPolicy().plan([d])
             assert plan.action is Action.ESCALATE
-            assert "book_ending_scope" in plan.rule_names
+            assert "book_ending_timing" in plan.rule_names
 
     def test_hard_gate_rolls_back(self):
         plan = DispositionPolicy().plan([_dim("logic_holes", value=2.0)])
