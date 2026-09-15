@@ -42,6 +42,7 @@ from agent.core.base.exceptions import FatalProviderError
 from agent.core.quality.scoring.quality_checker import (
     _count_cjk,
     _chapter_length_from_ctx,
+    resolve_hard_cap_cjk_words,
     resolve_max_cjk_words,
     resolve_min_cjk_words,
 )
@@ -376,6 +377,130 @@ class WriterAgent:
             )
         return merged
 
+    def _trim_length(self, text: str, target_words: int, min_words: int,
+                     max_words: int | None = None, max_rounds: int = 1) -> str:
+        """定向压缩（2026-09-15）：超硬上限时做一次压缩，而非原样落盘。
+
+        对称于 :meth:`_top_up_length`（下限补字）。背景：写章侧此前**只有下限硬闸、
+        上限全程无处置** —— 提示词第 17 条只约束「不足」，落盘前只判 ``< min_len``，
+        超长稿一路直落（灵荒薪传 ch012 单章 32520 字、越权写到全书大结局，实证）。
+
+        压缩只删冗余（重复描写／空泛抒情／大段心理独白／无信息量对白），**禁止新增
+        情节、禁止提前收尾**；输出必须「短于原稿且不低于下限」才被采纳，否则原样返回
+        （由调用方告警落盘，**绝不因压缩失败而拒绝落盘**）。
+
+        Args:
+            text: 当前超长草稿
+            target_words: 目标字数
+            min_words: 字数下限
+            max_words: 字数合理上限（压缩目标，缺省用目标字数）
+            max_rounds: 最多压缩轮数
+
+        Returns:
+            压缩后的全文；调用失败或输出无效则原样返回（由调用方决定告警）。
+        """
+        from agent.client.gateway_adapter import chat_creative
+
+        cur = _count_cjk(text)
+        upper = max_words or target_words
+        for i in range(max_rounds):
+            try:
+                resp = chat_creative(
+                    self.llm,
+                    messages=[
+                        {
+                            "role": "system",
+                            "content": (
+                                "你是网文精简器。只输出压缩后的完整正文，禁止任何解释、"
+                                "标题、批注或对压缩过程的说明；严格保留既有情节、子事件、"
+                                "人物、对话要点与章节结尾钩子，删除重复描写、空泛抒情、"
+                                "大段心理独白与无信息量对白；禁止新增情节，禁止提前收尾。"
+                            ),
+                        },
+                        {
+                            "role": "user",
+                            "content": (
+                                f"以下一章篇幅过长（当前 {cur} 字），请压缩到约 {upper} 字"
+                                f"以内（且不低于 {min_words} 字），输出完整的压缩后正文：\n\n"
+                                f"{text}"
+                            ),
+                        },
+                    ],
+                    temperature=0.5,
+                    max_tokens=8192,
+                    enable_thinking=False,
+                )
+            except Exception as e:  # noqa: BLE001
+                self.console.print(
+                    f"[yellow]      …篇幅压缩第 {i + 1} 轮调用失败（{e}），保留原稿[/yellow]"
+                )
+                continue  # noqa: SILENT_DEGRADE - 压缩失败降级，由调用方告警落盘
+            trimmed = (resp or "").strip()
+            new_len = _count_cjk(trimmed)
+            # 采纳判据：确实变短（防模型原样回吐）且不低于下限（防压成残章）
+            if new_len < cur and new_len >= min_words:
+                self.console.print(
+                    f"[dim]      · 篇幅压缩第 {i + 1} 轮：{cur} → {new_len} 字[/dim]"
+                )
+                return trimmed
+            self.console.print(
+                f"[yellow]      …篇幅压缩第 {i + 1} 轮输出无效（{new_len} 字，"
+                f"未变短或低于下限），保留原稿[/yellow]"
+            )
+        return text
+
+    @staticmethod
+    def _target_from_ctx(ctx: Any) -> int | None:
+        """解析本章目标字数（与 :meth:`_word_budget` 同口径；未知返回 None）。"""
+        if isinstance(ctx, dict):
+            return _chapter_length_from_ctx(ctx)
+        if ctx is not None:
+            v = getattr(ctx, "chapter_length", None)
+            try:
+                iv = int(v)  # type: ignore[arg-type]
+            except (TypeError, ValueError):
+                return None
+            return iv if iv > 0 else None
+        return None
+
+    def _normalize_overlong(
+        self, draft: str, ctx: Any, min_len: int,
+        passed: bool, report: dict[str, Any],
+    ) -> tuple[str, bool, dict[str, Any]]:
+        """超硬上限 → 一次定向压缩 → **对压缩稿重判门禁**；无效则保留原稿。
+
+        对称于过短分支的续写补字。压缩稿必须重新过闸（避免「未验证状态被当结论」）；
+        压缩失败 / 输出无效 ⇒ 原样返回原稿（告警落盘，不 raise、不放弃）——
+        与「宁断批不带病存档」不冲突：此处是篇幅问题而非确定性 blocking 缺陷。
+
+        Returns:
+            ``(draft, passed, report)``
+        """
+        target = self._target_from_ctx(ctx)
+        hard_cap = resolve_hard_cap_cjk_words(target)
+        if not hard_cap:
+            return draft, passed, report
+        cur = _count_cjk(draft)
+        if cur <= hard_cap:
+            return draft, passed, report
+        self.console.print(
+            f"[yellow]      …本章 {cur} 字，超硬上限 {hard_cap} 字（目标×2），"
+            f"触发定向压缩[/yellow]"
+        )
+        trimmed = self._trim_length(
+            draft,
+            target_words=target or hard_cap,
+            min_words=min_len,
+            max_words=resolve_max_cjk_words(target) or target or hard_cap,
+        )
+        if trimmed == draft:
+            self.console.print(
+                "[yellow]      …压缩无有效产出，保留原稿并告警落盘[/yellow]"
+            )
+            return draft, passed, report
+        new_passed, new_report = self._gate(trimmed, ctx)
+        return trimmed, new_passed, new_report
+
     # ------------------------------------------------------------------
     # 单轮起草（携带或不携带审稿意见）
     # ------------------------------------------------------------------
@@ -601,6 +726,9 @@ class WriterAgent:
         passed, report = self._gate(draft, ctx)
 
         if self.tier == "light":
+            draft, passed, report = self._normalize_overlong(
+                draft, ctx, self._min_len_from_ctx(ctx), passed, report
+            )
             return draft, 0, passed
 
         # 好稿兜底：追踪篇幅达标的最佳草稿，避免主观审稿误杀好稿导致整章作废
@@ -661,6 +789,11 @@ class WriterAgent:
                 "[yellow]      …质量门禁未通过，回退到本轮篇幅达标的最佳稿兜底落盘（标记未通过）。[/yellow]"
             )
             draft, report = best_draft, best_report
+        # 篇幅规范化（2026-09-15）：超硬上限 → 一次定向压缩 → 压缩稿重判门禁；
+        # 压缩无效则保留原稿告警落盘（不阻断）。对称于过短分支的续写补字。
+        draft, passed, report = self._normalize_overlong(
+            draft, ctx, min_len, passed, report
+        )
         return draft, revision_attempts, passed
 
     async def run_async(self, task: str, ctx: Any = None) -> tuple[str, int, bool]:
@@ -670,6 +803,9 @@ class WriterAgent:
         passed, report = self._gate(draft, ctx)
 
         if self.tier == "light":
+            draft, passed, report = self._normalize_overlong(
+                draft, ctx, self._min_len_from_ctx(ctx), passed, report
+            )
             return draft, 0, passed
 
         # 好稿兜底：追踪篇幅达标的最佳草稿，避免主观审稿误杀好稿导致整章作废
@@ -730,4 +866,8 @@ class WriterAgent:
                 "[yellow]      …质量门禁未通过，回退到本轮篇幅达标的最佳稿兜底落盘（标记未通过）。[/yellow]"
             )
             draft, report = best_draft, best_report
+        # 篇幅规范化：超硬上限 → 一次定向压缩 → 压缩稿重判门禁；无效则保留原稿告警落盘。
+        draft, passed, report = self._normalize_overlong(
+            draft, ctx, min_len, passed, report
+        )
         return draft, revision_attempts, passed

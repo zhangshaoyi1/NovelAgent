@@ -194,3 +194,132 @@ def test_run_fallback_tops_up_before_raise(monkeypatch, tmp_path: Path) -> None:
     assert "补" * 10 in text  # 续写内容已拼入
     assert passed is False  # 标记未通过，但不放弃落盘
     assert len(calls) == 1
+
+
+# ---------------------------------------------------------------- 缺口4：上限压缩
+# 背景（2026-09-15，灵荒薪传 ch012 单章 32520 字、越权写到全书大结局）：
+# 写章侧此前只有「下限补字 / 拒存」两级处置，上限全程无处置（仅提示词 + WARN）。
+# 新增「硬上限（目标×2）→ 一次定向压缩 → 压缩稿重判门禁；无效则保留原稿告警落盘」。
+def test_resolve_hard_cap_math() -> None:
+    """硬上限 = 目标×200%；目标未知返回 0（=不设硬上限）。"""
+    from agent.core.quality.scoring.quality_checker import resolve_hard_cap_cjk_words
+
+    assert resolve_hard_cap_cjk_words(2500) == 5000
+    assert resolve_hard_cap_cjk_words(None) == 0
+    assert resolve_hard_cap_cjk_words(0) == 0
+
+
+def test_trim_accepts_shorter_within_bounds(monkeypatch) -> None:
+    """压缩产出「短于原稿且不低于下限」→ 采纳。"""
+    calls: list[str] = []
+    _patch_chat_creative(monkeypatch, ["压" * 2200], calls)
+    out = _agent()._trim_length("超" * 9000, target_words=2500, min_words=2000, max_words=3000)
+    assert out == "压" * 2200
+    assert len(calls) == 1
+
+
+def test_trim_rejects_not_shorter(monkeypatch) -> None:
+    """压缩产出未变短（模型原样回吐）→ 保留原稿。"""
+    calls: list[str] = []
+    _patch_chat_creative(monkeypatch, ["等" * 9000], calls)
+    out = _agent()._trim_length("超" * 9000, target_words=2500, min_words=2000, max_words=3000)
+    assert out == "超" * 9000
+    assert len(calls) == 1
+
+
+def test_trim_rejects_below_min(monkeypatch) -> None:
+    """压缩产出低于下限（压成残章）→ 保留原稿。"""
+    calls: list[str] = []
+    _patch_chat_creative(monkeypatch, ["短" * 10], calls)
+    out = _agent()._trim_length("超" * 9000, target_words=2500, min_words=2000, max_words=3000)
+    assert out == "超" * 9000
+
+
+def test_trim_failure_keeps_original(monkeypatch) -> None:
+    """压缩调用异常 → 保留原稿（不 raise）。"""
+    import agent.client.gateway_adapter as gw
+
+    def boom(llm, messages=None, **kwargs):
+        raise RuntimeError("net down")
+
+    monkeypatch.setattr(gw, "chat_creative", boom)
+    out = _agent()._trim_length("超" * 9000, target_words=2500, min_words=2000, max_words=3000)
+    assert out == "超" * 9000
+
+
+def _pass_gate(text: str, ctx) -> tuple[bool, dict]:
+    return True, {"overall_pass": True, "issues": []}
+
+
+def test_run_compresses_overlong_draft(monkeypatch) -> None:
+    """端到端：12000 字草稿 > 硬上限 5000（目标 2500×2）→ 压缩为 2200 字并被采纳。"""
+    from agent.agents.writer_agent import WriterAgent
+
+    calls: list[str] = []
+    _patch_chat_creative(monkeypatch, ["压" * 2200], calls)
+    agent = WriterAgent(
+        project_dir=".",
+        tier="auto",
+        decide=lambda m: None,
+        quality_gate=_pass_gate,
+        console=Console(),
+        targeted_revise=False,
+    )
+    monkeypatch.setattr(
+        agent, "_draft",
+        lambda task, critique=None, min_words=None, max_words=None: "长" * 12000,
+    )
+    text, _rev, passed = agent.run("写一章", ctx={"chapter_length": "2500"})
+    assert text == "压" * 2200
+    assert passed is True
+    assert len(calls) == 1  # 只压缩一次
+
+
+def test_run_no_compress_within_hard_cap(monkeypatch) -> None:
+    """端到端：4000 字草稿 ≤ 硬上限 5000 → 不触发压缩（零额外 LLM 成本）。"""
+    from agent.agents.writer_agent import WriterAgent
+
+    calls: list[str] = []
+    _patch_chat_creative(monkeypatch, ["压" * 2200], calls)
+    agent = WriterAgent(
+        project_dir=".",
+        tier="auto",
+        decide=lambda m: None,
+        quality_gate=_pass_gate,
+        console=Console(),
+        targeted_revise=False,
+    )
+    monkeypatch.setattr(
+        agent, "_draft",
+        lambda task, critique=None, min_words=None, max_words=None: "长" * 4000,
+    )
+    text, _rev, passed = agent.run("写一章", ctx={"chapter_length": "2500"})
+    assert text == "长" * 4000
+    assert passed is True
+    assert len(calls) == 0  # 未触发压缩
+
+
+def test_run_overlong_compress_failure_keeps_original(monkeypatch) -> None:
+    """端到端：超长但压缩调用失败 → 保留原稿、照常落盘（passed 不变）。"""
+    import agent.client.gateway_adapter as gw
+    from agent.agents.writer_agent import WriterAgent
+
+    def boom(llm, messages=None, **kwargs):
+        raise RuntimeError("net down")
+
+    monkeypatch.setattr(gw, "chat_creative", boom)
+    agent = WriterAgent(
+        project_dir=".",
+        tier="auto",
+        decide=lambda m: None,
+        quality_gate=_pass_gate,
+        console=Console(),
+        targeted_revise=False,
+    )
+    monkeypatch.setattr(
+        agent, "_draft",
+        lambda task, critique=None, min_words=None, max_words=None: "长" * 12000,
+    )
+    text, _rev, passed = agent.run("写一章", ctx={"chapter_length": "2500"})
+    assert text == "长" * 12000  # 保留原稿，不因压缩失败而拒绝落盘
+    assert passed is True

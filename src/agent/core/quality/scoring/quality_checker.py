@@ -87,6 +87,11 @@ MIN_SCENE_RATIO = 0.30
 ABSOLUTE_MIN_CJK_WORDS = 1500   # 恒硬下限（对应 MIN_CHAPTER_LENGTH）
 MIN_WORD_RATIO = 0.8            # 目标字数的 80% 视为达标下限（保留合理余量）
 MAX_WORD_RATIO = 1.2            # 目标字数的 120% 视为合理上限（超限仅提示，非硬阻断）
+# 硬上限（2026-09-15）：目标×200%。超过它触发「定向压缩」（对称于下限的续写补字）。
+# 分层理由：合理上限（×1.2）只告警，避免对轻微超限章节无谓调用 LLM；硬上限才动手压缩。
+# 立案：灵荒薪传 ch012 单章 32520 字（目标 2500 → 6.5× 硬上限），越权写到全书大结局，
+# 而落盘前只有下限校验、上限全程无处置（优化登记 20260915_单章篇幅上限缺失）。
+MAX_WORD_HARD_RATIO = 2.0       # 目标字数的 200% 视为硬上限（超限触发一次定向压缩）
 
 # P2-2.4（竞品优化方案，对标 oh-story 字数硬约束表）：按 world 节奏档位的字数下限。
 # 仅在目标字数未知（无 chapter_length）时替代统一绝对下限——舒缓/正常章信息量需求更高；
@@ -133,6 +138,18 @@ def resolve_max_cjk_words(chapter_length: int | float | None = None) -> int:
     """解析本章字数合理上限：随目标字数动态伸缩（超限仅告警，不阻断）"""
     if chapter_length:
         return max(0, int(chapter_length * MAX_WORD_RATIO))
+    return 0
+
+
+def resolve_hard_cap_cjk_words(chapter_length: int | float | None = None) -> int:
+    """解析本章字数**硬上限**：目标×200%（超限触发定向压缩）。
+
+    与 :func:`resolve_max_cjk_words`（×1.2，仅告警）分层：本函数用于**触发处置**
+    （`writer_agent._trim_length` 定向压缩），故阈值更高以避免无谓的 LLM 调用。
+    目标字数未知时返回 0（=不设硬上限，保持既有行为）。
+    """
+    if chapter_length:
+        return max(0, int(chapter_length * MAX_WORD_HARD_RATIO))
     return 0
 
 
