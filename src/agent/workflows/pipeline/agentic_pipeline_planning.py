@@ -160,7 +160,7 @@ class _PipelinePlanningMixin:
             self._safe_step(
                 key=False, name="M3 大纲生成",
                 fn=lambda: wf(M3OutlineWorkflow, method_enabled=self.method_enabled).run(),  # G11：方法模板注入
-                degrade=self._write_placeholder_outline,
+                on_degrade=self._write_placeholder_outline,
             )
             # G4 熔断检查点：规划每步后
             if self._check_budget("plan_step"):
@@ -177,7 +177,7 @@ class _PipelinePlanningMixin:
             self._safe_step(
                 key=False, name="M4 角色设计",
                 fn=lambda: wf(M4CharacterWorkflow).run(),
-                degrade=self._write_placeholder_characters,
+                on_degrade=self._write_placeholder_characters,
             )
             # G4 熔断检查点：规划每步后
             if self._check_budget("plan_step"):
@@ -229,16 +229,20 @@ class _PipelinePlanningMixin:
         name: str,
         fn: Callable[[], Any],
         retries: int = 2,
-        degrade: Callable[[], None] | None = None,
+        on_degrade: Callable[[], None] | None = None,
     ) -> _PlanStepResult:
         """包装单步规划调用（失败不阻断，拍板 #2）。
 
         Args:
             key: True=关键前置（耗尽重试后安全退出，置 ``_plan_blocked``）；
-                 False=非关键（耗尽重试后调用 ``degrade`` 占位并继续）。
+                 False=非关键（耗尽重试后调用 ``on_degrade`` 占位并继续）。
             fn: 单步执行函数。
             retries: 统一重试上限（默认 2，即最多尝试 3 次）。
-            degrade: 非关键最终失败时的降级占位回调（可选）。
+            on_degrade: 非关键最终失败时的降级占位回调（可选）。
+                ⚠ 原参数名为 ``degrade``，会**遮蔽**统一降级出口
+                ``agent.core.infra.degrade.degrade`` —— 一旦本函数内需要真正的
+                降级留痕，调用 ``degrade()`` 会静默打到回调上（且旧红线还会把
+                它误判为"已可见处理"）。2026-09-15 改名收口（G2 契约红线发现）。
         """
         last: Exception | None = None
         for attempt in range(retries + 1):
@@ -252,9 +256,9 @@ class _PipelinePlanningMixin:
                 self._alert_cost(name)  # noqa: SILENT_DEGRADE
         if key:
             return _PlanStepResult(ok=False)
-        if degrade is not None:
+        if on_degrade is not None:
             try:
-                degrade()
+                on_degrade()
             except Exception:  # noqa: BLE001
                 pass  # noqa: SILENT_DEGRADE
         return _PlanStepResult(ok=False)
