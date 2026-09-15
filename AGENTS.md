@@ -171,7 +171,7 @@ agent/
 
 ### 测试验证：
 
-→ 修改后统一运行验证：`pytest`（全量口径 = 无参数，含 tests/ + llmagent_tests/，**2315 passed / 9 skipped / 0 failed**，约 761 秒；干净跑带 `CODEBUDDY_SAFE_DELETE_ENABLED=0`）
+→ 修改后统一运行验证：`pytest`（全量口径 = 无参数，含 tests/ + llmagent_tests/，**2354 passed / 9 skipped / 0 failed**，约 870 秒；干净跑带 `CODEBUDDY_SAFE_DELETE_ENABLED=0`）
 → 看 FAILED 行判定，不看退出码；`tests/architecture/` 红线测试零失败（128 项，秒级）
 → 提交关卡：`.git/hooks/pre-commit` 自动跑 architecture 红线（见第 10 条）；失败先归因再动手（`scripts/baseline_diff.py`，见第 13 条）
 
@@ -222,7 +222,7 @@ agent/
 2. **沙箱会回滚工作区**：已改文件可能被回滚到 HEAD（最阴险是部分回滚：调用进了提交、import 行被吞，测试全绿上线 NameError）→ **改完立刻 commit + `git show <sha> -- <file>` 核验，禁止攒批**；任何异常的测试/git 数字先重跑一次再采信。
 3. **并行 Edit 禁令**：并行 Edit 同一文件会互相覆盖（已三次事故），必须串行；并行会话下 Edit 失败 = 被并发改动，轮询等待静默再动手。
 4. **"改了不生效"系列**：改 .py / `models.json` 不影响已运行进程，必须重启 Web/daemon；既有 daemon 存活时"重启 Web ≠ 换代码"（任务由旧 daemon 的代码执行，回合主仓后下一个任务才生效）；浏览器 Ctrl+F5 ≠ 服务端重载；daemon 解释器是系统 python 非 venv；沙箱 spawn 的长驻进程必被回收，daemon 只能由 Web/用户终端拉起。
-5. **pytest 口径**：全量 = `pytest` 无参数（`testpaths = tests + llmagent_tests`，当前 **2315 passed / 9 skipped / 0 failed**，约 761 秒）；判定看 FAILED 行不看退出码；干净跑须 `CODEBUDDY_SAFE_DELETE_ENABLED=0`；基线见 `../.workbuddy/memory/MEMORY.md`（随提交刷新）。**提交关卡见下文第 10 条。**
+5. **pytest 口径**：全量 = `pytest` 无参数（`testpaths = tests + llmagent_tests`，当前 **2354 passed / 9 skipped / 0 failed**，约 870 秒）；判定看 FAILED 行不看退出码；干净跑须 `CODEBUDDY_SAFE_DELETE_ENABLED=0`；基线见 `../.workbuddy/memory/MEMORY.md`（随提交刷新）。**提交关卡见下文第 10 条。**
 
 ### 流程约定
 
