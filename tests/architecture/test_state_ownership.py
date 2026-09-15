@@ -41,40 +41,101 @@
 1. 一律用 ``encoding="utf-8-sig"`` 读取；
 2. 解析失败**必须 FAIL 并列出文件名**，不许静默跳过
    （「失败被当成通过」是本项目最忌讳的缺陷族，见 AGENTS.md 第 9/15 条）。
+
+────────────────────────────────────────────────────────────────
+契约升级（2026-09-15，G2 契约化 · 件 C）
+────────────────────────────────────────────────────────────────
+判据语义化只解决「数得准」，没解决「管什么」。旧的 `CONVERGE_BASELINE`
+是**每文件引用次数**的配额（"每文件 ≤ 1 次"）—— 它拦住的是**数量**，
+拦不住**资格**：把 7 处写入集中到一个无权模块，计数不变而所有权崩塌。
+
+新契约把「计数」换成「成员资格」：
+
+    STATE_OWNERSHIP: 状态路径 → 允许写入该路径的模块集合（业主）
+    STATE_OWNERSHIP_TOLERATED: 尚未收敛的旁路 —— 每条必须**具名**
+        （理由 + 收敛目标），而不是一个数字
+
+闸门 = 成员资格 + 容忍条目必备理由 + 无僵尸条目 + 容忍**条目数**棘轮。
+引用**次数**降为看板（`reference_counts()`，只作信息上报，不再单独致 FAIL）。
+
+为什么容忍清单要"具名"：数字（"7 个文件 ≤ 1 次"）不告诉你**为什么允许**、
+**谁来收**。具名条目把这两件事写死在契约里 —— 与 `# noqa` 的
+`reason=`/`ref=` 是同一手法（G2 件 B）。
 """
 
 from __future__ import annotations
 
 import ast
+import warnings
 from pathlib import Path
 
 AGENT_SRC = Path(__file__).resolve().parents[2] / "src" / "agent"
 
 MARK = "state.json"
 
-# 状态所有权者与必要工具：允许直接触碰 state.json
-STATE_OWNERS = {
-    "core/engine/state_machine.py",  # 状态机：state.json 的唯一所有权者
-    "core/infra/atomic.py",  # 原子写工具（被所有权者调用）
-    "core/infra/doctor.py",  # 健康诊断（只读 + 修复建议）
-    "core/infra/dashboard_aggregator.py",  # 仪表盘聚合（只读投影）
-    "core/engine/events.py",  # 进度事件落盘
-    "core/story/injected_trope_store.py",  # 注入梗独立存储
-    "web/state.py",  # 接入层适配（§3.7 项目状态读写门）
+# ── 契约（2026-09-15 件 C）：状态路径 → 允许写入的模块集合 ──────────
+# 注意：这里的"路径"是**逻辑路径**（判据命中用的子串），不是文件系统路径。
+STATE_PATH = ".state/state.json"
+
+STATE_OWNERSHIP: dict[str, set[str]] = {
+    STATE_PATH: {
+        "core/engine/state_machine.py",  # 状态机：state.json 的唯一所有权者
+        "core/infra/atomic.py",  # 原子写工具（被所有权者调用）
+        "core/infra/doctor.py",  # 健康诊断（只读 + 修复建议）
+        "core/infra/dashboard_aggregator.py",  # 仪表盘聚合（只读投影）
+        "core/engine/events.py",  # 进度事件落盘
+        "core/story/injected_trope_store.py",  # 注入梗独立存储
+        "web/state.py",  # 接入层适配（§3.7 项目状态读写门）
+    },
 }
 
-# 待收敛层基线（文件 -> state.json **路径引用**次数）：冻结，只减不增。
-# 2026-09-15 判据由「文本出现次数」改为「AST 路径字面量」后重定：
-# 旧基线 17 文件 / 22 次 → 新基线 7 文件 / 7 次（差额是注释与文档串）。
-CONVERGE_BASELINE = {
-    "cli/commands/cmd_list.py": 1,
-    "cli/commands/reset_state.py": 1,
-    "cli/commands/resume.py": 1,
-    "cli/commands/rollback.py": 1,
-    "cli/commands/status.py": 1,
-    "workflows/pipeline/budget_planner.py": 1,
-    "workflows/pipeline/plan_consistency.py": 1,
+# ── 容忍清单（尚未收敛的旁路写入）────────────────────────────────
+# 契约要求：每条必须**具名**（reason=为什么暂时允许 / target=收敛到哪），
+# 不接受"数字配额"。棘轮对象是**条目数**（= 待收敛文件的个数），
+# 而不是"引用次数"——后者已降为看板（reference_counts）。
+STATE_OWNERSHIP_TOLERATED: dict[str, dict[str, str]] = {
+    "cli/commands/cmd_list.py": {
+        "path": STATE_PATH,
+        "reason": "列表命令直读 state.json 展示项目清单，尚未改走 StateMachine 只读接口",
+        "target": "core/engine/state_machine.py 只读门（read_snapshot）",
+    },
+    "cli/commands/reset_state.py": {
+        "path": STATE_PATH,
+        "reason": "重置命令直接覆写初始状态，属 CLI 特权路径",
+        "target": "core/engine/state_machine.py::reset()",
+    },
+    "cli/commands/resume.py": {
+        "path": STATE_PATH,
+        "reason": "续写命令读取断点状态，尚未改走统一只读接口",
+        "target": "core/engine/state_machine.py 只读门（read_snapshot）",
+    },
+    "cli/commands/rollback.py": {
+        "path": STATE_PATH,
+        "reason": "回滚命令需读取并改写章节游标，属 CLI 特权路径",
+        "target": "core/engine/state_machine.py::rollback()",
+    },
+    "cli/commands/status.py": {
+        "path": STATE_PATH,
+        "reason": "状态展示命令直读活状态，尚未改走只读投影",
+        "target": "core/infra/dashboard_aggregator.py 投影",
+    },
+    "workflows/pipeline/budget_planner.py": {
+        "path": STATE_PATH,
+        "reason": "预算规划需在规划阶段写入派生字段（route/curve 锚点）",
+        "target": "core/engine/state_machine.py 派生状态写接口",
+    },
+    "workflows/pipeline/plan_consistency.py": {
+        "path": STATE_PATH,
+        "reason": "规划一致性核对直接对照活状态，尚未改走只读接口",
+        "target": "core/engine/state_machine.py 只读门（read_snapshot）",
+    },
 }
+
+# 棘轮：容忍**条目数**（待收敛文件个数）只减不增。建线时实测 = 7。
+TOLERATED_ENTRIES_BUDGET = 7
+
+# 看板软上限：旁路引用**次数**（建线时实测 = 7）。超出只告警，不 FAIL。
+TOLERATED_REFS_SOFT_CEILING = 7
 
 _MAX_PATH_LITERAL = 80
 
@@ -134,8 +195,71 @@ def scan_sources() -> tuple[dict[str, int], list[str]]:
     return counts, unparseable
 
 
-def _state_json_path_refs() -> dict[str, int]:
-    """兼容旧调用点：只返回计数（解析失败见 test_all_sources_parseable）。"""
+class TestJudgementIsSemantic:
+    """判据本身的行为（防退化回字符串计数）。"""
+
+    def test_prose_is_not_counted(self) -> None:
+        """文案/日志/异常消息里提到 state.json **不得**计数。
+
+        这是 092e55f → 4bd2ec7 那个假阳性的回归测试。
+        """
+        src = (
+            "def f():\n"
+            "    try:\n"
+            "        pass\n"
+            "    except Exception as e:\n"
+            '        degrade("payoff.resolve.state", "state.json 读取失败，回退缺省", e)\n'
+        )
+        assert count_state_refs(src) == 0
+
+    def test_comment_is_not_counted(self) -> None:
+        src = "# 本模块不直写 state.json，只经 StateMachine 读\nx = 1\n"
+        assert count_state_refs(src) == 0
+
+    def test_docstring_is_not_counted(self) -> None:
+        src = '"""模块说明：state.json 是项目活状态，唯一所有权者在 core。"""\n'
+        assert count_state_refs(src) == 0
+
+    def test_path_literal_is_counted(self) -> None:
+        src = 'p = self.project_dir / ".state" / "state.json"\n'
+        assert count_state_refs(src) == 1
+
+    def test_open_call_is_counted(self) -> None:
+        src = 'with open(d / "state.json", "w") as f:\n    pass\n'
+        assert count_state_refs(src) == 1
+
+    def test_bom_is_tolerated(self) -> None:
+        """BOM 文件必须能解析（否则整个文件对红线失明）。
+
+        实证：src/ 下 5 个文件带 BOM，其中 budget_planner.py 是真实写入者。
+        """
+        src = '\ufeffp = d / "state.json"\n'
+        assert count_state_refs(src) == 1
+
+
+# ── 契约查询 ────────────────────────────────────────────────────────
+
+
+def owners_for(path: str) -> set[str]:
+    """该状态路径的合法写入者（业主）集合。"""
+    return STATE_OWNERSHIP.get(path, set())
+
+
+def is_owner(path: str, module: str) -> bool:
+    return module in owners_for(path)
+
+
+def tolerated_refs_soft_ceiling() -> int:
+    """旁路引用的软上限（看板用，不参与判定）。"""
+    return TOLERATED_REFS_SOFT_CEILING
+
+
+def reference_counts() -> dict[str, int]:
+    """**看板指标**：每文件的 state.json 路径字面量引用次数。
+
+    ⚠ 仅作信息上报，**不再单独致 FAIL**（旧 `CONVERGE_BASELINE` 计数闸门已移除）。
+    契约的闸门是**成员资格**（见 TestStateOwnershipContract）。
+    """
     counts, _ = scan_sources()
     return counts
 
@@ -182,7 +306,30 @@ class TestJudgementIsSemantic:
         assert count_state_refs(src) == 1
 
 
-class TestStateOwnership:
+class TestOwnershipContractJudgement:
+    """契约判据本身的行为。"""
+
+    def test_owner_lookup(self) -> None:
+        assert is_owner(STATE_PATH, "core/engine/state_machine.py")
+        assert not is_owner(STATE_PATH, "cli/commands/status.py")
+
+    def test_all_tolerated_entries_declare_their_path(self) -> None:
+        """容忍条目必须声明它碰的是哪个受监管路径。"""
+        assert all(e.get("path") for e in STATE_OWNERSHIP_TOLERATED.values())
+
+    def test_tolerated_paths_are_tracked(self) -> None:
+        """容忍条目声明的路径必须在 STATE_OWNERSHIP 中有业主。"""
+        unknown = sorted(
+            f"  {f}: path={e.get('path')}"
+            for f, e in STATE_OWNERSHIP_TOLERATED.items()
+            if e.get("path") not in STATE_OWNERSHIP
+        )
+        assert not unknown, "容忍条目引用了未登记的受监管路径：\n" + "\n".join(unknown)
+
+
+class TestStateOwnershipContract:
+    """成员资格契约（取代旧的「每文件计数」配额）。"""
+
     def test_all_sources_parseable(self) -> None:
         """任何源码不可解析都必须显性失败（不得静默跳过 → 红线失明）。"""
         _, unparseable = scan_sources()
@@ -200,38 +347,63 @@ class TestStateOwnership:
             "判据很可能退回了「静默跳过解析失败」的写法。"
         )
 
-    def test_no_new_direct_state_writers(self) -> None:
-        """禁止新增直写 state.json 的文件（所有权者除外）。"""
+    def test_writers_must_be_owners_or_tolerated(self) -> None:
+        """**契约闸门**：触碰受监管状态的模块，必须是业主或被具名容忍。"""
         counts, _ = scan_sources()
         violations = [
-            f"  {f}: {n} 处（既非所有权者，也不在收敛基线内）"
-            for f, n in sorted(counts.items())
-            if f not in STATE_OWNERS and f not in CONVERGE_BASELINE
+            f"  {f}: {n} 处（既非 {STATE_PATH} 的业主，也不在容忍清单内）"
+            for f in sorted(counts)
+            if not is_owner(STATE_PATH, f) and f not in STATE_OWNERSHIP_TOLERATED
         ]
         assert not violations, (
-            "新增了直写 state.json 的文件——状态应经 core/engine/state_machine.py 访问，"
-            "不要另开门户：\n" + "\n".join(violations)
-        )
-
-    def test_converge_budget_never_grows(self) -> None:
-        """棘轮：待收敛层的 state.json 路径引用次数只减不增。"""
-        counts, _ = scan_sources()
-        violations = [
-            f"  {f}: 当前 {counts.get(f, 0)} > 基线 {budget}"
-            for f, budget in CONVERGE_BASELINE.items()
-            if counts.get(f, 0) > budget
-        ]
-        assert not violations, (
-            "待收敛层的 state.json 直写增加（应逐步收敛到状态所有权者）：\n"
+            f"新增了触碰 {STATE_PATH} 的文件——状态应经 core/engine/state_machine.py 访问；\n"
+            "确需临时旁路，请在 STATE_OWNERSHIP_TOLERATED 具名登记（reason + target）：\n"
             + "\n".join(violations)
         )
 
-    def test_baseline_not_stale(self) -> None:
-        """清偿后必须同步下调基线（棘轮只减不增，且不许留僵尸条目）。"""
+    def test_tolerated_entries_are_justified(self) -> None:
+        """容忍条目必须写明理由与收敛目标（不接受匿名容忍）。"""
+        bad = [
+            f"  {f}: reason={'有' if e.get('reason') else '缺'} "
+            f"target={'有' if e.get('target') else '缺'}"
+            for f, e in sorted(STATE_OWNERSHIP_TOLERATED.items())
+            if not (e.get("reason") and e.get("target"))
+        ]
+        assert not bad, (
+            "容忍条目缺少 reason/target —— 容忍是**有意为之**，必须能回答"
+            "「为什么暂时允许」与「收敛到哪」：\n" + "\n".join(bad)
+        )
+
+    def test_no_zombie_tolerance(self) -> None:
+        """已清偿的容忍条目必须删除（僵尸条目使契约失真）。"""
         counts, _ = scan_sources()
         stale = [
-            f"  {f}: 基线 {b} 但当前 0（已清偿 → 请从 CONVERGE_BASELINE 删除）"
-            for f, b in CONVERGE_BASELINE.items()
+            f"  {f}（已不再引用 {STATE_PATH} → 请从 STATE_OWNERSHIP_TOLERATED 删除）"
+            for f in STATE_OWNERSHIP_TOLERATED
             if counts.get(f, 0) == 0
         ]
-        assert not stale, "收敛基线存在僵尸条目：\n" + "\n".join(stale)
+        assert not stale, "容忍清单存在僵尸条目：\n" + "\n".join(stale)
+
+    def test_tolerated_entry_count_never_grows(self) -> None:
+        """棘轮：容忍**条目数**（待收敛文件个数）只减不增。"""
+        n = len(STATE_OWNERSHIP_TOLERATED)
+        assert n <= TOLERATED_ENTRIES_BUDGET, (
+            f"待收敛文件数 {n} 超过预算 {TOLERATED_ENTRIES_BUDGET}（棘轮：只减不增）。\n"
+            "清偿一个就把对应条目从 STATE_OWNERSHIP_TOLERATED 删除并下调本预算。"
+        )
+
+    def test_reference_counts_dashboard(self) -> None:
+        """**看板**：引用次数不参与判定，超软上限只告警（不 FAIL）。
+
+        旧实现把「每文件引用次数」当闸门，属于配额型监管：把一个无权模块的
+        多处写入集中起来，计数不变而所有权已崩塌。计数降级为看板后，
+        真正的闸门是成员资格。
+        """
+        counts = reference_counts()
+        bypass_refs = sum(n for f, n in counts.items() if f in STATE_OWNERSHIP_TOLERATED)
+        if bypass_refs > TOLERATED_REFS_SOFT_CEILING:
+            warnings.warn(
+                f"[看板] 旁路引用次数 {bypass_refs} 超过软上限 "
+                f"{TOLERATED_REFS_SOFT_CEILING}（不 FAIL，仅供收敛盯盘）",
+                stacklevel=1,
+            )
