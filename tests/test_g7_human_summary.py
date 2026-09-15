@@ -218,7 +218,10 @@ def test_to_dict_summary_field() -> None:
     for key in ("gate_decision", "trustworthy", "hard_failed",
                 "soft_failed", "evidence_validation_failed"):
         assert key in d, f"分级键 {key} 必须存在（只增不删）"
-    assert len(d) == 19, "既有 14 键 + HA-Eval L4 分级 5 键 = 19"
+    # 2026-09-15：新增 eval_infra_unavailable（区分「基建不可用」与「内容不达标」）
+    # → 19 + 1 = 20（见 项目文档/优化/20260915_质检假失败与回退死循环.md §二.G）
+    assert "eval_infra_unavailable" in d, "基建故障标识键必须存在（只增不删）"
+    assert len(d) == 20, "既有 14 键 + HA-Eval L4 分级 5 键 + 基建标识 1 键 = 20"
 
 
 # ============================================================

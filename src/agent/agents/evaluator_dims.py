@@ -192,9 +192,13 @@ class _EvaluatorDimensionsMixin:
                     "repetition_stat": rep_stat,
                     "info_density_stat": dens_stat,
                 }
-                # 硬闸：重复句占比 ≤ 阈值 才通过（direction="<="，0-1 量纲）
+                # 硬闸：**回退窗口内**重复句占比 ≤ 阈值 才通过（direction="<="，0-1 量纲）
+                # 2026-09-15：门禁值收窄到回退窗口（与 Scope.WINDOW 声明一致）；全书口径
+                # 仅入报告不参与判定——否则早段注水会把全书占比顶过阈值，而末窗回退
+                # 碰不到早段 → "判得对、但永远修不好"的硬闸死循环（同 _metric_pacing）。
                 _pad_worst = sorted(
-                    rep_stat.get("by_chapter", []),
+                    rep_stat.get("by_chapter_in_window")
+                    or rep_stat.get("by_chapter", []),
                     key=lambda x: -(x.get("repeated", 0) or 0),
                 )[:3]
                 dims.append(DimensionResult(
@@ -208,7 +212,10 @@ class _EvaluatorDimensionsMixin:
                             f"{c.get('repeated', 0)}/{c.get('total', 0)} 句，建议删减车轱辘话"
                             for c in _pad_worst if c.get("repeated")
                         ],
-                        rationale=f"全书重复句占比 {rep_ratio:.4f}",
+                        rationale=(
+                            f"回退窗口内重复句占比 {rep_ratio:.4f}"
+                            f"（全书 {rep_stat.get('repetition_ratio_full', rep_ratio):.4f}）"
+                        ),
                     ),
                 ))
                 # 软标红：info_density_abnormal 不建 DimensionResult（不进 overall_pass），
@@ -420,13 +427,18 @@ class _EvaluatorDimensionsMixin:
             ps = self._last_padding_stats
             rep_ratio = ps["repetition_ratio"]
             dens_ratio = ps["info_density_ratio"]
+            _rst = ps["repetition_stat"]
             report.padding = {
                 "repetition": {
-                    "ratio": round(rep_ratio, 4),
+                    "ratio": round(rep_ratio, 4),  # 门禁值：回退窗口内占比
+                    "full_ratio": _rst.get("repetition_ratio_full", round(rep_ratio, 4)),
+                    "window_chapters": _rst.get("window"),
                     "threshold": self.padding_threshold,
                     "passed": rep_ratio <= self.padding_threshold,
-                    "total_sentences": ps["repetition_stat"]["total_sentences"],
-                    "repeated_sentences": ps["repetition_stat"]["repeated_sentences"],
+                    "total_sentences": _rst["total_sentences"],
+                    "repeated_sentences": _rst["repeated_sentences"],
+                    "window_total_sentences": _rst.get("window_total_sentences"),
+                    "window_repeated_sentences": _rst.get("window_repeated_sentences"),
                 },
                 "info_density": {   # 软标红（P1，仅报告）
                     "advancing_ratio": round(dens_ratio, 4),
@@ -441,6 +453,15 @@ class _EvaluatorDimensionsMixin:
             f"节奏：回退窗口内 {pstat.get('window', pstat['chapters'])} 章中异常 "
             f"{pstat['abnormal']} 章（全书异常 {pstat.get('abnormal_total', pstat['abnormal'])} 章）"
         )
+        # 重复度门禁作用域（2026-09-15）：门禁值=回退窗口内占比；全书口径仅供排查早段注水
+        if getattr(self, "_last_padding_stats", None) is not None:
+            _rst_note = self._last_padding_stats["repetition_stat"]
+            report.notes.append(
+                f"重复度：回退窗口内占比 "
+                f"{_rst_note.get('window_repeated_sentences', 0)}/"
+                f"{_rst_note.get('window_total_sentences', 0)} 句"
+                f"（全书 {_rst_note.get('repetition_ratio_full', 0):.4f}）"
+            )
         # ---- 窗口外节奏异常：显性告警，但**不**据此回退（回退修不到，属动作错配）----
         # 2026-09-15：旧实现把窗口外异常章计入判定 → 判得对但永远修不好（灵荒薪传
         # ch012 32520 字，同一批被回退 8 次仍失败）。此处保留可见性，交人工处置。
@@ -453,6 +474,21 @@ class _EvaluatorDimensionsMixin:
                 f"[yellow]⚠ 节奏异常·回退窗口之外 {len(_pacing_out)} 章：{_detail}"
                 f"（中位数 {pstat.get('median', 0)} 字）——末窗回退修不到，"
                 f"需人工拆分/压缩，本次不据此回退[/yellow]"
+            )
+        # ---- 窗口外高重复章：显性告警，但**不**据此回退（同 pacing，动作错配）----
+        _pad_stats = getattr(self, "_last_padding_stats", None)
+        _rep_out = (
+            (_pad_stats or {}).get("repetition_stat", {}).get("chapters_out_of_window") or []
+        )
+        if _rep_out:
+            _rep_detail = "、".join(
+                f"{it.get('chapter')}（{it.get('repeated')}/{it.get('total')} 句）"
+                for it in _rep_out[:5]
+            )
+            self.console.print(
+                f"[yellow]⚠ 重复句偏高·回退窗口之外 {len(_rep_out)} 章：{_rep_detail}"
+                f"（门禁阈值 {self.padding_threshold}）——末窗回退修不到，"
+                f"需人工删减车轱辘话，本次不据此回退[/yellow]"
             )
         if hard_failed:
             report.notes.append(

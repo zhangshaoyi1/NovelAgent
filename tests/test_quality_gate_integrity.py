@@ -365,3 +365,66 @@ class TestInfraFailureIsNotContentFailure:
         assert "基建不可用" in report.escalated_reason
         assert "不代表内容质量" in report.escalated_reason
         assert report.rolled_back is False, "基建故障不得触发回退"
+
+
+# ============================================================
+# C2. padding_repetition_abnormal 作用域对齐（硬闸：窗口内判定）
+# ============================================================
+class TestRepetitionScopeAlignment:
+    """``padding_repetition_abnormal`` 是 **required=True 硬闸** 且声明
+    ``Scope.WINDOW``（末窗回滚可修）→ 统计范围必须与之一致。
+
+    旧实现用**全书**重复句数 / 全书句数：早段章节的车轱辘话会把全书占比顶过阈值，
+    而回退末 N 章碰不到早段 → 硬闸死循环（比 pacing 更重：硬闸会真实删章重写 +
+    双证据守门）。该实例被登记单 §二 的"阈值取字段名"脚本 bug 误判为无问题而漏过。
+    """
+
+    @staticmethod
+    def _low() -> str:
+        """20 句两两字符集不相交 → 相似度 0 → 无重复句。"""
+        return "".join(chr(0x4E00 + i) * 9 + "。" for i in range(20))
+
+    @staticmethod
+    def _high() -> str:
+        """20 句完全相同 → 19 句判重（占比 0.95）。"""
+        return "这片灰蒙蒙的天空依旧是那副模样。" * 20
+
+    def _seed(self, tmp_path: Path, highs: set[int]) -> Path:
+        d = make_project(tmp_path, n_chapters=10)
+        for n in range(1, 11):
+            (d / "chapters" / f"ch{n:03d}.md").write_text(
+                self._high() if n in highs else self._low(), encoding="utf-8"
+            )
+        return d
+
+    def test_gated_value_is_window_scoped(self, tmp_path: Path) -> None:
+        d = self._seed(tmp_path, highs={10})
+        ratio, stat = EvaluatorAgent(d, rollback_window=5)._metric_repetition()
+
+        # 门禁值 = 末 5 章聚合占比；ch010 高重复 → 明显超阈值
+        assert stat["window_repeated_sentences"] == 19
+        assert stat["window_total_sentences"] == 100
+        assert abs(ratio - 0.19) < 1e-9
+        assert ratio <= 0.30, "仅末窗 1/5 章高重复时聚合占比未越线（阈值 0.30）"
+
+    def test_all_high_window_chapters_fail(self, tmp_path: Path) -> None:
+        d = self._seed(tmp_path, highs={6, 7, 8, 9, 10})
+        ratio, stat = EvaluatorAgent(d, rollback_window=5)._metric_repetition()
+
+        assert stat["window"] == 5
+        assert ratio > 0.30, "整窗车轱辘话必须越线（硬闸应当拦截）"
+
+    def test_out_of_window_repetition_does_not_fail(self, tmp_path: Path) -> None:
+        d = self._seed(tmp_path, highs={1})   # ch001 高重复，但在末窗之外
+        ratio, stat = EvaluatorAgent(d, rollback_window=5)._metric_repetition()
+
+        assert ratio == 0.0, "窗口外历史注水不得顶起门禁值（否则判而不可修）"
+        assert stat["window_repeated_sentences"] == 0
+        # 全书口径仍看得见 ch001，供人工排查早段注水
+        assert stat["repetition_ratio_full"] > 0.0
+        assert [it["chapter"] for it in stat["chapters_out_of_window"]] == ["ch001"]
+
+    def test_window_size_follows_rollback_window(self, tmp_path: Path) -> None:
+        d = self._seed(tmp_path, highs={5})
+        assert EvaluatorAgent(d, rollback_window=5)._metric_repetition()[0] == 0.0
+        assert EvaluatorAgent(d, rollback_window=6)._metric_repetition()[0] > 0.0

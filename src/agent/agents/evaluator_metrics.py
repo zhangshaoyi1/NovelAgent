@@ -256,8 +256,25 @@ class _EvaluatorMetricsMixin:
         return len(sa & sb) / len(sa | sb)
 
     def _metric_repetition(self) -> tuple[float, dict[str, Any]]:
-        """确定性：重复句占比（0-1）。每章内句子两两比较，任一先前句子相似度 ≥ 0.85 即判重复。
-        全书占比 = 重复句总数 / 总句数。O(章内 n²)，单章句数有限、耗时毫秒级。"""
+        """确定性：**回退窗口内**重复句占比（0-1）。
+
+        判定口径：每章内句子两两比较，任一先前句子相似度 ≥ 0.85 即判重复。
+        O(章内 n²)，单章句数有限、耗时毫秒级。
+
+        2026-09-15 作用域对齐（与 :meth:`_metric_pacing` 同族，同一次复盘）：
+        本维度 ``required=True`` 且声明 ``Scope.WINDOW`` —— 语义是"窗口内硬闸，
+        末窗回滚可修"。但旧实现用**全书**重复句数 / 全书句数，与声明作用域不一致：
+        早段章节的车轱辘话会把全书占比顶过阈值，而回退末 N 章**碰不到早段** →
+        "判得对、但永远修不好"的硬闸死循环（比 pacing 更重：硬闸会真实触发
+        删章重写 + 双证据守门）。该实例被登记单
+        ``20260915_质检假失败与回退死循环.md`` §二 的阈值取字段名 bug 误判为
+        "0.018 远低于 0.3 无问题"而漏过，故单独立项修复。
+
+        现改为：**仅统计回退窗口内**（末 ``rollback_window`` 章）的重复句占比
+        作为门禁值；全书口径保留在 stats（``repetition_ratio_full``）供报告与人工
+        排查早段注水，但**不再**用它触发窗口回滚。窗口外高重复章仍在
+        ``chapters_out_of_window`` 中显性列出，由调用方告警交人工处理。
+        """
         total = 0
         repeated = 0
         by_chapter: list[dict[str, Any]] = []
@@ -274,9 +291,35 @@ class _EvaluatorMetricsMixin:
             total += len(sents)
             repeated += rep
             by_chapter.append({"chapter": f.stem, "total": len(sents), "repeated": rep})
-        ratio = (repeated / total) if total else 0.0
-        return ratio, {"chapters": len(by_chapter), "total_sentences": total,
-                       "repeated_sentences": repeated, "by_chapter": by_chapter}
+        full_ratio = (repeated / total) if total else 0.0
+        # 门禁值只看回退窗口（与 Scope.WINDOW / EvaluatorAgent.rollback_window 同源）
+        window = max(1, int(getattr(self, "rollback_window", 5) or 5))
+        in_window = by_chapter[-window:]
+        window_stems = {it["chapter"] for it in in_window}
+        w_total = sum(it["total"] for it in in_window)
+        w_repeated = sum(it["repeated"] for it in in_window)
+        win_ratio = (w_repeated / w_total) if w_total else 0.0
+        # 窗口外高重复章（单章占比 > 门禁阈值）→ 仅告警，不参与判定
+        pad_threshold = float(getattr(self, "padding_threshold", 0.30) or 0.30)
+        out_of_window = [
+            {**it, "ratio": round(it["repeated"] / it["total"], 4)}
+            for it in by_chapter
+            if it["chapter"] not in window_stems
+            and it["total"] > 0
+            and (it["repeated"] / it["total"]) > pad_threshold
+        ]
+        return win_ratio, {
+            "chapters": len(by_chapter),
+            "window": len(in_window),
+            "total_sentences": total,
+            "repeated_sentences": repeated,
+            "repetition_ratio_full": round(full_ratio, 4),
+            "window_total_sentences": w_total,
+            "window_repeated_sentences": w_repeated,
+            "by_chapter": by_chapter,
+            "by_chapter_in_window": in_window,
+            "chapters_out_of_window": out_of_window,
+        }
 
     def _metric_info_density(self) -> tuple[float, dict[str, Any]]:
         """确定性：推进句占比（软标红用）。启发式：含对话（引号/说/道/问…）或动作/位移/时间推进
