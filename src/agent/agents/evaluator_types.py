@@ -123,6 +123,23 @@ class DimensionResult:
         """
         return (not self.passed) and self.trustworthy
 
+    @property
+    def unverified(self) -> bool:
+        """本维是否**未经验证**（降级/无证据，confidence=0）。
+
+        2026-09-15（H1 实锤，登记单 ``20260915_回退熔断账实不符与降级当通过`` §二.R3）：
+        降级维的值被填成 ``safe_default``（评分维=满分 100、缺陷计数维=0），
+        恰好"达标" ⇒ 旧逻辑把**兜底默认值当成通过**：
+
+        - ``readability`` 降级 → 100 ≥ 80 → 判「追读力达标」；
+        - ``logic_holes`` 降级 → 0 ≤ 0 → 判「零逻辑漏洞」；
+        - 09-14 的"历史最高分 85.71"实际有 **12 个维度降级**，完全建立在默认值上。
+
+        故本属性与 :attr:`passed` 必须**分开消费**：``passed`` 只回答"值是否达标"（事实），
+        ``unverified`` 回答"这个值是否可信"——降级维**不得参与通过判定**。
+        """
+        return not self.trustworthy
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "name": self.name,
@@ -224,6 +241,25 @@ class NovelHealthReport:
         return [d for d in self.dimensions if d.required and d.credible_failed]
 
     @property
+    def unverified(self) -> list[DimensionResult]:
+        """降级（confidence=0）的维度——其值是兜底默认值，**不代表真实评分**。
+
+        2026-09-15（G1/H1）：必须显式暴露，否则这些维度会以 `safe_default` 的
+        伪装混过通过判定（见 :attr:`DimensionResult.unverified`）。
+        """
+        return [d for d in self.dimensions if d.unverified]
+
+    @property
+    def verified_pass(self) -> bool:
+        """**可信的**通过：值全部达标 **且** 无降级维。
+
+        只有它才允许"通过即归零熔断计数"（``RollbackBudget.reset``）——
+        否则兜底默认值会替我们宣布通过、把连续回退计数清零，
+        使回退死循环既不停批也不计数（H1 的连环后果）。
+        """
+        return self.overall_pass and not self.unverified
+
+    @property
     def eval_infra_unavailable(self) -> bool:
         """评测基建不可用：**全部** LLM 评分维都不可信（confidence=0）。
 
@@ -251,13 +287,22 @@ class NovelHealthReport:
     def gate_decision(self) -> str:
         """闸门分级裁决（字符串常量，便于落盘/展示）：
 
-        - ``"pass"``    无失败维度
+        - ``"pass"``    无失败维度**且**无降级维度
         - ``"block"``   存在**可信失败**的硬指标 ⇒ 允许不可逆动作（回滚/断批）
         - ``"warn"``    仅软维度可信失败 ⇒ 告警，不中断整批
-        - ``"recheck"`` 存在不可信失败证据（confidence=0）⇒ 只复评，禁止任何处置
+        - ``"recheck"`` 存在不可信失败证据（confidence=0）**或任何降级维**
+          ⇒ 只复评，禁止任何处置，且**不得宣称通过**
+
+        2026-09-15 修正（G1/H1「降级被当通过」）：
+        ``unverified`` 的判定必须**早于** pass/block。旧实现只看
+        ``[d for d in dimensions if not d.passed]``，而降级维因取 ``safe_default``
+        恰好达标、**根本不进这个集合** ⇒ 整份报告带着一堆默认值被判 ``pass``，
+        `logic_holes` 降级更是直接读成"零逻辑漏洞"。
         """
         if not self.dimensions:
             return "pass"
+        if self.unverified:
+            return "recheck"
         any_failed = any(not d.passed for d in self.dimensions)
         if not any_failed:
             return "pass"
@@ -287,6 +332,10 @@ class NovelHealthReport:
             # ---- HA-Eval L4 分级（只增不删）：闸门裁决 + 失败分类 ----
             "gate_decision": self.gate_decision(),
             "trustworthy": self.trustworthy,
+            # 2026-09-15（G1/H1）：降级维名单 + 可信通过标记——
+            # 让"通过"这个结论可被外部复核（兜底默认值不得冒充真实评分）。
+            "unverified": [d.name for d in self.unverified],
+            "verified_pass": self.verified_pass,
             # HA-Eval（2026-09-15）：基建级故障标记（全部 LLM 评分维降级）——
             # 上游据此与「内容不达标」分层，不计回退、不写失败教训。
             "eval_infra_unavailable": self.eval_infra_unavailable,
@@ -298,9 +347,20 @@ class NovelHealthReport:
     def to_markdown(self) -> str:
         lines = ["# 全书「不崩」体检报告"]
         lines.append("")
-        verdict = "✅ 通过" if self.overall_pass else (
-            "⚠️ 需人工介入" if self.escalated else "🔧 已触发自动回溯"
-        )
+        # 2026-09-15（G1/H1）：结论行改由 gate_decision 派生——
+        # 旧实现只看 overall_pass，降级维取 safe_default 达标时会显示「✅ 通过」，
+        # 即"兜底默认值替我们宣布通过"。展示层不得比判定层更乐观。
+        gate = self.gate_decision()
+        if self.escalated:
+            verdict = "⚠️ 需人工介入"
+        elif gate == "pass":
+            verdict = "✅ 通过"
+        elif gate == "block":
+            verdict = "🔧 已触发自动回溯"
+        elif gate == "warn":
+            verdict = "⚠️ 软维度未达标（仅告警，不中断）"
+        else:  # recheck
+            verdict = "⚠️ 判定证据不可信（只复评，不处置）"
         lines.append(f"- **总评**：{verdict}（综合分 {self.score:.1f}/100）")
         lines.append(f"- **回溯次数**：{self.rollback_attempts}　**已回退**：{self.rolled_back}")
         if self.escalated:

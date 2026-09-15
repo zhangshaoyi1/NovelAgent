@@ -84,7 +84,10 @@ class TestRuleMapping:
             assert "book_ending_timing" in plan.rule_names
 
     def test_hard_gate_rolls_back(self):
-        plan = DispositionPolicy().plan([_dim("logic_holes", value=2.0)])
+        # 2026-09-15：样例维度由 ``logic_holes`` 换成 ``character_stability_high``
+        # ——前者已拍板退出回退授权（判据不可达，登记单
+        # ``20260915_回退熔断账实不符与降级当通过`` §三.1），不再能代表"硬闸"。
+        plan = DispositionPolicy().plan([_dim("character_stability_high", value=2.0)])
         assert plan.action is Action.ROLLBACK_REWRITE
         assert plan.requires_double_evidence is True
 
@@ -149,7 +152,7 @@ class TestPrecedence:
         """开头问题 + 硬指标 → 上报人工（回滚修不到开头）。"""
         plan = DispositionPolicy().plan([
             _golden_dim(),
-            _dim("logic_holes", value=2.0),
+            _dim("character_stability_high", value=2.0),
         ])
         assert plan.action is Action.ESCALATE
 
@@ -157,7 +160,7 @@ class TestPrecedence:
         """硬指标 + 软评分维 → 回滚重写（一次覆盖两类问题）。"""
         plan = DispositionPolicy().plan([
             DimensionResult("coherence", "连贯性", 70.0, 85.0, ">=", False, "llm"),
-            _dim("logic_holes", value=2.0),
+            _dim("character_stability_high", value=2.0),
         ])
         assert plan.action is Action.ROLLBACK_REWRITE
 
@@ -167,7 +170,8 @@ class TestPrecedence:
 # ============================================================
 class TestDispositionGate:
     def _plan(self) -> DispositionPlan:
-        return DispositionPolicy().plan([_dim("logic_holes", value=2.0)])
+        # 硬闸样例：character_stability_high（logic_holes 已退出回退授权）
+        return DispositionPolicy().plan([_dim("character_stability_high", value=2.0)])
 
     def test_allows_when_trusted_and_within_budget(self):
         auth = DispositionGate().authorize(self._plan(), chapters=5,
@@ -276,7 +280,7 @@ class TestEvaluatorIntegration:
                 return NovelHealthReport(overall_pass=True, dimensions=[])
             return NovelHealthReport(
                 overall_pass=False,
-                dimensions=[_dim("logic_holes", value=2.0, confidence=1.0)],
+                dimensions=[_dim("character_stability_high", value=2.0, confidence=1.0)],
             )
 
         def fake_rollback(self, last_written=None):  # type: ignore[no-untyped-def]
@@ -300,7 +304,7 @@ class TestEvaluatorIntegration:
         def fake_eval(self):  # type: ignore[no-untyped-def]
             return NovelHealthReport(
                 overall_pass=False,
-                dimensions=[_dim("logic_holes", value=2.0)],
+                dimensions=[_dim("character_stability_high", value=2.0)],
             )
 
         ev._evaluate_once = fake_eval.__get__(ev, type(ev))  # type: ignore[method-assign]
@@ -319,7 +323,7 @@ class TestEvaluatorIntegration:
         def fake_eval(self):  # type: ignore[no-untyped-def]
             return NovelHealthReport(
                 overall_pass=False,
-                dimensions=[_dim("logic_holes", value=2.0)],
+                dimensions=[_dim("character_stability_high", value=2.0)],
             )
 
         ev._evaluate_once = fake_eval.__get__(ev, type(ev))  # type: ignore[method-assign]

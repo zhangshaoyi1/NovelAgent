@@ -267,7 +267,23 @@ DIMENSIONS: dict[str, DimensionSpec] = {
     "logic_holes": _spec(
         name="logic_holes", label="逻辑漏洞",
         unit=Unit.COUNT, direction=Direction.LOWER_BETTER, default_threshold=0.0,
-        required=True, source=SourceKind.LLM,
+        # 2026-09-15（登记单 ``20260915_回退熔断账实不符与降级当通过`` §二.R1）：
+        # required: True → False —— **退出回退授权**，阈值 0 保留为"报告线"。
+        #
+        # 原配置（required=True + 阈值 0 + repairability=WINDOW）命中
+        # ``disposition._hard_gate_in_window`` ⇒ 授权 ROLLBACK_REWRITE（不可逆，销毁末窗 5 章）。
+        # 而 prompt 是「逐项列举漏洞数量」——**值域无自然零点、无上界**：
+        # 灵荒薪传 27 轮实测分布 0×4 / 1×2 / 2×4 / 3×6 / 4×3 / 5×6 / 6 / 8，
+        # 中位数 3，`==0` 仅 15%。要求 LLM 写 3000+ 字零逻辑瑕疵 = **判据不可达**，
+        # 等于给"销毁 5 章"配了一个 ~85% 触发率的扳机（实测 4 批 21 次开章净增 0 章）。
+        #
+        # 与已拍板语义「软维度失败不触发回滚」互为镜像：那条治「判而不可修」，
+        # 本条治「判而不可达」——动作强度既不能低于证据等级，也不能高于判据可达性。
+        # 失败后走 ``_soft_dim → LOCAL_REPAIR``（只重写末章，可逆）+ warn 告警，
+        # 仍计入 overall_pass（不达标照样看得见），只是不再销毁整窗。
+        # 注：character_stability_high（可达 33%）/ setting_consistency_high（可达 19%）
+        # 本次**不动**——它们的失败由 RollbackBudget 熔断护栏兜底停批上报，见同登记单 §七。
+        required=False, source=SourceKind.LLM,
         repairability=Repairability.WINDOW, stat_scope=StatScope.WINDOW,
         prompt_label="逻辑漏洞（情节硬伤/因果不成立，逐项列举漏洞数量）",
         safe_default=0.0, summary_reason="存在逻辑漏洞，建议修复因果硬伤",

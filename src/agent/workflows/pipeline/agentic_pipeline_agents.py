@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from agent.core.infra.degrade import degrade
@@ -260,11 +261,12 @@ class _PipelineAgentsMixin:
         if gate == "block":
             # ---- P1：回退计数跨批持久化 + 熔断上报人工 ----
             budget = self._rollback_budget()
-            target = self._last_rollback_target(report)
             # 只有真的执行了回退重写才计数；gate=block 且未回退必然 escalated，
             # 由下面 evaluator_gave_up 分支上报，避免同一回合与批末体检重复 bump。
-            if getattr(report, "rolled_back", False):
-                budget.bump(target, fail_txt)
+            # 2026-09-15：判据由「单看 report.rolled_back」改为**双账本对账**
+            # （见 _count_rollback）——实测单点失效时 5 次真实回退一次都没记账，
+            # 熔断护栏整体失效、回退无限进行。
+            self._count_rollback(report, fail_txt)
             evaluator_gave_up = bool(getattr(report, "escalated", False))
             if budget.tripped() or evaluator_gave_up:
                 reason = (
@@ -311,6 +313,85 @@ class _PipelineAgentsMixin:
         return RollbackBudget.load(
             self.project_dir, getattr(self, "max_rollback_attempts", 3)
         )
+
+    def _rollback_ledger(self) -> tuple[int, int]:
+        """独立账本：回退动作自己写下的落地证据 → ``(快照序号, 回退目标章)``。
+
+        2026-09-15 新增（登记单 ``20260915_回退熔断账实不符与降级当通过`` §二.R2）。
+
+        动机：判断"是否真的回退过"原先**只**依据报告字段 ``rolled_back``。
+        实测该单点失效时——09-15 发生 5 次真实回退（``state.progress.last_rollback_at``
+        = 17:10:04、快照 ``rollback_to_23_20260915_171004``），而
+        ``rollback_budget.json`` 一次都没更新 —— 熔断护栏整体失效、回退无限进行。
+        这是"旁路失败被当成主结论成立"（与 H1/H5 同族）。
+
+        本方法给出**与报告接线完全无关**的第二个证据源：
+
+        - ``chapters/_archived/rollback_to_*`` 目录数 —— 单调递增的落地序号，
+          由 ``m10_rollback.rollback_to_chapter`` 每次归档时创建；
+        - ``state.progress.last_rollback_target`` —— 回退目标章。
+
+        两者都由回退动作本身写入，不经任何报告/异常/统计链路。
+        返回 ``(0, 0)`` 表示账本不可用（调用方随即退回主账本，行为与旧版一致）。
+        """
+        from agent.core.engine.state_machine import StateMachine
+
+        try:
+            arch = Path(self.project_dir) / "chapters" / "_archived"
+            seq = sum(1 for p in arch.glob("rollback_to_*") if p.is_dir()) if arch.exists() else 0
+            sm = StateMachine(self.project_dir)
+            sm.load()
+            target = int((sm.progress or {}).get("last_rollback_target", 0) or 0)
+            return seq, target
+        except Exception as e:  # noqa: BLE001 - 账本不可用不阻断，退回主账本
+            degrade("pipeline.rollback_ledger", "回退独立账本不可读，退回报告主账本", e)
+            return 0, 0
+
+    def _count_rollback(self, report: Any, reason: str) -> int:
+        """把「真实发生的回退」记入跨批预算；返回本次记账次数。
+
+        双账本取**并集**（登记单 §三.2）：
+
+        - 主账本 ``report.rolled_back``（经 ``_finalize_result`` 回写，链路长、可失效）；
+        - 独立账本 :meth:`_rollback_ledger`（快照序号，随回退动作自增）。
+
+        两者不一致（账本前进了但报告称未回退）时**既记账又告警**——
+        静默会复现"护栏在应该喊人的时候一声不响"。检查点与批末体检**共用本方法**，
+        并按快照序号去重，避免同一回合重复 bump。
+        """
+        budget = self._rollback_budget()
+        report_says = bool(getattr(report, "rolled_back", False))
+        seq, ledger_target = self._rollback_ledger()
+        seen = getattr(self, "_rollback_ledger_seq", None)
+        target = ledger_target or self._last_rollback_target(report)
+
+        if seq > 0:
+            if seen is None:
+                # 首次对账只对齐基线：账本里的历史回退不能补记成本轮
+                new = 1 if report_says else 0
+            else:
+                new = seq - seen
+            if new <= 0 and report_says:
+                new = 1  # 账本未前移但报告称已回退 → 信主账本（宁可多记，不可漏记）
+            if new > 0 and not report_says:
+                degrade(
+                    "pipeline.rollback_ledger_mismatch",
+                    f"独立账本显示新增 {new} 次回退（快照序号 {seq}），"
+                    f"但报告 rolled_back=False —— 报告接线失效，已按账本补记并上报",
+                )
+                self._emit_failure(
+                    "eval",
+                    f"回退记账不一致：独立账本新增 {new} 次回退、报告未标记（已按账本补记）",
+                    severity="warn",
+                )
+            self._rollback_ledger_seq = seq
+        else:
+            new = 1 if report_says else 0
+
+        new = max(0, new)
+        for _ in range(new):
+            budget.bump(target, reason)
+        return new
 
     @staticmethod
     def _last_rollback_target(report: Any) -> int:

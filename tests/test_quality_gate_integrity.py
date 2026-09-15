@@ -235,12 +235,14 @@ class TestRollbackFingerprintSync:
 # F. 回退事实跨封装层存活（否则 RollbackBudget 永不计数）
 # ============================================================
 def _hard_fail_report() -> NovelHealthReport:
+    # 硬闸样例用 character_stability_high：logic_holes 已于 2026-09-15 退出回退授权
+    # （判据不可达，登记单 20260915_回退熔断账实不符与降级当通过 §三.1）。
     return NovelHealthReport(
         overall_pass=False,
         dimensions=[
             DimensionResult(
-                "logic_holes", "逻辑漏洞", 3.0, 0.0, "<=", True, "llm/default",
-                evidence=EvalEvidence(),
+                "character_stability_high", "人设稳定", 3.0, 0.0, "<=", True,
+                "llm/default", evidence=EvalEvidence(),
             ),
         ],
     )
@@ -428,3 +430,105 @@ class TestRepetitionScopeAlignment:
         d = self._seed(tmp_path, highs={5})
         assert EvaluatorAgent(d, rollback_window=5)._metric_repetition()[0] == 0.0
         assert EvaluatorAgent(d, rollback_window=6)._metric_repetition()[0] > 0.0
+
+
+# ============================================================
+# H. 降级不得当通过（G1 / H1 接线）
+# ============================================================
+class TestDegradedDimIsNotPass:
+    """降级维（confidence=0）取的是 ``safe_default``，**不得参与通过判定**。
+
+    对应登记单 ``20260915_回退熔断账实不符与降级当通过.md`` §二.R3。
+
+    实测灵荒薪传：``readability`` 降级 7 次、``coherence`` 降级 5 次，降级值恒为
+    ``safe_default``（评分维 100.0 / 计数维 0.0）——
+    评分维降级 ⇒ ``100 >= 阈值`` ⇒ 判「通过」；``logic_holes`` 降级 ⇒ ``0 <= 0``
+    ⇒ 判「零逻辑漏洞」。09-14 那条"历史最高分 85.71"实际有 12 个维度降级。
+
+    旧实现的漏洞在 ``trustworthy`` 只看 ``[d for d in dimensions if not d.passed]``：
+    降级维因为取默认值恰好达标、**根本不进这个集合** ⇒ 整份报告带着一堆默认值被判 pass。
+    """
+
+    @staticmethod
+    def _dim(name: str, *, value: float, threshold: float, direction: str,
+             required: bool, confidence: float) -> DimensionResult:
+        ev = EvalEvidence()
+        if confidence <= 0.0:
+            ev.degrade("评分输出缺少 value 键（形状异常）")
+        return DimensionResult(
+            name, name, value, threshold, direction, required, "llm/default", evidence=ev
+        )
+
+    def _degraded_score_report(self) -> NovelHealthReport:
+        """全维达标，但 readability 是降级取默认值 100 —— 旧逻辑判「✅ 通过」。"""
+        return NovelHealthReport(
+            overall_pass=True,
+            score=100.0,
+            dimensions=[
+                self._dim("character_stability_high", value=0.0, threshold=0.0,
+                          direction="<=", required=True, confidence=1.0),
+                # safe_default=100.0 的评分维降级 → 假"追读力达标"
+                self._dim("readability", value=100.0, threshold=80.0,
+                          direction=">=", required=False, confidence=0.0),
+            ],
+        )
+
+    def test_degraded_dim_is_unverified(self) -> None:
+        rep = self._degraded_score_report()
+        assert [d.name for d in rep.unverified] == ["readability"]
+        assert rep.unverified[0].passed is True, "值确实达标（事实），但不可信"
+
+    def test_gate_decision_is_recheck_not_pass(self) -> None:
+        rep = self._degraded_score_report()
+        assert rep.gate_decision() == "recheck", (
+            "存在降级维 ⇒ 不得宣称通过（兜底默认值不能替我们通过）"
+        )
+        assert rep.verified_pass is False, "可信通过必须排除降级维"
+
+    def test_degraded_zero_holes_is_not_zero_defects(self) -> None:
+        """`logic_holes` 降级 ⇒ 旧逻辑读成"零逻辑漏洞"（假硬伤清零）。"""
+        rep = NovelHealthReport(
+            overall_pass=True,
+            score=100.0,
+            dimensions=[
+                self._dim("logic_holes", value=0.0, threshold=0.0,
+                          direction="<=", required=False, confidence=0.0),
+            ],
+        )
+        assert rep.gate_decision() == "recheck"
+        assert rep.verified_pass is False
+        assert rep.to_dict()["unverified"] == ["logic_holes"]
+
+    def test_verified_pass_when_all_credible_and_green(self) -> None:
+        """反向用例：全维可信且达标 → 仍须判 pass（防过度拦截）。"""
+        rep = NovelHealthReport(
+            overall_pass=True,
+            score=100.0,
+            dimensions=[
+                self._dim("character_stability_high", value=0.0, threshold=0.0,
+                          direction="<=", required=True, confidence=1.0),
+                self._dim("readability", value=92.0, threshold=80.0,
+                          direction=">=", required=False, confidence=1.0),
+            ],
+        )
+        assert rep.unverified == []
+        assert rep.gate_decision() == "pass"
+        assert rep.verified_pass is True
+
+    def test_computed_dim_without_evidence_is_verified(self) -> None:
+        """确定性计算维无 evidence → confidence=1.0，不得被误判为降级。"""
+        rep = NovelHealthReport(
+            overall_pass=False,
+            score=0.0,
+            dimensions=[
+                DimensionResult("pacing_abnormal", "节奏异常", 0.9, 0.03, "<=", False,
+                                "computed"),
+            ],
+        )
+        assert rep.unverified == []
+        assert rep.gate_decision() == "warn", "软维失败 → 只告警，不中断整批"
+
+    def test_markdown_verdict_never_claims_pass_on_degraded(self) -> None:
+        md = self._degraded_score_report().to_markdown()
+        assert "✅ 通过" not in md, "展示层不得比判定层乐观（不得宣称通过）"
+        assert "证据不可信" in md

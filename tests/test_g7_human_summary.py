@@ -221,7 +221,13 @@ def test_to_dict_summary_field() -> None:
     # 2026-09-15：新增 eval_infra_unavailable（区分「基建不可用」与「内容不达标」）
     # → 19 + 1 = 20（见 项目文档/优化/20260915_质检假失败与回退死循环.md §二.G）
     assert "eval_infra_unavailable" in d, "基建故障标识键必须存在（只增不删）"
-    assert len(d) == 20, "既有 14 键 + HA-Eval L4 分级 5 键 + 基建标识 1 键 = 20"
+    # 2026-09-15：新增 unverified（降级维名单）+ verified_pass（可信通过）
+    # → 20 + 2 = 22（见 项目文档/优化/20260915_回退熔断账实不符与降级当通过.md §三.5）
+    for key in ("unverified", "verified_pass"):
+        assert key in d, f"降级可见性键 {key} 必须存在（只增不删）"
+    assert len(d) == 22, (
+        "既有 14 键 + HA-Eval L4 分级 5 键 + 基建标识 1 键 + 降级可见性 2 键 = 22"
+    )
 
 
 # ============================================================

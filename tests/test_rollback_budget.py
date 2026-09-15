@@ -26,11 +26,56 @@ from agent.workflows.pipeline.agentic_pipeline_agents import _PipelineAgentsMixi
 def test_budget_counts_and_trips(tmp_path: Path) -> None:
     b = RollbackBudget.load(tmp_path, limit=3)
     assert b.consecutive == 0
-    for expected in (1, 2, 3):
-        assert b.bump(target_chapter=180, reason="硬指标不达标") == expected
+    # 目标章**递增**：隔离 same_target 独立硬闸（见 test_budget_trips_on_same_target_streak），
+    # 本用例单独验证「consecutive > limit」这一条款。
+    for i, expected in enumerate((1, 2, 3), start=1):
+        assert b.bump(target_chapter=170 + i, reason="硬指标不达标") == expected
     assert not b.tripped(), "等于上限不算熔断（> limit 才熔断）"
     assert b.bump(target_chapter=180, reason="硬指标不达标") == 4
     assert b.tripped(), "超过上限必须熔断"
+
+
+def test_budget_trips_on_same_target_streak(tmp_path: Path) -> None:
+    """独立硬闸（2026-09-15）：同一章节窗口连续回退 2 次即熔断，**不依赖 consecutive**。
+
+    实测灵荒薪传 4 批 21 次开章全部锁死在 23–27 窗口、净增 0 章 ——
+    同窗口重复翻车是死循环的直接特征，不该被"次数还没到上限"掩盖。
+    """
+    from agent.core.quality.rollback_budget import SAME_TARGET_LIMIT
+
+    assert SAME_TARGET_LIMIT == 2
+    b = RollbackBudget.load(tmp_path, limit=9)  # 上限远未到
+    b.bump(target_chapter=23, reason="x")
+    assert not b.tripped(), "首次回退不熔断"
+    b.bump(target_chapter=23, reason="x")
+    assert b.tripped(), "同一窗口连续 2 次回退必须熔断（独立硬闸）"
+    assert b.consecutive == 2 and b.limit == 9, "与 consecutive 条款无关"
+    assert "同一章节窗口" in b.trip_reason()
+
+
+def test_budget_load_returns_shared_instance(tmp_path: Path) -> None:
+    """进程内共享实例：落盘失败时计数仍单调推进（旧实现下一秒被旧值覆盖）。"""
+    a = RollbackBudget.load(tmp_path, limit=3)
+    a.bump(target_chapter=23, reason="x")
+    b = RollbackBudget.load(tmp_path, limit=3)
+    assert b is a, "load() 必须返回进程内共享实例"
+    assert b.consecutive == 1
+    # 显式 refresh 仍以磁盘为准（跨进程复核口径）
+    assert RollbackBudget.load(tmp_path, limit=3, refresh=True).consecutive == 1
+
+
+def test_budget_save_falls_back_when_replace_denied(tmp_path: Path, monkeypatch) -> None:
+    """落盘加固：os.replace 被占用/拒绝时，重试 + 非原子兜底仍要写出（账实相符）。"""
+    from agent.core.quality import rollback_budget as rb
+
+    def _boom(*a, **k):
+        raise PermissionError("[WinError 5] 拒绝访问")
+
+    monkeypatch.setattr(rb.os, "replace", _boom)
+    b = RollbackBudget.load(tmp_path, limit=3)
+    b.bump(target_chapter=23, reason="x")
+    assert b.path.exists(), "非原子兜底必须写出预算文件"
+    assert RollbackBudget.load(tmp_path, limit=3, refresh=True).consecutive == 1
 
 
 def test_budget_reset_after_pass(tmp_path: Path) -> None:
@@ -58,7 +103,7 @@ def test_budget_tracks_same_target_churn(tmp_path: Path) -> None:
 def test_budget_persists_across_instances(tmp_path: Path) -> None:
     """跨批生效的关键：计数落盘，新实例（新进程）读得到。"""
     RollbackBudget.load(tmp_path, limit=3).bump(target_chapter=180, reason="批末体检")
-    again = RollbackBudget.load(tmp_path, limit=3)
+    again = RollbackBudget.load(tmp_path, limit=3, refresh=True)  # refresh = 模拟新进程读盘
     assert again.consecutive == 1
     assert again.last_target == 180
     assert again.path.exists()
@@ -123,7 +168,8 @@ class _Evaluator:
 
 
 class _FakePipeline(_PipelineAgentsMixin):
-    def __init__(self, project_dir: Path, report: _Report, limit: int = 3) -> None:
+    def __init__(self, project_dir: Path, report: _Report, limit: int = 3,
+                 vary_target: bool = False) -> None:
         from rich.console import Console
 
         self.project_dir = project_dir
@@ -137,6 +183,8 @@ class _FakePipeline(_PipelineAgentsMixin):
         self.calls: list[Any] = []
         self.failures: list[tuple[str, str, str]] = []
         self._report = report
+        self._vary_target = vary_target
+        self._eval_calls = 0
 
     def _note_gate_blind(self, where: str, err: Exception) -> None:  # noqa: D102
         self._gate_blind_streak += 1
@@ -154,7 +202,16 @@ class _FakePipeline(_PipelineAgentsMixin):
         self.failures.append((kind, msg, severity))
 
     def _ensure_evaluator(self) -> Any:
-        return _Evaluator(self._report, self.calls)
+        self._eval_calls += 1
+        report = self._report
+        if self._vary_target:
+            # 每次体检换一个回退目标：隔离 same_target 独立硬闸，
+            # 让「consecutive > limit」条款可被单独验证。
+            report = _Report(
+                self._report._gate, self._report.escalated,
+                target=170 + self._eval_calls, rolled_back=self._report.rolled_back,
+            )
+        return _Evaluator(report, self.calls)
 
     def _ensure_writer(self) -> Any:
         return _Writer(self.calls)
@@ -184,13 +241,81 @@ def test_checkpoint_block_breaks_batch_and_counts(tmp_path: Path) -> None:
 
 
 def test_checkpoint_trips_and_escalates_after_limit(tmp_path: Path) -> None:
-    """连续回退超上限 → 必须 escalated 上报人工，不再无限重试。"""
-    pipe = _FakePipeline(tmp_path, _Report("block"), limit=3)
+    """连续回退超上限 → 必须 escalated 上报人工，不再无限重试。
+
+    目标章刻意**每次变化**（``vary_target``），以隔离同窗口独立硬闸，
+    单独验证「consecutive > limit」这一条款。
+    """
+    pipe = _FakePipeline(tmp_path, _Report("block"), limit=3, vary_target=True)
     for i in range(4):
         assert pipe._rolling_eval_checkpoint() is False, f"第 {i + 1} 次应停批"
     assert pipe._rolling_escalation_reason, "熔断后必须记录上报告知人工的原因"
     assert any(sev == "block" for _k, _m, sev in pipe.failures), "熔断应以 block 级上报"
     assert "超过上限 3" in pipe._rolling_escalation_reason
+
+
+def test_checkpoint_trips_on_same_window_within_limit(tmp_path: Path) -> None:
+    """独立硬闸（2026-09-15）：同一窗口连续 2 次回退即停批，即使次数远未到上限。"""
+    pipe = _FakePipeline(tmp_path, _Report("block", target=23), limit=9)
+    assert pipe._rolling_eval_checkpoint() is False
+    assert not pipe._rolling_escalation_reason, "首次回退还不该熔断"
+    assert pipe._rolling_eval_checkpoint() is False
+    assert "同一章节窗口" in pipe._rolling_escalation_reason, (
+        "同窗口第 2 次回退必须触发独立硬闸（不依赖 consecutive>limit）"
+    )
+
+
+# ---------------------------------------------------------------- 独立账本对账
+
+
+def _write_rollback_ledger(tmp_path: Path, *, target: int, snapshots: int) -> None:
+    """造出「回退动作自己写下」的独立账本：归档快照目录 + state.progress。"""
+    import json as _json
+
+    arch = tmp_path / "chapters" / "_archived"
+    arch.mkdir(parents=True, exist_ok=True)
+    existing = sorted(p.name for p in arch.glob("rollback_to_*"))
+    for i in range(len(existing), snapshots):
+        (arch / f"rollback_to_{target}_2026091517{i:02d}00").mkdir(parents=True, exist_ok=True)
+    st = tmp_path / ".state"
+    st.mkdir(parents=True, exist_ok=True)
+    (st / "state.json").write_text(
+        _json.dumps({"state": "WRITING",
+                     "progress": {"last_rollback_target": target}}),
+        encoding="utf-8",
+    )
+
+
+def test_checkpoint_counts_via_independent_ledger_when_report_lies(tmp_path: Path) -> None:
+    """R2 正面用例：报告 ``rolled_back=False``，但独立账本前进了 → 仍记账 + 显性上报。
+
+    实测灵荒薪传 09-15 发生 5 次真实回退（``state.progress.last_rollback_at``
+    = 17:10:04），而 ``rollback_budget.json`` 一次都没更新 ⇒ 熔断护栏从未生效。
+    """
+    pipe = _FakePipeline(tmp_path, _Report("block", rolled_back=False), limit=3)
+    _write_rollback_ledger(tmp_path, target=23, snapshots=1)
+    pipe._rolling_eval_checkpoint()
+    assert RollbackBudget.load(tmp_path, limit=3, refresh=True).consecutive == 0, (
+        "首次对账只对齐基线：账本里的历史回退不得补记成本轮"
+    )
+
+    _write_rollback_ledger(tmp_path, target=23, snapshots=2)  # 又回退了一次
+    pipe._rolling_eval_checkpoint()
+    assert RollbackBudget.load(tmp_path, limit=3, refresh=True).consecutive == 1, (
+        "账本前进但报告未标记时，必须按独立账本补记"
+    )
+    assert any("记账不一致" in m for _k, m, _s in pipe.failures), (
+        "两账本不一致必须显性上报（不得静默）"
+    )
+
+
+def test_checkpoint_no_count_when_no_rollback_anywhere(tmp_path: Path) -> None:
+    """反向用例：两账本都没回退 → 不记账（防把 escalation 误当回退）。"""
+    pipe = _FakePipeline(
+        tmp_path, _Report("block", escalated=True, rolled_back=False), limit=9
+    )
+    pipe._rolling_eval_checkpoint()
+    assert RollbackBudget.load(tmp_path, limit=9, refresh=True).consecutive == 0
 
 
 def test_checkpoint_propagates_evaluator_escalation(tmp_path: Path) -> None:

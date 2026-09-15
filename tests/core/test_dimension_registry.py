@@ -286,9 +286,19 @@ class TestRegistryIntegrity:
             assert get_spec(name).counted_by_issues is True
 
     def test_required_dims_are_hard_gates(self):
+        # 2026-09-15 契约变更（登记单 ``20260915_回退熔断账实不符与降级当通过`` §三.1）：
+        # ``logic_holes`` 由 required=True → **False**，退出回退授权。
+        # 理由：它的 prompt 是「逐项列举漏洞数量」——值域无自然零点、无上界，
+        # 27 轮实测中位数 3、`==0` 仅 15% ⇒ 阈值 0 是**判据不可达**，
+        # 却授权 ROLLBACK_REWRITE（不可逆，销毁末窗 5 章）。
+        # 失败后改走 ``_soft_dim → LOCAL_REPAIR``（可逆）+ warn，仍计入 overall_pass。
+        # 断言反向锁死：它**不得**再回到硬闸（回潮即红）。
         for name in ("character_stability_high", "setting_consistency_high",
-                     "logic_holes", "padding_repetition_abnormal"):
+                     "padding_repetition_abnormal"):
             assert get_spec(name).required is True
+        assert get_spec("logic_holes").required is False, (
+            "logic_holes 已拍板退出回退授权（判据不可达），不得改回 required=True"
+        )
 
     def test_appeal_and_golden_generated(self):
         for k in ("hook_strength", "payoff_density", "immersion",

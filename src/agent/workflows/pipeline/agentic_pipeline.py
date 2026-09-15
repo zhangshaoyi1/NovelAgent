@@ -845,19 +845,19 @@ class AgenticPipelineWorkflow(
                 # 每批新建 Evaluator 即归零 → 31 次回退也没人上报人工）。
                 try:
                     budget = self._rollback_budget()
-                    if report.overall_pass:
+                    if getattr(report, "verified_pass", report.overall_pass):
                         budget.reset()
-                    elif not _infra_down and getattr(report, "rolled_back", False):
-                        budget.bump(
-                            self._last_rollback_target(report),
-                            "批末体检不达标触发回退",
+                    elif not _infra_down:
+                        # 双账本对账（2026-09-15）：判据不再单看 report.rolled_back，
+                        # 而由 _count_rollback 取「主账本 ∪ 独立账本」——
+                        # 实测主账本单点失效时 5 次真实回退一次都没记账（见登记单 §二.R2）。
+                        self._count_rollback(report, "批末体检不达标触发回退")
+                    if budget.tripped() and not result.escalated:
+                        result.escalated = True
+                        result.escalated_reason = budget.reason_text()
+                        self._emit_failure(
+                            "eval", result.escalated_reason, severity="block"
                         )
-                        if budget.tripped() and not result.escalated:
-                            result.escalated = True
-                            result.escalated_reason = budget.reason_text()
-                            self._emit_failure(
-                                "eval", result.escalated_reason, severity="block"
-                            )
                 except Exception as e:  # noqa: BLE001 - 预算是护栏，读写异常不阻断收尾
                     degrade("pipeline.rollback_budget", "回退预算读写异常，跳过熔断上报", e)
                 # ---- G9：failure 事件（上报人工，warn）----
