@@ -337,9 +337,10 @@ class _PipelineAgentsMixin:
         from agent.core.engine.state_machine import StateMachine
 
         try:
-            arch = Path(self.project_dir) / "chapters" / "_archived"
+            project = Path(self.project_dir)  # 防御：project_dir 可能是 str 子类
+            arch = project / "chapters" / "_archived"
             seq = sum(1 for p in arch.glob("rollback_to_*") if p.is_dir()) if arch.exists() else 0
-            sm = StateMachine(self.project_dir)
+            sm = StateMachine(project)
             sm.load()
             target = int((sm.progress or {}).get("last_rollback_target", 0) or 0)
             return seq, target
