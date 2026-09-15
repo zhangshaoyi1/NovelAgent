@@ -44,7 +44,11 @@ from agent.client.gateway_adapter import (
 )
 from agent.core.infra.prompt_manager import pm
 from agent.core.infra.degrade import degrade
-from agent.core.quality.dimension_registry import clamp_value, safe_default_for
+from agent.core.quality.dimension_registry import (
+    EVAL_WINDOW_CHAPTERS,
+    clamp_value,
+    safe_default_for,
+)
 from agent.core.quality.eval_evidence import EvalEvidence, build_evidence, build_degraded_evidence
 
 
@@ -152,9 +156,13 @@ _CANON_DIMS = {
     "setting_consistency_high",
     "logic_holes",
 }
-# 注入真源后正文窗口不变，放宽这几维的 prompt 截断（8000 → 12000 字符），
-# 避免 3 章正文被挤出窗口。成本仅批末体检每 5 章一次，远低于一次整窗回退。
-_CANON_PROMPT_CHARS = 12000
+# 单章正文注入上限 + prompt 总上限（2026-09-15 改随 ``EVAL_WINDOW_CHAPTERS`` 派生）。
+# 此前写死的是"末 3 章"口径（8000 / 12000 字符）；根因 D 把评委取样对齐到整窗 5 章后，
+# 若上限不跟随，末 2 章会被原样截掉——"评委读满全窗"就成了一句空话（截断了却无告警，
+# 正是本项目最忌讳的"旁路失败当主结论成立"）。
+_EVAL_PER_CHAPTER_CHARS = 2500
+_PROMPT_CHARS = _EVAL_PER_CHAPTER_CHARS * EVAL_WINDOW_CHAPTERS       # 12500 = 整窗正文
+_CANON_PROMPT_CHARS = _PROMPT_CHARS + 4000                          # 16500 = 整窗正文 + 设定真源
 
 
 def _extract_md_section(content: str, title: str) -> str:
@@ -392,9 +400,19 @@ class ReaderAppealScorer:
         self,
         llm_client: Gateway | None = None,
         console: Console | None = None,
+        eval_window: int | None = None,
     ) -> None:
         self._llm = llm_client
         self.console = console or Console()
+        # D（2026-09-15）：评委取样窗口必须与 Evaluator 的回滚窗口同源，否则
+        # 「评的样本 ≠ 判的对象」——窗口内第 4/5 章的问题被算进分数，评委却看不到
+        # 这两章原文。缺省取 SSOT ``EVAL_WINDOW_CHAPTERS``；生产接线点应显式传
+        # ``eval_window=<EvaluatorAgent.rollback_window>`` 以覆盖用户自定义窗口。
+        # 显式判 None（不用 ``or``）：``eval_window=0`` 应被钳到 1（与
+        # ``EvaluatorAgent.rollback_window = max(1, ...)`` 同语义），而不是悄悄退回缺省值。
+        self.eval_window = max(
+            1, int(EVAL_WINDOW_CHAPTERS if eval_window is None else eval_window)
+        )
         # G2：保存各维度最近一次结构化评分结果（含 issues/rationale），供报告展示。
         self._last_eval: dict[str, dict] = {}
 
@@ -422,7 +440,7 @@ class ReaderAppealScorer:
             prompt = (
                 f"请评估以下小说片段在「{_EVAL_DIM_LABELS.get(dimension, dimension)}」"
                 f"维度上的表现。\n\n"
-                f"{text[:_CANON_PROMPT_CHARS if dimension in _CANON_DIMS else 8000]}"
+                f"{text[:_CANON_PROMPT_CHARS if dimension in _CANON_DIMS else _PROMPT_CHARS]}"
             )
             _messages = [
                 {"role": "system", "content": pm.get("quality.reader_appeal_eval").system},
@@ -515,7 +533,11 @@ class ReaderAppealScorer:
         return clamp_value(dimension, val)
 
     def _gather_for_eval(self, dimension: str, project_dir: str) -> str:
-        """收集评分所需文本（最新 1-3 章正文 + 世界观简介）。"""
+        """收集评分所需文本（最新 ``eval_window`` 章正文 + 世界观简介/设定真源）。
+
+        D（2026-09-15）：章数取自 ``self.eval_window``（= 回滚窗口，SSOT
+        ``EVAL_WINDOW_CHAPTERS``），不再写死 3——评委看到的必须就是要判的那几章。
+        """
         d = Path(project_dir)
         parts: list[str] = []
         # 世界观简介
@@ -533,13 +555,15 @@ class ReaderAppealScorer:
             canon = _gather_canon(d)
             if canon:
                 parts.insert(1, canon)
-        # 最新章节（最多 3 章）——复用公共 helper（G6，消除根因 B6-3 重复实现）
-        for f in take_chapter_files(list_chapter_files(project_dir), side="last", n=3):
+        # 整窗正文（``eval_window`` 章，与回滚窗口同源）——复用公共 helper（G6，消除根因 B6-3 重复实现）
+        for f in take_chapter_files(
+            list_chapter_files(project_dir), side="last", n=self.eval_window
+        ):
             try:
                 text = strip_frontmatter(f.read_text(encoding="utf-8")).strip()
             except OSError:
                 continue  # noqa: SILENT_DEGRADE
-            parts.append(f"【{f.stem}】\n{text[:2500]}")
+            parts.append(f"【{f.stem}】\n{text[:_EVAL_PER_CHAPTER_CHARS]}")
         return "\n\n".join(parts)
 
     # ---------------------------------------------------------- 路径 2：迷爱看 6 维

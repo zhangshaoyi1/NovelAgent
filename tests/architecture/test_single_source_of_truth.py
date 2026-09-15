@@ -153,17 +153,15 @@ ROOT_SCRIPT_SUFFIXES = (".py", ".bat", ".cmd", ".ps1")
 # 完全不可见（`git status` 只报一个 `?? path/`），内容漂移而改动无记录。
 # 第三方克隆尤其不该住在仓里。
 # 允许项必须登记 reason + remove_by（到期即 FAIL），与其他形态同一纪律。
-NESTED_REPO_ALLOWLIST: dict[str, dict[str, str]] = {
-    "项目文档/skill/skills": {
-        "reason": (
-            "🔴 待拍板：anthropics/skills 官方示例克隆（第三方，可重新克隆）+ "
-            "同级 `venom-reviewer/` 为用户自制 skill（毒蛇评审，有价值）—— "
-            "两者都不该住在文档仓内；建议 venom-reviewer 装到 ~/.workbuddy/skills/、"
-            "第三方克隆移出仓或删除"
-        ),
-        "remove_by": "2026-09-29",
-    },
-}
+#
+# 2026-09-15 已清空（拍板落地）：
+# - `项目文档/skill/skills`（anthropics/skills 第三方克隆，447 文件/17MB）已移出文档仓
+#   到 `D:\project\_external\anthropics-skills`（保留文件、脱离仓树）；条目随即删除
+#   —— 本类的 `test_nested_repo_allowlist_has_no_zombies` 正是为防"移走了却忘销账"
+#   而设，本次即由它拦下（僵尸条目 = 登记与现实脱节）。
+# - `项目文档/skill/venom-reviewer`（用户自制 skill，毒蛇评审）按拍板**原地保留不动**，
+#   它不是独立 git 仓（本类未把它判为嵌套仓），故无需登记。
+NESTED_REPO_ALLOWLIST: dict[str, dict[str, str]] = {}
 
 
 # ── 判据（纯函数，便于单测）──────────────────────────────────────────────

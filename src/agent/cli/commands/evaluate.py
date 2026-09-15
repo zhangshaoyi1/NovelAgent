@@ -96,7 +96,10 @@ def evaluate(
     if real_score:
         from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
 
-        score_fn = ReaderAppealScorer(llm_client=traced_llm).score   # 改：裸 GatewayAdapter → traced_llm
+        score_fn = ReaderAppealScorer(
+            llm_client=traced_llm,
+            eval_window=rollback_window,   # D：评委取样窗口 = 回滚窗口，禁止错位
+        ).score   # 改：裸 GatewayAdapter → traced_llm
 
     # D-J：CLI 侧（高于 workflows）构造并注入回退能力，agents 不再直接 import workflows
     from agent.workflows.evaluation.m10_rollback import M10RollbackWorkflow

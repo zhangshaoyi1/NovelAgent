@@ -357,3 +357,96 @@ class TestM9RequiredHasSingleSource:
             "以下构造点写出了与登记表冲突的 required（required 只有登记表一个真源，"
             "请删掉字面量或改用 DIMENSIONS[name].required）：\n" + "\n".join(offenders)
         )
+
+
+class TestM10EvalWindowAlignedToRollbackWindow:
+    """评委取样窗口必须与回滚窗口同源（2026-09-15 根因 D）。
+
+    背景：评委只读**末 3 章**正文，而回滚窗口是 **5 章**——窗口内第 4/5 章的问题
+    照样被算进分数，评委却拿不到这两章原文 ⇒ 「评的样本 ≠ 判的对象」，
+    判得对却永远修不对（回退死循环的判据侧成因）。
+
+    本类钉住三条：
+    - 缺省同源：``ReaderAppealScorer.eval_window`` 缺省 = ``EVAL_WINDOW_CHAPTERS``，
+      且 ``EvaluatorAgent.rollback_window`` 的缺省也来自同一常量（禁止各自写字面量）；
+    - 接线同源：``src/`` 里每一处 ``ReaderAppealScorer(...).score``（即 score_fn
+      生产接线点）都必须显式传 ``eval_window=``，否则用户自定义 ``rollback_window``
+      时两者又会分叉；
+    - 取样同源：``_gather_for_eval`` 取章节的 ``n`` 必须来自 ``self.eval_window``，
+      不得再出现写死的 3。
+    """
+
+    def test_defaults_share_one_ssot(self) -> None:
+        import inspect
+
+        from agent.agents.evaluator import EvaluatorAgent
+        from agent.core.quality.dimension_registry import EVAL_WINDOW_CHAPTERS
+        from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
+
+        assert EVAL_WINDOW_CHAPTERS >= 1
+        assert (
+            ReaderAppealScorer().eval_window == EVAL_WINDOW_CHAPTERS
+        ), "评分器取样窗口缺省必须取 SSOT，不得写死"
+        sig = inspect.signature(EvaluatorAgent.__init__)
+        assert (
+            sig.parameters["rollback_window"].default == EVAL_WINDOW_CHAPTERS
+        ), "Evaluator 回滚窗口缺省必须与取样窗口同源（EVAL_WINDOW_CHAPTERS）"
+
+    def test_score_fn_wiring_passes_eval_window(self) -> None:
+        """AST 扫描 ``src/``：``ReaderAppealScorer(...).score`` 必须显式传 eval_window。"""
+        import ast
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2] / "src"
+        offenders: list[str] = []
+        seen = 0
+        for path in sorted(root.rglob("*.py")):
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError):  # pragma: no cover
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Attribute) or node.attr != "score":
+                    continue
+                call = node.value
+                if not isinstance(call, ast.Call):
+                    continue
+                fn = call.func
+                if (getattr(fn, "id", None) or getattr(fn, "attr", None)) != (
+                    "ReaderAppealScorer"
+                ):
+                    continue
+                seen += 1
+                if not any(k.arg == "eval_window" for k in call.keywords):
+                    rel = path.relative_to(root.parent)
+                    offenders.append(f"{rel}:{node.lineno}")
+        assert seen >= 3, f"score_fn 接线点数量异常（找到 {seen} 处），红线可能失效"
+        assert offenders == [], (
+            "以下 score_fn 接线点未传 eval_window（会导致「评的样本 ≠ 判的对象」，"
+            "请传 eval_window=<回滚窗口>）：\n" + "\n".join(offenders)
+        )
+
+    def test_gather_window_not_hardcoded(self) -> None:
+        """``_gather_for_eval`` 的取样章数只能来自 ``self.eval_window``。"""
+        import ast
+        import textwrap
+        from pathlib import Path
+
+        src = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "agent"
+            / "core"
+            / "quality"
+            / "scoring"
+            / "reader_appeal.py"
+        ).read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        target = next(
+            n
+            for n in ast.walk(tree)
+            if isinstance(n, ast.FunctionDef) and n.name == "_gather_for_eval"
+        )
+        snippet = textwrap.dedent(ast.get_source_segment(src, target) or "")
+        assert "self.eval_window" in snippet, "_gather_for_eval 必须按 self.eval_window 取样"
+        assert "n=3" not in snippet, "取样章数不得再写死 3（根因 D 会复发）"

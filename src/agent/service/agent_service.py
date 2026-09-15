@@ -297,7 +297,10 @@ class AgentService:
 
         score_fn = None
         if real_score:
-            score_fn = ReaderAppealScorer(llm_client=self.traced_llm).score
+            # D：评委取样窗口 = 回滚窗口，禁止「评的样本 ≠ 判的对象」
+            score_fn = ReaderAppealScorer(
+                llm_client=self.traced_llm, eval_window=rollback_window
+            ).score
 
         # D-J：service 侧（高于 workflows）构造并注入回退能力，agents 不再直接 import workflows
         from agent.workflows.evaluation.m10_rollback import M10RollbackWorkflow

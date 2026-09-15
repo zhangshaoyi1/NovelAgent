@@ -54,6 +54,7 @@ from agent.core.quality.scoring.reader_appeal import (  # G5：迷爱看六维�
     GOLDEN_GATE_PREFIX,    # G6：golden_* 维度名前缀
     _verdict,
 )
+from agent.core.quality.dimension_registry import EVAL_WINDOW_CHAPTERS  # SSOT：回滚窗口 = 评委取样窗口
 
 
 # ============================================================
@@ -99,7 +100,7 @@ class EvaluatorAgent(
         project_dir: str | Path,
         console: Console | None = None,
         score_fn: ScoreFn | None = None,
-        rollback_window: int = 5,
+        rollback_window: int = EVAL_WINDOW_CHAPTERS,
         max_rollback_attempts: int = 3,
         auto_rollback: bool = True,
         quality_targets: dict[str, float] | None = None,

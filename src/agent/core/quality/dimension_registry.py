@@ -579,6 +579,16 @@ COUNT_DIMS: frozenset[str] = frozenset(
     name for name, spec in DIMENSIONS.items() if spec.counted_by_issues
 )
 
+#: 评测取样窗口 = 回滚窗口（SSOT，2026-09-15）。
+#:
+#: 根因 D「评的样本 ≠ 判的对象」：评委此前只读末 3 章正文，而回滚窗口是 5 章
+#: ——窗口内第 4/5 章的问题照样被算进分数，评委却拿不到这两章原文，判据与判的
+#: 对象错位（判得对、却永远修不对）。
+#: 此处只登记一次：``EvaluatorAgent.rollback_window`` 与
+#: ``ReaderAppealScorer.eval_window`` 均以此为准，**禁止各自写字面量**；
+#: 架构红线 ``test_eval_window_aligned_to_rollback_window`` 会拦住漂移。
+EVAL_WINDOW_CHAPTERS: int = 5
+
 #: 原 ``reader_appeal._EVAL_DIM_LABELS``
 _EVAL_DIM_LABELS: dict[str, str] = {
     name: spec.prompt_label

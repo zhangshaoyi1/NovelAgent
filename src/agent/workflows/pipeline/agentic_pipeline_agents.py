@@ -74,7 +74,10 @@ class _PipelineAgentsMixin:
                 from agent.core.quality.scoring.reader_appeal import ReaderAppealScorer
 
                 # 默认接真 LLM 评分（B1）；LLM 不可用时 scorer 内部自动降级为离线安全默认。
-                score_fn = ReaderAppealScorer(llm_client=self.llm).score
+                # D：评委取样窗口 = 回滚窗口，禁止「评的样本 ≠ 判的对象」。
+                score_fn = ReaderAppealScorer(
+                    llm_client=self.llm, eval_window=self.rollback_window
+                ).score
             except Exception:  # noqa: BLE001
                 score_fn = None  # noqa: SILENT_DEGRADE
             appeal_scorer = None
