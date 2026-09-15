@@ -203,6 +203,7 @@ agent/
 | `test_state_ownership.py` | 状态所有权：**路径→业主**成员契约（`STATE_OWNERSHIP`）；旁路须在 `STATE_OWNERSHIP_TOLERATED` 具名登记（reason+target）；引用次数降为看板 |
 | `test_degrade_visibility.py` | F-1 降级可见化：静默点清零；豁免须写 `reason=<枚举>[ ref=<登记单>]`，未引用 reason 者棘轮只减不增 |
 | `test_degrade_contract.py` | 降级命名空间契约：`degrade(where,...)` 的 where 必须在 `core/infra/degrade_registry.py` 登记；双向差集（未登记/僵尸条目均 FAIL） |
+| `test_single_source_of_truth.py` | 单一真源：根目录不得有权威副本（M1）；根目录脚本须在 `ROOT_SCRIPT_REGISTRY` 在册（M1b）；兄弟 worktree 须在 `SIBLING_WORKTREES` 在册且**到期即 FAIL**（M3）；仓内 `AGENTS/README/TEMPLATE` 必须被 git 跟踪 |
 | `test_capability_parity.py` | 能力对账：接口对账 + 副作用 hook 对账（差集真机制，勿改白名单） |
 | `test_hostile_delete_env.py` | 宿主敌意：safe-delete 护栏免疫，删除路径不被 SystemExit 逃逸 |
 | R4 方向矩阵 | cli↔web 循环依赖已拆除：web→cli 仅命令注册副作用，禁止反向 |
@@ -226,7 +227,10 @@ agent/
 
 ### 流程约定
 
-6. **agent-repair 是 linked worktree**：里面只做文件编辑、**禁跑 git**；与主仓同步用 cp 四件套 + models.json，**cp 会把 repair 侧旧版本带回主仓**（曾退回已删代码 → 假绿）→ cp 后必须 `git status` 逐条甄别，非本次改动 `git checkout HEAD --`。
+6. **agent-repair / docs-repair 都是 linked worktree，且都停在旧分支 `release/20260906`**（2026-09-15 普查：落后 master **163 提交**；agent-repair **791MB / 328 dirty**）：
+   - **只可读用于对照，禁止 cp 回主仓** —— cp 会把 repair 侧旧版本带回主仓（曾退回已删代码 → 假绿，测试全绿上线 NameError）。
+   - 若确需 cp 同步（历史流程）：只做文件编辑、**禁跑 git**；同步用 cp 四件套 + models.json，**cp 后必须 `git status` 逐条甄别**，非本次改动 `git checkout HEAD --`。
+   - 两条都已在 `test_single_source_of_truth.py` 的 `SIBLING_WORKTREES` 登记为 `deprecated-stale` 并带 `remove_by`；**到期红线即 FAIL**。移除用 `git worktree remove <path>`（分支与提交仍在对象库，可随时重建）。
 7. **停任务 SOP**：daemon 活着时首选 `tq.request_stop()`（约 8s 生效）；"终止一直终止中" = daemon 死了（Web 只写 stop_requested）；`exit_code=2` = escalated 质量熔断非崩溃；清锁一律 `agent unlock`，**勿手删 writer.lock**。
 8. **git**：双仓提交只推 gitcode，**无 GitHub 远程勿再补**（已拍板删除）；提交一律加 `-c commit.gpgsign=false`。
    - ⚠ **多行提交信息一律用 `-F <文件>`，不要用 `-m "..."`**（2026-09-15 两次实证）：`-m` 里的反引号会被当命令替换、`$` 会被展开、`*` 会被 glob 展开，**信息被静默改写且不报错**。踩过的例子：`` `except (SyntaxError, ...)` `` 整句消失、`scripts/*` 被展开成 `scripts/AGENTS.md: line 5: ...`。
@@ -265,6 +269,15 @@ agent/
     - 纪律：**特性上线前先自问"这会撞哪条红线"**，而不是撞了再补豁免；能用 schema/关卡表达的约束，不要退化成"人记得检查"。
 15. **★ 知识 ≠ 机制**：判据避坑、基线纪律这类经验，**写进 `../.workbuddy/memory/MEMORY.md` 不等于拦住复发**（G2 那个坑 09-13 就写进记忆第 79 行，`092e55f` 照样踩了）。
     - 能落成**红线断言 / 关卡 / schema 校验**的，一律落成机制；记忆只用于"暂时无法机制化"的取舍。
+16. **单一真源：权威资产只能有一份，且必须在受版本控制的仓内（G6 在「工作区布局」维度的复现）**
+    - ⚠ **工作区根目录 `D:\project\NovelAgent\` 不是任何 git 仓** —— `agent/`（代码仓）与 `项目文档/`（文档仓）是它的两个子仓。所以根目录里任何"权威文件"都是**第二副本：没有同步机制，只会漂移后无声误导**。已实证：根目录曾有一份 `AGENTS.md` 与仓内版本分叉（标题 78 / 正文 98 自相矛盾，新 Session 读到的是过期规则）。
+    - 红线 `tests/architecture/test_single_source_of_truth.py`，三类形态（判据都是**成员资格**，不是计数）：
+      · **M1 仓外副本**：根目录不得出现 `AGENTS.md` / `CLAUDE.md` / `README.md` / `pyproject.toml` / `models.json` / `.agents` / `src` / `tests` 等同名条目。**真源**：规则→`agent/AGENTS.md`；决策记录→`agent/.agents/notes/`。
+      · **M1b 根目录脚本**：根目录 `*.py/*.bat/*.cmd/*.ps1` 必须在 `ROOT_SCRIPT_REGISTRY` 在册（写明 `purpose` + `blocker`）。**不可随意迁移**：它们被 Windows 计划任务 `NovelAgent_HourlyMonitor` 以**绝对路径**引用，且本沙箱 `schtasks` 被程序黑名单拦截（改了任务指向无法回滚）。
+      · **M3 兄弟旧树**：根目录旁 `.git` 为**文件**的目录 = linked worktree，必须在 `SIBLING_WORKTREES` 在册；`status=deprecated-stale` 的必须带 `remove_by`，**到期即 FAIL**（把"临时容忍"变成"到期硬约束"）。
+    - ⚠ **`agent-repair/` 与 `docs-repair/` 是旧分支 `release/20260906` 的工作树**（普查时落后 master **163 个提交**；agent-repair **791 MB / 328 dirty**）。内含 4 份**严重过期**的同名权威文档与已被声明删除的旧文档。**只可读用于对照，禁止 cp 回主仓**（在册 3 次污染事故，代价是「测试全绿上线 NameError」）。
+    - ⚠ **`scripts/*.md` 必须能被版本控制看见**（`.gitignore` 已加负向规则 `!scripts/*.md`）：`scripts/AGENTS.md` 曾被忽略规则**永久吞掉**，从未入库 = 改了没人知道。
+    - 巡检入口：`python scripts/ssot_audit.py [--deep]`（登记表**从红线读取**，单一来源不复制）；退出码 1 = 存在无主资产 / 未登记项 / 失明文档。
 
 ***
 
@@ -303,8 +316,11 @@ agent/
 | `../项目文档/架构文档.md`                         | 完整架构文档（含模块职责）                           |
 | `../项目文档/详细设计文档.md`                       | 组件级详细设计（智能体/工作流/Skill/引擎核心类）            |
 | `../项目文档/优化/`                              | 质量优化 + 结构性改动**登记区**（改前必登记，含同类点位清单）      |
+| `.agents/notes/`                          | 决策记录（**权威路径在仓内**；工作区根目录曾另有一份 = 已清理）      |
 | `scripts/githooks/`                       | 提交关卡钩子（pre-commit 跑红线 / pre-push 跑全量，`install.sh` 安装） |
 | `scripts/baseline_diff.py`                | 失败归因工具：HEAD vs 基线失败差集（先归因再改码）          |
+| `scripts/ssot_audit.py`                   | 单一真源巡检：根目录资产归属 / worktree 分歧度 / 失明文档（登记表从红线读取） |
+| `../agent-repair/`、`../docs-repair/`       | ⚠ **旧分支工作树（只读对照，禁止 cp 回主仓）**，登记表在 `test_single_source_of_truth.py` |
 | `src/agent/core/infra/degrade_registry.py` | 降级命名空间**契约表**（新增 / 改名降级点必须同步登记）        |
 | `../.workbuddy/memory/MEMORY.md`          | 长期记忆（测试基线、已收口缺陷、通用约定）                  |
 | `../.workbuddy/reports/`                  | 复盘/回溯报告（含 2026-09-15 监管体系回溯）               |
