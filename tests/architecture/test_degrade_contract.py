@@ -41,7 +41,7 @@ from agent.core.infra.degrade_registry import (
     is_valid_namespace,
 )
 
-SRC = Path(__file__).resolve().parents[2] / "src" / "agent"
+SRC = Path(__file__).resolve().parents[2] / "src"
 
 
 def _static_prefix(joined: ast.JoinedStr) -> str:

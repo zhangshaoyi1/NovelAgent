@@ -43,6 +43,7 @@ from __future__ import annotations
 
 import ast
 import io
+import re
 import tokenize
 from pathlib import Path
 
@@ -267,3 +268,141 @@ def test_exemption_budget_by_file() -> None:
     assert not violations, (
         "主链路降级豁免超预算（写作/评估路径优先清偿）：\n" + "\n".join(violations)
     )
+
+
+# ══════════════════════════════════════════════════════════════════
+# 豁免契约（G2 契约化 · 件 B，2026-09-15）
+# ══════════════════════════════════════════════════════════════════
+# 上面的预算棘轮管的是**数量**（配额）；本节管的是**可追溯性**（契约）。
+#
+# 旧状态：``# noqa: SILENT_DEGRADE`` 是**零成本**标记 —— 加完即过，
+# 理由靠自觉、不可机检。这与 AGENTS #11「别把过扫描当修复」同病：
+# 约束没有指向任何责任人 / 文档，等于把"我确认这里安全"写成了匿名便条。
+#
+# 新契约（**增量收紧**，存量 402 条走棘轮 grandfather）：
+#   新豁免必须写成 ``# noqa: SILENT_DEGRADE reason=<枚举> [ref=<登记单>]``
+#   - ``reason`` 必填，取值须在 ``EXEMPTION_REASONS`` 内（可机检的语义分类）；
+#   - ``ref`` 在 reason ∈ ``REASONS_REQUIRING_REF`` 时必填 —— 这些理由
+#     **可能掩盖真 bug**（尽力而为 / 可选特性），必须指向一份有人签字的登记单；
+#   - 若给了 ``ref``，其指向的文件必须存在于 ``项目文档/优化/``。
+#
+# 为什么用棘轮而非一次性全量改造：存量 402 条是历史债，一次性重写理由
+# 只会产出 402 条敷衍文本（那正是"对齐判据不对齐语义"）。让**新增**先合规，
+# 存量随清偿自然下降，与 DEGRADE_EXEMPTION_BUDGET 同节奏。
+
+# reason 语义分类（闭集，可机检）
+EXEMPTION_REASONS = {
+    "expected-skip",  # 预期内的跳过（文件不存在 / 进程已退出 / 空输入）
+    "retry-loop",  # 重试循环体内，最终失败由外层 raise 上报
+    "best-effort",  # 尽力而为的旁路，失败不影响主流程（★ 需 ref）
+    "logging-only",  # 仅日志 / 事件 / 落盘留痕失败
+    "optional-feature",  # 可选特性 / 增强 / 优化失败（★ 需 ref）
+    "process-gone",  # 目标进程已退出 / 并发取消
+}
+
+# 这些 reason 可能掩盖真 bug → 必须引用登记单
+REASONS_REQUIRING_REF = {"best-effort", "optional-feature"}
+
+# 登记单目录（相对 agent/；AGENTS.md 规定结构性改动须先在 项目文档/优化/ 登记）
+_OPTIMIZATION_DIR = Path(__file__).resolve().parents[3] / "项目文档" / "优化"
+
+_REASON_RE = re.compile(r"\breason\s*=\s*([A-Za-z][A-Za-z0-9_-]*)")
+_REF_RE = re.compile(r"\bref\s*=\s*([^\s,)]+)")
+
+# 存量「未引用 reason」的豁免数（棘轮：只减不增）。
+# 2026-09-15 建线时实测 = 402（= DEGRADE_EXEMPTION_BUDGET，二者同批清偿）。
+BARE_EXEMPTION_BUDGET = 402
+
+
+def exemption_comments() -> list[tuple[str, int, str]]:
+    """返回全部豁免注释 ``[(相对路径, 行号, 注释原文), ...]``（COMMENT token）。"""
+    out: list[tuple[str, int, str]] = []
+    texts, _ = _read_sources()
+    for rel, text in texts.items():
+        try:
+            toks = tokenize.generate_tokens(
+                io.StringIO(text.removeprefix("\ufeff")).readline
+            )
+        except (tokenize.TokenError, IndentationError, SyntaxError, ValueError):
+            continue  # 由 test_all_sources_parseable 显性失败
+        for tok in toks:
+            if tok.type == tokenize.COMMENT and _EXEMPT_MARK in tok.string:
+                out.append((rel, tok.start[0], tok.string))
+    return out
+
+
+def parse_exemption(comment: str) -> tuple[str | None, str | None]:
+    """解析豁免注释里的 ``reason=`` / ``ref=``（返回 ``(reason, ref)``）。"""
+    m_r = _REASON_RE.search(comment)
+    m_f = _REF_RE.search(comment)
+    return (m_r.group(1) if m_r else None, m_f.group(1) if m_f else None)
+
+
+class TestExemptionContractJudgement:
+    """契约判据本身的行为。"""
+
+    def test_parse_plain(self) -> None:
+        assert parse_exemption("# noqa: SILENT_DEGRADE - 存量") == (None, None)
+
+    def test_parse_full(self) -> None:
+        c = "# noqa: SILENT_DEGRADE reason=best-effort ref=20260915_x.md"
+        assert parse_exemption(c) == ("best-effort", "20260915_x.md")
+
+    def test_parse_reason_only(self) -> None:
+        c = "# noqa: SILENT_DEGRADE reason=expected-skip"
+        assert parse_exemption(c) == ("expected-skip", None)
+
+
+def test_exemption_reason_values_are_known() -> None:
+    """``reason=`` 若给出，取值必须在闭集内（防自由发挥）。"""
+    bad = [
+        f"  {rel}:{ln}  reason={reason}"
+        for rel, ln, c in exemption_comments()
+        for reason, _ in [parse_exemption(c)]
+        if reason is not None and reason not in EXEMPTION_REASONS
+    ]
+    assert not bad, (
+        "豁免 reason 取值不在 EXEMPTION_REASONS 闭集内：\n" + "\n".join(bad)
+    )
+
+
+def test_ambiguous_reasons_must_cite_registration() -> None:
+    """可能掩盖真 bug 的 reason 必须带 ``ref=``，且指向存在的登记单。"""
+    missing = [
+        f"  {rel}:{ln}  reason={reason}（缺 ref=）"
+        for rel, ln, c in exemption_comments()
+        for reason, ref in [parse_exemption(c)]
+        if reason in REASONS_REQUIRING_REF and not ref
+    ]
+    assert not missing, (
+        "以下豁免使用了「可能掩盖真 bug」的 reason 却未引用登记单 ——\n"
+        "此类豁免必须指向 项目文档/优化/ 下的一份登记单（含同类点位清单）：\n"
+        + "\n".join(missing)
+    )
+
+
+def test_cited_registration_exists() -> None:
+    """``ref=`` 指向的登记单必须真实存在（悬空引用 = FAIL）。"""
+    dangling = [
+        f"  {rel}:{ln}  ref={ref}"
+        for rel, ln, c in exemption_comments()
+        for _, ref in [parse_exemption(c)]
+        if ref and not (_OPTIMIZATION_DIR / ref).exists()
+    ]
+    assert not dangling, (
+        f"豁免引用了不存在的登记单（对照目录 {_OPTIMIZATION_DIR}）——\n"
+        "请先在 项目文档/优化/ 建立登记单再引用：\n" + "\n".join(dangling)
+    )
+
+
+def test_new_exemptions_must_cite_reason() -> None:
+    """棘轮：未引用 ``reason=`` 的豁免总数只减不增（新增必须带 reason）。"""
+    bare = sum(1 for _, _, c in exemption_comments() if parse_exemption(c)[0] is None)
+    assert bare <= BARE_EXEMPTION_BUDGET, (
+        f"未引用 reason 的降级豁免 {bare} 超过预算 {BARE_EXEMPTION_BUDGET}（棘轮：只减不增）。\n"
+        "新增豁免请写成：\n"
+        f"    # noqa: {_EXEMPT_MARK} reason=<{'|'.join(sorted(EXEMPTION_REASONS))}>"
+        " [ref=<登记单>]\n"
+        "（reason ∈ {best-effort, optional-feature} 时 ref 必填）"
+    )
+
