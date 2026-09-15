@@ -1,0 +1,54 @@
+#!/bin/sh
+# NovelAgent pre-push 关卡：全量回归（AGENTS.md 第 10 条）
+#
+# 全量 = pytest 无参数（testpaths = tests + llmagent_tests），约 2315 项 / 760 秒。
+# 与 pre-commit 分工：pre-commit 挡架构红线（秒级），pre-push 挡行为回归（分钟级）。
+# push 频率远低于 commit，760 秒可接受。
+#
+# 显式跳过：NOVELAGENT_SKIP_FULL=1 git push
+#   —— 跳过是显性行为，须在当日日志记明原因（AGENTS.md 第 10 条）。
+set -u
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$ROOT" || exit 0
+
+if [ "${NOVELAGENT_SKIP_FULL:-0}" = "1" ]; then
+    echo "⚠ [pre-push] NOVELAGENT_SKIP_FULL=1 —— 全量回归【被显式跳过】。"
+    echo "  按 AGENTS.md 第 10 条，请在当日日志记明原因。"
+    exit 0
+fi
+
+PY=""
+for cand in "${NOVELAGENT_PYTHON:-}" python3 python py; do
+    [ -n "$cand" ] || continue
+    if command -v "$cand" >/dev/null 2>&1 && \
+       "$cand" -c 'import pytest' >/dev/null 2>&1; then
+        PY="$cand"
+        break
+    fi
+done
+
+if [ -z "$PY" ]; then
+    echo ""
+    echo "⚠ [pre-push] 未找到带 pytest 的解释器 —— 全量回归【未执行】(放行)。"
+    echo "  这属于「监管静默失效」：请 export NOVELAGENT_PYTHON=<python路径>。"
+    echo ""
+    exit 0
+fi
+
+echo "[pre-push] 全量回归：pytest（约 760 秒，解释器 $PY）"
+CODEBUDDY_SAFE_DELETE_ENABLED=0 "$PY" -m pytest -q -p no:cacheprovider
+rc=$?
+
+if [ "$rc" -ne 0 ]; then
+    echo ""
+    echo "✗ [pre-push] 全量回归未通过 —— push 已阻断（AGENTS.md 第 10 条）。"
+    echo "  ① 先归因（第 13 条）：$PY scripts/baseline_diff.py --base <基线sha>"
+    echo "  ② 判定看 FAILED 行，不看退出码；异常数字先重跑一次再采信。"
+    echo "  确需推送：NOVELAGENT_SKIP_FULL=1 git push（并在当日日志记明原因）。"
+    echo ""
+    exit 1
+fi
+
+echo "[pre-push] 全量回归通过"
+exit 0

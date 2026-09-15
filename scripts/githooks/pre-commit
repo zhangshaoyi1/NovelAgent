@@ -1,0 +1,53 @@
+#!/bin/sh
+# NovelAgent pre-commit 关卡：架构红线（AGENTS.md 第 10 条）
+#
+# 背景（2026-09-15 回溯缺口 G1）：此前 CI 只在 tags:v* / 手动触发，远程又只有
+# gitcode → 3 天 78 提交 CI 执行 0 次；人只跑「受影响面」340/2315 = 15%，
+# 85% 测试面是提交盲区，跨模块连带破坏只能等实弹暴露。
+#
+# 本钩子只跑 tests/architecture（113 项，约 9 秒）—— 它拦的正是「修 A 撞 B」
+# 的主要形态（状态所有权 / 降级可见化 / 分层 / 能力对账 / 契约矩阵）。
+# 全量回归交给 pre-push。
+set -u
+
+ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
+cd "$ROOT" || exit 0
+
+# ---- 解释器探测：必须真的能 import pytest 才算可用 ----
+# 踩坑实证：本机 `python`/`python3` 指向托管解释器（无 pytest），
+# 只有 Windows 启动器 `py` 落到 D:\env\python\python.exe 才带 pytest。
+PY=""
+for cand in "${NOVELAGENT_PYTHON:-}" python3 python py; do
+    [ -n "$cand" ] || continue
+    if command -v "$cand" >/dev/null 2>&1 && \
+       "$cand" -c 'import pytest' >/dev/null 2>&1; then
+        PY="$cand"
+        break
+    fi
+done
+
+if [ -z "$PY" ]; then
+    echo ""
+    echo "⚠ [pre-commit] 未找到带 pytest 的解释器 —— 架构红线关卡本次【未执行】(放行)。"
+    echo "  这属于「监管静默失效」，本身就是问题：请 export NOVELAGENT_PYTHON=<python路径>"
+    echo "  或安装 pytest 后重试。AGENTS.md 第 10 条要求提交前必须过架构红线。"
+    echo ""
+    exit 0
+fi
+
+echo "[pre-commit] 架构红线：pytest tests/architecture （解释器 $PY）"
+CODEBUDDY_SAFE_DELETE_ENABLED=0 "$PY" -m pytest tests/architecture -q -p no:cacheprovider
+rc=$?
+
+if [ "$rc" -ne 0 ]; then
+    echo ""
+    echo "✗ [pre-commit] 架构红线未通过 —— 提交已阻断（AGENTS.md 第 10 条）。"
+    echo "  不达标先归因，别急着改（AGENTS.md 第 13 条）："
+    echo "      $PY scripts/baseline_diff.py --base <基线sha>"
+    echo "  确属误报且急需提交：git commit --no-verify（须在当日日志记明原因，不许静默绕过）。"
+    echo ""
+    exit 1
+fi
+
+echo "[pre-commit] 架构红线通过"
+exit 0
