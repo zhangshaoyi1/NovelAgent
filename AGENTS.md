@@ -200,11 +200,17 @@ agent/
 
 | 红线 | 含义 |
 |---|---|
-| `test_state_ownership.py` | 状态所有权：冻结 state.json 直写面（豁免棘轮，只减不增） |
-| `test_degrade_visibility.py` | F-1 降级可见化：降级点必须走 degrade() 通道，静默点清零 |
+| `test_state_ownership.py` | 状态所有权：**路径→业主**成员契约（`STATE_OWNERSHIP`）；旁路须在 `STATE_OWNERSHIP_TOLERATED` 具名登记（reason+target）；引用次数降为看板 |
+| `test_degrade_visibility.py` | F-1 降级可见化：静默点清零；豁免须写 `reason=<枚举>[ ref=<登记单>]`，未引用 reason 者棘轮只减不增 |
+| `test_degrade_contract.py` | 降级命名空间契约：`degrade(where,...)` 的 where 必须在 `core/infra/degrade_registry.py` 登记；双向差集（未登记/僵尸条目均 FAIL） |
 | `test_capability_parity.py` | 能力对账：接口对账 + 副作用 hook 对账（差集真机制，勿改白名单） |
 | `test_hostile_delete_env.py` | 宿主敌意：safe-delete 护栏免疫，删除路径不被 SystemExit 逃逸 |
 | R4 方向矩阵 | cli↔web 循环依赖已拆除：web→cli 仅命令注册副作用，禁止反向 |
+
+> **契约 vs 配额（2026-09-15，G2 收口）**：上述两条计数型闸门（豁免总数 / 每文件引用次数）
+> 已**降为看板**（超限只告警不 FAIL）。闸门改为**成员资格**：降级点须有登记命名空间，
+> 状态写入者须是业主或被具名容忍。新增监管能力时优先问"这是成员资格校验，还是配额计数"——
+> 配额拦住的是数量，拦不住资格（把 N 处集中到一个无权模块，计数不变而所有权已崩塌）。
 
 ***
 
@@ -242,6 +248,11 @@ agent/
 11. **⚠ 两条红线的判据是启发式，写文案会撞（缺口 G2）**：`test_state_ownership`、`test_degrade_visibility` 曾用纯字符串出现次数做判据 —— **注释/日志文案里出现 `state.json` / `SILENT_DEGRADE` 字面量也会计数**。已实证：`092e55f` 补的 `degrade()` 文案含 "state.json"，**22 分钟后** `4bd2ec7` 只能改文案（语义完全没变）。
     - 2026-09-15 已升级为**语义判据**（`state_ownership` 走 AST 只数路径字面量；`degrade_visibility` 走 `tokenize` 只数 COMMENT）→ 文案不再计分。
     - 纪律：改这两条红线或新增降级点时，**先确认判据是"路径/注释"而非"任意字符串"**，不要把"为了让扫描过关"当成修复（那是 churn 的主引擎）。
+    - **进而「配额 → 契约」（同日收口）**：判据语义化只解决"数得准"，没解决"管什么"。两条红线的**计数闸门已降为看板**，闸门改为**成员资格**：
+      · 降级点 → 必须在 `core/infra/degrade_registry.py` 登记（未登记 / 僵尸条目均 FAIL）；
+      · 豁免 → 必须写 `reason=<枚举>`（模糊理由另需 `ref=<登记单>`；悬空 ref FAIL）；
+      · 状态写入 → 必须是业主，或在 `STATE_OWNERSHIP_TOLERATED` **具名**登记（reason+target）。
+      **纪律**：新增监管能力先问「这是成员资格校验，还是配额计数」——配额拦住的是数量，拦不住资格（把 N 处写入集中到一个无权模块，计数不变而所有权已崩塌）；能用成员资格表达的，不要退化成配额。
 12. **同类缺陷族必须一次列全（缺口 G4）**：修一处缺陷前，先枚举**全部同类入口**并在登记单写明「已覆盖 N / 共 M」。
     - **反面教材**：金三门禁链因每次只补下一个调用点（写时→批末→`/appeal`→rewrite→框架化），被跟进 **7 次**；degrade 可见化链按 except 点逐个清，**6 次**。
     - **正面范式（应制度化）**：`25a3293` 修完动作强度 → `479fcfc` 立刻把口径写成 M1–M6 矩阵红线 → **16 分钟后** `ddb4f14` 就被新红线抓出 `padding_repetition_abnormal` 作用域错配。**「修完立刻把口径棘轮化」是有效动作，不是可选项。**
@@ -294,6 +305,7 @@ agent/
 | `../项目文档/优化/`                              | 质量优化 + 结构性改动**登记区**（改前必登记，含同类点位清单）      |
 | `scripts/githooks/`                       | 提交关卡钩子（pre-commit 跑红线 / pre-push 跑全量，`install.sh` 安装） |
 | `scripts/baseline_diff.py`                | 失败归因工具：HEAD vs 基线失败差集（先归因再改码）          |
+| `src/agent/core/infra/degrade_registry.py` | 降级命名空间**契约表**（新增 / 改名降级点必须同步登记）        |
 | `../.workbuddy/memory/MEMORY.md`          | 长期记忆（测试基线、已收口缺陷、通用约定）                  |
 | `../.workbuddy/reports/`                  | 复盘/回溯报告（含 2026-09-15 监管体系回溯）               |
 | `.agents/skills/debugging.md`             | 调试方法论                                   |
