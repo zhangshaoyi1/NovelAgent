@@ -46,7 +46,20 @@ def build_batch_summary(project_dir: str | Path) -> str:
 
     # 2) 问题债务（未销账 watch/presence_ban 概览）
     try:
-        from agent.core.story.issue_debt import IssueDebtStore
+        from agent.core.story.issue_debt import IssueDebtStore, reverify
+
+        # 2a) 先复查销账（2026-09-15）：规则被修复后历史误报会变成"永久待办"，
+        #     每批开写前重跑来源规则，失效的当场销账——规划者只看有效债务，
+        #     避免"销账一个早就不存在的矛盾"占满 batch_directive.focus。
+        try:
+            _rep = reverify(project_dir)
+            if _rep.resolved:
+                parts.append(
+                    "【本轮复查销账】"
+                    + "、".join(f"{i}（{why}）" for i, why in _rep.resolved)
+                )
+        except Exception as e:  # noqa: BLE001 - 销账失败不阻断复规划
+            degrade("batch_replan.reverify", "问题债务复查销账失败，债务按原状注入", e)
 
         debts = IssueDebtStore(project_dir).load().open_items()
         if debts:

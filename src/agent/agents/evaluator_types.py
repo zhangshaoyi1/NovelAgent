@@ -54,6 +54,20 @@ class DimensionResult:
             self.spec = get_spec(self.name)
         if self.spec is not None:
             enforce_contract(self.spec, self.value)
+            # 2026-09-15（登记单 ``20260915_回退熔断账实不符与降级当通过`` §二.R4）：
+            # ``required`` 曾有两个真源——构造字面量与 ``dimension_registry`` 登记表。
+            # ``disposition._hard_gate`` 的 docstring 明确声明「以登记表为唯一真源」，
+            # 而 ``required`` / ``hard_failed`` / ``hard_failed_credible`` /
+            # ``gate_decision`` / ``to_dict`` 读的都是**实例字段**（构造时传入的字面量）
+            # ⇒ 两者一旦分歧，同一份报告会给出互相矛盾的结论。
+            #
+            # 实测分歧：``logic_holes`` 退出回退授权后，登记表 required=False（处置层
+            # 正确给出 LOCAL_REPAIR），而 ``evaluator_dims`` 第 174 行仍按位置参传
+            # required=True（裁决层仍给 block，报告仍标"硬指标"）——**半生效**。
+            #
+            # 统一：登记表存在时一律以登记表为准（未登记维度保留调用方字面量，
+            # 保持 ``test_unregistered_dim_is_tolerant`` 的向后宽容语义）。
+            self.required = bool(self.spec.required)
 
     @classmethod
     def degraded(

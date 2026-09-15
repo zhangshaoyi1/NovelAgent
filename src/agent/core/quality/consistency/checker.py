@@ -15,6 +15,7 @@
 from __future__ import annotations
 
 import re
+import logging
 from dataclasses import dataclass, field
 from enum import Enum
 from pathlib import Path
@@ -678,3 +679,51 @@ class _ConsistencyRule:
     name: str
     severity: Severity
     check: Any  # Callable[[dict, ConflictArbiter | None], list[Conflict]]
+
+
+def recheck_rule(
+    project_dir: "Path | str", rule_id: str, chapter_num: int
+) -> "list[Conflict] | None":
+    """在指定章原文上重跑**单条**内置规则（问题债务复查销账用，2026-09-15）。
+
+    为什么需要它
+    ------------
+    ``watch`` 级一致性警告会被登记成问题债务，再由 ``render_constraints`` 注入
+    每一章的 writer。这是必要的（否则问题静默复发），但**债务此前只进不出**：
+    规则本身被修复后，历史债务仍原样注入，规划者/写手被一个已不存在的矛盾
+    持续牵着走（实测灵荒薪传：``relation_conflict`` 主体锚定修复后，8 条
+    "林凡/沈长风已故"误报仍挂在账上，并成为批间复规划裁决的写作焦点）。
+
+    Returns:
+        命中列表；``None`` 表示**无法复查**（规则不存在 / 章节文件缺失 /
+        正文为空）。调用方必须显式区分「复查后不再命中」与「没复查成」——
+        把后者当前者会静默销掉真实债务（同族纪律：失败必须显性化）。
+    """
+    from agent.core.story.chapters import strip_frontmatter
+
+    checker = ConsistencyChecker(project_dir)
+    rule = next((r for r in checker._builtin_rules() if r.id == rule_id), None)
+    if rule is None:
+        return None
+    path = Path(project_dir) / "chapters" / f"ch{int(chapter_num):03d}.md"
+    if not path.exists():
+        return None
+    try:
+        text = strip_frontmatter(path.read_text(encoding="utf-8")).strip()
+    except OSError:
+        return None
+    if not text:
+        return None
+    try:
+        return list(rule.check({"chapter_text": text}, None))
+    except Exception as e:  # noqa: BLE001 - 规则自身异常 ⇒ 无法复查（不是"不再命中"）
+        from agent.core.infra.degrade import degrade
+
+        degrade(
+            "consistency.recheck_rule",
+            f"债务复查规则执行失败（rule={rule_id} ch={chapter_num}），"
+            "该条债务保持未复查状态（不自动销账）",
+            e,
+            level=logging.DEBUG,
+        )
+        return None

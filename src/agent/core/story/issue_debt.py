@@ -46,6 +46,11 @@ class IssueDebt:
     id: str
     kind: str  # presence_ban | watch | gate_skipped
     constraint: str  # 约束/问题描述（人读，写时原样注入）
+    #: 来源规则 id（一致性规则如 ``relation_conflict``）。2026-09-15 新增：
+    #: 债务此前只把规则名写进自由文本 ``constraint``，没有任何结构化出处，
+    #: 于是「规则被修复后债务是否还有效」无从判定 —— 债务只进不出。
+    #: 有它之后 ``reverify()`` 才能重跑来源规则并自动销账。
+    rule_id: str = ""
     subject: str = ""  # 主体（角色名/设定名）；presence_ban 必填
     scope: str = ""  # 适用范围（章节范围/地图/支线），空 = 全书
     registered_ch: int = 0  # 登记时章节号
@@ -99,12 +104,14 @@ class IssueDebtStore:
         scope: str = "",
         registered_ch: int = 0,
         debt_id: str = "",
+        rule_id: str = "",
     ) -> IssueDebt:
         """登记一条债务；id 缺省自动生成（DEBT-递增序号）。"""
         debt = IssueDebt(
             id=debt_id or self._next_id(),
             kind=kind,
             constraint=constraint.strip(),
+            rule_id=rule_id.strip(),
             subject=subject.strip(),
             scope=scope.strip(),
             registered_ch=int(registered_ch or 0),
@@ -172,11 +179,89 @@ def render_constraints(project_dir: str | Path, current_ch: int = 0) -> str:
     )
 
 
+#: 自动销账说明模板（:func:`reverify` 用）。必须写清"因何而销"——
+#: 销账是隐形的失效，理由不写等于把「复查通过」和「复查没做成」混为一谈。
+REVERIFY_NOTE = "复查销账：来源规则 {rule_id} 在登记章 ch{ch} 原文上已不再命中"
+
+
+@dataclass
+class ReverifyReport:
+    """复查结果：**销账的**与**没能复查的**必须分开列。
+
+    ``skipped`` 不是错误汇总，而是"本条债务未被证明失效"的显性记录——
+    调用方据此知道哪些债务还在生效、因为什么没被销掉。
+    """
+
+    resolved: list[tuple[str, str]] = field(default_factory=list)   # (id, note)
+    skipped: list[tuple[str, str]] = field(default_factory=list)    # (id, why)
+
+    @property
+    def saved(self) -> bool:
+        return bool(self.resolved)
+
+
+def reverify(
+    project_dir: str | Path,
+    *,
+    kinds: tuple[str, ...] = (KIND_WATCH,),
+) -> ReverifyReport:
+    """复查带 ``rule_id`` 的问题债务：来源规则不再命中 ⇒ 自动销账（2026-09-15）。
+
+    为什么要它
+    ----------
+    ``watch`` 债务由 ``render_constraints`` **每章原样注入 writer**，并被
+    ``batch_replan`` 喂给规划者。但债务此前**只进不出**：规则本身修好之后，
+    历史误报仍挂在账上，持续占用规划与写作的注意力。实测灵荒薪传
+    ``relation_conflict`` 主体锚定修复（2026-09-15 10:39）后，8 条
+    "林凡/沈长风已故"误报仍为 open，且已成为批间复规划裁决的写作焦点
+    （``batch_directive.focus``）——一个不存在的矛盾被当成待办写进了正文计划。
+
+    判定纪律
+    --------
+    - 只销 ``watch`` / ``gate_skipped``；``presence_ban`` 是人工作出的禁令，
+      规则修不修都不该被自动解除（默认 :data:`kinds` 已排除）。
+    - 只销**带 rule_id** 的条目；历史条目来源不可判定 → 记 ``skipped``，不猜。
+    - 复查**必须真的跑成功**：规则不存在 / 原文缺失 / 规则抛错 ⇒ ``skipped``。
+      **绝不把"没能复查"当成"不再命中"**（同族纪律：失败必须显性化）。
+    """
+    from agent.core.quality.consistency.checker import recheck_rule  # 延迟导入避免环
+
+    store = IssueDebtStore(project_dir).load()
+    report = ReverifyReport()
+    for d in store.open_items(list(kinds)):
+        if not d.rule_id:
+            report.skipped.append((d.id, "无 rule_id（历史条目，来源规则不可判定）"))
+            continue
+        if d.registered_ch <= 0:
+            report.skipped.append((d.id, "无登记章号，定位不到复查原文"))
+            continue
+        hits = recheck_rule(project_dir, d.rule_id, d.registered_ch)
+        if hits is None:
+            report.skipped.append((
+                d.id,
+                f"无法复查（规则 {d.rule_id} 不存在或 ch{d.registered_ch} 原文缺失），"
+                "保持未销账",
+            ))
+            continue
+        if hits:
+            report.skipped.append((d.id, f"复查仍命中 {len(hits)} 项，债务继续有效"))
+            continue
+        note = REVERIFY_NOTE.format(rule_id=d.rule_id, ch=d.registered_ch)
+        if store.resolve(d.id, note):
+            report.resolved.append((d.id, note))
+    if report.saved:
+        store.save()
+    return report
+
+
 __all__ = [
     "IssueDebt",
     "IssueDebtError",
     "IssueDebtStore",
+    "ReverifyReport",
+    "REVERIFY_NOTE",
     "render_constraints",
+    "reverify",
     "KIND_PRESENCE_BAN",
     "KIND_WATCH",
     "KIND_GATE_SKIPPED",

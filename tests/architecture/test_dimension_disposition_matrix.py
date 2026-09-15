@@ -276,3 +276,84 @@ class TestM8StatisticScopeMatchesAction:
             f"授权了末窗回滚（repairability=WINDOW）但统计口径超出窗口的维度："
             f"{offenders}——这正是『判得对、但永远修不好』的形态"
         )
+
+
+class TestM9RequiredHasSingleSource:
+    """``required`` 只有登记表一个真源（2026-09-15 §二.R4）。
+
+    背景：``required`` 曾经既可经构造位置参传入、又登记在 ``DIMENSIONS``。
+    ``disposition._hard_gate`` 早已声明「以登记表为唯一真源」，而
+    :class:`DimensionResult` 的 ``required`` / ``hard_failed`` / ``gate_decision``
+    读的是**实例字段** ⇒ 两者分歧时同一份报告自相矛盾。
+
+    实测分歧（本次修复的起因）：``logic_holes`` 退出回退授权后，
+    ``disposition`` 正确给出 ``LOCAL_REPAIR``，而构造点仍传 ``required=True``
+    ⇒ 裁决层仍判 ``block``、报告仍标「硬指标」——**半生效**。
+
+    本类同时钉住两条：
+    - 运行期：构造字面量与登记表冲突时，以登记表为准（自我修复，不靠人记得）；
+    - 静态期：``src/`` 里任何 ``DimensionResult(...)`` 调用都不得写出与登记表
+      冲突的字面量（防止新调用点又把两个真源分叉出去）。
+    """
+
+    def test_runtime_syncs_required_from_registry(self) -> None:
+        """故意传反的 required 必须被登记表纠正。"""
+        assert DIMENSIONS["logic_holes"].required is False
+        r = DimensionResult("logic_holes", "逻辑漏洞", 3.0, 0.0, "<=", True, "llm")
+        assert r.required is False, "登记表 required=False ⇒ 实例字段必须同步，否则裁决层半生效"
+        assert r.to_dict()["required"] is False
+
+        assert DIMENSIONS["character_stability_high"].required is True
+        r2 = DimensionResult(
+            "character_stability_high", "人设稳定", 3.0, 0.0, "<=", False, "llm"
+        )
+        assert r2.required is True, "登记表 required=True ⇒ 不得被构造字面量降级"
+
+    def test_unregistered_dim_keeps_caller_literal(self) -> None:
+        """未登记维度没有登记表可依据 ⇒ 保留调用方字面量（向后宽容）。"""
+        r = DimensionResult("some_new_dim", "新维度", 1.0, 0.0, "<=", True, "computed")
+        assert r.spec is None
+        assert r.required is True
+
+    def test_no_source_construction_contradicts_registry(self) -> None:
+        """AST 扫描 ``src/``：构造点字面量不得与登记表分歧。"""
+        import ast
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[2] / "src"
+        offenders: list[str] = []
+        for path in sorted(root.rglob("*.py")):
+            try:
+                tree = ast.parse(path.read_text(encoding="utf-8"))
+            except (OSError, SyntaxError):  # pragma: no cover - 语法错误由别的红线管
+                continue
+            for node in ast.walk(tree):
+                if not isinstance(node, ast.Call):
+                    continue
+                fn = node.func
+                if (getattr(fn, "id", None) or getattr(fn, "attr", None)) != "DimensionResult":
+                    continue
+                args = list(node.args)
+                kwargs = {k.arg: k.value for k in node.keywords}
+                if args and isinstance(args[0], ast.Constant):
+                    name = args[0].value
+                elif isinstance(kwargs.get("name"), ast.Constant):
+                    name = kwargs["name"].value
+                else:
+                    continue  # 动态名，无法静态判定
+                if len(args) >= 6 and isinstance(args[5], ast.Constant):
+                    literal = args[5].value
+                elif isinstance(kwargs.get("required"), ast.Constant):
+                    literal = kwargs["required"].value
+                else:
+                    continue  # 省略（用默认值）或动态取值
+                spec = DIMENSIONS.get(name)
+                if spec is not None and literal is not spec.required:
+                    rel = path.relative_to(root.parent)
+                    offenders.append(
+                        f"{rel}:{node.lineno} {name} literal={literal} registry={spec.required}"
+                    )
+        assert offenders == [], (
+            "以下构造点写出了与登记表冲突的 required（required 只有登记表一个真源，"
+            "请删掉字面量或改用 DIMENSIONS[name].required）：\n" + "\n".join(offenders)
+        )

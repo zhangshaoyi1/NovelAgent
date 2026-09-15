@@ -512,6 +512,10 @@ class AgenticPipelineWorkflow(
                                     f"{_c.description}"
                                 ),
                                 registered_ch=ch_num,
+                                # 结构化来源规则（2026-09-15）：reverify() 靠它重跑
+                                # 规则判定债务是否已随规则修复而失效 —— 缺它则债务
+                                # 只进不出，历史误报会永久注入 writer 与规划者。
+                                rule_id=str(getattr(_c, "rule_id", "") or ""),
                             )
                         _store.save()
                     except Exception as debt_e:  # noqa: BLE001 - 登记失败不阻断

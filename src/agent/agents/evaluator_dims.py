@@ -69,6 +69,7 @@ from agent.agents.evaluator_types import (  # noqa: F401
 #   - first_chapters: 开头若干章（末窗回滚修不到）。
 # 新增全书级维度必须先在 dimension_registry.DIMENSIONS 登记。
 from agent.core.quality.dimension_registry import _DIM_SCOPE  # noqa: F401
+from agent.core.quality.dimension_registry import DIMENSIONS as _DIMENSIONS
 
 
 def _scope_allows(name: str, in_book_ending_window: bool) -> bool:
@@ -171,7 +172,11 @@ class _EvaluatorDimensionsMixin:
             ),
             DimensionResult(
                 "logic_holes", "逻辑漏洞", logic,
-                self.qt["logic_holes"], "<=", True, "llm/default",
+                # required 取登记表（唯一真源）——此处曾硬写字面量 True，与登记表
+                # required=False 分叉 ⇒ disposition 判 LOCAL_REPAIR 而裁决层判 block
+                # （半生效）。2026-09-15 §二.R4；红线 TestM9RequiredHasSingleSource。
+                self.qt["logic_holes"], "<=", _DIMENSIONS["logic_holes"].required,
+                "llm/default",
                 soft_margin=_SOFT_MARGIN.get("logic_holes", 0.0),
                 evidence=self._evidence_for("logic_holes"),
             ),
