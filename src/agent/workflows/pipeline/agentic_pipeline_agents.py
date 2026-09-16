@@ -310,12 +310,22 @@ class _PipelineAgentsMixin:
         return True
 
     def _rollback_budget(self) -> "RollbackBudget":
-        """P1：读取跨批回退预算（.state/rollback_budget.json），缺省按上限 3 起算。"""
+        """P1：读取跨批回退预算（.state/rollback_budget.json），缺省按上限 3 起算。
+
+        2026-09-16：注入落盘失败回调 —— 护栏整体失效必须产生 **failure 事件**
+        （可取证），不能只留一行 logging（daemon stdout 为 0 字节，
+        事后无法区分"没回退"与"记不上账"）。见登记单
+        ``20260916_独立账本首轮对齐豁免使熔断失效`` §三.C。
+        """
         from agent.core.quality.rollback_budget import RollbackBudget
 
-        return RollbackBudget.load(
+        budget = RollbackBudget.load(
             self.project_dir, getattr(self, "max_rollback_attempts", 3)
         )
+        budget.on_persist_failure = lambda msg: self._emit_failure(
+            "eval", msg, severity="warn"
+        )
+        return budget
 
     def _rollback_ledger(self) -> tuple[int, int]:
         """独立账本：回退动作自己写下的落地证据 → ``(快照序号, 回退目标章)``。
@@ -362,17 +372,36 @@ class _PipelineAgentsMixin:
         两者不一致（账本前进了但报告称未回退）时**既记账又告警**——
         静默会复现"护栏在应该喊人的时候一声不响"。检查点与批末体检**共用本方法**，
         并按快照序号去重，避免同一回合重复 bump。
+
+        2026-09-16 修正（登记单 ``20260916_独立账本首轮对齐豁免使熔断失效``）：
+        去重水位原先只活在 **pipeline 实例属性**上，而 pipeline 每次 autowrite 运行
+        都新建 ⇒ **每次运行的首轮回退都落进「首轮豁免」分支** ⇒ 独立账本从未生效。
+        现改为 **持久化水位** ``budget.last_counted_seq``：豁免只对"装机前的历史快照"
+        生效一次，之后一律 ``new = seq - 水位``（跨运行/跨进程有效）。
         """
         budget = self._rollback_budget()
         report_says = bool(getattr(report, "rolled_back", False))
         seq, ledger_target = self._rollback_ledger()
+        # 2026-09-16（登记单 ``20260916_独立账本首轮对齐豁免使熔断失效`` §三.A）：
+        # 水位**取自持久化字段**（``budget.last_counted_seq``，跨运行/跨进程有效），
+        # 而非 pipeline 实例属性。旧实现在**每次运行新建的**实例上留水位 ⇒
+        # 每次运行的首轮回退都落进下面的「首次对账」豁免分支 ⇒ 独立账本从未生效，
+        # 判据退回 ``report.rolled_back`` 单点源（实测 5 次真实回退只记 3 次）。
         seen = getattr(self, "_rollback_ledger_seq", None)
+        if seen is None:
+            seen = budget.last_counted_seq
         target = ledger_target or self._last_rollback_target(report)
 
         if seq > 0:
-            if seen is None:
-                # 首次对账只对齐基线：账本里的历史回退不能补记成本轮
+            if seen < 0:
+                # **仅此一次**（装机前的历史快照）：对齐基线，沿用主账本语义。
+                # 此后水位持久化 ⇒ 一律以独立账本差值为准，豁免不再命中本轮。
                 new = 1 if report_says else 0
+                degrade(
+                    "pipeline.rollback_ledger_baseline",
+                    f"首次启用独立账本水位：以当前快照序号 {seq} 为基线（仅此一次），"
+                    f"此后跨运行以账本差值为准",
+                )
             else:
                 new = seq - seen
             if new <= 0 and report_says:
@@ -389,6 +418,8 @@ class _PipelineAgentsMixin:
                     severity="warn",
                 )
             self._rollback_ledger_seq = seq
+            # 水位落盘：下一个运行（新实例/新进程）据此对账，豁免不再命中。
+            budget.mark_ledger(seq)
         else:
             new = 1 if report_says else 0
 

@@ -48,6 +48,7 @@ from agent.core.quality.dimension_registry import (
     EVAL_WINDOW_CHAPTERS,
     clamp_value,
     safe_default_for,
+    value_plausibility_anomaly,
 )
 from agent.core.quality.eval_evidence import EvalEvidence, build_evidence, build_degraded_evidence
 # 设计产出供给单源（2026-09-16）：写手/评委/落盘三端共用同一份装配。
@@ -425,6 +426,25 @@ class ReaderAppealScorer:
             # 类级修复：降级必须携带 confidence=0 证据，否则降级值会被 L4 当成
             # 可信失败 → 假性不达标 → 无谓回滚（五灵破归档 ch190 前夜）。
             self._record_degraded(dimension, f"评分失败降级：{e}")
+            return self._default_for(dimension)
+        # ---- 量纲自洽守卫（2026-09-16，登记单 ``20260916_计数维被当分数返回``）----
+        # 计数维曾出现 LLM 把 0–100 分数填进"条数"字段（全库 7/309，取值双峰且
+        # 13–84 完全空档）。若放行，``95`` 会被读成"95 处崩坏"：阈值 0 + required
+        # + 授权整窗回退 ⇒ **单次单位混淆 = 销毁 5 章**（09-16 11:32 那次回退的触发轮）。
+        #
+        # 处置取「**不可信化**」而非失败：越界值**不静默钳制**（钳成 20 等于伪造
+        # 一个"20 处崩坏"的确凿结论），而是记 confidence=0 证据 ⇒
+        # ``gate_decision() == recheck``：只复评、不授权回退。
+        # 与 H1 互为镜像——降级不得当**通过**，误读不得当**失败**。
+        anomaly = value_plausibility_anomaly(dimension, val)
+        if anomaly:
+            degrade("reader_appeal.count_unit_anomaly", anomaly)
+            if self.console is not None:
+                self.console.print(
+                    f"[yellow]⚠ {anomaly}；本次按**不可信**处理"
+                    f"（只复评、不授权回退、不计硬伤）[/yellow]"
+                )
+            self._record_degraded(dimension, f"量纲混淆，按不可信处理：{anomaly}")
             return self._default_for(dimension)
         value = self._clamp(dimension, val)
         # G2：结构化结果落 _last_eval（issues/rationale），不扩展 score_fn 返回协议。

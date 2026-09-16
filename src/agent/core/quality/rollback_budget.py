@@ -33,6 +33,23 @@
    死循环的直接特征，不该被"次数未到上限"掩盖（且不依赖单一计数器）。
 
 读写失败一律降级为「不阻断」——本模块是护栏，不是关键路径。
+
+2026-09-16 加固（登记单 ``20260916_独立账本首轮对齐豁免使熔断失效``，**回开** 09-15 那条）
+------------------------------------------------------------------------------------------
+实测：灵荒薪传当日 5 次回退**全部指向第 27 章**（09:32/10:02/10:30/10:59/11:32），
+而本文件 mtime 停在 10:55:30（``consecutive=3 / same_target_streak=1``）
+⇒ ``tripped() = (3>3) or (1>=2)`` 恒 False ⇒ **回退在无人干预下持续销毁章节**。
+
+三处加固：
+
+4. **对账水位持久化**（``last_counted_seq``）：水位原先留在 pipeline **实例属性**
+   （``_rollback_ledger_seq``），而 pipeline 每次 autowrite 运行新建 ⇒ 每次运行的
+   首轮回退都落进对账的「首轮豁免」分支 ⇒ 独立账本 ``seq`` 从未被使用 ⇒
+   判据退回单点源。改为写进本文件 ⇒ 豁免只对"装机前的历史快照"生效**一次**。
+5. **目标章未知不归零**：``bump()`` 原先在 ``target == 0`` 时把
+   ``same_target_streak`` 置 0 ⇒ 抹掉"同一窗口反复翻车"这一最强死循环信号。
+6. **落盘失败可取证**：最终落盘失败除 ``degrade`` 外，回调 ``on_persist_failure``
+   上报 **failure 事件**（daemon stdout 为 0 字节，仅 logging 事后不可取证）。
 """
 
 from __future__ import annotations
@@ -87,6 +104,16 @@ class RollbackBudget:
     same_target_streak: int = 0
     last_reason: str = ""
     updated_at: str = ""
+    #: 「独立账本已记账到的快照序号」水位（2026-09-16）。
+    #: ``-1`` = 尚未初始化（装机前历史，仅对齐一次基线）。**必须持久化**：
+    #: 旧实现把水位留在 pipeline 实例属性上，而 pipeline 每次 autowrite 运行新建
+    #: ⇒ 每次运行的首轮回退都退回 ``report.rolled_back`` 单点源 ⇒ 独立账本从未生效、
+    #: 熔断形同虚设（登记单 ``20260916_独立账本首轮对齐豁免使熔断失效`` §二.R1）。
+    last_counted_seq: int = -1
+    #: 落盘失败回调（2026-09-16）：护栏失效必须**可取证**。``degrade`` 只走 logging，
+    #: 而 daemon stdout 为 0 字节 ⇒ 事后无法区分"没回退"与"记不上账"。
+    #: 由生产入口（pipeline）注入 ``_emit_failure``；非 dataclass 比较字段。
+    on_persist_failure: "Callable[[str], None] | None" = None
 
     @property
     def path(self) -> Path:
@@ -132,6 +159,10 @@ class RollbackBudget:
         budget.same_target_streak = _as_int(data.get("same_target_streak"))
         budget.last_reason = str(data.get("last_reason") or "")
         budget.updated_at = str(data.get("updated_at") or "")
+        # 水位：**键缺失/为 null ⇒ -1（未初始化）**，不得按 0 处理
+        # （0 会被读成"已记账到序号 0" ⇒ 首轮就把历史回退全部补记）。
+        _seq_raw = data.get("last_counted_seq")
+        budget.last_counted_seq = _as_int(_seq_raw) if _seq_raw is not None else -1
         _CACHE[key] = budget
         return budget
 
@@ -155,6 +186,8 @@ class RollbackBudget:
             "last_reason": self.last_reason,
             "updated_at": self.updated_at,
             "limit": self.limit,
+            # 对账水位（2026-09-16）：跨运行对账依赖它——见字段 docstring。
+            "last_counted_seq": self.last_counted_seq,
         }
         blob = json.dumps(payload, ensure_ascii=False, indent=2)
         try:
@@ -195,7 +228,28 @@ class RollbackBudget:
                 "非原子兜底写入仍失败——本进程内计数仍有效，重启后可能回退到旧值",
                 e,
             )
+            # 2026-09-16（登记单 ``20260916_独立账本首轮对齐豁免使熔断失效`` §三.C）：
+            # 护栏**整体失效**必须产生可取证的事件，不能只留一行 logging
+            # （daemon stdout 为 0 字节 ⇒ 事后无法区分"没回退"与"记不上账"）。
+            self._notify_persist_failure(
+                "回退预算落盘失败（原子重试 3 次 + 非原子兜底均失败）："
+                "熔断计数可能丢失、判据不可信，需人工核查磁盘/权限"
+            )
             return False
+
+    def _notify_persist_failure(self, msg: str) -> None:
+        """落盘失败上报（护栏失效可取证）；回调自身异常不得掩盖主流程。"""
+        cb = self.on_persist_failure
+        if cb is None:
+            return
+        try:
+            cb(msg)
+        except Exception as e:  # noqa: BLE001 - 上报通道故障不得阻断护栏自身
+            degrade(
+                "rollback_budget.persist_failure_notify",
+                "落盘失败上报回调异常（上报通道本身故障）",
+                e,
+            )
 
     # ---- 计数 ----
     def bump(self, target_chapter: int = 0, reason: str = "") -> int:
@@ -203,11 +257,15 @@ class RollbackBudget:
         self.consecutive += 1
         self.total += 1
         target = _as_int(target_chapter)
-        if target and target == self.last_target:
-            self.same_target_streak += 1
-        else:
-            self.same_target_streak = 1 if target else 0
-        self.last_target = target
+        # 2026-09-16（登记单 ``20260916_独立账本首轮对齐豁免使熔断失效`` §三.B）：
+        # 目标章**取不到时不得归零** ``same_target_streak``。归零会把
+        # "同一窗口反复翻车"这个最强死循环信号抹掉——实测灵荒薪传当日 5 次回退
+        # 全部指向第 27 章，而 ``streak`` 恒为 1，独立硬闸因此从未成立。
+        if target:
+            self.same_target_streak = (
+                self.same_target_streak + 1 if target == self.last_target else 1
+            )
+            self.last_target = target
         self.last_reason = (reason or "")[:200]
         if not self.save():
             degrade(
@@ -216,6 +274,22 @@ class RollbackBudget:
                 "本进程内计数仍有效，但重启后可能回退到旧值",
             )
         return self.consecutive
+
+    def mark_ledger(self, seq: int) -> None:
+        """持久化「独立账本已记账到的快照序号」水位（2026-09-16）。
+
+        跨运行对账的关键：下一个 autowrite 运行（新 pipeline 实例、可能新进程）
+        据此得到 ``new = seq - last_counted_seq``，而不再退回 ``report.rolled_back``
+        单点源。**首次启用**时由调用方显式对齐基线（仅一次），此后一律以账本为准。
+        """
+        if seq == self.last_counted_seq:
+            return
+        self.last_counted_seq = seq
+        if not self.save():
+            degrade(
+                "rollback_budget.mark_ledger.save",
+                "对账水位落盘失败——跨运行对账将退回基线，熔断判据可能失真",
+            )
 
     def reset(self) -> None:
         """体检通过 → 连续计数归零（累计 total 保留，供复盘）。"""

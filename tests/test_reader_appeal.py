@@ -121,6 +121,45 @@ def test_score_dim_missing_value_key_count_dim_unaffected(tmp_path: Path) -> Non
     assert val == 0.0
 
 
+# ============================================================
+# 2026-09-16 量纲混淆护栏（登记单 ``20260916_计数维被当分数返回``）
+# 根因：计数维偶发返回 0–100 分数（全库 7/309，13–84 完全空档）
+# → 阈值 0 + required + 授权整窗回退 ⇒ 单次混淆 = 销毁 5 章。
+# 处置：不可信化（confidence=0 ⇒ gate_decision=recheck），不授权回退、不计硬伤。
+# ============================================================
+def test_count_dim_score_like_value_is_marked_unverified(tmp_path: Path) -> None:
+    """★ 计数维返回 95（分数）⇒ **不可信**，不得当成"95 处崩坏"授权回退。
+
+    实测样本：09-16 11:32 灵荒薪传 ``character_stability_high=95.0``
+    （confidence=1.0，非降级）正是当日第 5 次回退的触发轮。
+    """
+    d = _project(tmp_path)
+    # issues 为空 ⇒ 走"回退自报 value"分支 ⇒ 95 会直奔阈值 0 的硬闸
+    llm = _fake_llm('{"value": 95, "rationale": "主角人设很稳定", "issues": []}')
+    scorer = ReaderAppealScorer(llm_client=llm)
+    val = scorer.score("character_stability_high", d)
+
+    assert val == 0.0, "越界值不得原样放行（会被读成 95 处崩坏）"
+    last = scorer._last_eval.get("character_stability_high", {})
+    assert last.get("value") == 0.0, "不得被静默钳制成上界而伪造结论"
+    ev = last.get("evidence")
+    assert ev is not None and float(getattr(ev, "confidence", 1.0)) == 0.0, (
+        "必须携带 confidence=0 证据 ⇒ gate_decision()==recheck，不授权回退"
+    )
+    assert "量纲混淆" in str(last.get("rationale", "")), "降级理由必须显性可读"
+
+
+def test_count_dim_legitimate_value_still_counts(tmp_path: Path) -> None:
+    """不放松：真正的崩坏（合理条数）照样计 issue（登记单 §六.4）。"""
+    d = _project(tmp_path)
+    llm = _fake_llm(
+        '{"value": 3, "rationale": "x", '
+        '"issues": [{"severity": "high"}, {"severity": "high"}, {"severity": "mid"}]}'
+    )
+    scorer = ReaderAppealScorer(llm_client=llm)
+    assert scorer.score("character_stability_high", d) == 3.0
+
+
 def test_parse_appeal_all_zero_dims_offline_shortcircuit(tmp_path: Path) -> None:
     """迷爱看解析结果六维全 0（dimensions 键缺失）→ llm_used=False 离线占位。"""
     llm = _fake_llm('{"one_liner": "模型漏答 dimensions", "suggestions": []}')

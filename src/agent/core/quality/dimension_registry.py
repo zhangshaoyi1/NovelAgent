@@ -145,6 +145,19 @@ _VALUE_RANGES: dict[Unit, tuple[float, float]] = {
     Unit.BOOLEAN: (0.0, 1.0),
 }
 
+#: 计数维「量纲自洽」上界（2026-09-16，登记单 ``20260916_计数维被当分数返回``）。
+#:
+#: 与 :data:`_VALUE_RANGES` 的**值域契约**是两件事：
+#:
+#: - 值域回答"数学上可能取什么值"（条数理论无上限 ⇒ ``[0, inf)``），越界即**编程错误**；
+#: - 本上界回答"这个读数**还是不是条数**"（量纲自洽），越界即**单位混淆**。
+#:
+#: 经验依据（全库 309 个 count 样本）：合法条数 ≤ 12，异常值 ≥ 85，
+#: **13–84 完全空档** —— 双峰且中间无样本，是"把 0–100 分数填进条数字段"的强证据
+#: （如 ``character_stability_high=95`` 实为"很稳定"）。取 20：对实测合法上界 12
+#: 留 ~67% 余量，同时仍把 85–100 全部拦下。
+MAX_PLAUSIBLE_COUNT: int = 20
+
 
 @dataclass(frozen=True)
 class DimensionSpec:
@@ -195,6 +208,17 @@ class DimensionSpec:
     @property
     def value_range(self) -> tuple[float, float]:
         return _VALUE_RANGES[self.unit]
+
+    @property
+    def plausible_range(self) -> tuple[float, float]:
+        """**量纲自洽**区间（2026-09-16）。
+
+        与 :attr:`value_range` 的区别见 :data:`MAX_PLAUSIBLE_COUNT`：
+        计数维的取值不仅要落在数学值域内，还要落在"合理条数"内——否则这个读数
+        已经不是条数了。非计数维两者相同。
+        """
+        lo, hi = self.value_range
+        return (lo, float(MAX_PLAUSIBLE_COUNT)) if self.unit is Unit.COUNT else (lo, hi)
 
     @property
     def is_count(self) -> bool:
@@ -254,7 +278,8 @@ DIMENSIONS: dict[str, DimensionSpec] = {
         prompt_label=(
             "人设稳定性（角色言行/动机是否与角色档案、**弧光轨迹**冲突——"
             "沿弧光登记轨迹的有序推进属设计内成长，**不算矛盾**；"
-            "仅倒退/跳档/无契机/与档案直接冲突才计；逐项列举崩坏处数量）"
+            "仅倒退/跳档/无契机/与档案直接冲突才计；逐项列举崩坏处数量。"
+            "**value 只填整数条数（无硬伤填 0），禁止填 0–100 分数/百分比**）"
         ),
         safe_default=0.0, summary_reason="人设出现前后矛盾，建议核对角色档案并统一言行/动机",
         counted_by_issues=True,
@@ -267,7 +292,8 @@ DIMENSIONS: dict[str, DimensionSpec] = {
         prompt_label=(
             "设定一致性（境界/金手指/世界观规则是否被打破——"
             "以**设定台账＋设计意图**为准，设计轨内允许的变化不算打破；"
-            "逐项列举冲突数量）"
+            "逐项列举冲突数量。"
+            "**value 只填整数条数（无冲突填 0），禁止填 0–100 分数/百分比**）"
         ),
         safe_default=0.0, summary_reason="设定被打破，建议回查世界观设定并修复冲突",
         counted_by_issues=True,
@@ -293,7 +319,10 @@ DIMENSIONS: dict[str, DimensionSpec] = {
         # 本次**不动**——它们的失败由 RollbackBudget 熔断护栏兜底停批上报，见同登记单 §七。
         required=False, source=SourceKind.LLM,
         repairability=Repairability.WINDOW, stat_scope=StatScope.WINDOW,
-        prompt_label="逻辑漏洞（情节硬伤/因果不成立，逐项列举漏洞数量）",
+        prompt_label=(
+            "逻辑漏洞（情节硬伤/因果不成立，逐项列举漏洞数量。"
+            "**value 只填整数条数（无漏洞填 0），禁止填 0–100 分数/百分比**）"
+        ),
         safe_default=0.0, summary_reason="存在逻辑漏洞，建议修复因果硬伤",
         counted_by_issues=True,
     ),
@@ -636,6 +665,36 @@ def clamp_value(name: str, value: float) -> float:
     """按量纲钳制（原 ``reader_appeal._clamp``）。"""
     spec = get_spec(name)
     return spec.clamp(value) if spec is not None else float(value)
+
+
+def value_plausibility_anomaly(name: str, value: float) -> str | None:
+    """**量纲自洽**校验：返回异常说明，自洽返回 ``None``（2026-09-16）。
+
+    登记单 ``20260916_计数维被当分数返回``：三个计数维曾把 LLM 自报的 0–100
+    分数（如 ``95``）**原样当成"95 处崩坏"**，而它们是 ``required`` + 阈值 0 +
+    授权整窗回退 ⇒ **单次单位混淆 = 销毁 5 章**。
+
+    本函数是 :func:`clamp_value` 的**上游守卫**，刻意与钳制分工：
+
+    - 钳制会"修好"越界值（95 → 20），那等于**伪造一个"20 处崩坏"的确凿结论**；
+    - 本函数只判不修 —— 上层据此把该维标为 **不可信**（``confidence=0``）⇒
+      走 ``gate_decision() == recheck``：不计硬失败、不授权回退。
+
+    与 H1 的分工：H1 治「降级（safe_default）**不得当通过**」，本条治
+    「误读（量纲混淆）**不得当失败**」——同一纪律的两面。
+    """
+    spec = get_spec(name)
+    if spec is None or spec.unit is not Unit.COUNT:
+        return None
+    lo, hi = spec.plausible_range
+    if value < lo:
+        return f"{name}: 计数维取值为负（{value:g}）"
+    if value > hi:
+        return (
+            f"{name}: 计数维取值 {value:g} 超出合理条数上界 {hi:g}"
+            f"——疑似把 0–100 分数填进条数字段（量纲混淆）"
+        )
+    return None
 
 
 def iter_specs(names: Iterable[str] | None = None) -> list[DimensionSpec]:

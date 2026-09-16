@@ -296,7 +296,7 @@ def test_checkpoint_counts_via_independent_ledger_when_report_lies(tmp_path: Pat
     _write_rollback_ledger(tmp_path, target=23, snapshots=1)
     pipe._rolling_eval_checkpoint()
     assert RollbackBudget.load(tmp_path, limit=3, refresh=True).consecutive == 0, (
-        "首次对账只对齐基线：账本里的历史回退不得补记成本轮"
+        "水位未初始化时只对齐基线（**仅此一次**，对应装机前的历史快照）"
     )
 
     _write_rollback_ledger(tmp_path, target=23, snapshots=2)  # 又回退了一次
@@ -307,6 +307,108 @@ def test_checkpoint_counts_via_independent_ledger_when_report_lies(tmp_path: Pat
     assert any("记账不一致" in m for _k, m, _s in pipe.failures), (
         "两账本不一致必须显性上报（不得静默）"
     )
+
+
+def test_new_instance_first_reconciliation_uses_ledger(tmp_path: Path) -> None:
+    """★ 红线（登记单 ``20260916_独立账本首轮对齐豁免使熔断失效`` §六.3）：
+    **新实例的首轮对账也必须使用账本差值**（水位跨运行持久化）。
+
+    旧实现把水位留在 pipeline **实例属性**（``_rollback_ledger_seq``），而 pipeline
+    每次 autowrite 运行新建 ⇒ 每次运行的首轮回退都落进「首次对账」豁免分支 ⇒
+    独立账本 ``seq`` 从未被使用 ⇒ 判据退回 ``report.rolled_back`` 单点源。
+
+    实测后果：灵荒薪传当日 **5 次回退全部指向第 27 章**、间隔约 30 分钟
+    （= 5 个独立运行，每次至多 1 次回退 ⇒ 豁免恒命中），而账本停在
+    ``consecutive=3 / same_target_streak=1`` ⇒ ``tripped()`` 恒 False ⇒
+    每 30 分钟销毁 5 章且净增 0 章，无人干预。
+    """
+    from agent.core.quality import rollback_budget as rb
+
+    # 运行 1（装机）：水位未初始化 ⇒ 仅此一次对齐基线
+    p1 = _FakePipeline(tmp_path, _Report("block", rolled_back=False), limit=3)
+    _write_rollback_ledger(tmp_path, target=27, snapshots=1)
+    p1._rolling_eval_checkpoint()
+    assert RollbackBudget.load(tmp_path, limit=3, refresh=True).last_counted_seq == 1, (
+        "对账水位必须落盘（不得只留在实例内存）"
+    )
+
+    # 运行 2：**全新实例 + 全新进程**（清进程缓存模拟），报告仍说谎
+    rb._CACHE.clear()
+    p2 = _FakePipeline(tmp_path, _Report("block", rolled_back=False), limit=3)
+    _write_rollback_ledger(tmp_path, target=27, snapshots=2)
+    p2._rolling_eval_checkpoint()
+    assert RollbackBudget.load(tmp_path, limit=3, refresh=True).consecutive == 1, (
+        "新实例首轮对账不得忽略独立账本——否则每次运行至多 1 次回退 ⇒ "
+        "豁免恒命中 ⇒ 熔断永不成立"
+    )
+
+
+def test_same_window_trips_across_runs(tmp_path: Path) -> None:
+    """★ 行为级验收（登记单 §六.2）：**跨运行**的同窗口连续 2 次回退必须熔断。
+
+    实测场景：5 次回退全指向第 27 章，却因 ``same_target_streak=1`` 从未熔断。
+    本用例把它钉死：两个独立运行、同一目标章、上限远未到 ⇒ 第 2 次必须停批上报。
+    """
+    from agent.core.quality import rollback_budget as rb
+
+    for i, snapshots in enumerate((1, 2), start=1):
+        rb._CACHE.clear()  # 每个运行都是新进程
+        pipe = _FakePipeline(tmp_path, _Report("block", target=27), limit=9)
+        _write_rollback_ledger(tmp_path, target=27, snapshots=snapshots)
+        stopped = pipe._rolling_eval_checkpoint() is False
+        assert stopped, f"第 {i} 次回退应停批"
+        if i == 2:
+            assert pipe._rolling_escalation_reason, (
+                "跨运行同窗口第 2 次回退必须触发熔断上报人工"
+            )
+            assert "同一章节窗口" in pipe._rolling_escalation_reason
+
+
+def test_bump_unknown_target_keeps_streak(tmp_path: Path) -> None:
+    """目标章取不到时**不得归零**同窗口计数（否则抹掉最强死循环信号）。
+
+    实测：5 次回退全指向第 27 章而 ``same_target_streak`` 恒为 1 —— 至少有 2 次
+    bump 时 target 取到 0，把 streak 归零了。
+    """
+    b = RollbackBudget.load(tmp_path, limit=9)
+    b.bump(target_chapter=27, reason="x")
+    b.bump(target_chapter=27, reason="x")
+    assert b.same_target_streak == 2 and b.tripped()
+    b.bump(target_chapter=0, reason="目标章取不到")
+    assert b.same_target_streak == 2, "target 未知不构成「换了窗口」的证据"
+    assert b.last_target == 27, "last_target 不得被 0 覆盖"
+
+
+def test_bump_swap_window_resets_streak(tmp_path: Path) -> None:
+    """换到**另一个已知**窗口才重新计数（原有语义不变）。"""
+    b = RollbackBudget.load(tmp_path, limit=9)
+    b.bump(target_chapter=27, reason="x")
+    b.bump(target_chapter=27, reason="x")
+    b.bump(target_chapter=31, reason="x")
+    assert b.same_target_streak == 1 and b.last_target == 31
+
+
+def test_persist_failure_is_reported_as_event(tmp_path: Path, monkeypatch) -> None:
+    """★ 护栏落盘失败必须**可取证**（failure 事件），不能只留一行 logging。
+
+    daemon stdout 为 0 字节 ⇒ 事后无法区分"没回退"与"记不上账"
+    （登记单 ``20260916_独立账本首轮对齐豁免使熔断失效`` §二.R3 / §六.4）。
+    """
+    from agent.core.quality import rollback_budget as rb
+
+    seen: list[str] = []
+    b = RollbackBudget.load(tmp_path, limit=3)
+    b.on_persist_failure = seen.append
+
+    def _boom(*_a: Any, **_k: Any) -> None:
+        raise PermissionError("[WinError 5] 拒绝访问")
+
+    monkeypatch.setattr(rb.os, "replace", _boom)   # 原子替换失败
+    monkeypatch.setattr(rb.Path, "write_text", _boom)  # 非原子兜底也失败
+
+    assert b.save() is False
+    assert seen, "落盘彻底失败必须回调上报（护栏失效可取证）"
+    assert "落盘失败" in seen[0]
 
 
 def test_checkpoint_no_count_when_no_rollback_anywhere(tmp_path: Path) -> None:

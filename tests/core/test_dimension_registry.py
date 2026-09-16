@@ -14,6 +14,7 @@ from agent.agents.evaluator_types import DimensionResult
 from agent.core.quality.dimension_registry import (
     COUNT_DIMS,
     DIMENSIONS,
+    MAX_PLAUSIBLE_COUNT,
     STRICT_DIMENSION_CONTRACT,
     Direction,
     DimensionContractError,
@@ -35,6 +36,7 @@ from agent.core.quality.dimension_registry import (
     specs_by_scope,
     specs_by_timing,
     validate_value,
+    value_plausibility_anomaly,
 )
 
 
@@ -75,6 +77,65 @@ class TestUnitContract:
         r = DimensionResult("some_new_dim", "新维度", 999.0, 0.0, "<=", False, "computed")
         assert r.spec is None
         assert r.unit == ""
+
+
+# ============================================================
+# 2. 量纲自洽契约（2026-09-16，登记单 ``20260916_计数维被当分数返回``）
+# ------------------------------------------------------------
+# 计数维曾被 LLM 填入 0–100 分数（全库 7/309，取值双峰且 13–84 完全空档），
+# 而它们是 required + 阈值 0 + 授权整窗回退 ⇒ 单次单位混淆 = 销毁 5 章。
+# ============================================================
+class TestCountPlausibilityContract:
+    def test_count_dim_value_bounded(self):
+        """★ 红线（登记单 §六.2）：计数维的「合理条数上界」必须被声明且可判。
+
+        声明在 ``DimensionSpec.plausible_range``（SSOT）；越界值**必须**被判为异常，
+        好让上层不可信化——而不是被静默钳制成上界（那等于伪造"20 处崩坏"）。
+        """
+        for name in COUNT_DIMS:
+            spec = get_spec(name)
+            lo, hi = spec.plausible_range
+            assert (lo, hi) == (0.0, float(MAX_PLAUSIBLE_COUNT)), (
+                f"{name} 未声明量纲自洽上界 ⇒ 分数会被当成条数"
+            )
+
+    def test_score_like_value_is_anomaly(self):
+        """实测异常样本（09-16 11:32 那次回退的触发轮）必须被判为量纲混淆。"""
+        for name, bad in (
+            ("character_stability_high", 95.0),
+            ("setting_consistency_high", 85.0),
+            ("logic_holes", 100.0),
+        ):
+            reason = value_plausibility_anomaly(name, bad)
+            assert reason and "量纲混淆" in reason, f"{name}={bad} 未被拦下"
+
+    def test_legitimate_counts_pass(self):
+        """实测合法条数（≤12）不得误伤——上界取 20 已留 ~67% 余量。"""
+        for name in COUNT_DIMS:
+            for v in (0.0, 1.0, 3.0, 5.0, 12.0, 20.0):
+                assert value_plausibility_anomaly(name, v) is None, f"{name}={v} 被误判"
+
+    def test_negative_count_is_anomaly(self):
+        assert value_plausibility_anomaly("logic_holes", -1.0) is not None
+
+    def test_non_count_dims_unaffected(self):
+        """评分维/比率维不适用计数条数上界（它们的值域本就不同）。"""
+        assert value_plausibility_anomaly("coherence", 95.0) is None
+        assert value_plausibility_anomaly("foreshadow_recycle_rate", 0.95) is None
+
+    def test_unknown_dim_is_tolerant(self):
+        assert value_plausibility_anomaly("some_new_dim", 999.0) is None
+
+    def test_clamp_is_not_the_guard(self):
+        """钉住分工：``clamp_value`` 对计数维**原样放行** 95（值域是 ``[0, inf)``）。
+
+        所以钳制不能当处置——95 会被当成"95 处崩坏"直接流向阈值 0 的硬闸。
+        守卫必须是 ``value_plausibility_anomaly``（判"不可信"，不改值）。
+        """
+        assert clamp_value("character_stability_high", 95.0) == 95.0, (
+            "clamp 不应改值——改了就等于伪造一个确凿结论"
+        )
+        assert value_plausibility_anomaly("character_stability_high", 95.0) is not None
 
     def test_value_range_by_unit(self):
         assert get_spec("coherence").value_range == (0.0, 100.0)
@@ -196,13 +257,16 @@ class TestDerivedAliases:
             "character_stability_high":
                 "人设稳定性（角色言行/动机是否与角色档案、**弧光轨迹**冲突——"
                 "沿弧光登记轨迹的有序推进属设计内成长，**不算矛盾**；"
-                "仅倒退/跳档/无契机/与档案直接冲突才计；逐项列举崩坏处数量）",
+                "仅倒退/跳档/无契机/与档案直接冲突才计；逐项列举崩坏处数量。"
+                "**value 只填整数条数（无硬伤填 0），禁止填 0–100 分数/百分比**）",
             "setting_consistency_high":
                 "设定一致性（境界/金手指/世界观规则是否被打破——"
                 "以**设定台账＋设计意图**为准，设计轨内允许的变化不算打破；"
-                "逐项列举冲突数量）",
+                "逐项列举冲突数量。"
+                "**value 只填整数条数（无冲突填 0），禁止填 0–100 分数/百分比**）",
             "logic_holes":
-                "逻辑漏洞（情节硬伤/因果不成立，逐项列举漏洞数量）",
+                "逻辑漏洞（情节硬伤/因果不成立，逐项列举漏洞数量。"
+                "**value 只填整数条数（无漏洞填 0），禁止填 0–100 分数/百分比**）",
             "coherence":
                 "连贯性（章节衔接/叙事流畅度，0-100 评分）",
             "readability":
