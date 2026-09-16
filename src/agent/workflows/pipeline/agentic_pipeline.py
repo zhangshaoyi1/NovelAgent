@@ -630,10 +630,18 @@ class AgenticPipelineWorkflow(
 
             # ---- 章级门禁计数复位：本章未被标记告警 → 连续告警清零；门禁正常
             #      工作（Editor 出了结论）→ 失明连击清零 ----
+            #      2026-09-16（普查 §三.B1）：清零同样**落盘**，否则跨运行累计只增不减。
             if len(self._quality_flags) == flags_before:
+                if self._consecutive_flagged:
+                    self._gate_blind_save(flagged_streak=0, last_where="flag_ok")
                 self._consecutive_flagged = 0
             if edit is not None:
                 self._note_gate_ok()
+            # ---- 写时质检失明接入熔断（2026-09-16，普查 §三.C1，拍板「两条都补」）----
+            #      agentic_write 的写时九项质检/金三失败会写 gate_skipped 标记，
+            #      但此前**不进失明计数**（最频繁的门禁环节失明无人知），批末也无补检。
+            #      放在计数复位之后：本章门禁正常则清零，写时质检失明确凿则再计一次。
+            self._scan_gate_skipped(ch_num)
 
             # ---- G14：章节落盘后增量更新全书指纹库（决策③：存 .state/ 下）----
             try:
@@ -766,10 +774,33 @@ class AgenticPipelineWorkflow(
         result.final_chapter = self._current_total()
 
         # G4: 熔断后跳过评测（拍板 #5）
+        # 2026-09-16（登记单 `20260916_闸门信号可达性普查` §三.A2，拍板 A「置位即短路」）：
+        # 旧实现只认 `result.tripped`（token/墙钟预算），而**滚动体检熔断**与**门禁失明熔断**
+        # 同样在批内 break，却要等到 run() 收尾（:879/:884）才被折入 result ⇒
+        # 「判定已记录、但没有改变控制流」：熔断后仍白跑整段批末评测 + 回退重试。
+        # 实测（灵荒薪传 2026-09-16 对 `rollback_budget.json` 回查）熔断 14:32:53 以
+        # consecutive=4 置位，之后仍涨到 7（又跑 1h06m / 3 次回退 / 重写 5 章 / +0.5M token）。
+        # 现三合一：任一熔断置位 ⇒ 立即短路批末评测，并以 escalated 收尾上报人工。
+        _trip_reason = ""
+        _trip_kind = "budget_trip"
         if result.tripped:
-            self.console.print("[red]✗ 熔断已触发，跳过评测直接返回[/red]")
+            _trip_reason = result.block_reason
+        elif self._rolling_escalation_reason:
+            _trip_reason = self._rolling_escalation_reason
+            _trip_kind = "eval"
+        elif self._gate_escalation_reason:
+            _trip_reason = self._gate_escalation_reason
+            _trip_kind = "gate_escalation"
+        if _trip_reason:
+            self.console.print(
+                f"[red]✗ 熔断已触发，跳过评测直接返回：{_trip_reason}[/red]"
+            )
+            # 非预算类熔断必须以 escalated 收尾（否则外层会再起一批盲写）。
+            if not result.tripped and not result.escalated:
+                result.escalated = True
+                result.escalated_reason = _trip_reason
             # ---- G9：failure 事件（熔断跳过评测，warn）----
-            self._emit_failure("budget_trip", result.block_reason, severity="warn")
+            self._emit_failure(_trip_kind, _trip_reason, severity="warn")
             self._finalize_cost(result)
             self._finalize_g9(result)
             return result

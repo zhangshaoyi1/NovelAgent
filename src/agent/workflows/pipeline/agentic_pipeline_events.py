@@ -11,6 +11,7 @@ import json
 
 import frontmatter
 
+from agent.core.infra.degrade import degrade
 from agent.workflows.pipeline.agentic_pipeline_types import PipelineResult, _now_iso
 
 # 门禁熔断阈值：连续 N 章"门禁失明"或 N 章连续"告警留章" → 停批上报人工。
@@ -18,29 +19,171 @@ from agent.workflows.pipeline.agentic_pipeline_types import PipelineResult, _now
 # 连续多章失明说明质检基建持续故障，继续写=质检真空裸奔，必须显性停下。
 GATE_ESCALATION_LIMIT = 3
 
+# ---- 2026-09-16（登记单 `20260916_闸门信号可达性普查` §三.B1）：护栏状态落盘 ----
+# 旧实现把 `_gate_blind_streak` / `_consecutive_flagged` 存在 **pipeline 实例属性**上，
+# 而 pipeline **每次 autowrite 运行都新建** ⇒ "连续 3 章失明即停批"退化为
+# "**单次运行内**连续 3 章失明"：跨运行永不累计，且未达阈值时完全静默
+# （degrade 只写 logging，daemon stdout 为 0 字节）。
+# 与 P0-1（回退水位活在实例属性）**同构** —— 护栏状态必须比它守护的周期活得更久
+# （纪律第 6 条）。反证非设计意图：同期的 `eval_lessons.history`（跨轮累计）是落盘的。
+GATE_BLIND_FILE = ".state/gate_blind.json"
+
 class _PipelineEventsMixin:
+    # ---------------------------------------------------------------- 失明护栏状态（跨运行落盘）
+    def _gate_blind_path(self):
+        """失明护栏状态文件路径（``.state/gate_blind.json``）。"""
+        return self.project_dir / GATE_BLIND_FILE
+
+    def _gate_blind_load(self) -> dict:
+        """读跨运行护栏状态；缺失/损坏按空状态起算（显性降级）。"""
+        try:
+            p = self._gate_blind_path()
+            if not p.exists():
+                return {}
+            data = json.loads(p.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception as e:  # noqa: BLE001 - 状态不可读不阻断，按 0 起算
+            degrade(
+                "pipeline.gate_blind.load",
+                "失明护栏状态不可读，本轮计数从 0 起算（跨运行累计可能失真）",
+                e,
+            )
+            return {}
+
+    def _gate_blind_save(self, **fields) -> None:
+        """落盘护栏状态（读-改-写 + 原子替换）；失败显性降级、不阻断写作。"""
+        try:
+            p = self._gate_blind_path()
+            p.parent.mkdir(parents=True, exist_ok=True)
+            data = self._gate_blind_load()
+            data.update(fields)
+            data["updated_at"] = _now_iso()
+            tmp = p.with_suffix(".json.tmp")
+            tmp.write_text(
+                json.dumps(data, ensure_ascii=False, indent=1), encoding="utf-8"
+            )
+            tmp.replace(p)
+        except Exception as e:  # noqa: BLE001 - 落盘失败不阻断
+            degrade(
+                "pipeline.gate_blind.save",
+                "失明护栏状态落盘失败，跨运行累计失效（本轮仍按内存计数）",
+                e,
+            )
+
+    @staticmethod
+    def _as_int(value) -> int:
+        try:
+            return int(value or 0)
+        except (TypeError, ValueError):
+            return 0
+
     def _note_gate_blind(self, where: str, err: Exception) -> None:
         """门禁失明计数：质检环节调用异常被降级为放行时调用（连续熔断判定）。
 
         仅负责计数与熔断置位；degrade 显性记录由各调用点在 except 块内完成
         （架构红线要求 except 块直接可见 degrade/logging，且豁免棘轮只减不增）。
+
+        2026-09-16（登记单 ``20260916_闸门信号可达性普查`` §三.B1 / §三.C1）：
+
+        - 计数**落盘并跨运行累计**（旧实现在 pipeline 实例属性上 ⇒ 每次运行新建即归零）；
+        - **按来源分桶**：``where == "write_quality_gate"`` 计入 ``write_gate_streak``，
+          其余计入 ``blind_streak``；两者**各自**判定熔断。
+          分桶是必需的 —— 章末「其它门禁正常」会调 ``_note_gate_ok`` 清 ``blind_streak``，
+          若共用同一桶，写时质检失明每次都被清零 ⇒ 连击恒为 1、永不熔断
+          （本文件写入后由行为级测试当场抓出）。
         """
-        if not hasattr(self, "_gate_blind_streak"):
-            self._gate_blind_streak = 0
-            self._consecutive_flagged = 0
+        if not hasattr(self, "_gate_escalation_reason"):
             self._gate_escalation_reason = ""
-        self._gate_blind_streak += 1
-        if self._gate_blind_streak >= GATE_ESCALATION_LIMIT and not self._gate_escalation_reason:
+        state = self._gate_blind_load()
+        is_write_gate = where == "write_quality_gate"
+        blind = self._as_int(state.get("blind_streak"))
+        wgate = self._as_int(state.get("write_gate_streak"))
+        if is_write_gate:
+            wgate += 1
+        else:
+            blind += 1
+        streak = wgate if is_write_gate else blind
+        self._gate_blind_streak = blind
+        self._gate_write_gate_streak = wgate
+        self._consecutive_flagged = self._as_int(state.get("flagged_streak"))
+        self._gate_blind_save(
+            blind_streak=blind,
+            write_gate_streak=wgate,
+            flagged_streak=self._consecutive_flagged,
+            last_where=where,
+            last_error=str(err)[:200],
+        )
+        # 未达阈值也显性留痕（旧实现只有 degrade → logging，daemon 下不可取证）
+        self._emit_failure(
+            "gate_blind",
+            f"门禁失明（{where}）：{err}"
+            f"（该来源连续第 {streak} 次，上限 {GATE_ESCALATION_LIMIT}）",
+            severity="warn",
+        )
+        if streak >= GATE_ESCALATION_LIMIT and not self._gate_escalation_reason:
             self._gate_escalation_reason = (
-                f"质量门禁连续 {self._gate_blind_streak} 章调用异常（最后：{where}: {err}）——"
+                f"质量门禁连续 {streak} 次失明（来源：{where}；最后：{err}）——"
                 "质检基建持续故障，继续写作将失去质量把关，已停批。请检查 LLM 网关后重跑。"
             )
             self.console.print(f"[red]✗ {self._gate_escalation_reason}[/red]")
 
     def _note_gate_ok(self) -> None:
-        """门禁正常工作（任一质检环节成功执行）→ 失明连击归零。"""
-        if hasattr(self, "_gate_blind_streak"):
-            self._gate_blind_streak = 0
+        """门禁正常工作（任一质检环节成功执行）→ 失明连击归零（含落盘）。"""
+        self._gate_blind_streak = 0
+        try:
+            if self._as_int(self._gate_blind_load().get("blind_streak")) > 0:
+                self._gate_blind_save(blind_streak=0, last_where="gate_ok")
+        except Exception as e:  # noqa: BLE001 - 归零落盘失败不影响主流程
+            degrade("pipeline.gate_blind.save", "失明连击归零落盘失败", e)
+
+    def _scan_gate_skipped(self, chapter: int) -> bool:
+        """把"写时质检失明"（gate_skipped）计入失明熔断（普查登记单 §三.C1）。
+
+        写时九项质检 / 金三评分失败时，``agentic_write._record_gate_skipped`` 会把该章
+        写入 ``.state/chapter_quality_flags.json``（violations 前缀 ``gate_skipped:``）
+        并挂 ``kind=gate_skipped`` 债务，但**不调用本 mixin 的失明计数** ——
+        而本机制（``_note_gate_blind`` + ``GATE_ESCALATION_LIMIT``）本就是为治
+        "质检基建持续故障"而建 ⇒ 最频繁的门禁环节失明不进计数；批末侧也无任何代码
+        读该 flag（承诺的"批末补检"不存在）。
+
+        本方法在**章末**读该文件：本章带 gate_skipped 标记 ⇒ 计入失明一次。
+        返回是否命中（便于测试断言）。读失败按"未跳过"处理并显性降级。
+        """
+        flags: list = []
+        try:
+            p = self.project_dir / ".state" / "chapter_quality_flags.json"
+            if p.exists():
+                raw = json.loads(p.read_text(encoding="utf-8")).get("flags", [])
+                flags = raw if isinstance(raw, list) else []
+        except Exception as e:  # noqa: BLE001 - 读失败按未跳过（保守：不误报门禁正常）
+            degrade(
+                "pipeline.gate_skipped_scan",
+                "写时门禁跳过标记不可读，本章按未跳过处理",
+                e,
+            )
+            return False
+        hit = ""
+        for f in flags:
+            if not isinstance(f, dict) or str(f.get("chapter", "")) != str(chapter):
+                continue
+            for v in (f.get("violations") or []):
+                if isinstance(v, str) and v.startswith("gate_skipped"):
+                    hit = v
+                    break
+            if hit:
+                break
+        if not hit:
+            # 本章写时质检正常 ⇒ 该来源连击清零（恢复即清零，避免历史残留误熔断）
+            # 内存与落盘必须同步复位（否则属性仍是旧值，与盘不一致）。
+            self._gate_write_gate_streak = 0
+            if self._as_int(self._gate_blind_load().get("write_gate_streak")) > 0:
+                self._gate_blind_save(write_gate_streak=0, last_where="write_gate_ok")
+            return False
+        self._note_gate_blind(
+            "write_quality_gate",
+            RuntimeError(f"第 {chapter} 章写时质检失明：{hit}"),
+        )
+        return True
 
     def _emit_progress(self, phase: str, current: int, total: int) -> None:
         """触发进度回调（若订阅）。
@@ -142,11 +285,18 @@ class _PipelineEventsMixin:
             "flagged_at": _now_iso(),
         }
         self._quality_flags.append(flag)
-        if not hasattr(self, "_consecutive_flagged"):
-            self._gate_blind_streak = 0
-            self._consecutive_flagged = 0
+        if not hasattr(self, "_gate_escalation_reason"):
             self._gate_escalation_reason = ""
-        self._consecutive_flagged += 1
+        # 2026-09-16（普查 §三.B1）：与失明计数同法**落盘**、跨运行累计
+        # （清零点在 pipeline 章末「本章未被标记告警 → 连续告警清零」）。
+        state = self._gate_blind_load()
+        self._gate_blind_streak = self._as_int(state.get("blind_streak"))
+        self._consecutive_flagged = self._as_int(state.get("flagged_streak")) + 1
+        self._gate_blind_save(
+            blind_streak=self._gate_blind_streak,
+            flagged_streak=self._consecutive_flagged,
+            last_where=f"flagged_ch{chapter}",
+        )
         if self._consecutive_flagged >= GATE_ESCALATION_LIMIT and not self._gate_escalation_reason:
             self._gate_escalation_reason = (
                 f"连续 {self._consecutive_flagged} 章门禁打回重写后仍不达标（第 {chapter} 章为最新）——"
