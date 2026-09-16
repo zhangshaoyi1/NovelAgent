@@ -98,69 +98,12 @@ def test_stream_wires_chapter_text(tmp_path: Path) -> None:
 
 
 # ============================================================
-# 3. 子阶段顺序 generate → quality_check → revise（M5 精确边界）
+# 3. 子阶段顺序 generate → quality_check → revise
 # ============================================================
-def test_substage_order_generate_quality_revise(tmp_path: Path) -> None:
-    d = _build_minimal_project(tmp_path, state=State.CHARACTER_DESIGN)
-    llm = _build_mock_llm(quality_report=QUALITY_FAIL)  # 首轮校验失败 → 触发修订
-    bus = ProgressEventBus(progress_file=None)  # 不落盘
-    m5 = M5WriteChapterWorkflow(
-        project_dir=d,
-        llm_client=llm,
-        console=Console(quiet=True),
-        conflict_arbiter=None,
-        pre_validate=False,
-        event_emitter=lambda partial: bus.emit_partial(partial),
-    )
-    res = m5.run()
-    substages = [e["substage"] for e in bus.events if e["type"] == "chapter_substage"]
-    assert substages[:3] == ["generate", "quality_check", "revise"], (
-        f"子阶段顺序应为 generate→quality_check→revise，实际 {substages}"
-    )
-    # 修订后正文再走 P0 去AI味（默认开），因此存在 deslop:* 尾阶段
-    assert any(s.startswith("deslop:") for s in substages), f"应有 deslop 阶段，实际 {substages}"
-    assert res.revision_attempts == 1, "QUALITY_FAIL 应触发一次修订"
-    # 每事件都带 chapter 字段（经 emit_partial 补 seq/ts/elapsed_s）
-    for e in bus.events:
-        assert "seq" in e and "ts" in e and "elapsed_s" in e
-
-
-def test_substage_no_revise_when_quality_pass(tmp_path: Path) -> None:
-    d = _build_minimal_project(tmp_path, state=State.CHARACTER_DESIGN)
-    llm = _build_mock_llm()  # 默认 QUALITY_PASS
-    bus = ProgressEventBus(progress_file=None)
-    m5 = M5WriteChapterWorkflow(
-        project_dir=d,
-        llm_client=llm,
-        console=Console(quiet=True),
-        conflict_arbiter=None,
-        pre_validate=False,
-        event_emitter=lambda partial: bus.emit_partial(partial),
-    )
-    m5.run()
-    substages = [e["substage"] for e in bus.events if e["type"] == "chapter_substage"]
-    # R2-D：档位由 DeslopRewriter(level="auto") 按正文命中判定（mock 正文命中 → heavy 属正常），
-    # 测试意图是「质量通过 → 无 revise 且存在去AI味阶段」，不再锁定具体档位。
-    assert "revise" not in substages, f"质量通过不应出现 revise，实际 {substages}"
-    assert any(s.startswith("deslop:") for s in substages), (
-        f"去AI味默认开 → 应有 deslop 尾阶段，实际 {substages}"
-    )
-
-
-def test_m5_no_emitter_zero_regression(tmp_path: Path) -> None:
-    """event_emitter 未注入（默认 None）→ M5 直跑行为不变、不发事件。"""
-    d = _build_minimal_project(tmp_path, state=State.CHARACTER_DESIGN)
-    llm = _build_mock_llm()
-    m5 = M5WriteChapterWorkflow(
-        project_dir=d,
-        llm_client=llm,
-        console=Console(quiet=True),
-        conflict_arbiter=None,
-        pre_validate=False,
-    )  # 不传 event_emitter
-    res = m5.run()
-    assert res.chapter_file.exists()
-    assert res.quality_passed is True
+# 2026-09-16：原三项「M5 精确边界」子阶段断言（经 `M5WriteChapterWorkflow.run()`）
+# 已随废弃写章入口删除（登记单 20260916_闸门信号可达性普查 §三.C2）。
+# ⚠ 能力缺口（已登记待办）：章内子阶段事件（chapter_substage）现由
+# `AgenticWriteWorkflow._emit_substage` 生产，但**尚无覆盖其阶段顺序的测试**。
 
 
 # ============================================================

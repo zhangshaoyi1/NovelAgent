@@ -1,19 +1,23 @@
-"""R2-C 红线：M5.run() 双写章语义收敛
+"""R2-C 红线：写章入口唯一（M5 废弃入口已**删除**）
 
-背景：本项目写章唯一入口已收敛为 ``AgenticWriteWorkflow``（agentic_write.py）；
-``M5WriteChapterWorkflow.run()`` 标记 @deprecated（仅测试基线兼容）。
+背景：本项目写章唯一入口已收敛为 ``AgenticWriteWorkflow``（agentic_write.py）。
+``M5WriteChapterWorkflow.run()`` 曾标记 @deprecated 仅作测试基线保留；
+**2026-09-16 已连同其专属链路删除**（登记单 ``20260916_闸门信号可达性普查``
+§三.C2：废弃入口内的质检 JSON 解析失败降级 ``overall_pass=True`` 且无任何留痕，
+该路径只有废弃入口可达 —— 按拍板「废弃即删除」清理，而非给不可达路径打补丁）。
 
-红线：
-1. 调用 ``M5WriteChapterWorkflow.run()`` 必须触发 DeprecationWarning；
-2. ``src/`` 生产代码禁止调用 ``M5WriteChapterWorkflow().run()``
-   （允许：m5_write_chapter.py 自身定义、tests/ 测试基线）；
-3. 新增写章逻辑应走 ``AgenticWriteWorkflow``。
+红线（较「仅打废弃标记」更强：由「禁止调用」升级为「不得存在」）：
+1. ``M5WriteChapterWorkflow`` **不得再有 ``run`` 属性** —— 防止废弃入口被
+   "顺手恢复"；一旦恢复，C2 那类「不可达却无留痕」的降级路径会立即复活；
+2. 废弃入口专属产物（``M5Result``）不得复活；
+3. ``src/`` 生产代码禁止调用 ``M5WriteChapterWorkflow().run()``（双重保险）；
+4. 写章构造收敛到 service 层（``build_write_workflow``）。
 """
 
 from __future__ import annotations
 
 import ast
-import warnings
+import importlib
 from pathlib import Path
 
 SRC = Path(__file__).resolve().parents[2] / "src"
@@ -25,7 +29,7 @@ def _production_run_calls() -> list[tuple[str, int]]:
     hits: list[tuple[str, int]] = []
     m5_file = SRC / "agent" / "workflows" / "writing" / "m5_write_chapter.py"
     for py in SRC.rglob("*.py"):
-        if py.name in ALLOWED_FILES:
+        if py.name in ALLOWED_FILES or py == m5_file:
             continue
         try:
             tree = ast.parse(py.read_text(encoding="utf-8"), filename=str(py))
@@ -48,21 +52,28 @@ def _production_run_calls() -> list[tuple[str, int]]:
     return hits
 
 
-def test_run_deprecated_warning() -> None:
-    """调用 run() 必须触发 DeprecationWarning。"""
-    import importlib
-
+def test_m5_run_entry_is_removed() -> None:
+    """废弃写章入口不得复活：``run`` 与 ``M5Result`` 都必须不存在。"""
     mod = importlib.import_module("agent.workflows.writing.m5_write_chapter")
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
-        # 不真正执行写章：仅验证方法带废弃标记（构造调用会进入状态机门禁前先 warn）
-        # 通过 inspect 直接触发函数体内首个语句（warnings.warn）不可行，改验源码标记：
-        src = (SRC / "agent/workflows/writing/m5_write_chapter.py").read_text(encoding="utf-8")
-        assert "DeprecationWarning" in src, "run() 未带 DeprecationWarning 废弃标记"
-        assert "R2-C" in src, "run() 缺少 R2-C 废弃说明"
-        # 运行时验证：实例化需要项目环境，此处改为验证方法对象存在且类未删除
-        assert hasattr(mod.M5WriteChapterWorkflow, "run")
-    assert not caught  # 说明性断言（真正运行态告警由生产路径触发）
+    assert not hasattr(mod.M5WriteChapterWorkflow, "run"), (
+        "M5WriteChapterWorkflow.run() 已删除（R2-C 收敛 + 2026-09-16 清理）——"
+        "写章唯一入口是 AgenticWriteWorkflow。恢复废弃入口会让「不可达却无留痕」的"
+        "质检降级路径复活（登记单 20260916_闸门信号可达性普查 §三.C2）"
+    )
+    assert not hasattr(mod, "M5Result"), (
+        "M5Result 是废弃入口专属产物，不得复活"
+    )
+
+
+def test_m5_module_docstring_records_removal() -> None:
+    """模块 docstring 必须写明「入口已删除」及其前置条件（防后人误判为待办）。"""
+    src = (
+        SRC / "agent" / "workflows" / "writing" / "m5_write_chapter.py"
+    ).read_text(encoding="utf-8")
+    assert "不再提供服务端的写章入口" in src
+    assert "删除前置条件" in src, (
+        "必须记录「L1 能力先迁移再删除」的前置条件，否则后人无法判断删除是否安全"
+    )
 
 
 def test_no_production_run_calls() -> None:

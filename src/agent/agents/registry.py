@@ -81,7 +81,7 @@ def _build_registry() -> List[RosterAgent]:
                     "agents.planner_agent（MasterPlan.arcs）", "布局的棋手"),
         RosterAgent("chapter-plotter", "章节编排师", "章", RosterCategory.PLOT_NARRATIVE,
                     "拆解章节大纲，分配爽点与悬念。",
-                    "workflows.m5_write_chapter", "排兵的参军"),
+                    "workflows.writing.agentic_write", "排兵的参军"),
         RosterAgent("conflict-designer", "冲突设计师", "冲", RosterCategory.PLOT_NARRATIVE,
                     "制造张力、反转与利害交锋。",
                     "core.conflict_service", "点火的煽动者"),

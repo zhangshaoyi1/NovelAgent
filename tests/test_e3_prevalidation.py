@@ -197,25 +197,9 @@ class TestNoConflictContinues:
 # ============================================================
 # 开关：pre_validate=False 跳过门禁
 # ============================================================
-class TestPreValidateToggle:
-    def test_pre_validate_false_skips_gate(self, tmp_path: Path) -> None:
-        d = _build_minimal_project(tmp_path)
-        # 即便返回高严重度报告，pre_validate=False 也应跳过
-        report = ConflictReport(
-            conflicts=[
-                Conflict(field="x", existing="a", new="b", severity="high", suggestion="")
-            ],
-            summary="",
-        )
-        arbiter = FakeConflictArbiter(report)
-        wf = M5WriteChapterWorkflow(
-            project_dir=d,
-            llm_client=_build_mock_llm(),
-            conflict_arbiter=arbiter,
-            pre_validate=False,
-        )
-        wf.state_machine.load()
-        # run() 应跳过门禁：高严重度报告也不抛 PreValidationBlocked，且仲裁器未被调用
-        result = wf.run()
-        assert result is not None
-        assert arbiter.calls == []  # 门禁未触发
+# 2026-09-16：原 TestPreValidateToggle（经 `M5WriteChapterWorkflow.run()` 验证
+# `pre_validate=False` 跳过 E3 门禁）已随废弃写章入口删除（登记单
+# 20260916_闸门信号可达性普查 §三.C2）。
+# E3 前置门禁在生产入口为**有意取舍**（agentic 显式 `pre_validate=False`，
+# 由生成后 M21 审稿兜底）——该取舍登记于 tests/architecture/test_capability_parity.py
+# 的能力契约说明中。`_pre_validation` 自身的分支测试见本文件其余用例。

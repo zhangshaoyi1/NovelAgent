@@ -48,13 +48,12 @@ def test_prompt_without_excerpt_still_renders() -> None:
     assert "{{" not in user
 
 
-def test_both_gate_paths_pass_prev_excerpt() -> None:
-    # 双路径透传对账（§5.12 能力对账）：agentic_write 与 m5_quality_gate
-    # 都必须向 render_user 传 prev_chapter_excerpt
+def test_gate_path_passes_prev_excerpt() -> None:
+    # 2026-09-16：写章入口收敛为唯一 AgenticWriteWorkflow（m5_quality_gate 的
+    # 质检主体已随废弃入口删除）。规则 13 的透传能力必须在该唯一入口保留：
+    # 既要从 ctx 取上一章原文（prev_chapter_summary），又要透传给 render_user。
     import agent.workflows.writing.agentic_write as aw
-    import agent.workflows.writing.m5_quality_gate as mq
 
-    for mod in (aw, mq):
-        src = inspect.getsource(mod)
-        assert "prev_chapter_excerpt=" in src, f"{mod.__name__} 未透传 prev_chapter_excerpt"
-        assert "prev_chapter_summary" in src, f"{mod.__name__} 未从 ctx 取上一章原文"
+    src = inspect.getsource(aw)
+    assert "prev_chapter_excerpt=" in src, "agentic_write 未透传 prev_chapter_excerpt"
+    assert "prev_chapter_summary" in src, "agentic_write 未从 ctx 取上一章原文"

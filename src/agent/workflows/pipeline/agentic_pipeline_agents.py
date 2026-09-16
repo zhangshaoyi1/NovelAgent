@@ -246,7 +246,9 @@ class _PipelineAgentsMixin:
         # 现按四象限裁决（见 NovelHealthReport.gate_decision）：
         #   block   → 可信失败的**硬指标** → 中断本批（不可放宽）
         #   warn    → 仅软维度失败         → 告警，继续写作
-        #   recheck → 存在不可信证据       → 只告警，不处置（本入口无复评能力）
+        #   recheck → 存在不可信证据       → 只告警，不处置；**但 evaluator 已放弃
+        #             处置（report.escalated）时停批上报**（D1 动作统一，2026-09-16：
+        #             批末与滚动检查点拿到的是同一份报告，必须同动作）
         dims = getattr(report, "dimensions", None) or []
         failed = [d for d in dims if not getattr(d, "passed", True)]
         score = getattr(report, "score", None)
@@ -292,6 +294,29 @@ class _PipelineAgentsMixin:
             )
             return False
         if gate == "recheck":
+            # ---- 动作统一（D1，2026-09-16）：同一证据，两个入口必须同一动作 ----
+            # 本入口与批末调用的是**同一个** ``evaluate_with_repair()``；批末据
+            # ``result.escalated = report.escalated`` 停批，而此处旧实现只看
+            # ``gate_decision()`` ⇒ 同一份"证据不可信"报告在批末停批、在此处
+            # 被当作"只告警继续"，动作强度与证据等级不对账（登记单 §四.D1）。
+            # 统一口径（与 block 分支同构）：
+            #   - evaluator 已放弃处置（``report.escalated``，即复评后仍未恢复）
+            #     ⇒ 停止自动处置（不回退/不重写）**且停批上报人工**；
+            #   - 仅降级维、复评即可恢复（``report.escalated=False``）
+            #     ⇒ 告警继续（与批末一致：批末此时亦不停批）。
+            if bool(getattr(report, "escalated", False)):
+                reason = (
+                    getattr(report, "escalated_reason", "")
+                    or f"滚动体检证据不可信且复评未恢复：{fail_txt}"
+                )
+                self._rolling_escalation_reason = reason
+                self.console.print(
+                    f"[red]✗ 滚动体检证据不可信且复评未恢复（得分 {score}）：{fail_txt}\n"
+                    f"  {reason}\n"
+                    f"  已停止自动处置（不回退/不重写）并停批上报人工。[/red]"
+                )
+                self._emit_failure("eval", reason, severity="block")
+                return False
             self.console.print(
                 f"[yellow]⚠ 滚动体检判定证据不可信（得分 {score}）：{fail_txt}；"
                 f"本轮只告警不处置，继续写作[/yellow]"

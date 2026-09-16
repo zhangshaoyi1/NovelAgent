@@ -121,26 +121,9 @@ def test_build_task_no_payoff_byte_identical() -> None:
     assert "# 情绪目标" not in task
 
 
-def test_generate_chapter_injects_payoff() -> None:
-    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
-
-    class _LLM:
-        def __init__(self) -> None:
-            self.messages: list[dict] = []
-
-        def chat(self, req, *args, **kwargs):
-            self.messages = req.messages if hasattr(req, 'messages') else req
-            from types import SimpleNamespace
-            return SimpleNamespace(text="正文。")
-
-    llm = _LLM()
-    wf = M5WriteChapterWorkflow(Path("."), llm_client=llm, pre_validate=False)
-    wf._generate_chapter(
-        _min_ctx(payoff_task="本章爽点：揭密（强度 5/5）", emotion_target="情绪目标：燃（张力 5/5）")
-    )
-    system = llm.messages[0]["content"]
-    assert "# 爽点剧本" in system and "揭密" in system
-    assert "# 情绪目标" in system and "燃（张力 5/5）" in system
+# 2026-09-16：原 `_generate_chapter` 的爽点/情绪注入断言已随废弃写章入口删除
+# （登记单 20260916_闸门信号可达性普查 §三.C2）；生产入口侧等价断言见上方
+# `test_build_task_*` 系列（agentic_write._build_task）。
 
 
 # ---------------------------------------------------------------- 懒生成（登记 20260914）

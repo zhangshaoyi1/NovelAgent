@@ -19,7 +19,9 @@ from agent.core.quality.guardrails import is_architecture_confirmed
 _DECOUPLED_WORKFLOWS = [
     "src/agent/workflows/planning/m3_outline.py",
     "src/agent/workflows/planning/m4_character.py",
-    "src/agent/workflows/writing/m5_write_chapter.py",
+    # 2026-09-16：写层守护随入口迁移。m5_write_chapter 已降为纯共享工具库
+    # （写章入口收敛为 AgenticWriteWorkflow），架构确认门禁改由 agentic_write 承担。
+    "src/agent/workflows/writing/agentic_write.py",
     "src/agent/workflows/writing/m6_adjust.py",
 ]
 

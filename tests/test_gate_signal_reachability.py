@@ -226,3 +226,110 @@ def test_corrupt_state_file_degrades_without_crash(tmp_path) -> None:
 @pytest.mark.parametrize("bad", ["", "abc", None, 3.7])
 def test_as_int_is_defensive(bad) -> None:
     assert _PipelineEventsMixin._as_int(bad) in (0, 3)
+
+
+# ---------------------------------------------------------------- D1：同一证据同一动作
+from agent.workflows.pipeline.agentic_pipeline_agents import (  # noqa: E402
+    _PipelineAgentsMixin,
+)
+
+
+class _FakeReport:
+    """最小体检报告替身（只备 ``_rolling_eval_checkpoint`` 消费的字段）。"""
+
+    def __init__(self, gate: str, escalated: bool = False, reason: str = "") -> None:
+        self.dimensions: list = []
+        self.score = 50.0
+        self.eval_infra_unavailable = False
+        self.escalated = escalated
+        self.escalated_reason = reason
+        self._gate = gate
+
+    def gate_decision(self) -> str:
+        return self._gate
+
+
+class _FakeEvaluator:
+    def __init__(self, report: _FakeReport) -> None:
+        self._report = report
+
+    def evaluate_with_repair(self, rewriter):  # noqa: ANN001, ANN201
+        return self._report
+
+
+class _FakeBudget:
+    consecutive = 0
+    limit = 3
+
+    def tripped(self) -> bool:
+        return False
+
+    def reset(self) -> None:
+        pass
+
+    def reason_text(self) -> str:
+        return ""
+
+
+class _AgentHarness(_PipelineAgentsMixin):
+    """最小混入宿主：驱动 ``_rolling_eval_checkpoint`` 的闸门分支。"""
+
+    def __init__(self, project_dir, report: _FakeReport) -> None:
+        self.project_dir = Path(project_dir)
+        self.console = _Console()
+        self._report = report
+        self._failures: list[tuple[str, str, str]] = []
+        self._rolling_escalation_reason = ""
+        self._gate_blind_streak = 0
+        self._gate_write_gate_streak = 0
+        self._consecutive_flagged = 0
+        self._gate_escalation_reason = ""
+        self._quality_flags: list[dict] = []
+
+    def _emit_progress(self, *a, **k) -> None:  # noqa: ANN002, ANN003
+        pass
+
+    def _emit_event(self, *a, **k) -> None:  # noqa: ANN002, ANN003
+        pass
+
+    def _emit_failure(self, step: str, reason: str, severity: str = "error") -> None:
+        self._failures.append((step, reason, severity))
+
+    def _note_gate_ok(self) -> None:
+        pass
+
+    def _note_gate_blind(self, *a, **k) -> None:  # noqa: ANN002, ANN003
+        pass
+
+    def _ensure_evaluator(self):  # noqa: ANN201
+        return _FakeEvaluator(self._report)
+
+    def _make_rewriter(self):  # noqa: ANN201
+        return lambda chapters: None
+
+    def _rollback_budget(self) -> _FakeBudget:
+        return _FakeBudget()
+
+
+def test_rolling_recheck_with_evaluator_giveup_stops_batch(tmp_path) -> None:
+    """D1：证据不可信**且复评未恢复**（``report.escalated``）⇒ 与批末同动作：停批上报。
+
+    修复前该分支只告警继续 —— 而批末拿到的是**同一份** ``evaluate_with_repair``
+    报告，会因 ``result.escalated = report.escalated`` 停批 ⇒ 同一证据、两种动作强度
+    （登记单 ``20260916_闸门信号可达性普查`` §四.D1）。
+    """
+    h = _AgentHarness(
+        tmp_path, _FakeReport("recheck", escalated=True, reason="复评后仍未恢复可信")
+    )
+    assert h._rolling_eval_checkpoint() is False, "evaluator 已放弃处置时必须停批"
+    assert h._rolling_escalation_reason, "停批必须置位 _rolling_escalation_reason"
+    assert h._failures[-1][0] == "eval"
+    assert h._failures[-1][2] == "block"
+
+
+def test_rolling_recheck_without_giveup_continues(tmp_path) -> None:
+    """仅降级维、复评即恢复（``escalated=False``）⇒ 告警继续（与批末一致）。"""
+    h = _AgentHarness(tmp_path, _FakeReport("recheck", escalated=False))
+    assert h._rolling_eval_checkpoint() is True
+    assert h._rolling_escalation_reason == ""
+    assert h._failures[-1][2] == "warn"

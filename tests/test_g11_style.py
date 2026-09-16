@@ -3,7 +3,8 @@
 覆盖（对齐 G11/设计.md §2 / §9 T2）：
 - load_style_guide 三态（存在/缺失/enabled=False）+ 800 字截断；
 - agentic_write._build_task 注入【风格指引】段（style_guide 存在 → 追加；缺失 → 不含）；
-- m5_write_chapter._generate_chapter 同注入（FakeLLM 捕获 system prompt）；
+- （2026-09-16 移除：m5 侧 `_generate_chapter` 已随废弃写章入口删除，见登记单
+  20260916_闸门信号可达性普查 §三.C2）；
 - style_file 指定路径（--style-file）生效。
 """
 
@@ -116,25 +117,9 @@ def test_build_task_no_style_byte_identical() -> None:
 
 
 # ---------------------------------------------------------------- m5._generate_chapter
-def test_generate_chapter_injects_style() -> None:
-    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
-
-    llm = _CaptureLLM()
-    wf = M5WriteChapterWorkflow(Path("."), llm_client=llm, pre_validate=False)
-    wf._generate_chapter(_min_ctx(style_guide="冷峻白描"))
-    assert llm.calls == 1
-    system = llm.messages[0]["content"]
-    assert "# 风格指引" in system
-    assert "冷峻白描" in system
-
-
-def test_generate_chapter_no_style() -> None:
-    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
-
-    llm = _CaptureLLM()
-    wf = M5WriteChapterWorkflow(Path("."), llm_client=llm, pre_validate=False)
-    wf._generate_chapter(_min_ctx(style_guide=""))
-    assert "# 风格指引" not in llm.messages[0]["content"]
+# 2026-09-16：原 `_generate_chapter` 的风格注入断言已随废弃写章入口删除
+# （登记单 20260916_闸门信号可达性普查 §三.C2）；生产入口侧等价断言见上方
+# `test_build_task_injects_style` / `test_build_task_no_style_byte_identical`。
 
 
 def test_generate_chapter_style_disabled(tmp_path: Path) -> None:

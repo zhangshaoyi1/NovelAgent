@@ -147,18 +147,16 @@ class TestWriterGetsDesignIntent:
         )
         assert "build_design_brief(" in src
 
-    @pytest.mark.parametrize(
-        "rel",
-        ["workflows/writing/agentic_write.py", "workflows/writing/m5_write_chapter.py"],
-    )
-    def test_both_write_paths_append_design_block(self, rel: str) -> None:
-        """两条写章路径都要注入——只接一条 = 「一条路径能看到、另一条看不到」。
+    def test_write_path_appends_design_block(self) -> None:
+        """唯一写章入口必须注入设计产出。
 
-        本项目历史上正栽在这类接线漂移上（模板无该字段且从未渲染 ⇒
-        autowrite 主路径 Writer 长期看不到）。
+        2026-09-16：废弃 M5 写章入口（``m5_write_chapter.py`` 的 ``_generate_chapter``）
+        已随 ``run()`` 删除（登记单 ``20260916_闸门信号可达性普查`` §三.C2），
+        故由「两条路径都要注入」收敛为「唯一入口必须注入」。断言口径不变
+        （仍是行为级：必须真的 ``+=`` 追加到提示词，不是取了就算）。
         """
-        src = _read(rel)
-        assert 'ctx.get("design_brief")' in src, f"{rel} 未注入设计产出"
+        src = _read("workflows/writing/agentic_write.py")
+        assert 'ctx.get("design_brief")' in src, "生产写章入口未注入设计产出"
         # 必须是"追加到提示词"，不是取了就算
         assert "+= " in src
 

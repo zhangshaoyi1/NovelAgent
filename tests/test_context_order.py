@@ -121,40 +121,10 @@ class _CaptureLLM:
         return SimpleNamespace(text="正文。")
 
 
-def test_generate_chapter_stable_sections_precede_volatile() -> None:
-    """system prompt 内：稳定段（base/style）必须出现在易变段（payoff/continuity）之前。"""
-    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
-
-    llm = _CaptureLLM()
-    wf = M5WriteChapterWorkflow(Path("."), llm_client=llm, pre_validate=False)
-    wf._generate_chapter(
-        _min_ctx(
-            style_guide="冷峻白描",
-            payoff_task="# 爽点剧本\n本章爽点：打脸",
-            continuity_projection="【连续性账本投影】已定事实…",
-        )
-    )
-    system = llm.messages[0]["content"]
-    assert system.index("冷峻白描") < system.index("打脸")
-    assert system.index("冷峻白描") < system.index("连续性账本投影")
-
-
-def test_generate_chapter_sections_content_preserved() -> None:
-    """排序不得改变任何段内容（逐段子串仍在）。"""
-    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
-
-    llm = _CaptureLLM()
-    wf = M5WriteChapterWorkflow(Path("."), llm_client=llm, pre_validate=False)
-    guide = "冷峻白描、短句"
-    projection = "【连续性账本投影】F-001 已埋"
-    payoff = "# 爽点剧本\n本章爽点：揭密"
-    wf._generate_chapter(
-        _min_ctx(
-            style_guide=guide,
-            payoff_task=payoff,
-            continuity_projection=projection,
-        )
-    )
-    system = llm.messages[0]["content"]
-    for fragment in (guide, projection.strip(), "揭密"):
-        assert fragment in system
+# 2026-09-16：原 `_generate_chapter` 的两项 KV 缓存排序断言已随废弃写章入口删除
+# （登记单 20260916_闸门信号可达性普查 §三.C2）。`order_sections` 本身的单元测试
+# 见本文件上半部分。
+#
+# ⚠ 能力缺口（已登记待办）：生产入口链路（agentic_write → WriterAgent）**未使用**
+# order_sections —— KV 缓存感知的 prompt 段排序目前只存在于刚被删除的路径。
+# 影响面为成本/时延（稳定前缀不再命中 provider prompt cache），不影响正确性。

@@ -1,47 +1,53 @@
-"""M5 章节创作工作流（共享工具方法库）
+"""M5 写章共享工具方法库
 
-单章生成闭环的编排入口：run() 驱动 上下文装配 → 生成 → 质量闸 → 净化 → 落盘。
-具体职责已按 Mixin 拆分：
+写章闭环（上下文装配 → 生成 → 质量闸 → 净化 → 落盘）已收敛为**唯一入口**
+``AgenticWriteWorkflow``（``workflows/writing/agentic_write.py``）；本模块
+**不再提供服务端的写章入口**。
+
+历史沿革
+--------
+- **R2-C（2026-09-06）**：``M5WriteChapterWorkflow.run()`` 标记 @deprecated，
+  仅作测试基线保留、生产零调用；
+- **2026-09-16**（登记单 ``20260916_闸门信号可达性普查`` §三.C2）：该废弃入口
+  **连同其专属链路一并删除** —— ``run()`` / ``_generate_chapter`` /
+  ``_maybe_deslop`` / ``M5Result`` / ``mode_controller`` property。
+  删除而非补丁的理由：入口内的 ``_quality_check_and_revise`` 在质检 JSON 解析
+  失败时降级 ``overall_pass=True`` 且**无任何留痕**，而该路径**只有废弃入口可达**。
+
+  ⚠ **删除前置条件**：``_maybe_deslop`` 内的 **L1 禁词硬拦截 + ``l1_trace`` 轨迹
+  落盘** 此前**从未随迁**到生产入口（与 2026-09-11 G15 ``_archive_chapter``
+  同构：收敛丢能力，且被「整方法豁免」掩盖）。故**先迁移到
+  ``AgenticWriteWorkflow._run_deslop``，再删除**（红线
+  ``tests/test_l1_hard_block_reachability.py``）。
+
+保留本类的唯一目的：作为**共享工具方法库**，供 ``AgenticWriteWorkflow`` 复用
+确定性、已验证的实现：
     m5_context.py      上下文装配（M5ContextMixin）
-    m5_quality_gate.py 质量校验/修订/多维审查（M5QualityGateMixin）
-    m5_text_hygiene.py 文本净化/去重（M5TextHygieneMixin + 模块级净化函数）
-    m5_persist.py      依据链/持久化/归档/进度/呈现（M5PersistMixin）
-类名与导入路径保持不变，旧代码/测试无需改动。
+    m5_quality_gate.py 评审校准常量 + ``_stage_calibration``（原质量闸主体已删）
+    m5_text_hygiene.py 文本净化 / 去重（M5TextHygieneMixin + 模块级净化函数）
+    m5_persist.py      依据链 / 持久化 / 归档 / 进度（M5PersistMixin）
 
-⚠️ R2-C（2026-09-06）：**写章主流程已收敛为单语义**
-- CLI/Web 唯一写章入口是 ``AgenticWriteWorkflow``（``workflows/writing/agentic_write.py``），
-  本项目不再经 ``M5WriteChapterWorkflow.run()`` 写章；
-- ``M5WriteChapterWorkflow`` 保留为 **共享工具方法库**（``_load_context``/落盘/质检等被 agentic 复用），
-  ``run()`` 主流程标记 @deprecated（测试基线保留、生产零调用，见
-  ``tests/architecture/test_m5_run_deprecated.py`` 红线）；
-- 新增代码禁止调用 ``M5WriteChapterWorkflow.run()``。
+⚠️ 新增代码禁止在本类上新增写章入口；写章请经 ``AgenticWriteWorkflow``。
 """
 
 from __future__ import annotations
 
-import json as _json
 import logging
 import re
-import warnings
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable
 
 from rich.console import Console
 
-from agent.core.base.exceptions import PreValidationBlocked
-from agent.core.engine.state_machine import Event, State, StateMachine
+from agent.core.base.exceptions import PreValidationBlocked  # noqa: F401 - re-export（agentic_write 由此导入）
+from agent.core.engine.state_machine import StateMachine
 from agent.core.engine.workflow_registry import workflow
-from agent.core.infra.prompt_manager import pm
-from agent.core.llmops.trace import usage_snapshot as _usage_snapshot  # LLMOps 章级用量
 from agent.core.quality.consistency import ConflictArbiter
-from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.core.quality.scoring import QualityChecker
 from agent.core.registry.genre_pack import GenrePackRegistry
-from agent.core.story.evidence_chain import EvidenceChain
 from agent.core.story.injected_trope_store import InjectedTropeStore
 from agent.core.story.setting_manager import SettingManager
-from agent.client.gateway_adapter import create_gateway, chat_creative
+from agent.client.gateway_adapter import create_gateway
 from llmagent.gateway import Gateway
 
 from agent.workflows.writing.m5_context import M5ContextMixin
@@ -63,32 +69,11 @@ from agent.workflows.writing.m5_text_hygiene import (  # noqa: F401 - re-export 
 logger = logging.getLogger(__name__)
 
 
-
-
-@dataclass
-class M5Result:
-    """M5 执行结果"""
-
-    chapter_file: Path
-    chapter_num: int
-    chapter_title: str
-    chapter_text: str
-    word_count: int
-    quality_passed: bool
-    revision_attempts: int
-    quality_report: dict[str, Any] = field(default_factory=dict)
-    evidence_chain: EvidenceChain = field(default_factory=EvidenceChain)
-    rag_context_len: int = 0
-    d_issues: list[dict[str, Any]] = field(default_factory=list)  # D 多维审查问题（仅 strict_review 时填充）
-    # LLMOps：本章 LLM 用量（tokens_in/tokens_out/llm_calls，窗口差值统计；None=未启用追踪）
-    usage: dict[str, Any] | None = None
-
-
 @workflow("m5_write_chapter")
 class M5WriteChapterWorkflow(
     M5ContextMixin, M5QualityGateMixin, M5TextHygieneMixin, M5PersistMixin
 ):
-    """M5 章节创作工作流"""
+    """M5 写章共享工具方法库（写章入口已收敛为 ``AgenticWriteWorkflow``）"""
 
     def __init__(
         self,
@@ -138,30 +123,10 @@ class M5WriteChapterWorkflow(
         # G11：风格模仿（project/style.md 存在即注入；--no-style 关闭）
         self.style_enabled = style_enabled
         self.style_file = style_file
-        # G12：爽点剧本/情绪目标注入（.state/payoff_script.json 存在即注入；--no-payoff 关闭）
+        # G12：爽点剧本/情绪目标注入（default 开；--no-payoff 关闭）
         self.payoff_enabled = payoff_enabled
         # P0：去AI味开关（质量门禁通过后、落盘前执行；--no-deslop 关闭）
         self.deslop_enabled = deslop_enabled
-        # 提速：确定性关卡快速复审（上轮失败全部来自英文污染/字数等纯扫描关卡时，
-        # 下一轮跳过 LLM 复检，仅重跑确定性扫描；置 False 恢复每轮全量 LLM 复检）
-        self.fast_deterministic_recheck = True
-
-    def _emit_substage(self, substage: str, chapter: int) -> None:
-        """G9：章内子阶段事件（真实阶段边界，M5 精确）；未注入 emitter 时零开销。
-
-        Args:
-            substage: generate / quality_check / revise。
-            chapter: 当前章节号。
-        """
-        if self.event_emitter is not None:
-            try:
-                self.event_emitter({
-                    "type": "chapter_substage",
-                    "chapter": chapter,
-                    "substage": substage,
-                })
-            except Exception:  # noqa: BLE001 - 子阶段事件异常不阻断写章（拍板 3）
-                pass  # noqa: SILENT_DEGRADE
 
     def _load_published_titles(self) -> set[str]:
         """扫描 chapters/ 已发布章节的标题（实例内缓存一次；本方法在落盘前调用，
@@ -252,549 +217,3 @@ class M5WriteChapterWorkflow(
         while f"{base}·{n}" in used:
             n += 1
         return f"{base}·{n}"
-
-    def _maybe_deslop(self, text: str, ctx: dict[str, Any]) -> str:
-        """P0 去AI味：质量门禁通过后、落盘前执行（轻度规则/中重 LLM）。
-
-        与 agentic_write 共用策略：轻度走规则后处理（零 LLM），中/重度走 LLM 改写
-        （6 Gate + 三遍法）。任何失败降级返回原文，绝不阻断写章（G3 哲学）。
-        输入应为已 ``_clean_chapter_body`` 的正文（无标题行/元信息）。
-        """
-        if not self.deslop_enabled:
-            return text
-        # ---- L1 禁词硬拦截（批间反思驱动 2026-09-13）：确定性替换 + 二次校验
-        # 循环，先于 LLM deslop 执行（零成本）；失败降级原文不阻断。----
-        try:
-            from agent.workflows.writing.m5_text_hygiene import (
-                hard_replace_ai_phrases,
-                scan_ai_phrases,
-            )
-
-            text, _l1_replaced = hard_replace_ai_phrases(text)
-            if _l1_replaced:
-                # 对策执行留痕（批间反思"对策→执行记录→门禁回归→销账"闭环）：
-                # 替换轨迹落盘 .state/l1_trace.jsonl，供批末反思作执行/回归证据
-                try:
-                    import json as _json
-                    from datetime import datetime as _datetime, timezone as _tz
-
-                    _trace = self.project_dir / ".state" / "l1_trace.jsonl"
-                    _trace.parent.mkdir(parents=True, exist_ok=True)
-                    with _trace.open("a", encoding="utf-8") as _f:
-                        _f.write(_json.dumps({
-                            "ch": int(ctx.get("chapter_num", 0) or 0),
-                            "replaced": _l1_replaced,
-                            "ts": _datetime.now(_tz.utc).isoformat(timespec="seconds"),
-                        }, ensure_ascii=False) + chr(10))
-                except Exception as trace_e:  # noqa: BLE001 - 留痕失败不影响拦截，但必须显性
-                    from agent.core.infra.degrade import degrade
-
-                    degrade("m5.l1_trace", "L1 替换轨迹落盘失败，本批执行记录缺失", trace_e)
-                if getattr(self, "console", None) is not None:
-                    self.console.print(
-                        f"[cyan]L1 禁词硬拦截：{len(_l1_replaced)} 类替换（{_l1_replaced[:3]}…）[/cyan]"
-                    )
-        except Exception as hyg_e:  # noqa: BLE001 - 硬拦截失败降级原文，但必须显性
-            from agent.core.infra.degrade import degrade
-
-            degrade("m5.l1_block", "L1 禁词硬拦截执行失败，本章回退为仅 LLM 门禁", hyg_e)
-        try:
-            from agent.core.anti_ai.rewriter import DeslopRewriter
-
-            rewriter = DeslopRewriter(
-                self.llm, project_dir=self.project_dir, console=self.console
-            )
-            result = rewriter.rewrite(text, level="auto")
-            self._emit_substage(f"deslop:{result.level}", ctx["chapter_num"])
-            if result.changed and result.text.strip():
-                return result.text
-            return text
-        except Exception:  # noqa: BLE001 - 去AI味失败降级原文，不阻断写章
-            return text
-
-    @property
-    def mode_controller(self) -> "ModeController":
-        """懒加载 ModeController（M8）"""
-        if self._mode_controller is None:
-            from agent.workflows.writing.m8_mode import ModeController
-
-            self._mode_controller = ModeController(
-                project_dir=self.project_dir,
-                state_machine=self.state_machine,
-                console=self.console,
-            )
-        return self._mode_controller
-
-    # ============================================================
-    # 入口
-    # ============================================================
-    def run(self) -> M5Result:
-        """运行 M5 章节创作工作流（**已废弃，R2-C**）
-
-        ⚠️ 本项目写章唯一入口已收敛为 ``AgenticWriteWorkflow``（agentic_write.py）。
-        本方法保留仅为测试基线兼容，**生产代码禁止调用**；新增调用会被
-        ``tests/architecture/test_m5_run_deprecated.py`` 红线拦截。
-
-        Raises:
-            RuntimeError: 状态不符 / 架构未确认 / 必要文件缺失
-        """
-        warnings.warn(
-            "M5WriteChapterWorkflow.run() 已废弃（R2-C）：本项目写章唯一入口为 "
-            "AgenticWriteWorkflow；本方法仅保留测试基线兼容，生产代码禁止调用。",
-            DeprecationWarning,
-            stacklevel=2,
-        )
-        self.state_machine.load()
-        if self.state_machine.state not in (State.CHARACTER_DESIGN, State.WRITING):
-            raise RuntimeError(
-                f"当前状态 {self.state_machine.state.value} 不允许章节创作，"
-                f"需先运行 /design-characters 进入 CHARACTER_DESIGN"
-            )
-
-        # ★门禁 F14
-        if not is_architecture_confirmed(self.project_dir):
-            raise RuntimeError("故事架构尚未确认，无法开始章节创作")
-
-        # ------ 0. M18 草稿检测（F18.4）------
-        # 进入 WRITING 时检测是否有未完成草稿（非首次进入才检测）
-        if self.state_machine.state == State.WRITING:
-            from agent.workflows.evaluation.m18_recovery import check_draft_on_startup
-
-            draft_decision = check_draft_on_startup(
-                self.project_dir, console=self.console, interactive=False
-            )
-            if draft_decision.has_draft and draft_decision.draft is not None:
-                self.console.print(
-                    f"[yellow]⚠ 检测到未完成草稿（第 {draft_decision.draft.chapter_num} 章），"
-                    f"请先运行 novel-agent draft-status -d {self.project_dir} 处理[/yellow]"
-                )
-
-        # ------ 1. 7 步上下文加载 ------
-        ctx = self._load_context()
-
-        # ------ 1.5 M8 介入：章节前询问方向（heavy 模式） ------
-        user_direction = self.mode_controller.ask_chapter_direction(ctx)
-        if user_direction:
-            ctx["user_direction"] = user_direction
-
-        # ------ 1.6 E2 题材动态注入：收集运行时指定的套路文本 ------
-        injected_tropes_text = self._collect_injected_tropes(ctx)
-
-        # ------ 1.7 E3 前置式冲突检测门禁（生成前拦截） ------
-        if self.pre_validate and self.conflict_arbiter is not None:
-            pv = self._pre_validation(ctx)
-            if pv.decision == "interrupt":
-                raise PreValidationBlocked(pv.report)
-
-        # ------ 2. 生成章节 ------
-        self.console.print(
-            f"\n[cyan]正在生成第 {ctx['chapter_num']} 章"
-            f"（{ctx['subline_id']} · {ctx['pressure_stage']}）...[/cyan]"
-        )
-        # ---- G9：章内子阶段事件（生成）----
-        self._emit_substage("generate", ctx["chapter_num"])
-        # LLMOps：章级用量窗口起点（写章前快照，与收尾差值 = 本章真实用量）
-        _u0 = _usage_snapshot()
-        chapter_text = self._generate_chapter(
-            ctx, injected_tropes_text=injected_tropes_text
-        )
-
-        # ------ 2.5 M18 保存草稿（F18.4）------
-        # 生成后、持久化前保存草稿，中断时可恢复
-        from agent.workflows.evaluation.m18_recovery import DraftManager
-
-        draft_mgr = DraftManager(self.project_dir)
-        draft_mgr.save_draft(
-            chapter_num=ctx["chapter_num"],
-            subline_id=ctx["subline_id"],
-            text=chapter_text,
-        )
-
-        # ------ 3. 质量校验 + 自动修订 ------
-        # ---- G9：章内子阶段事件（质量校验）----
-        self._emit_substage("quality_check", ctx["chapter_num"])
-        quality_report, revision_attempts, final_text = self._quality_check_and_revise(
-            ctx, chapter_text
-        )
-        quality_passed = bool(quality_report.get("overall_pass", False))
-
-        # ------ 3.5 金三写时门禁硬判定（2026-09-12）------
-        # 前三章是全书的门面与后续所有评估的锚点，评分不达标不得落盘——
-        # 宁可断批显性失败，也不带病存档（否则批末金三评估必然熔断且修不到开头）。
-        golden_gate = quality_report.get("golden_write_gate") or {}
-        if (
-            int(ctx.get("chapter_num", 0) or 0) <= GOLDEN_WRITE_GATE_FIRST_N
-            and golden_gate.get("applied")
-            and not golden_gate.get("passed", True)
-        ):
-            raise RuntimeError(
-                f"第{ctx['chapter_num']}章金三门禁不达标"
-                f"（综合 {golden_gate.get('total')}/{60}，逐维 {golden_gate.get('dimensions')}），"
-                f"已自动修订 {revision_attempts} 次仍未达标，拒绝落盘。"
-                "请人工检查开篇质量，或用 --golden-three-threshold 调整合格线。"
-            )
-
-        # ------ 4. 提取章节标题 + 清理正文元信息 ------
-        chapter_title = self._extract_title(final_text, ctx)
-        # 落盘/计数前去掉模型误输出的标题行、原文标题、编辑批注，保证字数统计正确、无双标题
-        final_text = self._clean_chapter_body(final_text)
-
-        # ------ 4.4 标题唯一性保障（2026-09-06）：占位/重复标题就地重生，不再依赖整章重写 ------
-        # 此前标题重复只能靠 G14 门禁打回整章重写，重写不收敛时按「降级保留」带病落盘
-        # （无灵 ch247/249/250/251/255/256 实证）。现在在提取点就近修复：一次轻量
-        # LLM 调用换一个未用过的场景化标题，失败退化为确定性编号后缀。
-        chapter_title = self._ensure_unique_title(
-            ctx["chapter_num"], chapter_title, final_text
-        )
-
-        # ------ 4.5 P0 去AI味：质量门禁通过后、落盘前（轻度规则/中重 LLM；失败降级原文）------
-        final_text = self._maybe_deslop(final_text, ctx)
-
-        # ------ 4.7 缺口 B（2026-09-06）：canonical body 成文管线 ------
-        # 落盘 / 门禁 / 指纹一律消费同一产物；_save_chapter 内部再走同链幂等兜底。
-        final_text = self._finalize_chapter_text(final_text)
-
-        # ------ 5. 依据链（E4 结构化） ------
-        evidence_chain = self._build_evidence_chain(ctx)
-        # F-E4.3 落盘前校验引用源是否存在
-        evidence_chain = self._validate_evidence(evidence_chain)
-
-        # ------ 6. 持久化 ------
-        word_count = len(final_text.replace("\n", "").replace(" ", ""))
-        chapter_file = self._save_chapter(
-            ctx, final_text, chapter_title, word_count,
-            quality_passed, revision_attempts, evidence_chain,
-        )
-        # 标题已发布 → 失效缓存，下一章查重可见本章标题
-        self._published_titles_cache = None
-        # canonical artifact（成文 = 标题 + 正文）：供管线门禁（标题合规/查重/指纹）
-        # 消费，保证「过检的 == 落盘的」。
-        canonical_text = self.compose_chapter_markdown(
-            ctx["chapter_num"], chapter_title, final_text
-        )
-
-        # ---- G15 章后归档 hook：本章 deltas 归档进连续性账本 + 伏笔 beats 标记落地。
-        # 缺账本/失败一律 try/except 降级不阻断（对齐 `_maybe_advance_mainline` hook 位置）。
-        self._archive_chapter(ctx, chapter_title, canonical_text)
-
-        # ---- 书级台账 hook（2026-09-12）：与 agentic 入口同位（能力对账要求
-        # 两侧 run 链路同名调用）；失败降级不阻断。
-        self._record_book_ledger(
-            ctx, chapter_title, canonical_text, quality_passed, revision_attempts
-        )
-
-        # ---- M13 伏笔对账 hook（2026-09-06）：按正文实证同步 foreshadows.md 状态。
-        # 此前登记表只读不写（update_state 死桥），回收率恒 0%；失败降级不阻断。
-        try:
-            from agent.workflows.evaluation.m13_foreshadow import sync_foreshadow_states
-
-            sync_foreshadow_states(self.project_dir, console=self.console)
-        except Exception:  # noqa: BLE001 - 对账失败不阻断写章
-            pass  # noqa: SILENT_DEGRADE
-
-        # A：增量索引（2026-09-09：索引缺失时自动自举一次）
-        # 此前此处以「.state/rag 目录是否存在」为开关，而建目录的唯一途径是手动
-        # reindex 命令 → 从未执行过的项目（如五灵破归档）永远零召回、零索引。
-        # 现改为无条件 ensure()：空索引则全量自举一次（仅一次，落 marker）。
-        rag_context_len = len(ctx.get("rag_context", []))
-        try:
-            from agent.core.rag.indexer import Indexer
-
-            idx = Indexer(self.project_dir)
-            boot = idx.ensure()
-            if boot.get("bootstrapped"):
-                self.console.print(
-                    f"[dim]· RAG 索引已自举：{boot.get('indexed_chunks', 0)} 切片 / "
-                    f"{boot.get('chapters', 0)} 章[/dim]"
-                )
-            idx.index_chapter(chapter_file, final_text)
-        except Exception:  # noqa: BLE001 - 索引失败不影响章节产出
-            self.console.print(
-                "[yellow]⚠ RAG 增量索引失败，已跳过（不影响本章产出）[/yellow]"
-            )  # noqa: SILENT_DEGRADE
-
-        # ------ 6.5 M18 清除草稿（F18.4）------
-        # 章节已成功持久化，清除草稿
-        draft_mgr.clear_draft()
-
-        # ------ 6.6 E2 生成后清除运行时注入的套路（独立存储文件）------
-        if self._injected_store.get():
-            self._injected_store.clear()
-
-        # ------ 7. 更新进度 ------
-        self._update_progress(ctx)
-
-        # ------ 8. 状态转换 ------
-        if self.state_machine.state == State.CHARACTER_DESIGN:
-            self.state_machine.transition(Event.WRITE)
-            self.state_machine.save()
-
-        # ------ 9. 呈现 ------
-        self._present(chapter_file, ctx, word_count, quality_passed, revision_attempts)
-
-        # ------ 9.5 M8 介入：章节后等待反馈（heavy 模式） ------
-        # 非 heavy 模式直接返回；heavy 模式由 CLI 层处理交互
-        # 此处仅记录用户决策到 result，不阻塞流程
-        feedback = self.mode_controller.ask_chapter_feedback(
-            ctx,
-            {
-                "word_count": word_count,
-                "quality_passed": quality_passed,
-            },
-        )
-        # feedback: accept / revise / rewrite / continue
-        # 当前实现：accept/continue 正常返回；revise/rewrite 需用户手动重跑
-        # （未来可扩展为循环修订）
-
-        # ------ 9.5 LLMOps：本章用量统计（窗口差值）+ 落盘 ------
-        _u1 = _usage_snapshot()
-        usage = {
-            "chapter": ctx["chapter_num"],
-            "llm_calls": max(0, _u1["calls"] - _u0["calls"]),
-            "tokens_in": max(0, _u1["tokens_in"] - _u0["tokens_in"]),
-            "tokens_out": max(0, _u1["tokens_out"] - _u0["tokens_out"]),
-        }
-        usage["tokens_total"] = usage["tokens_in"] + usage["tokens_out"]
-        if usage["llm_calls"] > 0:
-            self.console.print(
-                f"[cyan]📊 第 {ctx['chapter_num']} 章用量："
-                f"in {usage['tokens_in']:,} / out {usage['tokens_out']:,} tokens"
-                f"（{usage['llm_calls']} 次调用）[/cyan]"
-            )
-        try:
-            _llmops_dir = self.project_dir / ".state" / "llmops"
-            _llmops_dir.mkdir(parents=True, exist_ok=True)
-            (_llmops_dir / "usage_last_chapter.json").write_text(
-                _json.dumps(usage, ensure_ascii=False, indent=2), encoding="utf-8"
-            )
-        except Exception:  # noqa: BLE001 - 统计落盘失败不影响章节产出
-            pass  # noqa: SILENT_DEGRADE
-
-        return M5Result(
-            chapter_file=chapter_file,
-            chapter_num=ctx["chapter_num"],
-            chapter_title=chapter_title,
-            chapter_text=canonical_text,
-            word_count=word_count,
-            quality_passed=quality_passed,
-            revision_attempts=revision_attempts,
-            quality_report=quality_report,
-            evidence_chain=evidence_chain,
-            rag_context_len=rag_context_len,
-            d_issues=quality_report.get("d_issues", []),
-            usage=usage,
-        )
-
-    # ============================================================
-    # 2. 章节生成
-    # ============================================================
-    def _generate_chapter(
-        self, ctx: dict[str, Any], injected_tropes_text: str = ""
-    ) -> str:
-        """调 LLM 生成章节正文
-
-        Args:
-            ctx: 上下文
-            injected_tropes_text: E2 运行时注入的题材套路文本（追加到 system prompt）
-        """
-        wi = ctx["world_info"]
-        from agent.core.infra.prompt_helpers import format_open_debts, format_rag_context
-
-        rag_context_text = format_rag_context(ctx.get("rag_context", []), max_chunks=3, max_text_len=120)
-        open_debts_text = format_open_debts(ctx.get("open_debts", []), max_debts=5, max_desc_len=60)
-        user_prompt = pm.get("m5.generate").render_user(
-            title=wi["title"],
-            tone=wi["tone"],
-            pov=wi["pov"],
-            rhythm=wi["rhythm"],
-            chapter_length=wi["chapter_length"],
-            info_density=wi["info_density"],
-            banned_elements=wi["banned_elements"],
-            chapter_num=ctx["chapter_num"],
-            subline_id=ctx["subline_id"],
-            subline_name=ctx["subline_name"],
-            subline_goal=ctx["subline_goal"],
-            pressure_stage=ctx["pressure_stage"],
-            tension_level=ctx["tension_level"],
-            world_synopsis=wi["synopsis"],
-            realm_system=wi["realm_system"],
-            golden_finger_info=wi["golden_finger_info"],
-            route_node_id=ctx["route_node_id"],
-            route_milestone=ctx["route_milestone"],
-            route_main_title=ctx["route_main_title"],
-            route_main_result=ctx["route_main_result"],
-            route_main_growth=ctx["route_main_growth"],
-            characters_info=ctx["characters_info"],
-            relations_info=ctx["relations_info"],
-            foreshadow_task=ctx["foreshadow_task"],
-            prev_chapter_summary=ctx["prev_chapter_summary"],
-            rag_context=rag_context_text,
-            open_debts=open_debts_text,
-        )
-        # 设计产出（2026-09-16）：本章设计意图 + 弧线轨迹 + 达标判据。
-        # 与 autowrite 主路径（agentic_write）及评委端同源（design_brief），
-        # 避免「一条路径注入了、另一条没注入」的接线漂移。
-        _design_block = str(ctx.get("design_brief") or "").strip()
-        if _design_block:
-            user_prompt += "\n\n" + _design_block
-
-        # P0-1（KV 缓存感知）：system 段按 stable → semi → volatile 排序，
-        # 使跨章生成时稳定前缀（系统规则/文风/硬约束）尽量命中 provider 端 prompt cache。
-        from agent.core.infra.context_order import (
-            SEMI,
-            STABLE,
-            VOLATILE,
-            PromptSection,
-            order_sections,
-        )
-
-        system_base = pm.get("m5.generate").render_system(genre=wi.get("genre_label", ""))
-        sections: list[PromptSection] = [PromptSection("base", system_base, STABLE)]
-
-        # E2 题材动态注入：将选中套路以 System Prompt 片段注入
-        if injected_tropes_text:
-            sections.append(
-                PromptSection(
-                    "injected_tropes",
-                    "【本章注入套路（运行时指定，请自然融入章节结构与标志性要素，"
-                    "不要生硬堆砌）】\n" + injected_tropes_text,
-                    VOLATILE,
-                )
-            )
-
-        # E：项目学习记忆注入 System Prompt（长期保留、不清空；类似 injected tropes）
-        learnings_text = ctx.get("learnings_text", "")
-        if learnings_text and learnings_text != "（暂无已沉淀的写法记忆）":
-            sections.append(
-                PromptSection(
-                    "learnings",
-                    "【本项目已沉淀的写法记忆（长期积累，请自然融入本章，"
-                    "不要生硬堆砌）】\n" + learnings_text,
-                    SEMI,
-                )
-            )
-
-        # ---- G15：连续性账本投影注入（写前输入；缺账本 → 跳过，不阻断）----
-        continuity_projection = (ctx.get("continuity_projection") or "").strip()
-        if continuity_projection:
-            sections.append(
-                PromptSection(
-                    "continuity",
-                    "【连续性账本投影（已定事实/未闭环/上章交接，请遵守，"
-                    "不要与之冲突）】\n" + continuity_projection,
-                    VOLATILE,
-                )
-            )
-
-        # ---- B1：写章防模板注入（本卷已用手段清单 + 灭门回忆计数；只约束字数/花式，不硬删）----
-        reuse_guard_text = (ctx.get("reuse_guard_text") or "").strip()
-        if reuse_guard_text:
-            sections.append(
-                PromptSection(
-                    "reuse_guard",
-                    "【本节为防模板的运行时提醒（参考，若与情节冲突以情节为准）】\n"
-                    + reuse_guard_text,
-                    VOLATILE,
-                )
-            )
-
-        # ---- G8（补充边界 4）：结局模式指令注入（ending 为空降级「收尾」通用指令，不阻断）----
-        if ctx.get("ending_mode"):
-            ending = (ctx.get("ending") or "").strip()
-            if ending:
-                sections.append(
-                    PromptSection(
-                        "ending",
-                        pm.get("g8.ending_instruction").render_user(
-                            subline_id=ctx.get("subline_id", ""),
-                            mainline="、".join(ctx.get("mainline", []) or []) or "—",
-                            ending=ending,
-                        ),
-                        SEMI,
-                    )
-                )
-            else:
-                sections.append(
-                    PromptSection(
-                        "ending_fallback",
-                        pm.get("g8.ending_fallback_instruction").render_user(),
-                        SEMI,
-                    )
-                )
-
-        # ---- G11：风格指引注入（style.md 存在即注入；缺失/关闭 → 与 G10 输出逐字节一致）----
-        style_guide = (ctx.get("style_guide") or "").strip()
-        if style_guide:
-            sections.append(
-                PromptSection(
-                    "style",
-                    pm.get("g11.style_instruction").render_user(style_guide=style_guide),
-                    STABLE,
-                )
-            )
-
-        # ---- G12：爽点剧本 + 情绪目标 + 读者反馈注入（追加顺序：爽点 → 情绪 → 反馈）----
-        payoff_task = (ctx.get("payoff_task") or "").strip()
-        if payoff_task:
-            sections.append(
-                PromptSection(
-                    "payoff",
-                    pm.get("g12.payoff_instruction").render_user(payoff_task=payoff_task),
-                    VOLATILE,
-                )
-            )
-        emotion_target = (ctx.get("emotion_target") or "").strip()
-        if emotion_target:
-            sections.append(
-                PromptSection(
-                    "emotion",
-                    pm.get("g12.emotion_instruction").render_user(emotion_target=emotion_target),
-                    VOLATILE,
-                )
-            )
-        signals = ctx.get("reader_signals") or []
-        if signals:
-            lines = []
-            for s in signals:
-                desc = str(s.get("desc", "") or "")
-                planted = int(s.get("planted_ch", 0) or 0)
-                marker = "（位于本章之前，请针对此反馈强化本章）" if planted and planted < ctx.get("chapter_num", 0) else ""
-                lines.append(f"- {desc}{marker}")
-            if lines:
-                sections.append(
-                    PromptSection(
-                        "reader_feedback",
-                        pm.get("g12.reader_feedback").render_user(reader_signals="\n".join(lines)),
-                        VOLATILE,
-                    )
-                )
-
-        # ---- 角色状态硬约束（P-C 修复）：把 characters/*.md 的生死/时间线真源注入为不可违背规则 ----
-        character_constraints = (ctx.get("character_constraints") or "").strip()
-        if character_constraints:
-            sections.append(
-                PromptSection(
-                    "character_constraints",
-                    pm.get("g.character_state_constraint").render_user(
-                        character_constraints=character_constraints
-                    ),
-                    SEMI,
-                )
-            )
-
-        system_prompt = order_sections(sections)
-
-        resp = chat_creative(
-            self.llm,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                {"role": "user", "content": user_prompt},
-            ],
-            temperature=0.85,
-            max_tokens=4096,
-            enable_thinking=False,
-        )
-        # 后处理：规范化段落格式（安全网，即使 LLM 遗漏规则 15 也兜底）
-        raw = resp.strip()
-        return self._format_chapter_body(raw)
-

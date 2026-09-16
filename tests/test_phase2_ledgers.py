@@ -192,17 +192,9 @@ def test_reflection_in_batch_summary(tmp_path: Path) -> None:
 
 
 # ---------------------------------------------------------------- 质检合并（同质检查单次调用）
-def test_d_supplement_merge_and_off(tmp_path: Path) -> None:
-    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
-
-    proj = _build_minimal_project(tmp_path)
-    wf = M5WriteChapterWorkflow(proj, llm_client=None, pre_validate=False)
-    wf.strict_review = False
-    assert wf._d_supplement() == ""  # 关闭 D 审查 → 不合并
-
-    wf.strict_review = True
-    block = wf._d_supplement()
-    assert "d_issues" in block and "rule_id" in block and "审查维度" in block
+# 2026-09-16：原 `_d_supplement` 合并/关闭两态断言已随废弃写章入口删除
+# （登记单 20260916_闸门信号可达性普查 §三.C2）——D 多维审查合并已收敛到
+# agentic_write 的写时门禁路径。
 
 
 # ---------------------------------------------------------------- L1 禁词硬拦截

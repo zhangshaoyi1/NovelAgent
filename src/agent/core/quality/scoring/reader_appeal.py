@@ -1171,8 +1171,9 @@ _SCORE_CTX_FIELDS = (
 def build_score_chapter_kwargs_from_ctx(ctx: dict[str, Any] | None) -> dict[str, str]:
     """从写章 ctx 提取评分器所需的上下文参数（缺省字段空串，绝不抛异常）。
 
-    供 m5_quality_gate._apply_golden_write_gate 与 agentic_write 写时门禁共用，
-    保证两条路径的评分上下文口径一致。ctx 为 None / 字段缺失 → 空串（等价裸评，
+    2026-09-16：写章入口已收敛为唯一 ``AgenticWriteWorkflow``
+    （原 ``m5_quality_gate._apply_golden_write_gate`` 已随废弃入口删除），
+    本函数供 agentic_write 写时门禁使用。ctx 为 None / 字段缺失 → 空串（等价裸评，
     与旧行为一致，不阻断评分）。
     """
     ctx = ctx or {}

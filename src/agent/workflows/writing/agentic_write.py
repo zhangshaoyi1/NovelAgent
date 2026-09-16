@@ -151,6 +151,50 @@ class AgenticWriteWorkflow:
         """
         if not self.deslop_enabled:
             return text
+
+        # ---- L1 禁词硬拦截（2026-09-16 能力迁移）：确定性替换 + 二次校验循环，
+        # 先于 LLM deslop 执行（零成本）；失败降级原文不阻断。
+        # 该子能力原只存在于废弃 M5 入口的 ``_maybe_deslop`` 内；写章入口收敛到
+        # agentic 时**未随迁** —— 能力对账豁免表登记的去向（「改由 _run_deslop
+        # 承担」）只对了「去 AI 味」一半，L1 硬拦截与其执行轨迹在生产路径**从未
+        # 运行**，``.state/l1_trace.jsonl`` 恒空 ⇒ 批间反思的
+        # 「对策→执行记录→回归→销账」闭环缺执行证据。
+        # 与 2026-09-11 G15 ``_archive_chapter`` 同构（收敛丢能力），故随本次
+        # 「删除废弃入口」一并把能力迁移到生产入口（先补再删）。
+        try:
+            from agent.workflows.writing.m5_text_hygiene import hard_replace_ai_phrases
+
+            text, _l1_replaced = hard_replace_ai_phrases(text)
+            if _l1_replaced:
+                try:
+                    from datetime import datetime as _dt, timezone as _tz
+
+                    _trace = self.project_dir / ".state" / "l1_trace.jsonl"
+                    _trace.parent.mkdir(parents=True, exist_ok=True)
+                    with _trace.open("a", encoding="utf-8") as _f:
+                        _f.write(json.dumps({
+                            "ch": int(ctx.get("chapter_num", 0) or 0),
+                            "replaced": _l1_replaced,
+                            "ts": _dt.now(_tz.utc).isoformat(timespec="seconds"),
+                        }, ensure_ascii=False) + chr(10))
+                except Exception as trace_e:  # noqa: BLE001 - 留痕失败不影响拦截，但必须显性
+                    degrade(
+                        "agentic_write.l1_trace",
+                        "L1 替换轨迹落盘失败，本批执行记录缺失",
+                        trace_e,
+                    )
+                if getattr(self, "console", None) is not None:
+                    self.console.print(
+                        f"[cyan]L1 禁词硬拦截：{len(_l1_replaced)} 类替换"
+                        f"（{_l1_replaced[:3]}…）[/cyan]"
+                    )
+        except Exception as hyg_e:  # noqa: BLE001 - 硬拦截失败降级原文，但必须显性
+            degrade(
+                "agentic_write.l1_block",
+                "L1 禁词硬拦截执行失败，本章回退为仅 LLM 门禁",
+                hyg_e,
+            )
+
         try:
             from agent.core.anti_ai.detector import AIFlavorScanner
             from agent.core.anti_ai.rewriter import DeslopRewriter

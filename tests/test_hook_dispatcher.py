@@ -80,39 +80,10 @@ def test_dispatch_refuses_upper_layer_spec(tmp_path: Path) -> None:
     assert "R6" in msg and "agent.workflows" in msg
 
 
-def test_m5_check_prompt_includes_genre_rules(tmp_path: Path) -> None:
-    """M5 质量校验 prompt 注入题材层质量规则文本（mock 捕获）"""
-    from unittest.mock import MagicMock
-
-    from agent.workflows.writing.m5_write_chapter import M5WriteChapterWorkflow
-
-    from types import SimpleNamespace
-
-    llm = MagicMock()
-    llm.chat.return_value = SimpleNamespace(
-        text='{"overall_pass": true, "rules": [], "suggestions": ""}'
-    )
-    wf = M5WriteChapterWorkflow(project_dir=tmp_path, llm_client=llm)
-    ctx = {
-        "world_info": {
-            "tone": "热血",
-            "chapter_length": 3000,
-            "genre": "xiuxian",
-            "characters_fingerprint": "",
-        },
-        "pressure_stage": "发展",
-        "characters_fingerprint": "",
-        "chapter_num": 1,
-    }
-    chapter = "主角运转功法，丹田灵气翻涌，一举突破至炼气三层。"
-    wf._quality_check_and_revise(ctx, chapter)
-
-    called = llm.chat.call_args_list[0]
-    req = called[0][0]
-    check_prompt = req.messages[1]["content"]
-    assert "xiuxian" in check_prompt
-    # 题材层质量规则文本应被注入（如 G-01 境界推进频率）
-    assert "境界推进" in check_prompt or "G-01" in check_prompt
+# 2026-09-16：原 `test_m5_check_prompt_includes_genre_rules`（经
+# `_quality_check_and_revise` 捕获质检 prompt 含题材层规则）已随废弃写章入口删除
+# （登记单 20260916_闸门信号可达性普查 §三.C2）。题材规则的**定义与加载**仍由
+# genre_pack 承担，下方用例覆盖其落盘语义。
 
 
 def test_load_genre_template_writes_when_absent(tmp_path: Path) -> None:
