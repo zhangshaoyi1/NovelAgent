@@ -330,7 +330,13 @@ class AgenticWriteWorkflow:
             open_debts=open_debts_text,
         )
         # ---- 长线一致性底座（设计稿第一期·A/D）：批间复规划裁决 + 三账注入 ----
-        # 批间复规划的下一批方向（规划者缺席/未复规划 → 空跳过）；
+        # ---- 设计产出（2026-09-16）：本章设计意图 + 弧线轨迹 + 达标判据 ----
+        # 「只设计不通知」的写手侧对症：写手必须知道本章设计上要表现什么、
+        # 弧线这一跳是设计好的（不是前后不一致）、批末体检拿什么尺子量。
+        # 与评委端同源（`core/story/design_brief`），禁止各端自行抽取。
+        design_block = str(ctx.get("design_brief") or "").strip()
+        if design_block:
+            task += "\n\n" + design_block
         directive = ctx.get("batch_directive") or {}
         _d_focus = str(directive.get("focus") or "").strip()
         _d_rationale = str(directive.get("rationale") or "").strip()

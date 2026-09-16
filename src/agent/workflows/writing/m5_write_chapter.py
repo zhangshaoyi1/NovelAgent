@@ -631,6 +631,12 @@ class M5WriteChapterWorkflow(
             rag_context=rag_context_text,
             open_debts=open_debts_text,
         )
+        # 设计产出（2026-09-16）：本章设计意图 + 弧线轨迹 + 达标判据。
+        # 与 autowrite 主路径（agentic_write）及评委端同源（design_brief），
+        # 避免「一条路径注入了、另一条没注入」的接线漂移。
+        _design_block = str(ctx.get("design_brief") or "").strip()
+        if _design_block:
+            user_prompt += "\n\n" + _design_block
 
         # P0-1（KV 缓存感知）：system 段按 stable → semi → volatile 排序，
         # 使跨章生成时稳定前缀（系统规则/文风/硬约束）尽量命中 provider 端 prompt cache。

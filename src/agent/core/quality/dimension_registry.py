@@ -251,7 +251,11 @@ DIMENSIONS: dict[str, DimensionSpec] = {
         required=True, source=SourceKind.LLM,
         # LLM 只看当前窗口章节 → 统计口径 WINDOW；末窗回滚可修 → repairability=WINDOW
         repairability=Repairability.WINDOW, stat_scope=StatScope.WINDOW,
-        prompt_label="人设稳定性（角色言行/动机是否前后矛盾，逐项列举崩坏处数量）",
+        prompt_label=(
+            "人设稳定性（角色言行/动机是否与角色档案、**弧光轨迹**冲突——"
+            "沿弧光登记轨迹的有序推进属设计内成长，**不算矛盾**；"
+            "仅倒退/跳档/无契机/与档案直接冲突才计；逐项列举崩坏处数量）"
+        ),
         safe_default=0.0, summary_reason="人设出现前后矛盾，建议核对角色档案并统一言行/动机",
         counted_by_issues=True,
     ),
@@ -260,7 +264,11 @@ DIMENSIONS: dict[str, DimensionSpec] = {
         unit=Unit.COUNT, direction=Direction.LOWER_BETTER, default_threshold=0.0,
         required=True, source=SourceKind.LLM,
         repairability=Repairability.WINDOW, stat_scope=StatScope.WINDOW,
-        prompt_label="设定一致性（境界/金手指/世界观规则是否被打破，逐项列举冲突数量）",
+        prompt_label=(
+            "设定一致性（境界/金手指/世界观规则是否被打破——"
+            "以**设定台账＋设计意图**为准，设计轨内允许的变化不算打破；"
+            "逐项列举冲突数量）"
+        ),
         safe_default=0.0, summary_reason="设定被打破，建议回查世界观设定并修复冲突",
         counted_by_issues=True,
     ),

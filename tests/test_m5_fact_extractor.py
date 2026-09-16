@@ -137,3 +137,52 @@ def test_colorado_facts_evidence_nonempty() -> None:
 
 def test_empty_body_returns_empty() -> None:
     assert _extract_chapter_facts(7, "", _CTX) == ([], [], [])
+
+
+# ============================================================
+# 设计维度事实（2026-09-16）——「除了性格之外，别的都不是一成不变的」
+# ============================================================
+# 背景（登记单 20260916_角色弧光规格未建立与设计内转变被误判）：
+# 旧抽取器只有 presence/state/location/holder/count 五类 ⇒ 境界提升、关系演变、
+# 心性转变这些"设计上明确要求推进"的维度**从不落盘** ⇒ 后续章节永远拿初始档案
+# 说话（"已是铸府期"仍按杂役写），且评委据此把设计内推进判成前后矛盾 ⇒ 整窗回退。
+# 下面四条把「设计维度必须结账」钉成红线。
+
+
+def test_realm_advance_is_captured() -> None:
+    """境界推进要落盘为 character/<名>.realm —— 设计上「境界：杂役→归一期」。"""
+    body = "林砚闭关三月，终于突破到栖气期，神识也随之大涨。"
+    facts = _facts(body)
+    realms = {s: v for _d, s, f, v, _e in facts if f == "realm"}
+    assert realms.get("林砚") == "栖气期", facts
+
+
+def test_relation_change_is_captured() -> None:
+    """关系演变要落盘为 character/<名>.relation —— 档案「关系」段登记的是演变方向。"""
+    body = "此战之后，林砚与苏晚正式结盟。"
+    facts = _facts(body)
+    rels = {s: v for _d, s, f, v, _e in facts if f == "relation"}
+    assert rels.get("林砚") == "结盟", facts
+
+
+def test_disposition_shift_is_captured() -> None:
+    """心性转变要落盘为 character/<名>.disposition —— 对应「心性：隐忍→果敢」。"""
+    body = "目睹宗门倾轧，林砚终于明白退让换不来活路。"
+    facts = _facts(body)
+    disp = {s for _d, s, f, _v, _e in facts if f == "disposition"}
+    assert "林砚" in disp, facts
+
+
+def test_negated_design_change_is_not_a_fact() -> None:
+    """否定式不算推进（与既有 _negated 守卫同口径）。"""
+    body = "林砚没有突破到栖气期。"
+    facts = _facts(body)
+    assert [f for f in facts if f[2] == "realm"] == [], facts
+
+
+def test_design_facts_subject_is_entity_not_chapter() -> None:
+    """设计维度事实同样遵守实体锚定不变式（subject 绝不是章节号）。"""
+    body = "林砚突破到开玄期，与苏晚和解，也终于放下旧怨。"
+    for _d, subject, field, _v, _e in _facts(body):
+        if field in ("realm", "relation", "disposition"):
+            assert not _CH_NUM_RE.match(subject), f"{field} 的 subject 不得是章节号：{subject!r}"

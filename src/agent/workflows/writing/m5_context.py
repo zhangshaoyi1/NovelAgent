@@ -8,6 +8,9 @@ from typing import Any
 from agent.core.registry.genre_pack import first_genre, first_genre_label
 from agent.core.progress import next_chapter
 from agent.core.story.volume import estimate_chapters
+# 设计产出供给单源（2026-09-16）：写手/评委/落盘三端共用同一装配，
+# 消除"设计只进不出"。本模块只渲染，不产生真源。
+from agent.core.story.design_brief import build_design_brief
 from agent.core.infra.degrade import degrade
 import frontmatter
 
@@ -268,6 +271,25 @@ class M5ContextMixin:
             subline_data.get("content", ""), pressure_stage
         )
 
+        # ---- 设计产出供给（2026-09-16，登记单 20260916_角色弧光规格未建立…）----
+        # 「凡设计，三端可达」的写手侧：此前写手只拿到**当前**路线节点的成长预期，
+        # 看不到前后档（于是临到节点才转换、显得突兀），也从未拿到**达标判据**
+        # （写完才知道被打回）。此处与评委端、落盘端共用同一装配
+        # （``core/story/design_brief``），禁止各端自行抽取。
+        design_brief_text = ""
+        try:
+            design_brief_text = build_design_brief(
+                self.project_dir,
+                chapter_num,
+                subline_id=subline_id,
+            ).render_for_writer()
+        except Exception as e:  # noqa: BLE001 - 设计产出缺失不得阻断写章
+            degrade(
+                "m5.context.design_brief",
+                "设计产出装配失败，写手看不到设计轨/达标判据（回退风险回升）",
+                e,
+            )
+
         return {
             "world_info": world_info,
             "subline_id": subline_id,
@@ -317,6 +339,9 @@ class M5ContextMixin:
             "ledger_context": self._load_ledger_context(subline_data, chapter_num),
             # ---- 完本收束清单（设计稿第一期·E）：仅结局模式装载（缺/空 → ""）----
             "closure_text": self._load_closure_text() if bool(progress.get("ending_mode", False)) else "",
+            # ---- 设计产出（2026-09-16）：本章设计意图 + 弧线轨迹 + 达标判据 ----
+            # 与评委端同源的预渲染文本块（`render_for_writer`）；缺失为空串。
+            "design_brief": design_brief_text,
         }
     def _load_batch_directive(self) -> dict[str, Any]:
         """读批间复规划裁决（.state/batch_directive.json）；缺失/损坏 → 空降级。"""

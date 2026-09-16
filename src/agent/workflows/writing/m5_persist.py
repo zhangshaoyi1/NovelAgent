@@ -69,6 +69,40 @@ _TAKE_VERBS: tuple[str, ...] = (
 )
 _TAKE_ALT = "|".join(re.escape(s) for s in _TAKE_VERBS)
 
+# ---------------------------------------------------------------------------
+# 设计维度事实（2026-09-16）——「除了性格之外，别的都不是一成不变的」
+# ---------------------------------------------------------------------------
+# 背景（作者 2026-09-16 命题 + 登记单 20260916_角色弧光规格未建立与设计内转变
+# 被误判）：旧抽取器只有 presence/state/location/holder/count 五类 ⇒
+# **境界提升、关系演变、心性转变**这些"设计上明确要求推进"的维度**从不落盘**。
+# 后果是双向的：
+#   1) 后续章节永远拿**初始档案**说话（"已是铸府期"仍按杂役写、"已和解"仍按
+#      排斥写）⇒ 与已发生剧情矛盾 ⇒ 真·设定冲突；
+#   2) 更常见的是评委据此判「设计内推进 = 前后矛盾」⇒ 整窗回退（本次事故主因）。
+# 因此新增三类事实，主体一律锚定**角色名**（与 P0-2 实体锚定同口径），
+# 供后续章节注入新状态、供评委在「沿设计轨推进」时免罪。
+_REALM_VERBS: tuple[str, ...] = (
+    "突破", "晋升", "踏入", "进阶", "跨入", "凝成", "炼成", "登临", "修成",
+)
+_REALM_ALT = "|".join(re.escape(s) for s in _REALM_VERBS)
+#: 境界名（通用形态：X期/X境/X阶/X层，1-4 字）；不依赖某一本书的专用名词表。
+_REALM_NAME_RE = re.compile(r"([\u4e00-\u9fa5]{1,4}(?:期|境|阶|层))")
+
+#: 关系演变动词（结盟/反目/和解…）——对应角色档案「关系」段登记的演变方向。
+_RELATION_VERBS: tuple[str, ...] = (
+    "结盟", "结拜", "拜师", "反目", "决裂", "和解", "认可", "投靠", "效忠",
+    "背叛", "和解", "化敌为友", "并肩",
+)
+_RELATION_ALT = "|".join(re.escape(s) for s in _RELATION_VERBS)
+
+#: 心性/立场转变（对应路线节点「心性：隐忍→果敢」）——作者命题里的"性格"那一项。
+#: 只收**正向、已发生**的转变表述；「不再/没有」这类否定式由 _negated 守卫挡住，
+#: 故此处刻意**不收录**否定前缀写法。
+_DISPOSITION_VERBS: tuple[str, ...] = (
+    "明白", "懂得", "醒悟", "释然", "放下", "决心", "立志", "坦然", "坚定",
+)
+_DISPOSITION_ALT = "|".join(re.escape(s) for s in _DISPOSITION_VERBS)
+
 # ---- 计数：必须「数量 + 2~4 字实体性名词」，否则判为量词噪音 ----
 # 旧版实况：``一道缝``（「裂开一道缝」）、``一根``（「像一根钉入大地的桩」）被当成
 # 计数事实、主体还写成章号。现要求名词以实体性后缀收尾（人/符/剑/丹……），
@@ -286,12 +320,57 @@ def _extract_chapter_facts(
         if noun:
             _emit("world", noun, "count", m.group(1), m.group(0))
 
-    # 6) must_carry：结尾段含叙事道具的句子（匣/锁/钥匙/符……），保权威口径
+    # 6) 设计维度·境界推进（≤3）：character/<角色名>.realm
+    #    设计上「境界：杂役→归一期」是明确要求的推进；不落盘则后续章节永远按
+    #    初始境界写，评委据此判「设定被打破」（设计内推进被当成冲突）。
+    for name in characters:
+        if _count_field("realm") >= 3:
+            break
+        # 组 1 = 动词（用于否定守卫定位），组 2 = 境界名。
+        # 中间允许逗号（「林砚闭关三月，终于突破到栖气期」），但不跨句读。
+        m = re.search(
+            rf"{re.escape(name)}[^。；！？\n]{{0,12}}?({_REALM_ALT})(?:到|至|为|了)?"
+            rf"[^。；！？\n]{{0,6}}?({_REALM_NAME_RE.pattern})",
+            body,
+        )
+        if not m or _negated(body, m.start(1)):
+            continue
+        _emit("character", name, "realm", m.group(2), m.group(0))
+
+    # 7) 设计维度·关系演变（≤4）：character/<角色名>.relation
+    #    角色档案「关系」段登记的是**演变方向**（"从排斥到认可"）；不落盘则
+    #    后续仍按旧关系写，与已发生剧情矛盾（真冲突），且评委无从判断这是设计。
+    for name in characters:
+        if _count_field("relation") >= 4:
+            break
+        m = re.search(
+            rf"{re.escape(name)}[^。；！？\n]{{0,16}}?({_RELATION_ALT})",
+            body,
+        )
+        if not m or _negated(body, m.start(1)):
+            continue
+        _emit("character", name, "relation", m.group(1), m.group(0))
+
+    # 8) 设计维度·心性转变（≤3）：character/<角色名>.disposition
+    #    对应路线节点「心性：隐忍→果敢」。这是**被误判成"人设崩坏"最多**的一类
+    #    ——必须在写完后落盘为新状态，否则弧线每推进一次就被判一次崩坏。
+    for name in characters:
+        if _count_field("disposition") >= 3:
+            break
+        m = re.search(
+            rf"{re.escape(name)}[^。；！？\n]{{0,16}}?({_DISPOSITION_ALT})",
+            body,
+        )
+        if not m or _negated(body, m.start(1)):
+            continue
+        _emit("character", name, "disposition", m.group(0)[:40], m.group(0))
+
+    # 9) must_carry：结尾段含叙事道具的句子（匣/锁/钥匙/符……），保权威口径
     item_hits = [s for s in sentences if _ITEM_PATTERN.search(s)]
     for s in item_hits[-2:]:
         must_carry.append(s[:120])
 
-    # 7) 未闭环动作（≤3）：下一章约束（待续口径）
+    # 10) 未闭环动作（≤3）：下一章约束（待续口径）
     for s in sentences:
         if _OPEN_LOOP_PATTERN.search(s):
             entry = "待续：" + s[:110]
@@ -300,7 +379,7 @@ def _extract_chapter_facts(
         if len(constraints) >= 3:
             break
 
-    # 8) must_carry 兜底：仍为空时取结尾最后一句（结尾状态永远必须携带）
+    # 11) must_carry 兜底：仍为空时取结尾最后一句（结尾状态永远必须携带）
     if not must_carry and sentences:
         must_carry.append(sentences[-1][:120])
 

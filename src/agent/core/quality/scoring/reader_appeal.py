@@ -50,6 +50,9 @@ from agent.core.quality.dimension_registry import (
     safe_default_for,
 )
 from agent.core.quality.eval_evidence import EvalEvidence, build_evidence, build_degraded_evidence
+# 设计产出供给单源（2026-09-16）：写手/评委/落盘三端共用同一份装配。
+# 「只设计不通知」是回退死循环的判据侧成因——评委必须与写手拿到同一设计轨。
+from agent.core.story.design_brief import build_design_brief
 
 
 # ============================================================
@@ -162,78 +165,15 @@ _CANON_DIMS = {
 # 正是本项目最忌讳的"旁路失败当主结论成立"）。
 _EVAL_PER_CHAPTER_CHARS = 2500
 _PROMPT_CHARS = _EVAL_PER_CHAPTER_CHARS * EVAL_WINDOW_CHAPTERS       # 12500 = 整窗正文
-_CANON_PROMPT_CHARS = _PROMPT_CHARS + 4000                          # 16500 = 整窗正文 + 设定真源
-
-
-def _extract_md_section(content: str, title: str) -> str:
-    """取 `## <title>` 小节正文（到下一个 `##` 为止）；不存在返回空串。"""
-    m = re.search(rf"^##\s*{re.escape(title)}\s*\n", content, re.M)
-    if not m:
-        return ""
-    rest = content[m.end():]
-    nxt = re.search(r"^##\s", rest, re.M)
-    return rest[: nxt.start()] if nxt else rest
-
-
-def _gather_canon(project_dir: Path) -> str:
-    """汇总设定真源：world.md 冻结设定（境界体系/金手指）+ 角色状态/时间线。
-
-    与写作端 m5_context 的真源口径一致（状态段落 → 关键词兜底 → 基础信息），
-    让审端与写端对着同一份事实说话。文件缺失/读取失败静默跳过（真源是
-    增强信息，不阻断评分）。
-    """
-    parts: list[str] = []
-    world = project_dir / "world.md"
-    if world.exists():
-        try:
-            content = world.read_text(encoding="utf-8")
-        except OSError:
-            content = ""  # noqa: SILENT_DEGRADE - 增强信息，缺失静默跳过（见 docstring）
-        for title, tag in (("修炼境界体系", "境界体系（冻结）"), ("金手指登记", "金手指登记")):
-            section = _extract_md_section(content, title).strip()
-            if section:
-                parts.append(f"【设定真源·{tag}】{section[:1200]}")
-    chars_dir = project_dir / "characters"
-    if chars_dir.exists():
-        bits: list[str] = []
-        for p in sorted(chars_dir.glob("*.md"))[:8]:
-            try:
-                card = p.read_text(encoding="utf-8")
-            except OSError:
-                continue  # noqa: SILENT_DEGRADE
-            status = ""
-            for t in ("状态", "当前状态", "生死", "存活状态"):
-                status = _extract_md_section(card, t).strip()
-                if status:
-                    break
-            if not status:
-                if re.search(r"已故|去世|死亡|牺牲|阵亡|陨落|辞世", card):
-                    status = "（档案正文提及已故/牺牲，按已故处理）"
-                elif re.search(r"在世|存活|健在", card):
-                    status = "（档案正文提及在世/存活）"
-            timeline = (
-                _extract_md_section(card, "时间线").strip()
-                or _extract_md_section(card, "关键时间线").strip()
-                or _extract_md_section(card, "生平").strip()
-            )
-            basis = _extract_md_section(card, "基础").strip()[:150]
-            info = "；".join(
-                b for b in (f"状态：{status[:120]}" if status else "",
-                            f"时间线：{timeline[:160]}" if timeline else "",
-                            f"基础：{basis}" if basis else "") if b
-            )
-            if info:
-                bits.append(f"- {p.stem}：{info}")
-        if bits:
-            parts.append(
-                "【角色真源（判定角色状态/言行矛盾时以此为准）】\n" + "\n".join(bits)
-            )
-    if not parts:
-        return ""
-    return (
-        "【设定真源】以下为既定设定与角色状态，正文与之**冲突**才计 issue；"
-        "评委不知道但设定允许的内容不算不一致。\n" + "\n".join(parts)
-    )
+# 设计产出预算（2026-09-16）：设定真源 + 角色真源（含内核/弧光/关系演进）
+# + 弧线轨迹 + 章级设计意图 + 达标判据。
+#
+# 此前只有 3 个「一致性类」维度配了 4000 字符，且内容**仅** 状态/时间线/基础
+# ——设计意图（弧光、关系演变、章级意图）在审端**零引用**，于是写手每轮被要求
+# 写「兼济」、评委每轮被要求抓「前后矛盾」且看不到这是设计 ⇒ 必然回退。
+# 现改为**所有维度**都注入完整设计产出（`design_brief`，SSOT），预算随之上调。
+_DESIGN_PROMPT_CHARS = 8000
+_CANON_PROMPT_CHARS = _PROMPT_CHARS + _DESIGN_PROMPT_CHARS          # 20500 = 整窗正文 + 设计产出
 
 
 def _count_gated_issues(issues: list) -> float:
@@ -415,6 +355,9 @@ class ReaderAppealScorer:
         )
         # G2：保存各维度最近一次结构化评分结果（含 issues/rationale），供报告展示。
         self._last_eval: dict[str, dict] = {}
+        # 设计产出真相块缓存（2026-09-16）：同一轮体检 5 个维度共用一份装配，
+        # 避免重复读 plan.json / 角色档案 / 设定台账。值可为空串（= 真源缺失）。
+        self._design_cache: dict[str, str] = {}
 
     @property
     def llm(self) -> Gateway:
@@ -440,7 +383,7 @@ class ReaderAppealScorer:
             prompt = (
                 f"请评估以下小说片段在「{_EVAL_DIM_LABELS.get(dimension, dimension)}」"
                 f"维度上的表现。\n\n"
-                f"{text[:_CANON_PROMPT_CHARS if dimension in _CANON_DIMS else _PROMPT_CHARS]}"
+                f"{text[:_CANON_PROMPT_CHARS]}"
             )
             _messages = [
                 {"role": "system", "content": pm.get("quality.reader_appeal_eval").system},
@@ -533,10 +476,15 @@ class ReaderAppealScorer:
         return clamp_value(dimension, val)
 
     def _gather_for_eval(self, dimension: str, project_dir: str) -> str:
-        """收集评分所需文本（最新 ``eval_window`` 章正文 + 世界观简介/设定真源）。
+        """收集评分所需文本（最新 ``eval_window`` 章正文 + 设计产出真源）。
 
         D（2026-09-15）：章数取自 ``self.eval_window``（= 回滚窗口，SSOT
         ``EVAL_WINDOW_CHAPTERS``），不再写死 3——评委看到的必须就是要判的那几章。
+
+        Q-设计供给（2026-09-16，登记单 ``20260916_角色弧光规格未建立与设计内转变
+        被误判``）：**所有维度**都注入完整设计产出（设定/角色/弧线轨迹/章级意图/
+        判据），而不再是只给 3 个一致性维一个贫瘠的「状态/时间线/基础」。
+        「只设计不通知」正是回退死循环的判据侧成因：写手拿得到设计轨、评委拿不到。
         """
         d = Path(project_dir)
         parts: list[str] = []
@@ -547,14 +495,20 @@ class ReaderAppealScorer:
             idx = content.find("## 故事简介")
             if idx >= 0:
                 parts.append("【世界观简介】" + content[idx: idx + 400])
-        # 设定真源（2026-09-12，五灵破归档 31 次回退复盘）：一致性类维度必须
-        # 对照真源判定——此前评委只拿 400 字简介对 3 章正文自由裁量，
-        # 长窗口上恒能挑出"不一致"（多为评委不知道设定），造成假性不达标 →
-        # 整窗 5 章回退。注入冻结设定与角色状态后，只有与真源冲突才计 issue。
-        if dimension in _CANON_DIMS:
-            canon = _gather_canon(d)
-            if canon:
-                parts.insert(1, canon)
+        # ---- 设计产出（2026-09-16）：三端同源，禁止各端自行抽取 ----
+        # 装配一次、全部维度共用（同一窗口下 5 个维度取值相同，避免重复读盘）。
+        design = self._design_facts(project_dir)
+        if design:
+            parts.insert(1, design)
+        elif dimension in _CANON_DIMS:
+            # 一致性类维度**必须**有设计真源才能判"是否与设计冲突"。
+            # 真源缺失时不是"没问题"，而是"判不了"——显性化，禁止静默通过
+            # （与「失败必须显性化，绝不能被解读为通过」同一纪律）。
+            degrade(
+                "reader_appeal.canon_without_design",
+                f"维度 {dimension} 需要设计真源，但设计产出为空 ⇒ 本次判定缺前提"
+                f"（不是『无冲突』）",
+            )
         # 整窗正文（``eval_window`` 章，与回滚窗口同源）——复用公共 helper（G6，消除根因 B6-3 重复实现）
         for f in take_chapter_files(
             list_chapter_files(project_dir), side="last", n=self.eval_window
@@ -565,6 +519,30 @@ class ReaderAppealScorer:
                 continue  # noqa: SILENT_DEGRADE
             parts.append(f"【{f.stem}】\n{text[:_EVAL_PER_CHAPTER_CHARS]}")
         return "\n\n".join(parts)
+
+    def _design_facts(self, project_dir: str) -> str:
+        """设计产出真相块（进程内按项目缓存一次；失败降级为空串）。
+
+        缓存理由：一轮体检会按维度多次调用 ``_gather_for_eval``，同一窗口的
+        设计产出完全相同；不缓存等于把 plan.json / 角色档案 / 台账重复读 5 遍。
+        缓存键含项目路径，避免跨书串味。
+        """
+        key = str(project_dir)
+        cached = self._design_cache.get(key)
+        if cached is not None:
+            return cached
+        try:
+            brief = build_design_brief(project_dir, eval_window=self.eval_window)
+            rendered = brief.render_for_judge()
+        except Exception as e:  # noqa: BLE001 - 设计产出装配失败不得阻断评分
+            degrade(
+                "reader_appeal.design_brief",
+                "设计产出装配失败，评委看不到设计轨（回退误判风险回升）",
+                e,
+            )
+            rendered = ""
+        self._design_cache[key] = rendered
+        return rendered
 
     # ---------------------------------------------------------- 路径 2：迷爱看 6 维
     def score_chapter(
@@ -599,13 +577,14 @@ class ReaderAppealScorer:
             context += (
                 f"【设定真源】以下为既定设定（境界/金手指/角色状态），"
                 f"正文与之**冲突**才算设定问题；设定允许的内容不算新颖度低分。"
-                f"\n{setting_canon[:1200]}\n"
+                f"\n{setting_canon[:2000]}\n"
             )
         if character_growth:
             context += (
                 f"【前情与角色成长】本章之前已发生的剧情与角色状态轨迹"
-                f"（判断人物弧光时以此为准，单章信息不足不得直接否定弧光）。"
-                f"\n{character_growth[:800]}\n"
+                f"（判断人物弧光时以此为准，单章信息不足不得直接否定弧光；"
+                f"**沿弧线轨迹的有序推进属设计内变化，不计人物崩塌**）。"
+                f"\n{character_growth[:1600]}\n"
             )
         if prev_handoff:
             context += (
@@ -614,9 +593,10 @@ class ReaderAppealScorer:
             )
         if chapter_intent:
             context += (
-                f"【本章细纲意图】本章大纲设计的钩子/情节点目标"
-                f"（判断钩子强度/爽点密度时参照此意图评估达成度）。"
-                f"\n{chapter_intent[:600]}\n"
+                f"【本章细纲意图与达标判据】本章大纲设计的钩子/情节点目标，"
+                f"以及本作达标判据（判断钩子强度/爽点密度/达标度时参照此口径，"
+                f"勿自设更严标准）。"
+                f"\n{chapter_intent[:2000]}\n"
             )
         user_prompt = (
             f"{context}\n【本章正文】\n{chapter_text[:10000]}"
@@ -814,6 +794,34 @@ def _load_eval_appeal_kwargs(
                 break
     except Exception as e:  # noqa: BLE001 - 细纲缺失降级为空
         degrade("reader_appeal.eval_intent", "批末评估本章意图装载失败，降级为空", e)
+
+    # 4) 设计产出（2026-09-16）：弧线轨迹 + 章级设计意图 + 达标判据。
+    #    上面 1)–3) 只覆盖「设定/前情/情节点」，**不含设计意图**（弧光轨迹、
+    #    本窗口应处于哪一档）⇒ 迷爱看 6 维里的 character_arc 照样可能把
+    #    「设计内成长」看成「工具人/无成长」。此处补上与写手链同源的装配。
+    try:
+        brief = build_design_brief(d, eval_window=None)
+        if brief.route_track:
+            kw["character_growth"] = (
+                f"{kw.get('character_growth', '')}\n\n"
+                f"【角色弧线轨迹（设计轨：沿此推进是设计内变化，不算人物崩塌）】\n"
+                f"{brief.route_track}"
+            )[:2000]
+        if brief.chapter_intent:
+            kw["chapter_intent"] = (
+                f"{kw.get('chapter_intent', '')}\n\n"
+                f"【本章设计意图（规划端登记）】\n{brief.chapter_intent}"
+            )[:1600]
+        if brief.rubric:
+            kw["chapter_intent"] = (
+                f"{kw.get('chapter_intent', '')}\n\n【达标判据】\n{brief.rubric}"
+            )[:2000]
+    except Exception as e:  # noqa: BLE001 - 设计产出缺失降级为空（回退误判风险回升）
+        degrade(
+            "reader_appeal.eval_design",
+            "批末评估设计产出装载失败，评委看不到设计轨（回退误判风险回升）",
+            e,
+        )
 
     return kw
 
