@@ -273,7 +273,19 @@ class _PipelineAgentsMixin:
             # 2026-09-15：判据由「单看 report.rolled_back」改为**双账本对账**
             # （见 _count_rollback）——实测单点失效时 5 次真实回退一次都没记账，
             # 熔断护栏整体失效、回退无限进行。
-            self._count_rollback(report, fail_txt)
+            counted = self._count_rollback(report, fail_txt)
+            # 2026-09-17（登记单 ``20260917_熔断计数无断链归零_陈旧置位自锁``）：
+            # ``consecutive`` 是「**连续**回退」计数，而 ``reset()`` 原先**只在
+            # ``gate == "pass"`` 触发** ⇒ 一次置位即永久生效：陈旧 ``tripped()``
+            # 每轮到检查点即 ``break``，而解锁又要求检查点 ``pass`` ⇒ **死锁**。
+            # 实测《灵荒薪传》``consecutive=9`` 冻结 5.5h（账本 mtime 停在 11:06:40），
+            # 下午三轮**每轮只写 5 章**（= ``rolling_eval_every``）即被截断，
+            # 且报出的原因是 11:06 的**旧原因**（"人设稳定=2.0、设定一致=2.0"）。
+            # 修法：本轮检查点**未发生任何回退** ⇒ 「连续回退」链条断裂 ⇒ 归零。
+            # 安全性：``report.rolled_back`` 为真时 ``_count_rollback`` 恒返回 ≥1
+            # （宁多记不漏记），故「返回 0」必为「确无回退」，不会误杀真实熔断。
+            if counted <= 0:
+                budget.reset()
             evaluator_gave_up = bool(getattr(report, "escalated", False))
             if budget.tripped() or evaluator_gave_up:
                 reason = (

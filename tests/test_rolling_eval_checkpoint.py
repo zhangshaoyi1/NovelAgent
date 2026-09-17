@@ -214,3 +214,115 @@ def test_batch_no_stale_snapshot_regression(tmp_path: Path) -> None:
     new_target = live + 5           # CLI 实时换算
     assert not (live < stale_target)  # 旧算法：循环条件为假 → 秒退
     assert live < new_target          # 新算法：正常推进
+
+
+# ---------------- 2026-09-17：「未回退即断链归零」解陈旧熔断自锁 ----------------
+#
+# 事故（《灵荒薪传》，登记单 ``20260917_熔断计数无断链归零_陈旧置位自锁``）：
+# ``consecutive`` 冻结在 9（账本 mtime 停在 11:06:40）后 ``reset()`` 从不触发
+# —— 它原先**只在 ``gate == "pass"`` 调用**。于是每个检查点读到陈旧
+# ``tripped()``（``9 > 3``）⇒ 批内 ``break`` ⇒ 每轮只写 ``rolling_eval_every``(=5)
+# 章即被截断（下午三轮各 +5、净推进 15 章），且**上报的是 11:06 的旧原因**。
+# 自锁的本质：解锁要求检查点 ``pass``，而每次到达检查点都被陈旧值拦下。
+#
+# 语义修正：``consecutive`` 是「**连续**回退」计数 ⇒ 本轮检查点**未发生任何回退**
+# 时链条即断裂，必须归零。安全性依据：``report.rolled_back`` 为真时
+# ``_count_rollback`` 恒返回 ≥1（宁多记不漏记），故「返回 0」=「确无回退」。
+
+
+def test_stale_budget_released_when_checkpoint_has_no_rollback(tmp_path: Path) -> None:
+    """陈旧置位必须在「本轮确无回退」的检查点上解锁，且不得再报旧原因。"""
+    from agent.core.quality.rollback_budget import RollbackBudget
+
+    for _ in range(9):
+        RollbackBudget.load(tmp_path).bump(target_chapter=37, reason="陈旧置位")
+    seeded = RollbackBudget.load(tmp_path)
+    assert seeded.consecutive == 9 and seeded.tripped()
+
+    ev = _FakeEvaluator(passed=False, rolled_back=False, escalated=True)
+    p = _pipeline(tmp_path, ev)
+    assert p._rolling_eval_checkpoint() is False, "硬指标不达标仍应中断本批（不得放行质量）"
+
+    b = RollbackBudget.load(tmp_path)
+    assert b.consecutive == 0, "本轮未发生任何回退 ⇒ 「连续回退」链条必须断裂归零"
+    assert b.same_target_streak == 0, "同窗口连击计数同样应随链条断裂而清零"
+    assert not b.tripped()
+    assert "超过上限" not in p._rolling_escalation_reason, (
+        "不得再把陈旧熔断的 11:06 旧原因当作本轮原因上报"
+    )
+
+
+def test_stale_budget_released_without_escalation(tmp_path: Path) -> None:
+    """不带 escalated 的 block 检查点同样解锁（走「未达标」分支而非熔断分支）。"""
+    from agent.core.quality.rollback_budget import RollbackBudget
+
+    for _ in range(9):
+        RollbackBudget.load(tmp_path).bump(target_chapter=37, reason="陈旧置位")
+
+    p = _pipeline(
+        tmp_path, _FakeEvaluator(passed=False, rolled_back=False, escalated=False)
+    )
+    assert p._rolling_eval_checkpoint() is False
+    assert RollbackBudget.load(tmp_path).consecutive == 0
+    assert not p._rolling_escalation_reason, "无回退且未放弃处置时不应上报熔断"
+
+
+def test_stale_budget_release_does_not_disable_breaker(tmp_path: Path) -> None:
+    """解锁**不得**误伤熔断：随后真实连续回退仍须累计到上限并停批上报。"""
+    from agent.core.quality.rollback_budget import RollbackBudget
+
+    for _ in range(9):
+        RollbackBudget.load(tmp_path).bump(target_chapter=37, reason="陈旧置位")
+
+    # 第 1 次：确无回退 ⇒ 解锁（归零）
+    p = _pipeline(
+        tmp_path, _FakeEvaluator(passed=False, rolled_back=False, escalated=False)
+    )
+    assert p._rolling_eval_checkpoint() is False
+    assert RollbackBudget.load(tmp_path).consecutive == 0
+
+    # 随后每次都是**真实回退** ⇒ 必须重新累计到 limit(3) 之上并熔断
+    q = _pipeline(
+        tmp_path, _FakeEvaluator(passed=False, rolled_back=True, escalated=False)
+    )
+    for i in range(4):
+        q._rolling_eval_checkpoint()
+        assert RollbackBudget.load(tmp_path).consecutive == i + 1, (
+            f"第 {i + 1} 次真实回退计数不符 —— 边界归零误伤了正常累计"
+        )
+    assert "超过上限" in q._rolling_escalation_reason, (
+        "解锁后真实连续回退仍必须触发熔断，不得被顺带关掉"
+    )
+
+
+def test_batch_end_site_pairs_count_with_release() -> None:
+    """两处成对（纪律）：批末预算块也必须「未回退即归零」。
+
+    滚动检查点已修；若批末块不同步，这条自锁会从另一个入口原样复现。
+    本断言是**锚点契约**：找不到判定点即说明锚点漂移，必须重新取证（不许直接删）。
+    """
+    import ast
+    from pathlib import Path as _P
+
+    src_path = (
+        _P(__file__).resolve().parents[1]
+        / "src/agent/workflows/pipeline/agentic_pipeline.py"
+    )
+    tree = ast.parse(src_path.read_text(encoding="utf-8"))
+    anchor = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.If):
+            continue
+        test = node.test
+        if not isinstance(test, ast.Compare) or not isinstance(test.left, ast.Call):
+            continue
+        if getattr(test.left.func, "attr", "") == "_count_rollback":
+            anchor = node
+            break
+    assert anchor is not None, (
+        "未找到批末 `_count_rollback(...) <= 0` 判定点（锚点漂移，须重新取证能力新家）"
+    )
+    assert "reset()" in ast.unparse(anchor), (
+        "批末块缺「未回退即归零」—— 陈旧熔断自锁会从批末入口复现"
+    )
+
