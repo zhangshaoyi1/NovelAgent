@@ -101,6 +101,7 @@ DEGRADE_NAMESPACES: dict[str, str] = {
     "evaluator_dims.mainline_stats.progress": "agents/evaluator_dims.py",
     "evaluator_dims.mainline_stats.subline": "agents/evaluator_dims.py",
     "evaluator_dims.mainline_stats.total": "agents/evaluator_dims.py",
+    "evaluator.rollback_barrier": "agents/evaluator.py",
     "intro_rate.text": "core/story/intro_rate.py",
     "issue_debt.render": "core/story/issue_debt.py",
     "knowledge_ledger.render": "core/story/entity_ledger.py",

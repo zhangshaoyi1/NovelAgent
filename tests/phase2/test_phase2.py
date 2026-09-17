@@ -298,8 +298,10 @@ def test_evaluator_auto_rollback_on_failure(tmp_path):
     )  # 默认 auto_rollback=True
 
     # 可信的硬指标失败（count 维，required=True，confidence 恒 1.0）
+    # 2026-09-17：取值须达回退门槛 ROLLBACK_MIN_COUNT=3，1~2 条属可逆 LOCAL_REPAIR
+    # 不再授权销毁整窗（登记单「回退熔断仅事后生效_计数维回退门槛不可达」）。
     hard = DimensionResult(
-        "character_stability_high", "角色稳定性", 2, 0, "<=", True, "computed",
+        "character_stability_high", "角色稳定性", 3, 0, "<=", True, "computed",
     )
     blocked = NovelHealthReport(overall_pass=False, score=50.0, dimensions=[hard])
     ev._evaluate_once = lambda: blocked  # type: ignore[method-assign]

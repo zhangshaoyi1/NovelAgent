@@ -158,6 +158,19 @@ _VALUE_RANGES: dict[Unit, tuple[float, float]] = {
 #: 留 ~67% 余量，同时仍把 85–100 全部拦下。
 MAX_PLAUSIBLE_COUNT: int = 20
 
+#: 计数维「授权不可逆回退」的最小越界条数（2026-09-17，登记单
+#: ``20260917_回退熔断仅事后生效_计数维回退门槛不可达``）。
+#:
+#: 判据可达性是动作强度的上界：LLM 计数维提示词要求"逐项列举冲突/崩坏数量"，
+#: 值域无自然零点、无上界，实测 ``==0`` 占比仅 15.8% / 27.5%（中位数 2）。
+#: 用这样的判据授权"销毁末窗 5 章"，触发率必然 90%+ —— 灵荒薪传 24 次可信体检中
+#: 22 次因这两个维度硬失败（17 次双失败），每轮净推进 0 章。
+#:
+#: 取 3：实测非零分布集中在 1–5（1/2/3/4/5），3 条以上属"确实成片崩坏"，
+#: 值得一次整窗重写；1–2 条属零星瑕疵，可逆的定向修复（只重写末章）即可。
+#: 阈值仍为 0（报告线不动）——**降低的是动作强度，不是质量要求**。
+ROLLBACK_MIN_COUNT: float = 3.0
+
 
 @dataclass(frozen=True)
 class DimensionSpec:
@@ -183,6 +196,16 @@ class DimensionSpec:
     safe_default: float = 0.0       # LLM 不可用时的降级值
     summary_reason: str = ""        # 人话归因模板
     counted_by_issues: bool = False  # True=以 LLM 列举的 issues 条数重算（原 COUNT_DIMS）
+    #: 授权**不可逆回退**所需的最小越界幅度（仅 LOWER_BETTER 计数维使用）。
+    #: ``None`` = 不设门槛（阈值本身即门槛，行为与旧版一致）。
+    #:
+    #: 2026-09-17 新增（登记单 ``20260917_回退熔断仅事后生效_计数维回退门槛不可达``）：
+    #: 「必须达标」（``required``）与「越界一点就值得销毁整窗」（回退授权）是**两件事**。
+    #: LLM 计数维的值域无自然零点——提示词要求"逐项列举"，模型必然报出少量条目，
+    #: 于是 ``阈值 0 + required`` 等于给"销毁末窗 5 章"配了一个 90%+ 触发率的扳机。
+    #: 本字段把两者分开：轻越界走可逆的 ``LOCAL_REPAIR``，只有达到门槛才授权
+    #: ``ROLLBACK_REWRITE``。**阈值 0 保留为报告线**（该维照样计失败、照样看得见）。
+    rollback_min_value: float | None = None
 
     @property
     def scope(self) -> Scope:
@@ -247,6 +270,8 @@ class DimensionSpec:
             "source": self.source.value,
             "counted_by_issues": self.counted_by_issues,
             "safe_default": self.safe_default,
+            # 2026-09-17：回退授权门槛（仅增不删；让复算脚本/看板能直接读到）
+            "rollback_min_value": self.rollback_min_value,
         }
 
 
@@ -283,6 +308,8 @@ DIMENSIONS: dict[str, DimensionSpec] = {
         ),
         safe_default=0.0, summary_reason="人设出现前后矛盾，建议核对角色档案并统一言行/动机",
         counted_by_issues=True,
+        # 2026-09-17：轻越界（1–2 条）不再授权销毁整窗，走可逆定向修复 + 告警。
+        rollback_min_value=ROLLBACK_MIN_COUNT,
     ),
     "setting_consistency_high": _spec(
         name="setting_consistency_high", label="设定一致",
@@ -297,6 +324,8 @@ DIMENSIONS: dict[str, DimensionSpec] = {
         ),
         safe_default=0.0, summary_reason="设定被打破，建议回查世界观设定并修复冲突",
         counted_by_issues=True,
+        # 2026-09-17：同上，轻越界（1–2 条）走可逆定向修复，不销毁整窗。
+        rollback_min_value=ROLLBACK_MIN_COUNT,
     ),
     "logic_holes": _spec(
         name="logic_holes", label="逻辑漏洞",

@@ -101,6 +101,8 @@ class _PipelineAgentsMixin:
                 quality_targets=qt or None,
                 score_fn=score_fn,
                 rollback_provider=M10RollbackWorkflow(self.project_dir, console=self.console),
+                # 2026-09-17：回退前置闸（跨批熔断置位 ⇒ 禁止再销毁内容）
+                rollback_barrier=self._rollback_barrier_check,
                 # G5：迷爱看六维双闸透传
                 appeal_scorer=appeal_scorer,
                 appeal_gate=self.appeal_gate,
@@ -351,6 +353,26 @@ class _PipelineAgentsMixin:
             "eval", msg, severity="warn"
         )
         return budget
+
+    def _rollback_barrier_check(self) -> tuple[bool, str]:
+        """回退**前置闸**（2026-09-17）：跨批熔断已置位 ⇒ 禁止再执行不可逆回退。
+
+        登记单 ``20260917_回退熔断仅事后生效_计数维回退门槛不可达`` §二.R2。
+
+        动机：``tripped()`` 原先只在本类两个消费点被读到，而它们都在
+        ``evaluate_with_repair()`` **返回之后** —— 回退+重写发生在该方法内部，
+        只受实例级 ``max_rollback_attempts`` 约束（每批新建 Evaluator 即归零）。
+        于是熔断只能"事后停批"，**拦不住已经发生的销毁**：实测
+        ``consecutive=7 > limit 3`` 与 ``same_target_streak=4 >= 2`` 早已双双置位，
+        却仍在丢章。注入 Evaluator 后，闸门改在 ``trigger_rollback()`` 动手**之前**生效。
+
+        异常不在此处吞掉：由 :meth:`EvaluatorAgent._rollback_barrier_reason`
+        统一按「禁止回退 + degrade 留痕」处理——护栏自己坏掉时不得默认放行。
+        """
+        budget = self._rollback_budget()
+        if budget.tripped():
+            return True, budget.reason_text()
+        return False, ""
 
     def _rollback_ledger(self) -> tuple[int, int]:
         """独立账本：回退动作自己写下的落地证据 → ``(快照序号, 回退目标章)``。

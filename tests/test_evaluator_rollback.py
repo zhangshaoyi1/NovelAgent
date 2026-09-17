@@ -27,11 +27,19 @@ def _dim(name: str, label: str, value: float, threshold: float,
 
 
 def _fail_report() -> NovelHealthReport:
-    """含硬指标 + 软指标失败的体检报告。"""
+    """含硬指标 + 软指标失败的体检报告。
+
+    2026-09-17（登记单 ``20260917_回退熔断仅事后生效_计数维回退门槛不可达``）：
+    ``character_stability_high`` 的取值由 1.0 提到 3.0 —— 该维已声明
+    ``rollback_min_value=3``，1–2 条属「轻越界」，**按拍板口径不再授权整窗回退**，
+    只走可逆的定向修复。本用例要验的是「回退闭环」，故须构造**达门槛**的越界。
+    轻越界走可逆路径由 ``tests/architecture/test_dimension_disposition_matrix.py``
+    的 ``TestM4...test_below_bar_hard_gate_is_reversible_not_destructive`` 钉住。
+    """
     return NovelHealthReport(
         overall_pass=False,
         dimensions=[
-            _dim("character_stability_high", "人设稳定", 1.0, 0.0, "<=", True),
+            _dim("character_stability_high", "人设稳定", 3.0, 0.0, "<=", True),
             _dim("setting_consistency_high", "设定一致", 0.0, 0.0, "<=", True),
             _dim("foreshadow_recycle_rate", "伏笔闭环", 0.50, 0.90, ">=", False),
             _dim("coherence", "连贯性", 60.0, 80.0, ">=", False),

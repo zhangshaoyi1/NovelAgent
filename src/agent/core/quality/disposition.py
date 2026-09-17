@@ -135,12 +135,53 @@ def _hard_gate_out_of_window(d: Any) -> bool:
     return bool(spec.required) and spec.repairability is not Repairability.WINDOW
 
 
+def _rollback_bar_met(d: Any) -> bool:
+    """越界幅度是否达到**授权不可逆回退**的门槛（``DimensionSpec.rollback_min_value``）。
+
+    2026-09-17 新增（登记单 ``20260917_回退熔断仅事后生效_计数维回退门槛不可达``）。
+
+    默认 ``True``（未声明门槛 / 未登记 / 读数取不到）—— 本函数的职责**只是降低**动作
+    强度，绝不负责抬高它；读不到读数属"证据不可信"范畴，由 ``untrusted_evidence``
+    规则处理，不在这里顺手放宽成"不用管"。
+    """
+    spec = _spec_of(d)
+    if spec is None:
+        return True
+    bar = getattr(spec, "rollback_min_value", None)
+    if bar is None:
+        return True
+    v = getattr(d, "value", None)
+    if not isinstance(v, (int, float)):
+        return True
+    return float(v) >= float(bar)
+
+
 def _hard_gate_in_window(d: Any) -> bool:
-    """硬指标**且**修复范围就是末窗——唯一授权 ``ROLLBACK_REWRITE`` 的形态。"""
+    """硬指标**且**修复范围是末窗，**且**越界幅度达到回退门槛——唯一授权
+    ``ROLLBACK_REWRITE`` 的形态。
+
+    2026-09-17 补第三个条件：「**必须达标**」（``required``）与「**越界一点就值得
+    销毁整窗**」是两件事。LLM 计数维的值域无自然零点——提示词要求"逐项列举"，
+    模型必然报出零星条目，于是 ``阈值 0 + required`` 等于给"销毁末窗 5 章"配了
+    一个 90%+ 触发率的扳机（灵荒薪传 24 次可信体检 22 次触发，17 次双维齐发）。
+    未达门槛的轻越界改由 ``hard_gate_below_rollback_bar`` → ``LOCAL_REPAIR``。
+    """
     spec = _spec_of(d)
     if spec is None:
         return bool(getattr(d, "required", False))
-    return bool(spec.required) and _repair_is(Repairability.WINDOW)(d)
+    if not (bool(spec.required) and _repair_is(Repairability.WINDOW)(d)):
+        return False
+    return _rollback_bar_met(d)
+
+
+def _hard_gate_below_rollback_bar(d: Any) -> bool:
+    """硬指标 + 修复范围在末窗，但越界幅度**未达**回退门槛 ⇒ 只允许可逆定向修复。"""
+    spec = _spec_of(d)
+    if spec is None:
+        return False
+    if not (bool(spec.required) and _repair_is(Repairability.WINDOW)(d)):
+        return False
+    return not _rollback_bar_met(d)
 
 
 def _soft_dim(d: Any) -> bool:
@@ -201,9 +242,22 @@ DEFAULT_RULES: tuple[DispositionRule, ...] = (
         "非硬指标（required=False）不达标：只做可逆的定向修复，无需销毁整窗",
         max_cost_tokens=200_000,
     ),
+    # 2026-09-17 新增（登记单 ``20260917_回退熔断仅事后生效_计数维回退门槛不可达``）：
+    # 硬指标但**越界幅度在回退门槛内**（如计数维 1–2 条）→ 可逆定向修复。
+    # 与 ``soft_dim`` 的区别：软维是"可以不达标"；本条是"必须达标，但零星条目
+    # 不值得用不可逆动作回应"——判据（阈值 0 / required=True）一字未动，
+    # 该维照样计失败、照样进报告，只是把**动作强度**降到判据可达性之内。
+    # 若不先于 ``hard_gate`` 生效（即 hard_gate 不因此失配），
+    # ``ACTION_PRECEDENCE`` 会把 LOCAL_REPAIR 升级回 ROLLBACK_REWRITE —— 故
+    # ``_hard_gate_in_window`` 已同步加了门槛判断，两处必须成对修改。
+    DispositionRule(
+        "hard_gate_below_rollback_bar", _hard_gate_below_rollback_bar, Action.LOCAL_REPAIR,
+        "硬指标越界幅度在回退门槛内（零星条目）：只做可逆的定向修复 + 告警，不销毁整窗",
+        max_cost_tokens=200_000,
+    ),
     DispositionRule(
         "hard_gate", _hard_gate_in_window, Action.ROLLBACK_REWRITE,
-        "硬指标不达标**且**修复范围就在回退窗口内：回溯最近窗口并重写",
+        "硬指标不达标**且**修复范围就在回退窗口内**且**越界达门槛：回溯最近窗口并重写",
         requires_double_evidence=True,
         max_cost_tokens=1_500_000,
     ),

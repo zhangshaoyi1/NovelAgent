@@ -40,6 +40,7 @@ from rich.console import Console
 
 from agent.core.story.chapters import iter_chapter_texts  # G6：公共章节读取 helper（根因 B6-3）
 from agent.core.engine.state_machine import StateMachine
+from agent.core.infra.degrade import degrade  # F-1 降级可见化统一出口
 # D-J（2026-08-29）：不再在 agents 层直接 import workflows（违反依赖方向）。
 # 回退能力经 ``rollback_provider`` 构造注入（见 RollbackProvider），未注入时懒加载兜底。
 from agent.core.quality.scoring.reader_appeal import (  # G5：迷爱看六维双闸
@@ -130,6 +131,8 @@ class EvaluatorAgent(
         disposition_gate: "DispositionGate | None" = None,
         disposition_dry_run: bool = False,
         budget_remaining_tokens: "int | None" = None,
+        # ---- 2026-09-17 新增：回退前置闸（把跨批熔断从「事后读数」变成前置条件）----
+        rollback_barrier: "Callable[[], tuple[bool, str]] | None" = None,
     ) -> None:
         self.project_dir = Path(project_dir)
         self.console = console or Console()
@@ -137,6 +140,16 @@ class EvaluatorAgent(
         self.rollback_window = max(1, rollback_window)
         self.max_rollback_attempts = max(1, max_rollback_attempts)
         self.auto_rollback = auto_rollback
+        #: 回退前置闸：``() -> (是否禁止回退, 原因)``。
+        #: 登记单 ``20260917_回退熔断仅事后生效_计数维回退门槛不可达`` §二.R2：
+        #: 跨批熔断（``RollbackBudget.tripped()``）原先只在 ``evaluate_with_repair()``
+        #: **返回之后**被上层读到 ⇒ 它只能事后停批，**拦不住已经发生的销毁**；
+        #: 而回退+重写发生在该方法内部、只受实例级 ``max_rollback_attempts`` 约束
+        #: （每批新建 Evaluator 即归零）。实测 ``consecutive=7 > limit 3`` 与
+        #: ``same_target_streak=4 >= 2`` 早已双双置位，却仍在丢章。
+        self._rollback_barrier: "Callable[[], tuple[bool, str]] | None" = rollback_barrier
+        #: 最近一次被前置闸拦下的原因（供调用方拼装 escalated_reason，避免误报"无可回退章节"）
+        self.last_rollback_barrier_reason: str = ""
         # D-J：回退能力 DI（None → trigger_rollback 懒加载 M10RollbackWorkflow 兜底）
         self._rollback_provider: "RollbackProvider | None" = rollback_provider
         # 最近一次「不达标」体检报告（供 Pipeline 的 rewriter 编译针对性重写提示）
@@ -320,8 +333,47 @@ class EvaluatorAgent(
             )
         return self._rollback_provider
 
+    def _rollback_barrier_reason(self) -> str | None:
+        """回退**前置闸**：禁止回退时返回原因，允许回退返回 ``None``。
+
+        2026-09-17 新增（登记单 ``20260917_回退熔断仅事后生效_计数维回退门槛不可达`` §二.R2）。
+
+        与上层事后读 ``RollbackBudget.tripped()`` 的区别就在**时机**：本闸在
+        ``trigger_rollback()`` 动手**之前**生效，因此是「不可逆动作必须由显式规则授权」
+        的真实拦截点；上层那次读只是二次上报。
+
+        读闸异常按「不放行」处理（``degrade`` 显性留痕）——回退是不可逆动作，
+        护栏自己坏掉时不能默认成"可以删章"。
+        """
+        fn = getattr(self, "_rollback_barrier", None)
+        if fn is None:
+            return None
+        try:
+            tripped, reason = fn()
+        except Exception as e:  # noqa: BLE001 - 闸门异常按禁止回退处理
+            degrade(
+                "evaluator.rollback_barrier",
+                "回退前置闸读取异常，按禁止回退处理（避免护栏失效时静默删章）",
+                e,
+            )
+            return "回退前置闸读取异常，已按禁止回退处理（护栏失效不得静默删章）"
+        if not tripped:
+            return None
+        return reason or "回退熔断已置位"
+
     def trigger_rollback(self, last_written: int | None = None) -> Optional[RepairPlan]:
-        """回退最近 ``rollback_window`` 章并归档，返回修复方案；无法回退则返回 None。"""
+        """回退最近 ``rollback_window`` 章并归档，返回修复方案；无法回退则返回 None。
+
+        2026-09-17：**先过前置闸**。跨批熔断已置位时直接拒绝动手，并把原因记到
+        :attr:`last_rollback_barrier_reason`，供调用方拼装 escalated_reason。
+        """
+        barrier = self._rollback_barrier_reason()
+        if barrier:
+            self.last_rollback_barrier_reason = barrier
+            self.console.print(
+                f"[red]✗ 回退熔断已置位，拒绝再次销毁内容（前置闸拦截）：{barrier}[/red]"
+            )
+            return None
         last = self._last_written() if last_written is None else last_written
         if last <= 0:
             return None
@@ -381,7 +433,11 @@ class EvaluatorAgent(
         plan = self.trigger_rollback()
         if plan is None:
             report.escalated = True
-            report.escalated_reason = "无可回退章节（尚未写出章节），请人工检查设定/规划。"
+            report.escalated_reason = (
+                f"回退被前置闸拒绝：{self.last_rollback_barrier_reason}"
+                if self.last_rollback_barrier_reason
+                else "无可回退章节（尚未写出章节），请人工检查设定/规划。"
+            )
             return report
         report.rolled_back = plan.rolled_back
         report.repair = plan
@@ -496,7 +552,11 @@ class EvaluatorAgent(
             plan_rollback = self.trigger_rollback()
             if plan_rollback is None or not plan_rollback.rolled_back:
                 report.escalated = True
-                report.escalated_reason = "无可回退章节，请人工检查设定/规划。"
+                report.escalated_reason = (
+                    f"回退被前置闸拒绝：{self.last_rollback_barrier_reason}"
+                    if self.last_rollback_barrier_reason
+                    else "无可回退章节，请人工检查设定/规划。"
+                )
                 return self._finalize_result(
                     report, attempts, rolled_back_any, last_repair
                 )

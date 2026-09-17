@@ -97,6 +97,31 @@ def _failing_dim(name: str) -> DimensionResult:
     return dim
 
 
+def _failing_dim_above_bar(name: str) -> DimensionResult:
+    """构造「不达标**且**越界幅度达到回退门槛」的可信结果。
+
+    2026-09-17 新增（登记单 ``20260917_回退熔断仅事后生效_计数维回退门槛不可达``）：
+    声明了 ``rollback_min_value`` 的维度，其「未达门槛」的轻越界按新口径只走可逆
+    定向修复，故验证 ``hard_gate`` 必须用达门槛的取值；其余维度与
+    :func:`_failing_dim` 等价（门槛为 ``None`` 时两条路径同源）。
+    """
+    spec = DIMENSIONS[name]
+    bar = getattr(spec, "rollback_min_value", None)
+    if bar is None or spec.direction is not Direction.LOWER_BETTER:
+        return _failing_dim(name)
+    value = spec.clamp(float(bar))
+    dim = DimensionResult(
+        name, spec.label, value, spec.default_threshold,
+        spec.direction.value, spec.required, "llm/default",
+    )
+    assert not dim.passed, f"{name}: 达门槛用例未构成失败，红线判据无效"
+    return dim
+
+
+def _plan_for_dim(dim: DimensionResult):
+    return DispositionPolicy().plan([dim])
+
+
 def _degraded_probe() -> DimensionResult:
     """降级维度探针：confidence=0，用于命中 ``untrusted_evidence`` 规则。
 
@@ -184,15 +209,48 @@ class TestM3ScopeDecidesRepairability:
 
 class TestM4HardGatesAreNotDowngraded:
     def test_window_hard_gate_rolls_back(self) -> None:
+        """窗口内硬指标**且越界达回退门槛** ⇒ 必须可触发回滚重写。
+
+        2026-09-17 收紧判据（登记单 ``20260917_回退熔断仅事后生效``）：原断言对
+        「窗口内硬指标」一刀切要求回滚，把判据可达性排除在考虑之外 —— 使得
+        ``==0`` 仅 15.8%/27.5% 的 LLM 计数维也拿到销毁整窗的授权（实测 91.7% 的
+        体检触发销毁）。现改为按 ``rollback_min_value`` 区分「值得销毁」与
+        「只值得可逆修复」，本断言只钉**达门槛**这一半。
+        """
         offenders = [
-            (n, _plan_for(n).action.value)
+            (n, _plan_for_dim(_failing_dim_above_bar(n)).action.value)
             for n in DIMENSIONS
             if DIMENSIONS[n].required and DIMENSIONS[n].scope is Scope.WINDOW
-            and _plan_for(n).action is not Action.ROLLBACK_REWRITE
+            and _plan_for_dim(_failing_dim_above_bar(n)).action
+            is not Action.ROLLBACK_REWRITE
         ]
         assert offenders == [], (
-            f"窗口内硬指标不达标必须可触发回滚重写，实测：{offenders}"
+            f"窗口内硬指标（越界达门槛）不达标必须可触发回滚重写，实测：{offenders}"
         )
+
+    def test_below_bar_hard_gate_is_reversible_not_destructive(self) -> None:
+        """窗口内硬指标但**越界未达门槛** ⇒ 只允许可逆动作，不得销毁内容。
+
+        2026-09-17 新增（同登记单）：轻越界的硬指标**仍是失败**（阈值/required 一字未
+        动，照样进报告），但动作强度必须落在判据可达性之内 —— 用「LLM 必然报出的
+        零星条目」授权不可逆删章，等于给摧毁性动作配 90%+ 触发率的扳机。
+        """
+        pinned = [
+            n for n in DIMENSIONS
+            if DIMENSIONS[n].required
+            and DIMENSIONS[n].scope is Scope.WINDOW
+            and DIMENSIONS[n].rollback_min_value is not None
+        ]
+        assert pinned, "登记表里应至少有一个声明了回退门槛的窗口内硬指标"
+        for n in pinned:
+            action = _plan_for(n).action
+            assert action not in IRREVERSIBLE_ACTIONS, (
+                f"{n}: 轻越界（未达 rollback_min_value）不得触发不可逆动作，实测 {action.value}"
+            )
+            assert action is Action.LOCAL_REPAIR, (
+                f"{n}: 轻越界应走可逆的定向修复（LOCAL_REPAIR），实测 {action.value}"
+                f"——若为 CONTINUE 则等于把失败静默放行"
+            )
 
 
 class TestM5FallbackNeverDestroysContent:

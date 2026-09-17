@@ -87,7 +87,11 @@ class TestRuleMapping:
         # 2026-09-15：样例维度由 ``logic_holes`` 换成 ``character_stability_high``
         # ——前者已拍板退出回退授权（判据不可达，登记单
         # ``20260915_回退熔断账实不符与降级当通过`` §三.1），不再能代表"硬闸"。
-        plan = DispositionPolicy().plan([_dim("character_stability_high", value=2.0)])
+        # 2026-09-17：取值须**达回退门槛** ``ROLLBACK_MIN_COUNT=3``。计数维 1~2 条属
+        # 零星瑕疵（可逆 LOCAL_REPAIR），≥3 才授权销毁整窗；本用例测"达门槛 ⇒ 回滚"，
+        # 故取边界值 3.0。below-bar 可逆性由
+        # ``test_below_bar_hard_gate_is_reversible_not_destructive`` 覆盖。
+        plan = DispositionPolicy().plan([_dim("character_stability_high", value=3.0)])
         assert plan.action is Action.ROLLBACK_REWRITE
         assert plan.requires_double_evidence is True
 
@@ -152,7 +156,7 @@ class TestPrecedence:
         """开头问题 + 硬指标 → 上报人工（回滚修不到开头）。"""
         plan = DispositionPolicy().plan([
             _golden_dim(),
-            _dim("character_stability_high", value=2.0),
+            _dim("character_stability_high", value=3.0),  # 达门槛，确保是 ESCALATE vs ROLLBACK
         ])
         assert plan.action is Action.ESCALATE
 
@@ -160,7 +164,7 @@ class TestPrecedence:
         """硬指标 + 软评分维 → 回滚重写（一次覆盖两类问题）。"""
         plan = DispositionPolicy().plan([
             DimensionResult("coherence", "连贯性", 70.0, 85.0, ">=", False, "llm"),
-            _dim("character_stability_high", value=2.0),
+            _dim("character_stability_high", value=3.0),  # 达门槛才构成 ROLLBACK
         ])
         assert plan.action is Action.ROLLBACK_REWRITE
 
@@ -171,7 +175,9 @@ class TestPrecedence:
 class TestDispositionGate:
     def _plan(self) -> DispositionPlan:
         # 硬闸样例：character_stability_high（logic_holes 已退出回退授权）
-        return DispositionPolicy().plan([_dim("character_stability_high", value=2.0)])
+        # 取值须达回退门槛 ROLLBACK_MIN_COUNT=3，否则降为可逆 LOCAL_REPAIR，
+        # 不再进入守门器（见 2026-09-17 登记单「回退熔断仅事后生效」）。
+        return DispositionPolicy().plan([_dim("character_stability_high", value=3.0)])
 
     def test_allows_when_trusted_and_within_budget(self):
         auth = DispositionGate().authorize(self._plan(), chapters=5,
@@ -280,7 +286,7 @@ class TestEvaluatorIntegration:
                 return NovelHealthReport(overall_pass=True, dimensions=[])
             return NovelHealthReport(
                 overall_pass=False,
-                dimensions=[_dim("character_stability_high", value=2.0, confidence=1.0)],
+                dimensions=[_dim("character_stability_high", value=3.0, confidence=1.0)],
             )
 
         def fake_rollback(self, last_written=None):  # type: ignore[no-untyped-def]
@@ -304,7 +310,7 @@ class TestEvaluatorIntegration:
         def fake_eval(self):  # type: ignore[no-untyped-def]
             return NovelHealthReport(
                 overall_pass=False,
-                dimensions=[_dim("character_stability_high", value=2.0)],
+                dimensions=[_dim("character_stability_high", value=3.0)],
             )
 
         ev._evaluate_once = fake_eval.__get__(ev, type(ev))  # type: ignore[method-assign]
@@ -323,7 +329,7 @@ class TestEvaluatorIntegration:
         def fake_eval(self):  # type: ignore[no-untyped-def]
             return NovelHealthReport(
                 overall_pass=False,
-                dimensions=[_dim("character_stability_high", value=2.0)],
+                dimensions=[_dim("character_stability_high", value=3.0)],
             )
 
         ev._evaluate_once = fake_eval.__get__(ev, type(ev))  # type: ignore[method-assign]
