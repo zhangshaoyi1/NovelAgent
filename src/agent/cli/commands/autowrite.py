@@ -542,6 +542,10 @@ def autowrite(
         # ---- G6 新增：B5 接线 + B4/B6 三闸透传 ----
         guardrails=guardrails_obj,                 # 修复 B5-2 空白（此前恒 None）
         gate_mode=gate_mode,
+        # ★ 2026-09-18：规划前置闸豁免必须透传到 pipeline —— pipeline.run() 会**再跑一次**
+        #   prepare_for_write（覆盖 Web/直调入口），不透传则 CLI 豁免被自己否掉
+        #   （实测：0 章写出）。此处与上方 CLI 层调用同一开关，保证只有一个语义。
+        plan_gate_allow_stage_level=bool(_cli_value(allow_stage_level, False)),
         golden_three_gate=_golden_gate,
         golden_three_threshold=int(_cli_value(golden_three_threshold, 60)),
         golden_three_floor=int(_cli_value(golden_three_floor, 40)),

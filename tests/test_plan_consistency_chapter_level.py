@@ -197,3 +197,32 @@ def test_prepare_for_write_forwards_exemption(tmp_path: Path) -> None:
     proj = _make_project(tmp_path, _STAGE_ONLY)
     assert prepare_for_write(proj), "默认应严格"
     assert not prepare_for_write(proj, allow_stage_level=True), "豁免未透传"
+
+
+def test_pipeline_preflight_forwards_stage_level_exemption(tmp_path: Path) -> None:
+    """★ 端到端实测缺陷（2026-09-18）：pipeline 内部那次 prepare_for_write
+    必须与 CLI 层**同语义**地透传豁免。
+
+    实测（真实运行 `autowrite --allow-stage-level`）：日志先打印
+    「已按 --allow-stage-level 显式豁免并留痕」，紧接着 pipeline 自己报
+    「✗ 规划校验失败」⇒ **0 章写出**。pipeline 在 run() 内会再跑一次本校验
+    （用于覆盖 Web / 直调入口），此前没带 allow_stage_level。
+    ⇒ 声明了却走不通的口子＝陷阱；本条把"两层同语义"钉成红线（行为级：
+    观察真实 `_preflight_plan_gate()` 的返回值，不是断言字段存在）。
+    """
+    from agent.workflows.pipeline.agentic_pipeline import AgenticPipelineWorkflow
+
+    proj = _make_project(tmp_path, _STAGE_ONLY, total_written=5)
+
+    def _bare(allow: bool) -> AgenticPipelineWorkflow:
+        # 只测该方法的透传语义，故绕过重型构造（llm/planner/editor 等）
+        p = object.__new__(AgenticPipelineWorkflow)
+        p.project_dir = proj
+        p.console = _CollectConsole()
+        p._plan_gate_allow_stage_level = allow
+        return p
+
+    assert _bare(False)._preflight_plan_gate(), "pipeline 层默认必须严格"
+    assert not _bare(True)._preflight_plan_gate(), (
+        "pipeline 层未透传 allow_stage_level —— CLI 的显式豁免被自己否掉（实测 0 章写出）"
+    )

@@ -90,6 +90,12 @@ class AgenticPipelineWorkflow(
         memory: Any = None,
         guardrails: Any = None,
         gate_mode: str = "block",  # G10（拍板 5）：默认 block（AI 味命中拒落盘；--ai-gate-mode advisory 显式放宽）
+        # ★ 2026-09-18 修复：规划前置闸的阶段级豁免必须**透传到本层**。
+        #   pipeline 在 run() 内会**再跑一次** prepare_for_write（覆盖 Web/直调入口），
+        #   此前该次调用没带 allow_stage_level ⇒ CLI 层的豁免被自己否掉
+        #   （实测：日志先「已按 --allow-stage-level 显式豁免并留痕」，
+        #   紧接着「✗ 规划校验失败」⇒ 0 章写出）。**声明了却走不通的豁免＝陷阱**。
+        plan_gate_allow_stage_level: bool = False,
         # F-11：D 多维审查透传（None → writer 默认 True；autowire/write 按 quality_policy 注入）
         strict_review: bool | None = None,
         console: Console | None = None,
@@ -149,6 +155,7 @@ class AgenticPipelineWorkflow(
         self._rolling_escalation_reason: str = ""
         self.guardrails = guardrails
         self.gate_mode = gate_mode
+        self._plan_gate_allow_stage_level = bool(plan_gate_allow_stage_level)
         self.strict_review = strict_review
         self.console = console or Console()
 
@@ -258,6 +265,24 @@ class AgenticPipelineWorkflow(
         self.state_machine = StateMachine(self.project_dir)
 
     # ---------------------------------------------------------------- 构造默认 Agent
+
+    def _preflight_plan_gate(self) -> list[str]:
+        """写前规划一致性校验（缺口 A/C）：返回致命错误（空 = 通过）。
+
+        ★ 抽成独立方法是为了**可被红线行为级断言**：pipeline 会在 ``run()``
+        内再跑一次本校验（覆盖 Web / 直调入口），它必须与 CLI 层**同语义**地
+        透传 ``allow_stage_level`` —— 否则 CLI 的显式豁免会被本层自己否掉
+        （2026-09-18 实测：日志先「已按 --allow-stage-level 显式豁免并留痕」，
+        紧接着「✗ 规划校验失败」⇒ 0 章写出）。
+        """
+        from agent.workflows.pipeline.plan_consistency import prepare_for_write
+
+        return prepare_for_write(
+            self.project_dir,
+            console=self.console,
+            allow_stage_level=getattr(self, "_plan_gate_allow_stage_level", False),
+        )
+
     def run(self) -> PipelineResult:
         import time
 
@@ -279,9 +304,7 @@ class AgenticPipelineWorkflow(
         # ---- 规划一致性守护（缺口 A/C，2026-09-06）：写前对账 + 不变量 fail-fast ----
         # 覆盖直接调用 pipeline 的入口（Web / 测试）；CLI autowrite 已另行前置校验。
         try:
-            from agent.workflows.pipeline.plan_consistency import prepare_for_write
-
-            _fatal = prepare_for_write(self.project_dir, console=self.console)
+            _fatal = self._preflight_plan_gate()
             if _fatal:
                 result.blocked = True
                 result.block_reason = "规划校验失败：" + "；".join(_fatal)
