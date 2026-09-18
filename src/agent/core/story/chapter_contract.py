@@ -66,6 +66,36 @@ def chapter_line_pattern(chapter_num: int) -> re.Pattern[str]:
 #: 章标记（带冒号）——既是切分边界，也是「这一行是不是章级契约」的判据
 _CHAPTER_MARKER = re.compile(r"第\s*\d+\s*章\s*[：:]")
 
+#: 「最近前文」回退值的**统一标注前缀**（唯一真源，2026-09-18 N1 修复）。
+#:
+#: ★ 为什么要一个显式前缀而不是"各端自己判断"：
+#:   本前缀同时承担三个职责，三处**必须同源**（否则又是一份手写清单，纪律 #19）：
+#:     ① 写给**人/LLM 看**的语义声明（写手知道这不是本章标准，别照抄）；
+#:     ② ``pace_tier_of`` 的**判据**（带此前缀 ⇒ 不得借它的档位当本章档位）；
+#:     ③ 红线 ``tests/test_n1_nearest_prior.py`` 的锚点。
+#:   改动本常量必须同步 ②③（语言锚与解析式是同一件事的两半，纪律 #3）。
+PRIOR_CONTRACT_PREFIX = "⚠ 本章（第{n}章）尚无逐章契约；以下为**最近前文**的第{p}章契约"
+
+#: 前缀的稳定片段（供不依赖具体章号的判据使用）
+_PRIOR_CONTRACT_MARK = "尚无逐章契约"
+
+#: 渲染端给「非本章」意图块用的**标签后缀**（唯一真源，2026-09-18 N1 修复）。
+#:
+#: ★ 为什么连标签文案也要同源：`design_brief._intent_label` 的标签与
+#:   :data:`_PRIOR_CONTRACT_MARK` 若各写一份，就是纪律 #19 的「手写清单」——
+#:   一次改名即双向破裂（红线 ``test_n1_nearest_prior`` 的
+#:   ``test_consumers_do_not_hardcode_the_string`` 钉住这一点）。
+NON_CURRENT_LABEL_SUFFIX = "（非本章，仅供参考——本章尚无逐章契约）"
+
+
+def _is_marked_as_non_current(text: str) -> bool:
+    """该文本是否被标注为「非本章契约」（最近前文 / 阶段模板）。
+
+    消费者据此**拒绝把弱证据当强证据**——典型误用是把最近前文的档位
+    当作本章档位（参照系错位 ⇒ 评委按错误的尺判分）。
+    """
+    return _PRIOR_CONTRACT_MARK in text
+
 
 def _chapter_segments(line: str) -> list[str]:
     """把一行切成逐章段（LLM 有时用 ``；`` 而非换行分隔多章）。
@@ -91,29 +121,72 @@ def select_chapter_lines(
 ) -> str:
     """从细纲小节中切出「本章」契约行。
 
-    优先级：逐章段 > 压力阶段行 > 整段。
+    优先级：本章逐章段 > **最近前文**逐章段 > 压力阶段行 > 整段。
+
+    ★ 2026-09-18 校正（N1，真实项目跑闸发现）：此前第 2 档是「压力阶段行」，
+    但它**依赖调用方猜对阶段词**——实测四重缺陷（详见 ``_select_*`` 注释与
+    方案文档 §13）：三个消费者里只有一个传 ``pressure_stage``；即使传对，
+    命中的阶段行（如「铺垫阶段（第6章起）」）**没有章号、不随章推进**；
+    两小节的阶段行结构不对称（钩子小节没有）⇒ 钩子仍回退整段；
+    而**猜错阶段词反而更贵**（命中 0 行 ⇒ 回退整段 1663 字）。
+    ⇒ 改为**结构判据**：取「章号 ≤ 请求章」里最大的那个逐章段作为
+    **最近前文**，并在返回值上显式标注它不是本章（防止写手/评委误当本章标准）。
+
+    ⚠ 兼容性（纪律 #4）：老数据（无任何逐章行）仍走「阶段行 → 整段」原路径，
+    逐字不变。
     """
     section = extract_section(content, title)
     if not section:
         return ""
     lines = [ln.strip() for ln in section.splitlines() if ln.strip()]
-    if int(chapter_num or 0) > 0:
-        pat = chapter_line_pattern(chapter_num)
-        matched = [
-            seg
-            for ln in lines
-            for seg in _chapter_segments(ln)
-            if pat.search(seg)
-        ]
+    num = int(chapter_num or 0)
+    if num > 0:
+        pat = chapter_line_pattern(num)
+        # ---- 档 1：本章逐章段（精确命中，唯一权威） ----
+        matched = [seg for ln in lines for seg in _chapter_segments(ln) if pat.search(seg)]
         if matched:
             return "\n".join(matched)
+        # ---- 档 2：最近前文逐章段（弱证据，必须显式标注） ----
+        prev = _nearest_prior_chapter_line(lines, num)
+        if prev is not None:
+            prev_num, prev_text = prev
+            return PRIOR_CONTRACT_PREFIX.format(n=num, p=prev_num) + f"：\n{prev_text}"
+    # ---- 档 3/4：阶段行 → 整段（老数据与阶段级历史路径，保持原样） ----
     if pressure_stage:
-        matched = [
+        stage_matched = [
             ln for ln in lines if f"{pressure_stage}阶段" in ln or pressure_stage in ln
         ]
-        if matched:
-            return "\n".join(matched)
+        if stage_matched:
+            return "\n".join(stage_matched)
     return section
+
+
+def _nearest_prior_chapter_line(lines: list[str], chapter_num: int) -> tuple[int, str] | None:
+    """取「章号 ≤ chapter_num」里**章号最大**的那条逐章段（最近前文）。
+
+    用途（N1 修复）：本章没有逐章契约时，给写手/评委**最近的一条**具体事件，
+    而不是整段（1663 字里只有约 60 字相关）或一串不随章推进的阶段模板。
+
+    ★ 为什么必须是**最近前文**而不是**最近后文**：
+      后文事件尚未发生，注入给写手会**剧透并诱导提前写掉**（更严重的缺陷）。
+      前文事件是"刚发生过、需要衔接"的信息，语义安全。
+
+    Returns:
+        ``(章号, 该段文本)``；无任何 ``第N章：`` 段时返回 ``None``。
+    """
+    best_num = 0
+    best_text = ""
+    for ln in lines:
+        for seg in _chapter_segments(ln):
+            m = _CHAPTER_MARKER.match(seg)
+            if not m:
+                continue
+            num = int(re.sub(r"\D", "", m.group(0)) or 0)
+            if 0 < num <= chapter_num and num > best_num:
+                best_num, best_text = num, seg
+    if best_num <= 0:
+        return None
+    return best_num, best_text
 
 
 def chapter_contract(subline_md: str, *, chapter_num: int, pressure_stage: str = "") -> tuple[str, str]:
@@ -255,9 +328,14 @@ def pace_tier_of(subline_md: str, chapter_num: int) -> str:
       - 读取侧先查钩子小节，未命中再查情节点小节（容忍 LLM 标错小节）。
 
     ⚠ **必须校验"确实是本章逐章行"**：``select_chapter_lines`` 的兜底语义是
-      「无逐章行 ⇒ 回退阶段行 ⇒ 再回退整段」，若不做校验，回退出的整段里若
-      碰巧含 ``｜档位=``（例如规划者把格式示例写进了阶段文本），就会被误当成
-      "本章档位" ⇒ **静默失真**（纪律 #21 同型）。取不到就返回空串。
+      「本章逐章行 ⇒ 最近前文逐章行 ⇒ 阶段行 ⇒ 整段」，若不做校验，回退出的
+      文本里若碰巧含 ``｜档位=``（例如**最近前文**那行就带着上一章的档位，
+      或规划者把格式示例写进了阶段文本），就会被误当成"本章档位"
+      ⇒ **静默失真**（纪律 #21 同型）。取不到就返回空串。
+
+      ★ 2026-09-18 N1 修复后风险上升：档位解析也必须挡住新的"最近前文"档，
+        否则第 9 章会拿到第 5 章的档位（**参照系错位** ⇒ 评委按错误的尺判）。
+        下方 ``_is_marked_as_non_current(line)`` 前缀判定即为此设。
     """
     try:
         num = int(chapter_num or 0)
@@ -268,8 +346,10 @@ def pace_tier_of(subline_md: str, chapter_num: int) -> str:
     pat = chapter_line_pattern(num)
     for title in (HOOKS_SECTION, POINTS_SECTION):
         line = select_chapter_lines(subline_md, title, chapter_num=num)
-        if not line or not pat.search(line):
-            continue  # 非本章逐章行（阶段行/整段兜底）⇒ 此处没有章级档位
+        if not line or _is_marked_as_non_current(line):
+            continue  # 最近前文/阶段文本 ⇒ 不是本章档位，不得借用
+        if not pat.search(line):
+            continue  # 兜底出的整段（无本章行）⇒ 此处没有章级档位
         tier = parse_pace_tier(line)
         if tier:
             return tier
@@ -397,11 +477,13 @@ __all__ = [
     "CONTRACT_FIELDS",
     "CONTRACT_LEAK_LABELS",
     "HOOKS_SECTION",
+    "NON_CURRENT_LABEL_SUFFIX",
     "PACE_TIER_BY_NAME",
     "PACE_TIER_FIELD",
     "PACE_TIER_NAMES",
     "PACE_TIERS",
     "POINTS_SECTION",
+    "PRIOR_CONTRACT_PREFIX",
     "PaceTier",
     "chapter_contract",
     "chapter_line_pattern",

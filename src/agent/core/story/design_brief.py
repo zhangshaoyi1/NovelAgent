@@ -343,6 +343,30 @@ def _render_route_track(nodes: list[dict], window: tuple[int, int]) -> str:
     )
 
 
+def _intent_label(text: str, chapter_num: int, what: str) -> str:
+    """给章级意图块挑一个**与证据等级相符**的标签（N1 修复）。
+
+    ★ 这是「判据强度必须与证据匹配」（纪律 #20）在渲染层的落地：
+      - 文本自带非本章标注（最近前文回退）⇒ 标签**必须**说明"非本章"；
+      - 取不到任何章级信息（整段兜底）⇒ 标"按压力阶段/整段"；
+      - 精确命中本章 ⇒ 才能标"本章"。
+    一律标"本章"会让评委拿上一章的尺量本章 ⇒ 与 D2 档位串档同型的**参照系错位**。
+    """
+    from agent.core.story.chapter_contract import (
+        NON_CURRENT_LABEL_SUFFIX,
+        _is_marked_as_non_current,
+    )
+
+    if not chapter_num:
+        return f"{what}（按压力阶段）"
+    if _is_marked_as_non_current(text):
+        # 标签后缀取自真源（不得硬编码——两份字面量改名即双向破裂，纪律 #19）
+        return f"{what}{NON_CURRENT_LABEL_SUFFIX}"
+    if re.match(rf"^\s*第\s*{int(chapter_num)}\s*章\s*[：:]", text):
+        return f"本章{what}"
+    return f"{what}（按压力阶段/整段，非本章精确契约）"
+
+
 def _render_chapter_intent(
     subline_md: str,
     *,
@@ -396,11 +420,14 @@ def _render_chapter_intent(
         parts.append(line)
     hooks = select_chapter_lines(subline_md, HOOKS_SECTION, chapter_num=chapter_num)
     if hooks:
-        label = "本章钩子设计" if chapter_num else "钩子设计（按压力阶段）"
+        # ★ 标签必须反映**实际证据等级**（N1）：`select_chapter_lines` 可能回退
+        #   到「最近前文」（带非本章标注）或整段。若一律标"本章"，评委就会拿
+        #   上一章的钩子当本章标准 ⇒ **参照系错位**（与 D2 档位串档同型缺陷）。
+        label = _intent_label(hooks, chapter_num, "钩子设计")
         parts.append(f"- {label}：{hooks[:400]}")
     pts = select_chapter_lines(subline_md, POINTS_SECTION, chapter_num=chapter_num)
     if pts:
-        label = "本章情节点" if chapter_num else "情节点序列"
+        label = _intent_label(pts, chapter_num, "情节点")
         parts.append(f"- {label}：{pts[:500]}")
     conflicts = _md_section(subline_md, "关键冲突")
     if conflicts:

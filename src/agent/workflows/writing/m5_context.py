@@ -263,7 +263,7 @@ class M5ContextMixin:
 
         # ---- 细纲钩子设计（m3 chapter_hooks → subline.md「章节钩子设计」段；缺则空，不阻断）----
         chapter_hooks = self._extract_chapter_hooks(
-            subline_data.get("content", ""), chapter_num
+            subline_data.get("content", ""), chapter_num, pressure_stage
         )
 
         # ---- 细纲情节点序列（m3 plot_points → subline.md「情节点序列」段；缺则空，不阻断）----
@@ -1069,15 +1069,24 @@ class M5ContextMixin:
         m = re.search(pattern, content, re.DOTALL)
         return m.group(1).strip() if m else ""
     @staticmethod
-    def _extract_chapter_hooks(content: str, chapter_num: int) -> str:
-        """从 subline.md 提取**本章**「章节钩子设计」；无逐章行时回退阶段行/整段。
+    def _extract_chapter_hooks(
+        content: str, chapter_num: int, pressure_stage: str = ""
+    ) -> str:
+        """从 subline.md 提取**本章**「章节钩子设计」；无本章行时给最近前文/阶段行。
 
         2026-09-18：切分实现下沉 ``core/story/chapter_contract``（三端唯一真源，
         此前各端各写一份正则 ⇒ 粒度漂移）。
+        2026-09-18（N1）：补传 ``pressure_stage`` —— 此前本函数**不传**，
+        导致阶段回退分支永远进不去、直接落到整段兜底（实测每章注入 1663 字，
+        其中只有约 60 字相关）。根治靠 `select_chapter_lines` 的结构判据，
+        传参是让阶段档仍然可用（阶段行未带章号时的最后兜底）。
         """
         from agent.core.story.chapter_contract import HOOKS_SECTION, select_chapter_lines
 
-        return select_chapter_lines(content, HOOKS_SECTION, chapter_num=chapter_num)
+        return select_chapter_lines(
+            content, HOOKS_SECTION,
+            chapter_num=chapter_num, pressure_stage=pressure_stage,
+        )
     @staticmethod
     def _extract_plot_points(
         content: str, pressure_stage: str, chapter_num: int = 0
