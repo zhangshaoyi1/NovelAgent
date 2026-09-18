@@ -333,10 +333,18 @@ def _render_chapter_intent(
     2026-09-18：钩子/情节点两段改走 ``chapter_contract`` 按**本章**切分（此前整段
     注入后按 400/500 字截断 ⇒ 细纲按章供给时评委只看得到前几章、看不到本章；
     细纲按阶段供给时又只看到前几个阶段）。三端共用同一实现。
+
+    2026-09-18（M1/D2）：新增**本章强度档位**。这是"整体有起伏、单章可以放松、
+    部分注水不影响质量"的落点——档位是判据的**参照系**：
+    标了 ``垫片``/``日常`` 的章，评委就不该按高潮尺判它"没爆点/没钩子"。
+    ⚠ 档位缺失（老数据 / 规划未标）时**不渲染该行**，判据回到通用口径
+    （不放松也不收紧），保证"为兼容历史开的口子只挡历史"（纪律 #4）。
     """
     from agent.core.story.chapter_contract import (
         HOOKS_SECTION,
+        PACE_TIER_BY_NAME,
         POINTS_SECTION,
+        pace_tier_of,
         select_chapter_lines,
     )
 
@@ -346,6 +354,24 @@ def _render_chapter_intent(
         parts.append(f"- 支线目标：{goal[:300]}")
     if route_title or route_result:
         parts.append(f"- 主线方向：{route_title}｜结果预期：{route_result}"[:300])
+    # ---- 本章强度档位（D2）：规划端登记，写手与评委共用同一把尺 ----
+    tier_name = pace_tier_of(subline_md, chapter_num) if chapter_num else ""
+    tier = PACE_TIER_BY_NAME.get(tier_name)
+    if tier is not None:
+        line = (
+            f"- **本章强度档位：{tier.name}**（{tier.label}；"
+            f"张力 {tier.tension_lo:g}-{tier.tension_hi:g}；"
+            f"章内要求：{tier.chapter_req}）"
+        )
+        if tier.relaxed:
+            # 放松档 = "注水章合法化"的载体：**必须先声明本档允许放松**，
+            # 否则评委仍会拿高潮尺判它注水（这正是死循环的成因）。
+            line += (
+                "\n  ★ 本档位为规划登记的**放松章**：允许无强钩子、允许舒展的节奏，"
+                "**不得**按高潮章的爆点/钩子标准判它注水或不达标；"
+                "但仍须服务本章目标情绪。"
+            )
+        parts.append(line)
     hooks = select_chapter_lines(subline_md, HOOKS_SECTION, chapter_num=chapter_num)
     if hooks:
         label = "本章钩子设计" if chapter_num else "钩子设计（按压力阶段）"
