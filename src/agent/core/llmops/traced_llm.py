@@ -1,8 +1,15 @@
 """LLMOps · 可追踪 LLM 客户端
 
-轻量包装 ``llmagent.gateway.Gateway``，在每次调用前后记录 ``TraceSpan``
-（模型 / 用途 / token / 延迟 / 成本 / 成败）到全局 Tracer。零侵入；
-未注入 Tracer 时为 ``NullTracer``，零开销。
+轻量包装 ``llmagent.gateway.Gateway``，提供 ``chat_creative`` / ``chat_utility`` /
+``chat_structured`` 语义化入口与 Gateway 兼容代理，**并声明调用用途**供唯一
+收口写出正确的 ``TraceSpan.use``。
+
+记账归属（2026-09-18 记账双收口事故后确立）：
+**TraceStore 的唯一写入收口是 ``client/gateway_adapter`` → ``llm_wiring`` 的
+用量 hook**（provider 级，覆盖 100% 的 ``create_gateway()`` 调用）。本包装层
+**不再无条件写 span**，只在调用期间未触发该收口时**兜底补记**（底层非 Gateway
+的测试替身 / 未接线 / 语义缓存命中）。否则同一物理调用被记两次 ⇒ ``totals()``
+虚增 100% ⇒ 假熔断 ⇒ 自动降档 ⇒ boost 层评审维度被削。
 
 用法：
     from agent.core.llmops.trace import TraceStore, set_tracer
@@ -10,7 +17,7 @@
 
     set_tracer(TraceStore(project_dir))
     llm = TracedLLMClient(create_gateway(), model="creative-strong")
-    llm.chat_creative(messages)  # 自动记录 span
+    llm.chat_creative(messages)  # span 由唯一收口记录（若底层非 Gateway 则此处兜底）
 """
 
 from __future__ import annotations
@@ -20,6 +27,8 @@ from typing import Any
 
 from llmagent.gateway.models import ChatRequest, HintComplexity, TaskHint
 
+# 用量记账收口（client 层，无循环依赖）：epoch 判定 + 调用用途声明
+from agent.client.llm_usage import llm_use, usage_epoch
 from agent.core.llmops.trace import TraceSpan, get_tracer
 
 
@@ -68,6 +77,13 @@ class TracedLLMClient:
         )
 
     def _record(self, use: str, req: ChatRequest, extra: dict[str, Any] | None = None) -> Any:
+        """发起调用；**仅在唯一收口未记账时**兜底补写一个 TraceSpan。
+
+        判定依据：调用前后 ``usage_epoch()`` 是否增长（provider 级收口每次投递
+        通知都会 +1）。增长 ⇒ 收口已写 span ⇒ 本层静默（避免虚增 100%）；
+        未增长 ⇒ 底层不是 Gateway / 未接线 / 语义缓存命中 ⇒ 本层补记，
+        保证「有调用必有 span」「一调用恰一 span」。
+        """
         tracer = self._tracer or get_tracer()
         t0 = time.time()
         ok = True
@@ -78,22 +94,45 @@ class TracedLLMClient:
         # 只能靠人工比对推断。这里把 cache_hit / cache_key 写进 meta，使串值事故可被直接观测。
         cache_hit = False
         cache_key = ""
+        epoch0 = usage_epoch()
         try:
             if self._llm is None:
                 raise RuntimeError("TracedLLMClient: 底层 LLM (Gateway) 未初始化")
-            resp = self._llm.chat(req)
+            # 声明调用用途：provider 层不可见 creative/utility，靠此经收口落到 span.use
+            with llm_use(use):
+                resp = self._llm.chat(req)
             cache_hit = bool(getattr(resp, "cache_hit", False))
             cache_key = str(getattr(resp, "cache_key", "") or "")
         except Exception as e:  # noqa: BLE001
             ok = False
             err = str(e)
             dt_ms = (time.time() - t0) * 1000.0
+            if usage_epoch() <= epoch0:
+                tracer.record(
+                    TraceSpan(
+                        model=self.model,
+                        use=use,
+                        tokens_in=0,
+                        tokens_out=0,
+                        latency_ms=dt_ms,
+                        cost=self.cost_per_call,
+                        ok=ok,
+                        error=err,
+                        meta={"cache_hit": cache_hit, "cache_key": cache_key},
+                    )
+                )
+            raise
+        dt_ms = (time.time() - t0) * 1000.0
+        tin, tout = (0, 0)
+        if resp is not None:
+            tin, tout = _extract_tokens(resp)
+        if usage_epoch() <= epoch0:
             tracer.record(
                 TraceSpan(
                     model=self.model,
                     use=use,
-                    tokens_in=0,
-                    tokens_out=0,
+                    tokens_in=tin,
+                    tokens_out=tout,
                     latency_ms=dt_ms,
                     cost=self.cost_per_call,
                     ok=ok,
@@ -101,24 +140,6 @@ class TracedLLMClient:
                     meta={"cache_hit": cache_hit, "cache_key": cache_key},
                 )
             )
-            raise
-        dt_ms = (time.time() - t0) * 1000.0
-        tin, tout = (0, 0)
-        if resp is not None:
-            tin, tout = _extract_tokens(resp)
-        tracer.record(
-            TraceSpan(
-                model=self.model,
-                use=use,
-                tokens_in=tin,
-                tokens_out=tout,
-                latency_ms=dt_ms,
-                cost=self.cost_per_call,
-                ok=ok,
-                error=err,
-                meta={"cache_hit": cache_hit, "cache_key": cache_key},
-            )
-        )
         return resp
 
     def chat_creative(

@@ -55,7 +55,13 @@ def wire_llm_event_hook(project_dir: str) -> None:
 
 
 def _usage_hook_factory():
-    """用量 hook：llm.usage 事件落 EventBus + TraceSpan 落全局 TraceStore。"""
+    """用量 hook：llm.usage 事件落 EventBus + TraceSpan 落全局 TraceStore。
+
+    这是 **TraceStore 的唯一写入收口**（2026-09-18 记账双收口事故后确立）：
+    包装层（``TracedLLMClient``）不再无条件写 span，只在「本次调用未触发
+    本 hook」时兜底补记。判据见 ``agent.client.llm_usage.usage_epoch``，
+    红线见 ``tests/test_trace_single_sink.py``。
+    """
 
     def _hook(payload: dict) -> None:
         # 1) EventBus（.events/events.jsonl）
@@ -78,14 +84,22 @@ def _usage_hook_factory():
             tracer.record(
                 TraceSpan(
                     model=str(payload.get("model", "")),
-                    use="chat",
+                    # use 由调用方声明（包装层经 llm_use 传递）；缺省 chat。
+                    # 此前硬编码 "chat" 导致 creative/utility 语义在收口处丢失。
+                    use=str(payload.get("use") or "chat"),
                     tokens_in=int(payload.get("tokens_in", 0) or 0),
                     tokens_out=int(payload.get("tokens_out", 0) or 0),
                     tokens_cached=int(payload.get("tokens_cached", 0) or 0),
                     latency_ms=float(payload.get("latency_ms", 0) or 0),
                     ok=bool(payload.get("ok", True)),
                     error=str(payload.get("error", "")),
-                    meta={"provider": str(payload.get("provider", ""))},
+                    meta={
+                        "provider": str(payload.get("provider", "")),
+                        # 缓存命中留痕（HA-Eval L1）：provider 层通常取不到，
+                        # 缺省 False；包装层兜底补记时会带真实值。
+                        "cache_hit": bool(payload.get("cache_hit", False)),
+                        "cache_key": str(payload.get("cache_key", "") or ""),
+                    },
                 )
             )
         except Exception:  # noqa: BLE001 - 追踪失败不阻断调用
