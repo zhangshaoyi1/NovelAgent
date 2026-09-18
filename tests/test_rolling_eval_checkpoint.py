@@ -41,13 +41,60 @@ def _report(passed: bool, *, rolled_back: bool = False, escalated: bool = False)
     )
 
 
+def _gated_report(
+    gate: str,
+    *,
+    escalated: bool = False,
+    reason: str = "",
+    rolled_back: bool = False,
+):
+    """构造带 ``gate_decision()`` 的报告，用于覆盖 pass/block/warn/recheck 四象限。
+
+    2026-09-18 新增：旧 ``_report`` 无 ``gate_decision`` 属性 ⇒ 检查点走兼容分支
+    （``pass``/``block`` 二值），**测不到 warn / recheck 象限** —— 而本次事故正是
+    「销毁授权在第一轮（block 级证据）、调用方拿到的是复评后（warn 级证据）」。
+    """
+    ok = gate == "pass"
+    dims = [
+        _dim("setting_consistency_high", "设定一致", 0.0, 0.0, "<=", gate != "block"),
+        _dim("coherence", "连贯性", 88.0 if ok else 70.0, 85.0, ">=", ok),
+    ]
+    rep = SimpleNamespace(
+        overall_pass=ok,
+        score=88.0 if ok else 70.0,
+        dimensions=dims,
+        rolled_back=rolled_back,
+        escalated=escalated,
+        escalated_reason=reason,
+    )
+    rep.gate_decision = lambda: gate
+    return rep
+
+
+def _seed_ledger(tmp_path: Path, *, water: int, dirs: int) -> None:
+    """预置独立账本：水位 ``water`` + ``dirs`` 个 ``rollback_to_*`` 快照目录。
+
+    ``RollbackBudget.last_counted_seq`` 初值为 **-1**（未启用）⇒ 首次对账会落进
+    「基线对齐、仅此一次」豁免（不计数）。要测「账本前进被记账」必须先显式对齐水位，
+    否则测出来的是豁免分支而不是目标分支（本仓纪律：别把豁免路径当主路径）。
+    """
+    from agent.core.quality.rollback_budget import RollbackBudget
+
+    arch = tmp_path / "chapters" / "_archived"
+    for i in range(dirs):
+        (arch / f"rollback_to_54_20260918_1000{i}").mkdir(parents=True, exist_ok=True)
+    RollbackBudget.load(tmp_path).mark_ledger(water)
+
+
 class _FakeEvaluator:
     def __init__(self, passed: bool = True, raises: Exception | None = None,
-                 rolled_back: bool = False, escalated: bool = False):
+                 rolled_back: bool = False, escalated: bool = False,
+                 report=None):
         self._passed = passed
         self._raises = raises
         self._rolled_back = rolled_back
         self._escalated = escalated
+        self._report = report
         self.calls = 0
         self.rewrite_calls = 0
         self.last_failed_report = None
@@ -57,6 +104,8 @@ class _FakeEvaluator:
         self.calls += 1
         if self._raises is not None:
             raise self._raises
+        if self._report is not None:
+            return self._report
         return _report(self._passed, rolled_back=self._rolled_back,
                        escalated=self._escalated)
 
@@ -296,10 +345,13 @@ def test_stale_budget_release_does_not_disable_breaker(tmp_path: Path) -> None:
 
 
 def test_batch_end_site_pairs_count_with_release() -> None:
-    """两处成对（纪律）：批末预算块也必须「未回退即归零」。
+    """两处成对（纪律）：批末预算块也必须「先统一对账、再据 counted 归零」。
 
-    滚动检查点已修；若批末块不同步，这条自锁会从另一个入口原样复现。
-    本断言是**锚点契约**：找不到判定点即说明锚点漂移，必须重新取证（不许直接删）。
+    2026-09-18 更新：批末块的记账已由「``elif not _infra_down`` 分支里的
+    ``_count_rollback(...) <= 0``」改为**无条件统一对账点** ``_reconcile_rollback_ledger``
+    —— 旧写法在 ``verified_pass`` 时**先 reset 再看账本**，把已经发生的销毁
+    连记都没记就抹平（登记单 ``20260918_回退销毁与记账分支脱钩``）。
+    本断言是**锚点契约**：找不到对账点即说明锚点漂移，必须重新取证（不许直接删）。
     """
     import ast
     from pathlib import Path as _P
@@ -309,20 +361,174 @@ def test_batch_end_site_pairs_count_with_release() -> None:
         / "src/agent/workflows/pipeline/agentic_pipeline.py"
     )
     tree = ast.parse(src_path.read_text(encoding="utf-8"))
-    anchor = None
+    reconcile_line = None
+    reset_if_line = None
     for node in ast.walk(tree):
-        if not isinstance(node, ast.If):
-            continue
-        test = node.test
-        if not isinstance(test, ast.Compare) or not isinstance(test.left, ast.Call):
-            continue
-        if getattr(test.left.func, "attr", "") == "_count_rollback":
-            anchor = node
-            break
-    assert anchor is not None, (
-        "未找到批末 `_count_rollback(...) <= 0` 判定点（锚点漂移，须重新取证能力新家）"
+        if (
+            isinstance(node, ast.Call)
+            and getattr(node.func, "attr", "") == "_reconcile_rollback_ledger"
+        ):
+            reconcile_line = node.lineno
+        if isinstance(node, ast.If) and ".reset()" in ast.unparse(node):
+            if "counted" in ast.unparse(node.test):
+                reset_if_line = node.lineno
+    assert reconcile_line is not None, (
+        "批末块缺统一对账点 ``_reconcile_rollback_ledger(...)``（锚点漂移，须重新取证能力新家）"
     )
-    assert "reset()" in ast.unparse(anchor), (
-        "批末块缺「未回退即归零」—— 陈旧熔断自锁会从批末入口复现"
+    assert reset_if_line is not None, (
+        "批末块的归零必须**以 counted 为条件**——不得回到「verified_pass 就直接 reset」"
+    )
+    assert reconcile_line < reset_if_line, (
+        "批末块必须先对账再决定归零，否则 reset 会抹掉本批已发生的回退"
+    )
+
+
+# ---------------- 2026-09-18：「销毁与记账分支脱钩」→ 统一对账点 ----------------
+#
+# 事故（《灵荒薪传》ch054-058，登记单 ``20260918_回退销毁与记账分支脱钩``）：
+# 回退销毁发生在 ``evaluate_with_repair()`` **内部**，授权它的是**第一轮** report
+# （硬维失败 ⇒ block 级证据）；而检查点拿到的是该方法**复评后**的返回 report ——
+# 重写之后硬维往往已达标，只剩软维失败 ⇒ ``gate_decision()`` 返 **warn**。
+# 旧实现把 ``_count_rollback`` 写在 ``gate == "block"`` 分支里 ⇒ 落到 warn 象限
+# **一次都不记账** ⇒ ``consecutive`` 恒 0 ⇒ ``tripped()`` 恒 False ⇒ 熔断与
+# 2026-09-17 新加的 ``rollback_barrier`` 全部空转 ⇒ 同一窗口反复销毁 5 轮、净推进 0
+# （账本 mtime 冻结 11h，``last_counted_seq`` 停在 31 而真实快照已 36 —— 铁证）。
+#
+# 语义修正：记账依据 = **动作事实**（独立账本是否前进），与 gate 象限无关。
+
+
+def test_warn_gate_still_counts_rollback(tmp_path: Path) -> None:
+    """★ 核心红线：gate=warn（仅软维失败）时**仍须记账**。
+
+    这是本次事故的直接成因——销毁已经发生，但 report 落在 warn 象限 ⇒ 旧实现不记账。
+    """
+    from agent.core.quality.rollback_budget import RollbackBudget
+
+    _seed_ledger(tmp_path, water=0, dirs=1)  # 独立账本前移 1（快照 0 → 1）
+    ev = _FakeEvaluator(report=_gated_report("warn", rolled_back=False))
+    p = _pipeline(tmp_path, ev)
+    assert p._rolling_eval_checkpoint() is True, "warn 象限应放行继续写作"
+
+    assert RollbackBudget.load(tmp_path).consecutive == 1, (
+        "warn 象限漏记账 —— 熔断与前置闸将再次全部空转（本次事故的直接成因）"
+    )
+
+
+def test_recheck_gate_still_counts_rollback(tmp_path: Path) -> None:
+    """gate=recheck（降级证据 + 真回退）同样必须记账 —— 同一不变量，不按象限豁免。"""
+    from agent.core.quality.rollback_budget import RollbackBudget
+
+    _seed_ledger(tmp_path, water=0, dirs=2)  # 前移 2
+    ev = _FakeEvaluator(report=_gated_report("recheck", rolled_back=False))
+    p = _pipeline(tmp_path, ev)
+    p._rolling_eval_checkpoint()
+    assert RollbackBudget.load(tmp_path).consecutive == 2
+
+
+def test_warn_gate_escalated_stops_batch(tmp_path: Path) -> None:
+    """D1 补口：warn 分支必须看 ``report.escalated``（旧实现只告警继续）。"""
+    ev = _FakeEvaluator(
+        report=_gated_report(
+            "warn", escalated=True, reason="回退 2 次仍不达标，需人工介入"
+        )
+    )
+    p = _pipeline(tmp_path, ev)
+    assert p._rolling_eval_checkpoint() is False, "evaluator 已放弃处置时不得继续写作"
+    assert "人工介入" in p._rolling_escalation_reason
+
+
+def test_warn_gate_without_escalation_continues(tmp_path: Path) -> None:
+    """反向：warn 且未放弃处置 ⇒ 仍只告警继续（不得把软维告警升级成停批）。"""
+    ev = _FakeEvaluator(report=_gated_report("warn", escalated=False))
+    p = _pipeline(tmp_path, ev)
+    assert p._rolling_eval_checkpoint() is True
+    assert not p._rolling_escalation_reason
+
+
+def test_pass_with_real_rollback_does_not_reset(tmp_path: Path) -> None:
+    """回退后重写通过 ≠ 没回退：不得被 reset 抹平（否则熔断永久失效）。"""
+    from agent.core.quality.rollback_budget import RollbackBudget
+
+    _seed_ledger(tmp_path, water=0, dirs=1)
+    ev = _FakeEvaluator(report=_gated_report("pass", rolled_back=False))
+    p = _pipeline(tmp_path, ev)
+    assert p._rolling_eval_checkpoint() is True
+    assert RollbackBudget.load(tmp_path).consecutive == 1, (
+        "通过分支无条件 reset ⇒ 靠回退刷出来的「通过」永远不计入熔断"
+    )
+
+
+def test_pass_without_rollback_still_resets(tmp_path: Path) -> None:
+    """回归：通过且**确无回退**时仍须归零（保持 2026-09-17「断链归零」语义）。"""
+    from agent.core.quality.rollback_budget import RollbackBudget
+
+    for _ in range(5):
+        RollbackBudget.load(tmp_path).bump(target_chapter=54, reason="陈旧置位")
+    assert RollbackBudget.load(tmp_path).consecutive == 5
+
+    ev = _FakeEvaluator(report=_gated_report("pass"))
+    p = _pipeline(tmp_path, ev)
+    assert p._rolling_eval_checkpoint() is True
+    assert RollbackBudget.load(tmp_path).consecutive == 0
+
+
+def test_reconcile_exception_does_not_reset(tmp_path: Path) -> None:
+    """对账异常（-1）时**不得归零**：未知不是"确无回退"（一号病的镜像）。"""
+    from agent.core.quality.rollback_budget import RollbackBudget
+
+    for _ in range(5):
+        RollbackBudget.load(tmp_path).bump(target_chapter=54, reason="陈旧置位")
+
+    ev = _FakeEvaluator(report=_gated_report("pass"))
+    p = _pipeline(tmp_path, ev)
+
+    def _boom(*a, **k):
+        raise RuntimeError("账本不可读")
+
+    p._count_rollback = _boom
+    assert p._rolling_eval_checkpoint() is True
+    assert RollbackBudget.load(tmp_path).consecutive == 5, (
+        "对账异常被当成「没有回退」⇒ 又一次把失败读成通过"
+    )
+
+
+def test_reconcile_runs_before_gate_branches() -> None:
+    """锚点契约：统一对账点必须位于**所有** ``gate ==`` 分支之前。
+
+    若被挪回某个分支内，「漏象限」缺陷会原样复现。本断言锁位置而非行为，
+    是为了让改动者必须先读到这条纪律（登记单 §纪律）。
+    """
+    import ast
+    from pathlib import Path as _P
+
+    src_path = (
+        _P(__file__).resolve().parents[1]
+        / "src/agent/workflows/pipeline/agentic_pipeline_agents.py"
+    )
+    tree = ast.parse(src_path.read_text(encoding="utf-8"))
+    fn = None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef) and node.name == "_rolling_eval_checkpoint":
+            fn = node
+            break
+    assert fn is not None, "未找到 _rolling_eval_checkpoint（锚点漂移，须重新取证）"
+
+    reconcile_line = None
+    gate_lines: list[int] = []
+    for node in ast.walk(fn):
+        if (
+            isinstance(node, ast.Call)
+            and getattr(node.func, "attr", "") == "_reconcile_rollback_ledger"
+        ):
+            reconcile_line = min(reconcile_line or 10**9, node.lineno)
+        if isinstance(node, ast.Compare) and "gate" in ast.unparse(node.left):
+            for c in node.comparators:
+                if isinstance(c, ast.Constant) and isinstance(c.value, str):
+                    gate_lines.append(node.lineno)
+    assert reconcile_line is not None, "滚动检查点缺统一对账点调用"
+    assert gate_lines, "未找到 gate 象限判定（锚点漂移）"
+    assert reconcile_line < min(gate_lines), (
+        f"统一对账点（L{reconcile_line}）必须在所有 gate 分支（最早 L{min(gate_lines)}）"
+        f"**之前** —— 否则 warn/recheck 象限会再次漏记账"
     )
 

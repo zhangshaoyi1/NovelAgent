@@ -880,20 +880,22 @@ class AgenticPipelineWorkflow(
                 # 每批新建 Evaluator 即归零 → 31 次回退也没人上报人工）。
                 try:
                     budget = self._rollback_budget()
-                    if getattr(report, "verified_pass", report.overall_pass):
+                    # ---- 统一对账点（2026-09-18）：先记账，再决定是否翻篇 ----
+                    # 见 ``_reconcile_rollback_ledger``：回退销毁发生在
+                    # ``evaluate_with_repair()`` **内部**，而这里拿到的是它**复评后**的
+                    # report ⇒ 旧实现「``verified_pass`` 时直接 reset、否则才在
+                    # ``not _infra_down`` 分支里记账」会把已经发生的销毁**连记都没记就
+                    # 抹平**（reset 覆盖计数），与滚动检查点同一缺陷（登记单
+                    # ``20260918_回退销毁与记账分支脱钩``）。
+                    # 改为无条件先对账：
+                    #   记账依据 = 独立账本是否前进（动作事实），与 gate 象限无关；
+                    #   归零依据 = 通过 **且** 本轮确无回退 **且** 证据可信。
+                    counted = self._reconcile_rollback_ledger(report, "批末体检")
+                    verified = bool(getattr(report, "verified_pass", report.overall_pass))
+                    if counted == 0 and verified and not _infra_down:
+                        # 对账异常（-1）不归零：未知不是"确无回退"（一号病的镜像）。
+                        # ``_infra_down`` 时不归零：基建不可用时证据不可信，保守保留计数。
                         budget.reset()
-                    elif not _infra_down:
-                        # 双账本对账（2026-09-15）：判据不再单看 report.rolled_back，
-                        # 而由 _count_rollback 取「主账本 ∪ 独立账本」——
-                        # 实测主账本单点失效时 5 次真实回退一次都没记账（见登记单 §二.R2）。
-                        # 2026-09-17（登记单 ``20260917_熔断计数无断链归零_陈旧置位自锁``）：
-                        # 与滚动检查点同一口径 —— 本批**未发生任何回退** ⇒ 「连续回退」
-                        # 链条断裂 ⇒ 归零。否则检查点因 ``tripped()`` 陈旧置位而提前 break、
-                        # 永远到不了"通过"，计数便被永久锁死（实测连续 9 次冻结 5.5h）。
-                        # ``_infra_down`` 分支**不归零**：基建不可用时证据不可信，
-                        # 保守保留计数（宁可不放行，不可误放行）。
-                        if self._count_rollback(report, "批末体检不达标触发回退") <= 0:
-                            budget.reset()
                     if budget.tripped() and not result.escalated:
                         result.escalated = True
                         result.escalated_reason = budget.reason_text()

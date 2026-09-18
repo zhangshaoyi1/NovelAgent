@@ -228,10 +228,31 @@ def test_checkpoint_uses_repair_loop_not_plain_evaluate(tmp_path: Path) -> None:
 
 
 def test_checkpoint_pass_resets_budget(tmp_path: Path) -> None:
+    """通过 ⇒ 链条断裂 ⇒ 归零（**前提**：本轮确无回退）。
+
+    2026-09-18 修正：原用例用 ``_Report("pass")``，而 ``_Report`` 默认
+    ``rolled_back=True``（语义="回退后重写才通过"）。旧实现 pass 分支**无条件 reset**
+    ⇒ 把已经发生的回退连记都没记就抹平；改为「先统一对账、再据 counted 归零」后，
+    这种"靠回退刷出来的通过"必须照样累计（否则熔断永久失效——本次事故成因之一）。
+    故此处显式声明 ``rolled_back=False``，保持本用例「未回退即归零」的原意；
+    「通过但回退过 ⇒ 不归零」由下一条用例锁定。
+    """
     RollbackBudget.load(tmp_path, limit=3).bump(target_chapter=180, reason="上一次")
-    pipe = _FakePipeline(tmp_path, _Report("pass"))
+    pipe = _FakePipeline(tmp_path, _Report("pass", rolled_back=False))
     assert pipe._rolling_eval_checkpoint() is True
     assert RollbackBudget.load(tmp_path, limit=3).consecutive == 0
+
+
+def test_checkpoint_pass_after_rollback_does_not_reset(tmp_path: Path) -> None:
+    """通过 ≠ 没回退：回退后重写通过仍须累计（否则"回退+通过"可无限自刷）。"""
+    RollbackBudget.load(tmp_path, limit=3).bump(target_chapter=180, reason="上一次")
+    assert RollbackBudget.load(tmp_path, limit=3).consecutive == 1
+
+    pipe = _FakePipeline(tmp_path, _Report("pass", rolled_back=True))
+    assert pipe._rolling_eval_checkpoint() is True
+    assert RollbackBudget.load(tmp_path, limit=3).consecutive == 2, (
+        "回退后通过被 reset ⇒ 熔断永远攒不起来（本次事故的直接成因之一）"
+    )
 
 
 def test_checkpoint_block_breaks_batch_and_counts(tmp_path: Path) -> None:

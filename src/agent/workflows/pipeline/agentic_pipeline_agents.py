@@ -261,8 +261,17 @@ class _PipelineAgentsMixin:
         fail_txt = "、".join(
             f"{d.label}={d.value}" for d in failed[:6]
         ) or "见报告"
+        # ---- 统一对账点（2026-09-18）：先记账，再按象限决定动作 ----
+        # 见 _reconcile_rollback_ledger 的 docstring：销毁发生在 evaluate_with_repair()
+        # 内部、授权它的是**第一轮** report（block 级），而这里拿到的是**复评后**的
+        # report（往往只剩软维 ⇒ warn）。把记账写在 gate 分支里 ⇒ 落到 warn/recheck/pass
+        # 就一次都不记 ⇒ consecutive 恒 0 ⇒ 熔断与 rollback_barrier 全部空转。
+        counted = self._reconcile_rollback_ledger(report, "滚动体检")
         if gate == "pass":
-            self._rollback_budget().reset()  # P1：连续回退计数归零（通过即翻篇）
+            # 通过且本轮**确无回退**（counted == 0）⇒ 「连续回退」链条断裂 ⇒ 翻篇。
+            # counted == -1（对账异常）时保守不归零：未知不是"没有"。
+            if counted == 0:
+                self._rollback_budget().reset()  # P1：连续回退计数归零（通过即翻篇）
             self.console.print(f"[green]✓ 滚动体检通过（得分 {score}）[/green]")
             return True
         if gate == "block":
@@ -273,7 +282,10 @@ class _PipelineAgentsMixin:
             # 2026-09-15：判据由「单看 report.rolled_back」改为**双账本对账**
             # （见 _count_rollback）——实测单点失效时 5 次真实回退一次都没记账，
             # 熔断护栏整体失效、回退无限进行。
-            counted = self._count_rollback(report, fail_txt)
+            # 2026-09-18：记账已**上移**到本方法开头的统一对账点（见
+            # ``_reconcile_rollback_ledger``）—— 不再按 gate 分支枚举，否则
+            # warn / recheck / pass 象限会把「已经发生的销毁」整个漏掉。
+            # ``counted`` 由统一对账点给出，此处只消费不再记账。
             # 2026-09-17（登记单 ``20260917_熔断计数无断链归零_陈旧置位自锁``）：
             # ``consecutive`` 是「**连续**回退」计数，而 ``reset()`` 原先**只在
             # ``gate == "pass"`` 触发** ⇒ 一次置位即永久生效：陈旧 ``tripped()``
@@ -284,7 +296,7 @@ class _PipelineAgentsMixin:
             # 修法：本轮检查点**未发生任何回退** ⇒ 「连续回退」链条断裂 ⇒ 归零。
             # 安全性：``report.rolled_back`` 为真时 ``_count_rollback`` 恒返回 ≥1
             # （宁多记不漏记），故「返回 0」必为「确无回退」，不会误杀真实熔断。
-            if counted <= 0:
+            if counted == 0:  # 对账异常（-1）不归零：未知不等于"确无回退"
                 budget.reset()
             evaluator_gave_up = bool(getattr(report, "escalated", False))
             if budget.tripped() or evaluator_gave_up:
@@ -341,6 +353,24 @@ class _PipelineAgentsMixin:
         soft_txt = "、".join(
             f"{d.label}={d.value}" for d in failed if not getattr(d, "required", False)
         ) or fail_txt
+        # ---- D1 补口（2026-09-18）：warn 分支原先**不看 report.escalated** ----
+        # 2026-09-16 的「动作统一」（D1）只统一了 block 与 recheck 两个分支，漏了 warn。
+        # 而 warn 恰是"复评后硬维已修好、只剩软维差"的常见结局 —— 此时
+        # ``evaluate_with_repair`` 内部可能已经**放弃处置**（回退次数耗尽仍不达标 ⇒
+        # ``report.escalated=True``）。同一份证据在批末会停批上报，在此处却"只告警继续"
+        # ⇒ 动作强度与证据等级不对账（与 D1 同一条纪律）。
+        if bool(getattr(report, "escalated", False)):
+            reason = (
+                getattr(report, "escalated_reason", "")
+                or f"滚动体检软维度未达标且修复未收敛：{soft_txt}"
+            )
+            self._rolling_escalation_reason = reason
+            self.console.print(
+                f"[red]✗ 滚动体检软维未达标且复评未恢复（得分 {score}）：{soft_txt}\n"
+                f"  {reason}\n  中断本批并上报人工。[/red]"
+            )
+            self._emit_failure("eval", reason, severity="block")
+            return False
         self.console.print(
             f"[yellow]⚠ 滚动体检软维度未达标（得分 {score}）：{soft_txt}；"
             f"仅告警，继续写作（不回滚不中断）[/yellow]"
@@ -419,6 +449,49 @@ class _PipelineAgentsMixin:
         except Exception as e:  # noqa: BLE001 - 账本不可用不阻断，退回主账本
             degrade("pipeline.rollback_ledger", "回退独立账本不可读，退回报告主账本", e)
             return 0, 0
+
+    def _reconcile_rollback_ledger(self, report: Any, where: str) -> int:
+        """**统一对账点**（2026-09-18）：不论 gate 落在哪个象限，只要独立账本前进了就记账。
+
+        登记单 ``20260918_回退销毁与记账分支脱钩``。
+
+        动机（本条是本仓「护栏记账」一类缺陷的第三个变体）：
+        回退销毁发生在 ``evaluate_with_repair()`` **内部**，授权它的是**第一轮** report
+        （硬维失败 ⇒ block 级证据）；而调用方拿到的是该方法**复评后**的返回 report ——
+        重写之后硬维往往已回到达标，只剩软维失败 ⇒ ``gate_decision()`` 返 ``warn``。
+        旧实现把 ``_count_rollback`` 写在 ``gate == "block"`` 分支里（批末块同理写在
+        ``elif not _infra_down`` 里，且 ``verified_pass`` 时**先 reset 再不看账本**）
+        ⇒ 落到 warn / recheck / pass 时**一次都不记账** ⇒ ``RollbackBudget.consecutive``
+        恒 0 ⇒ ``tripped()`` 恒 False ⇒ 熔断永不触发，且 2026-09-17 新加的
+        ``rollback_barrier``（读 ``tripped()``）彻底空转。
+
+        实测代价：《灵荒薪传》ch054-058 被反复销毁重写 5 轮（5 个归档目录内容逐轮重生成），
+        任务跑 1h51m 净推进 0 章，``rollback_budget.json`` 冻结 11 小时（``last_counted_seq``
+        停在 31，而真实快照已 36）—— ``mark_ledger()`` 每次必 ``save()``，账本未动即
+        铁证「记账从未执行」。
+
+        改法（纪律 #8/#12 的思路：**能用不变量表达的，不要用分支枚举**）：
+        记账依据从「判据象限」改为「**动作事实**」—— ``_rollback_ledger`` 取的是
+        ``chapters/_archived/rollback_to_*`` 目录数，是与 report 接线完全无关的第二个证据源，
+        只要它前进了就说明销毁真的发生过。因此本方法**无条件**执行，不参与任何 gate 分支；
+        ``_count_rollback`` 内部按快照序号去重，重复调用幂等。
+
+        Returns:
+            本次记账次数；**``-1`` 表示对账本身异常**（记账未知）。调用方据此**不得归零**
+            —— 「未知」不是「确无回退」，这是本仓一号病（失败被解读为通过）的镜像。
+        """
+        try:
+            return self._count_rollback(report, f"{where}：独立账本显示发生回退")
+        except Exception as e:  # noqa: BLE001 - 对账异常不得静默
+            degrade(
+                "pipeline.rollback_unified_ledger",
+                f"统一对账点异常（{where}），回退可能未被记账，熔断判据存疑",
+                e,
+            )
+            self._emit_failure(
+                "eval", f"回退记账异常（{where}）：{e}", severity="warn"
+            )
+            return -1
 
     def _count_rollback(self, report: Any, reason: str) -> int:
         """把「真实发生的回退」记入跨批预算；返回本次记账次数。
