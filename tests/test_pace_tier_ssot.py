@@ -228,3 +228,97 @@ class TestTierLeakGuard:
             f"指纹关键词 {sorted(unknown)} 无法由契约真源派生 —— "
             "必须在 CONTRACT_FIELDS 或小节名里找到来源（禁止手写第二份清单）"
         )
+
+
+# ============================================================
+# 五、端到端跑闸（2026-09-18 真实项目上发现，纪律 #20）
+#
+# ★ 这条是**验收级**红线，不是单元级：
+#   上面四组判据全绿时，真实项目上 D2 依然**完全失效** ——
+#   ``chapter_intent`` 块 1200 字预算被靠前的钩子/情点行长文吃满，
+#   档位声明行位于其后 ⇒ 被 ``_clip`` 从**尾部**切断 ⇒ 评委拿不到参照系
+#   ⇒ 仍按高潮尺判放松章注水 ⇒ 死循环原样复现。
+#   （纪律 #20：「单点单测绿 ≠ 链路口子通」；纪律 #11：验收须写成因果链）
+#
+#   判据形态刻意选「单调性 + 保全」而不是「数值相等」：
+#     - 截断发生时，档位锚行**必须仍在**（保全）；
+#     - 文本越长，档位锚行**越不能被挤掉**（单调）；
+#     - 老数据无档位 ⇒ 截断形态**逐字不变**（纪律 #4）。
+# ============================================================
+class TestIntentBudgetPreservesTier:
+    """档位声明必须在字符预算截断下**活下来**（否则"注入了"＝没注入）。"""
+
+    @staticmethod
+    def _render(tier_name: str, filler_words: int) -> str:
+        from agent.core.story.design_brief import _render_chapter_intent
+
+        filler = "支线铺垫与人物关系推进的细碎事件，" * filler_words
+        md = (
+            "## 支线目标\n目标。\n\n"
+            "## 章节钩子设计\n\n"
+            f"第7章：章首钩子=传唤｜章尾钩子=赃物｜爽点={filler}｜档位={tier_name}\n\n"
+            "## 情节点序列\n\n"
+            f"第7章：动作一；动作二；{filler}\n"
+        )
+        return _render_chapter_intent(md, chapter_num=7)
+
+    @pytest.mark.parametrize("tier_name", ["高潮", "推进", "垫片", "日常"])
+    @pytest.mark.parametrize("filler_words", [0, 20, 120])
+    def test_tier_survives_clip(self, tier_name: str, filler_words: int) -> None:
+        from agent.core.story.design_brief import _BUDGET, _clip
+
+        text = self._render(tier_name, filler_words)
+        clipped = _clip(text, "chapter_intent")
+        assert len(clipped) <= _BUDGET["chapter_intent"] + 16, "截断后仍超预算"
+        assert f"本章强度档位：{tier_name}" in clipped, (
+            f"档位 {tier_name}（填充 {filler_words} 词）被截断吃掉 ⇒ 评委拿不到参照系"
+        )
+
+    def test_clip_is_monotonic_in_filler(self) -> None:
+        """反单调＝缺陷：填充越多，档位越不该消失。"""
+        from agent.core.story.design_brief import _clip
+
+        seen = []
+        for words in (0, 10, 40, 90, 160, 260):
+            clipped = _clip(self._render("日常", words), "chapter_intent")
+            seen.append("本章强度档位：日常" in clipped)
+        assert all(seen), f"填充增加后档位消失（单调性破裂）：{seen}"
+
+    def test_no_tier_no_anchor_legacy_unchanged(self) -> None:
+        """★ 纪律 #4：老数据（无档位）⇒ 无锚 ⇒ 截断行为与修复前**逐字相同**。
+
+        ⚠ 本测试初版三度写错，每次都是**没先取证就断言**（值得记下来的教训）：
+        1. 以为 ``_clip`` 从末尾删字 —— 实为**截头**（保留前 limit 字）；
+        2. 以为多行填充能撑到 1200 —— hooks 段先被 ``[:400]``、
+           points 段被 ``[:500]`` 各自截过 ⇒ 加起来只有 ~400+500，
+           **`chapter_intent` 单块根本到不了 1200** ⇒ 撑不动的方向错了；
+        3. 正确做法：直接**单独**验证 ``_clip`` 的"无锚"路径（那才是本次改动的
+           行为面），不要绕渲染器。
+        """
+        from agent.core.story.design_brief import _BUDGET, _clip
+
+        plain = "- 章节钩子设计：" + "填充，" * 900
+        assert len(plain) > _BUDGET["chapter_intent"], "样本未超预算 ⇒ 没在测截断"
+        assert _clip(plain, "chapter_intent") == (
+            plain[: _BUDGET["chapter_intent"]] + "…（已截断）"
+        ), "无档位锚时截断形态改变 ⇒ 影响了当前路径（口子只应挡历史）"
+
+    def test_render_output_is_never_clipped_in_practice(self) -> None:
+        """★ 反证上面那条：真实渲染路径的 ``chapter_intent`` **到不了** 1200 预算。
+
+        这是本次排查的一个副产品认识（值得钉住，防止后人误以为"渲染已经在截断了"）：
+        hooks 段 ``[:400]`` + points 段 ``[:500]`` + 档位行 ~120 + 支线目标 ~300
+        ⇒ 单块上限约 1300，实测老数据（无档位行）约 410–920 ⇒ **多数情况下不触发
+        ``_clip``**；触发时只可能是"长档位声明 + 放松说明"（约 250 字）把总量推过线。
+        故档位锚的保全红线（``TestIntentBudgetPreservesTier.test_tier_survives_clip``）
+        是**必需的**：那才是档位行真会消失的那条路径。
+        """
+        from agent.core.story.design_brief import _BUDGET, _render_chapter_intent
+
+        long_line = "第7章：章首钩子=a｜章尾钩子=b｜" + "填充，" * 260 + "\n"
+        legacy = "## 章节钩子设计\n\n" + long_line * 4
+        text = _render_chapter_intent(legacy, chapter_num=7)
+        assert len(text) < _BUDGET["chapter_intent"], (
+            f"老数据渲染竟达 {len(text)} 字（预算 {_BUDGET['chapter_intent']}）"
+            "—— 若确实超了，说明各段上限被调大，本测试与护栏需同步复核"
+        )

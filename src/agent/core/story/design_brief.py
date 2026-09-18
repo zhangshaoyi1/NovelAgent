@@ -138,11 +138,33 @@ def _md_section(content: str, *titles: str) -> str:
     return ""
 
 
+#: 截断时**必须优先保全**的「判定前提」行前缀。
+#:
+#: 2026-09-18（M1 端到端跑闸发现，纪律 #4「为兼容历史开的口子必须只挡历史」的反例）：
+#: 「本章强度档位」是**判据的参照系**——评委据此决定用高潮尺还是放松尺。
+#: 而 ``chapter_intent`` 块有 1200 字预算，此前契约行是**整段文本**（一章一行、
+#: 单行常 300–500 字）⇒ 靠前的钩子/情节点两段就能把预算吃满 ⇒ 档位声明被
+#: ``_clip`` 从**尾部**切断 ⇒ 「注入了但被截断」＝**没注入**，评委仍按高潮尺判
+#: 放松章注水，死循环原样复现（D2 失效）。
+#:
+#: 故给正式档案（旧数据无档位 ⇒ 无此锚 ⇒ 行为与修复前一致）一个**守卫锚**：
+#: 截断发生时，先把这些行整体保留，再从剩余预算里装正文。
+_INTENT_KEEP_PREFIXES: tuple[str, ...] = ("- **本章强度档位：",)
+
+
 def _clip(text: str, key: str) -> str:
     limit = _BUDGET.get(key, 1000)
     if len(text) <= limit:
         return text
-    return text[:limit] + "…（已截断）"
+    kept = [ln for ln in text.splitlines() if ln.startswith(_INTENT_KEEP_PREFIXES)]
+    if not kept:
+        return text[:limit] + "…（已截断）"
+    head = "\n".join(kept)
+    budget = limit - len(head) - 8  # 8 = 省略标记与换行的余量
+    if budget <= 0:  # 守卫行本身超预算（理论不可达）⇒ 不硬塞，退回原行为
+        return text[:limit] + "…（已截断）"
+    body = "\n".join(ln for ln in text.splitlines() if not ln.startswith(_INTENT_KEEP_PREFIXES))
+    return f"{head}\n{body[:budget]}…（已截断；判定前提已保全）"
 
 
 # ============================================================
