@@ -23,6 +23,12 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
+# 契约字段名的唯一真源（同层 core ⇒ 不违反 R6「core 不得反向依赖上层」）
+from agent.core.story.chapter_contract import (
+    CONTRACT_LEAK_LABELS,
+    find_contract_annotations,
+)
+
 # 默认占位符（草稿残留，绝不应出现在成书中）
 _DEFAULT_PLACEHOLDERS: list[str] = [
     r"\[TODO\]", r"\[待补\]", r"\[占位\]", r"XXX", r"xxxx",
@@ -92,8 +98,15 @@ META_LEAK_RULE_ID: str = "meta_instruction_leak"
 #   表现为编号清单（"1. 开场钩子…5. 英文污染…"）或字数汇报
 #   （"正文从约1619字扩展至约2450字，符合目标字数要求"）。
 #   模式库按事故样本持续回填，新增模式须带实测样本回归（tests/test_scope_and_meta_boundary.py）。
+_CONTRACT_LABEL_ALT = "|".join(re.escape(_x) for _x in CONTRACT_LEAK_LABELS)
+
 _META_LEAK_RE = re.compile(
-    r"章末悬念|留下悬念|悬念[：:]|本章要求[：:]|写作指令|作者指令|系统指令|写作提示"
+    # 契约字段名（**由契约唯一真源派生**，2026-09-18）：prompt v4 把字段名定为
+    # 「章首钩子/章尾钩子/爽点/目标情绪/在场/禁/验收」后，本词表曾未同步 ⇒
+    # 写手照抄字段名被误判为「元指令泄漏」（ch003.md:254 实测）。
+    # 判据词表与提示词语言锚必须同源，否则改名就是一次双向破裂。
+    _CONTRACT_LABEL_ALT
+    + r"|留下悬念|悬念[：:]|本章要求[：:]|写作指令|作者指令|系统指令|写作提示"
     r"|修订说明|修订笔记|改稿说明"
     r"|ch\d+章|第\d+章里|第\d+段[：:]"
     # 2026-09-13 无灵实测泄漏模式（质检自查报告 / 扩写汇报）
@@ -647,6 +660,18 @@ class Guardrails:
         先剥离 YAML frontmatter（含 chapter/created_at 等非正文字段），仅扫正文。
         """
         body = re.sub(r"^---[\s\S]*?---", "", text, flags=re.MULTILINE)  # 去 frontmatter
+
+        # 2.5) 契约批注块（**全文**扫，不只章末）：2026-09-18 新增。
+        # 词表层曾能抓到「章末悬念」，但写手会把**整块规划批注**带进正文（实测
+        # ch003.md:254 `- *钩子：章末悬念从笼统的…*`，位于章中而非章末）；
+        # 类级指纹认「行首列表标记 + 契约语义标签 + 冒号」，与措辞无关。
+        annotations = find_contract_annotations(body)
+        if annotations:
+            return (
+                f"检测到规划批注块泄漏：正文出现契约批注行「{annotations[0][:40]}」"
+                "（细纲字段名/批注是 agent→LLM 的指令，不得写入交付正文）"
+            )
+
         m = _META_LEAK_RE.search(body)
         if m:
             return (

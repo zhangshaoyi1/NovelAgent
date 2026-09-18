@@ -162,9 +162,16 @@ class AgenticWriteWorkflow:
         # 与 2026-09-11 G15 ``_archive_chapter`` 同构（收敛丢能力），故随本次
         # 「删除废弃入口」一并把能力迁移到生产入口（先补再删）。
         try:
+            from agent.core.story.chapter_contract import strip_contract_annotations
             from agent.workflows.writing.m5_text_hygiene import hard_replace_ai_phrases
 
             text, _l1_replaced = hard_replace_ai_phrases(text)
+            # 2026-09-18：契约批注块（细纲字段名被写手照抄，ch003.md:254 实测
+            # `- *钩子：章末悬念从笼统的…*`）必须在门禁**之前**清掉 ——
+            # 否则 guardrails 判 blocking ⇒ 打回重写 ⇒ 重写仍可能再抄
+            # ⇒「整章重写仍不过」。清理与检测同源（core/story/chapter_contract）。
+            text, _anno_replaced = strip_contract_annotations(text)
+            _l1_replaced.extend(_anno_replaced)
             if _l1_replaced:
                 try:
                     from datetime import datetime as _dt, timezone as _tz

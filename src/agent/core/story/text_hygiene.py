@@ -16,6 +16,11 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 
+from agent.core.story.chapter_contract import (
+    find_contract_annotations,
+    strip_contract_annotations,
+)
+
 
 def strip_frontmatter(text: str) -> str:
     """去掉可能存在的 YAML frontmatter（与 m5_text_hygiene._strip_frontmatter 同实现）"""
@@ -251,6 +256,12 @@ def scan_hard_pollutions(text: str) -> list[str]:
     if ph:
         hits.append(f"占位符残留：{len(ph)} 处（裸问号/TODO/待补充等）")
 
+    annotations = find_contract_annotations(body)
+    if annotations:
+        hits.append(
+            f"契约批注泄漏：{len(annotations)} 行（如「{annotations[0][:30]}」）"
+        )
+
     bridges = [p for p in _HARD_BRIDGE_PHRASES if p in narrative_projection(body)]
     if bridges:
         hits.append("AI 承接词残留：" + "、".join(bridges))
@@ -269,6 +280,11 @@ def clean_hard_pollutions(text: str) -> tuple[str, list[str]]:
     """
     out = text
     traced: list[str] = []
+
+    # 2026-09-18：先删**契约批注行**（细纲字段名被写手照抄成批注块，
+    # ch003.md:254 实测）——与 guardrails 的检测同源，判得出就删得掉。
+    out, _anno_traced = strip_contract_annotations(out)
+    traced.extend(_anno_traced)
 
     def _drop(m: re.Match) -> str:
         traced.append(f"删指令：{m.group(0).strip()[:30]}")
