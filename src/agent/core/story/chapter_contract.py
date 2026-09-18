@@ -219,7 +219,11 @@ PACE_TIER_BY_NAME: dict[str, PaceTier] = {t.name: t for t in PACE_TIERS}
 PACE_TIER_FIELD = "档位"
 
 #: 从逐章行抠出档位值：``…｜档位=推进｜…``（容忍三种分隔符与两种竖线）
-_PACE_TIER_RE = re.compile(rf"[｜|]\s*{PACE_TIER_FIELD}\s*[=:：]\s*([^\s｜|，,、）)]+)")
+#: ⚠ 终止符须含中英文句读（``，,、。；;`` 等）：档位常出现在行尾，
+#:   其后紧邻句号/逗号（如 ``｜档位=日常。``）——不收会把标点吞进取值。
+_PACE_TIER_RE = re.compile(
+    rf"[｜|]\s*{PACE_TIER_FIELD}\s*[=:：]\s*([^\s｜|，,、。；;）)：:（(]+)"
+)
 
 
 def parse_pace_tier(chapter_line: str) -> str:
