@@ -154,15 +154,24 @@ def _write_window(project_dir: str | Path, *, size: int = _OPENING_WINDOW) -> tu
     return (cur + 1, cur + size)
 
 
-def _chapter_line_count(content: str) -> int:
-    """逐章契约行覆盖的**去重章号数**（与章级契约真源 ``chapter_contract`` 同源）。"""
+def _chapter_numbers(content: str) -> set[int]:
+    """逐章契约行覆盖的**章号集合**（与章级契约真源 ``chapter_contract`` 同源）。
+
+    ⚠ 必须返回**集合**而非计数：判据 2 的作用域是「即将写的窗口」，
+    只有章号才能与窗口求交（全局计数无法回答"窗口内有没有行"）。
+    """
     from agent.core.story.chapter_contract import extract_section
 
     nums: set[int] = set()
     for name in _PLOT_SOURCE_SECTIONS:
         section = extract_section(content, name)
         nums.update(int(n) for n in re.findall(r"第\s*(\d+)\s*章\s*[：:]", section))
-    return len(nums)
+    return nums
+
+
+def _chapter_line_count(content: str) -> int:
+    """逐章契约行覆盖的**去重章号数**（全文件口径；窗口口径见 ``_chapter_numbers``）。"""
+    return len(_chapter_numbers(content))
 
 
 def _has_stage_lines(content: str) -> bool:
@@ -215,17 +224,31 @@ def check_subline_plot_source(
     判据必须检查**粒度**，不能只检查"有没有这个段"。
 
     判据分层（强度与修复手段配对）：
+      0. **作用域＝即将写的窗口**（``cur+1 .. cur+20``）。支线区间与窗口不相交
+         ⇒ 只告警（远期支线不许冻住全书）；判据 2/3 的**分母分子都只算窗口内**。
       1. 「情节点序列 / 章节钩子设计」至少一处存在且非空 —— 缺则 **fail-fast**
          （确定性不变量；修复手段＝重跑大纲/支线生成）
-      2. 至少一处含**逐章**契约行（``第N章：…``）—— 缺则 **fail-fast**
-         （阶段模板 ≠ 章级供给：写手拿到的"本章意图"可套用到任意一章 ⇒
+      2. **窗口内**含逐章契约行（``第N章：…``）—— 缺则 **fail-fast**
+         （阶段模板 ≠ 章级供给：写手拿到的"本章意图"可套用到窗口内任意一章 ⇒
          只能自行编造 ⇒ 同质内容 ⇒ 回退重写死循环；修复手段＝用 v4 提示词重跑）
-      3. 开篇窗口逐章契约覆盖率 ≥ 90% —— 不足只**告警**
+         ⚠ 判定量必须是"**窗口内**的行数"而不是"全文件的行数"：只判"有没有"
+         而不判"窗口内够不够"＝形同虚设（2026-09-18 两度踩坑，见下方 §判据量）。
+      3. 窗口内逐章契约覆盖率 ≥ 90% —— 不足只**告警**
          （分批写作的合法中间态，不应阻断）
 
     豁免：``allow_stage_level=True`` 时判据 2 降为告警，但要求 subline **显式给出
     阶段行**，且豁免**必须落盘留痕**（``.state/plan_gate_waivers.jsonl``）；
     落痕失败即视为未豁免（静默放行比不放行更危险）。
+
+    §判据量（本函数最贵的一条教训）
+    ------------------------------
+    同一个缺陷类（"只判有没有、不判够不够"）在本函数内出现过**两次**：
+    第一次 只判「段存在」⇒ 180 章只有 4 行阶段模板也通过；
+    第二次（初版修复）只判「全文件有逐章行」⇒ 1-5 章逐章、6 章起阶段模板
+    照样通过，而窗口 6-25 内一条逐章行都没有。
+    两处都靠**端到端在真实项目上跑闸**才暴露，单元测试当时全绿。
+    ⇒ 教训：凡闸门，判据量必须与它守护的**作用域**同口径；且**必须在真实
+    项目上验收**，token/代码级单测不能替代。
 
     Returns:
         致命错误列表（空 = 通过）。
@@ -263,24 +286,50 @@ def check_subline_plot_source(
             )
             continue
 
-        # ---- 判据 2：章级粒度（阶段模板不算；作用域＝即将写的窗口） ----
-        chapter_lines = _chapter_line_count(content)
-        if chapter_lines == 0:
+        # ---- 判据 2：章级粒度（阶段模板不算；**作用域＝即将写的窗口**） ----
+        # ⚠ 2026-09-18 二次校正（端到端验收发现）：初版判据量是**全文件的**
+        #   `chapter_lines == 0`。于是"S01 只把第 1-5 章写成逐章、第 6 章起全是阶段模板"
+        #   这种形态**照样通过** —— 而即将写的窗口（6-25）内一条逐章行都没有，
+        #   正是 09-18 P0 的成因。**判据只判"有没有"、不判"窗口内够不够"＝形同虚设**，
+        #   所以判定量必须收到窗口上（同一缺陷类，同一个修复里踩了两次）。
+        win = _write_window(project_dir)
+        nums = _chapter_numbers(content)
+        lo, hi = _subline_range(content)
+
+        # 2a) 支线区间与写作窗口不相交 ⇒ 远期支线，只告警
+        #     （否则一条 181-420 章的支线会因为"阶段级细纲"冻住整本书）
+        if win is not None and lo and (hi < win[0] or lo > win[1]):
+            _emit(
+                f"sublines/{sub_dir.name}/subline.md 的章级契约不属于本次写作窗口 "
+                f"{win[0]}-{win[1]}（该支线区间 {lo}-{hi}），本次只告警；"
+                "进入该支线窗口前必须补齐逐章契约。",
+                fatal=False,
+            )
+            continue
+
+        # 2b) 判定量收准到窗口：窗口内被逐章契约行覆盖的章号集合
+        if win is None:
+            scope = nums
+            scope_desc = "全支线"
+            span = _subline_span(content)
+            denom = min(_OPENING_WINDOW, span) if span > 0 else _OPENING_WINDOW
+        else:
+            scope_lo, scope_hi = win
+            if lo:  # 支线区间已知 ⇒ 与窗口取交集（避免把支线覆盖不到的章算进分母）
+                scope_lo = max(scope_lo, lo)
+                scope_hi = min(scope_hi, hi)
+            scope = {n for n in nums if scope_lo <= n <= scope_hi}
+            scope_desc = f"写作窗口 {scope_lo}-{scope_hi}"
+            denom = scope_hi - scope_lo + 1
+
+        if not scope:
             msg = (
-                f"sublines/{sub_dir.name}/subline.md 只有**阶段级**细纲，没有逐章契约行"
-                f"（『第N章：…』格式）。阶段模板可套用到本支线任意一章 ⇒ 写手只能"
+                f"sublines/{sub_dir.name}/subline.md 在**{scope_desc}**内没有逐章契约行"
+                f"（『第N章：…』格式，全支线现有 {len(nums)} 行）。"
+                f"窗口内只有阶段级模板 ⇒ 模板可套用到窗口内任意一章 ⇒ 写手只能"
                 f"自行编造本章内容 ⇒ 同质/注水 ⇒ 评委判不合格 ⇒ 回退重写时输入不变"
                 f" ⇒ 整窗销毁-重写死循环（2026-09-18 实证：1h51m / 净推进 0 章）。"
             )
-            win = _write_window(project_dir)
-            lo, hi = _subline_range(content)
-            if win is not None and lo and (hi < win[0] or lo > win[1]):
-                _emit(
-                    msg + f"（本支线区间 {lo}-{hi} 尚未进入写作窗口 "
-                    f"{win[0]}-{win[1]}，本次只告警；进入窗口前必须补齐）",
-                    fatal=False,
-                )
-                continue
             if not allow_stage_level:
                 errors.append(
                     msg
@@ -296,7 +345,9 @@ def check_subline_plot_source(
                 )
                 continue
             if not _record_waiver(
-                project_dir, sub_dir.name, "stage_level_exempt: 显式豁免，仅阶段级细纲"
+                project_dir,
+                sub_dir.name,
+                f"stage_level_exempt: 显式豁免，{scope_desc}内仅阶段级细纲",
             ):
                 errors.append(
                     f"sublines/{sub_dir.name}/subline.md 阶段级豁免**留痕落盘失败**"
@@ -307,15 +358,14 @@ def check_subline_plot_source(
             _emit(msg + "（已按 --allow-stage-level 显式豁免并留痕）", fatal=False)
             continue
 
-        # ---- 判据 3：开篇窗口覆盖率（不足只告警） ----
-        span = _subline_span(content)
-        window = min(_OPENING_WINDOW, span) if span > 0 else _OPENING_WINDOW
-        required = max(1, int(window * _COVERAGE_MIN))
-        if chapter_lines < required:
+        # ---- 判据 3：写作窗口内逐章契约覆盖率（不足只告警） ----
+        required = max(1, int(denom * _COVERAGE_MIN))
+        if len(scope) < required:
             _emit(
-                f"sublines/{sub_dir.name}/subline.md 逐章契约覆盖 {chapter_lines} 章，"
-                f"低于开篇窗口 {window} 章的 {int(_COVERAGE_MIN * 100)}%（{required} 章）。"
-                "分批写作时属正常中间态；若已定稿请补齐开篇窗口的逐章契约。",
+                f"sublines/{sub_dir.name}/subline.md 在{scope_desc}内逐章契约覆盖 "
+                f"{len(scope)} 章，低于 {denom} 章的 {int(_COVERAGE_MIN * 100)}%"
+                f"（{required} 章）。分批写作时属正常中间态；"
+                "若已定稿请补齐写作窗口的逐章契约。",
                 fatal=False,
             )
 

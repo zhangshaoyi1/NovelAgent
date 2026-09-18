@@ -9,12 +9,16 @@
 
 判据分层（设计意图，本文件的断言逐条对应）
 ------------------------------------------
+0. **作用域＝即将写的窗口**（``cur+1 .. cur+20``）：支线区间与窗口不相交 ⇒ 只告警；
+   判据 2/3 的分子分母**只算窗口内**
 1. 段缺失 ⇒ fail-fast（既有行为，保留）
-2. **无逐章契约行（纯阶段模板）⇒ fail-fast** ← 本次新增，09-18 P0 的回归断言
-   - 作用域＝**即将写的章节窗口**：远期支线（如 181-420 章的 S02）只告警，
-     否则一条还未轮到写的支线会冻住整本书
+2. **窗口内无逐章契约行（纯阶段模板）⇒ fail-fast** ← 本次新增，09-18 P0 的回归断言
+   - ⚠ 判定量必须是「窗口内的行数」而不是「全文件的行数」：初版用全文件计数时，
+     "1-5 章逐章 + 6 章起阶段模板"（窗口 6-25 内一条行都没有）**照样通过** ——
+     同一缺陷类（只判有没有、不判窗口内够不够）在同一修复里踩了两次，
+     第二次是**端到端在真实项目上跑闸**才暴露的（见 ``test_partial_...``）
    - 豁免 ``allow_stage_level=True``：放行但**必须落盘留痕**；留痕失败＝未豁免
-3. 开篇窗口覆盖率不足 ⇒ **只告警**（分批写作的合法中间态）
+3. 窗口内覆盖率不足 ⇒ **只告警**（分批写作的合法中间态）
 """
 
 from __future__ import annotations
@@ -59,6 +63,13 @@ _CHAPTER_HOOKS = "\n".join(
 )
 _CHAPTER_LEVEL = _STAGE_ONLY.replace(
     "铺垫阶段：章尾=日常小悬念（弱）\n冲突阶段：章尾=危机升级（中）", _CHAPTER_HOOKS
+)
+
+# ★ 端到端验收发现的真实形态（灵荒薪传-重启 S01）：1-5 章逐章契约、第 6 章起阶段模板。
+#   全文件有 5 行逐章 ⇒ 初版「全文件计数」判据静默放行，而窗口 6-25 内一行都没有。
+_PARTIAL_CHAPTERS = "\n".join(f"第{i}章：章尾钩子=悬念{i}" for i in range(1, 6))
+_PARTIAL_CHAPTER_LEVEL = _STAGE_ONLY.replace(
+    "铺垫阶段：章尾=日常小悬念（弱）\n冲突阶段：章尾=危机升级（中）", _PARTIAL_CHAPTERS
 )
 
 
@@ -138,13 +149,35 @@ def test_far_future_subline_does_not_block(tmp_path: Path) -> None:
     console = _CollectConsole()
     errs = check_subline_plot_source(proj, console=console)
     assert not errs, f"远期支线挡住了当前写作：{errs}"
-    assert any("尚未进入写作窗口" in ln for ln in console.lines), console.lines
+    assert any("不属于本次写作窗口" in ln for ln in console.lines), console.lines
 
 
 def test_in_window_subline_still_blocks(tmp_path: Path) -> None:
     """对照：窗口内的支线（1-150）仍必须 fail-fast —— 作用域收准≠判据放宽。"""
     proj = _make_project(tmp_path, _STAGE_ONLY, total_written=5)
     assert check_subline_plot_source(proj), "窗口内的阶段级支线被放行"
+
+
+def test_partial_chapter_lines_do_not_cover_window(tmp_path: Path) -> None:
+    """★ 端到端验收发现：1-5 章逐章 + 6 章起阶段模板 ⇒ 窗口 6-25 内无行，必须 fail-fast。
+
+    初版判据量是「全文件有逐章行」（5 行 > 0）⇒ **静默放行**，而即将写的窗口
+    6-25 内一条逐章行都没有 —— 这正是 09-18 P0（净推进 0 章）的成因。
+    断言手段：错误信息必须点名**窗口号**，证明判定量真的收到了窗口上。
+    """
+    proj = _make_project(tmp_path, _PARTIAL_CHAPTER_LEVEL, total_written=5)
+    errs = check_subline_plot_source(proj)
+    assert errs, "窗口内无逐章契约却被放行 —— 判据量没有收到窗口"
+    assert any("写作窗口 6-25" in e for e in errs), errs
+
+
+def test_full_window_coverage_passes(tmp_path: Path) -> None:
+    """对照：窗口 1-20 被逐章契约全覆盖 ⇒ 通过（收准作用域≠把判据变严）。"""
+    proj = _make_project(tmp_path, _CHAPTER_LEVEL, total_written=0)
+    console = _CollectConsole()
+    errs = check_subline_plot_source(proj, console=console)
+    assert not errs, f"窗口已全覆盖仍被拦：{errs}"
+    assert not console.lines, f"窗口已全覆盖仍告警：{console.lines}"
 
 
 def test_low_coverage_warns_but_passes(tmp_path: Path) -> None:
@@ -156,7 +189,7 @@ def test_low_coverage_warns_but_passes(tmp_path: Path) -> None:
     console = _CollectConsole()
     errs = check_subline_plot_source(_make_project(tmp_path, few), console=console)
     assert not errs, f"分批写作被误拦：{errs}"
-    assert any("低于开篇窗口" in ln for ln in console.lines), console.lines
+    assert any("低于" in ln and "90%" in ln for ln in console.lines), console.lines
 
 
 def test_prepare_for_write_forwards_exemption(tmp_path: Path) -> None:
