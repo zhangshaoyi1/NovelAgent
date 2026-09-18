@@ -163,6 +163,12 @@ def autowrite(
         help="关闭批间复规划（默认开：续写批次前由 Planner 依据批级进展摘要"
              "重排剩余剧情弧并裁决下一批方向，失败显性降级为沿用既有计划）",
     ),
+    allow_stage_level: bool = typer.Option(
+        False, "--allow-stage-level",
+        help="显式豁免「细纲必须逐章供给」前置闸：历史项目按压力阶段给细纲时使用。"
+             "豁免会落盘 .state/plan_gate_waivers.jsonl 留痕；默认严格（阶段级细纲"
+             "会让写手拿不到章级意图 ⇒ 同质内容 ⇒ 回退重写死循环）",
+    ),
     mode: str = typer.Option(
         "auto", "--mode", help="写章引擎档位：auto / heavy / light"
     ),
@@ -566,7 +572,11 @@ def autowrite(
     # ---- 规划一致性守护（缺口 A/C，2026-09-06）：写前对账 + 确定性不变量 fail-fast ----
     from agent.workflows.pipeline.plan_consistency import prepare_for_write
 
-    _fatal = prepare_for_write(project_path, console=console)
+    _fatal = prepare_for_write(
+        project_path,
+        console=console,
+        allow_stage_level=bool(_cli_value(allow_stage_level, False)),
+    )
     if _fatal:
         for _msg in _fatal:
             console.print(f"[red]✗ 规划校验失败：{_msg}[/red]")

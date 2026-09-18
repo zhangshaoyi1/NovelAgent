@@ -42,8 +42,15 @@ _GENERIC_PLAN: dict = {
             },
             # R2-D：M3 输出适配 plot_points/chapter_hooks（规划一致性守护
             # check_subline_plot_source 要求 subline 含剧情源段，否则 fail-fast）
-            "plot_points": "铺垫阶段：主角觉醒；冲突阶段：对抗强敌；高潮阶段：突破境界；舒缓阶段：复盘",
-            "chapter_hooks": "铺垫章：章尾=神秘物品（弱）；冲突章：章尾=危机升级（中）；高潮章：章尾=突然揭示（强）",
+            # 2026-09-18 起该闸还要求**章级粒度**（纯阶段模板 fail-fast），
+            # 故 fake 输出按新判据给逐章契约行（保持原意图：一份合法的 M3 输出）
+            "plot_points": "\n".join(
+                f"第{i}章：情节点=测试情节点{i}" for i in range(1, 21)
+            ),
+            "chapter_hooks": "\n".join(
+                f"第{i}章：章首钩子=测试开场{i}｜章尾钩子=测试悬念{i}"
+                for i in range(1, 21)
+            ),
         }
     ],
     "protagonist_route": {

@@ -270,7 +270,12 @@ frozen_fields:
     # subline
     sub_dir = d / "sublines" / "S01_器灵人性觉醒"
     sub_dir.mkdir(parents=True)
-    subline = """---
+    # 2026-09-18 起写前闸要求**章级**粒度（纯阶段模板 fail-fast）——
+    # 本 fixture 造数按新判据补齐逐章契约行（保持原意图：提供一个可写的项目）
+    _chapter_lines = "\n".join(
+        f"第{i}章：章尾钩子=测试悬念{i}｜验收=读者知道第{i}步" for i in range(1, 21)
+    )
+    subline = f"""---
 subline_id: "S01_器灵人性觉醒"
 subline_name: "器灵人性觉醒"
 status: "planned"
@@ -289,7 +294,7 @@ characters: ["林寻", "太虚镜"]
 
 ## 情节点序列
 
-1. 测试情节点
+{_chapter_lines}
 
 ## 剧集压力曲线
 

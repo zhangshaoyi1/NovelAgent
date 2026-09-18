@@ -99,7 +99,11 @@ def _seed_writable_project(tmp_path: Path) -> None:
     sm.save_subline(
         "S01_主线",
         {"subline_name": "主线", "characters": []},
-        "# s\n\n## 支线目标\nx\n\n## 情节点序列\n铺垫阶段：主角调查线索；冲突阶段：与对手交锋\n\n## 剧集压力曲线\n"
+        # 2026-09-18 起写前闸要求**章级**粒度（纯阶段模板 fail-fast）；
+        # 本测试聚焦回溯重写链路，造数按新判据补齐即可（保持原意图）。
+        "# s\n\n## 支线目标\nx\n\n## 情节点序列\n"
+        + "\n".join(f"第{i}章：情节点=测试情节点{i}" for i in range(1, 21))
+        + "\n\n## 剧集压力曲线\n"
         "| 阶段 | 章节 | 张力等级 |\n|---|---|---|\n| 铺垫 | 1-100 | 低 |\n",
     )
     st = StateMachine(tmp_path)

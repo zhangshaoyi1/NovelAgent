@@ -100,18 +100,145 @@ def reconcile_chapters_with_progress(
 
 _PLOT_SOURCE_SECTIONS = ("情节点序列", "章节钩子设计")
 
+#: 开篇窗口（章）—— outline.md 要求规划者逐章给「本支线开篇前 N 章」的章级契约
+_OPENING_WINDOW = 20
 
-def check_subline_plot_source(project_dir: str | Path) -> list[str]:
-    """校验每条 subline.md 至少含一个剧情源段（确定性不变量 → fail-fast）。
+#: 开篇窗口逐章契约的最低覆盖率（不足只**告警**：分批写作的合法中间态）
+_COVERAGE_MIN = 0.9
 
-    M5 每章的前瞻剧情取自「情节点序列 / 章节钩子设计」，两段皆缺时静默注入
-    空串，写作退化为「接上一章结尾自由续写」（无灵 ch100-198 母题循环实证）。
-    这是数据缺陷而非 LLM 波动，必须启动即报错，不允许静默降级。
+#: 阶段级供给的显式声明词（豁免路径要求出现，否则连阶段供给都没落地）
+_STAGE_DECLARATION = "按阶段"
+
+#: 豁免留痕文件：显式豁免必须落盘可审计。
+#: ★ 口子必须「只挡历史、不影响当前」，且**不得静默放行**——
+#:   否则口子本身就成了缺陷的新入口（本项目纪律：为兼容历史开的口子必须可审计）。
+_WAIVER_LEDGER = Path(".state") / "plan_gate_waivers.jsonl"
+
+
+def _subline_range(content: str) -> tuple[int, int]:
+    """支线的章节区间 (lo, hi)：取「剧集压力曲线」表区间的最小起点/最大上界。
+
+    解析不出返回 ``(0, 0)`` —— 调用方据此**不做窗口过滤**（保持严格）。
+    """
+    spans = [
+        (int(a), int(b))
+        for a, b in re.findall(r"\|\s*(\d+)\s*-\s*(\d+)\s*\|", content)
+    ]
+    if not spans:
+        return (0, 0)
+    return (min(a for a, _ in spans), max(b for _, b in spans))
+
+
+def _subline_span(content: str) -> int:
+    """支线覆盖的章数（区间上界）；解析不出返回 0。"""
+    return _subline_range(content)[1]
+
+
+def _write_window(project_dir: str | Path, *, size: int = _OPENING_WINDOW) -> tuple[int, int] | None:
+    """接下来要写的章节窗口 ``(起, 止)``；读不到进度返回 ``None``。
+
+    用途：把判据 2（章级粒度）的**作用域**收准 —— 尚未进入写作窗口的支线
+    （如第 181-420 章的 S02）不该因为"阶段级细纲"把整个项目挡住：
+    判据必须只约束它守护的那一段（否则一条远期支线就会冻住全书）。
+    """
+    state_file = Path(project_dir) / ".state" / "state.json"
+    try:
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - 无进度文件时不做窗口过滤
+        return None
+    progress = state.get("progress") or {}
+    try:
+        cur = int(progress.get("total_written") or progress.get("current_chapter") or 0)
+    except (TypeError, ValueError):
+        cur = 0  # noqa: SILENT_DEGRADE
+    return (cur + 1, cur + size)
+
+
+def _chapter_line_count(content: str) -> int:
+    """逐章契约行覆盖的**去重章号数**（与章级契约真源 ``chapter_contract`` 同源）。"""
+    from agent.core.story.chapter_contract import extract_section
+
+    nums: set[int] = set()
+    for name in _PLOT_SOURCE_SECTIONS:
+        section = extract_section(content, name)
+        nums.update(int(n) for n in re.findall(r"第\s*(\d+)\s*章\s*[：:]", section))
+    return len(nums)
+
+
+def _has_stage_lines(content: str) -> bool:
+    """是否给出**阶段级**情节点/钩子（豁免路径要求给出——连阶段供给都没有时不给豁免）。"""
+    from agent.core.story.chapter_contract import extract_section
+
+    for name in _PLOT_SOURCE_SECTIONS:
+        section = extract_section(content, name)
+        if section and re.search(r"(铺垫|冲突|高潮|舒缓)\s*阶段", section):
+            return True
+    return False
+
+
+def _record_waiver(project_dir: str | Path, subline_id: str, detail: str) -> bool:
+    """显式豁免落盘留痕。Returns: 是否落盘成功（失败 ⇒ 调用方必须视为未豁免）。"""
+    from datetime import datetime, timezone
+
+    path = Path(project_dir) / _WAIVER_LEDGER
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "subline": subline_id,
+                        "gate": "stage_level_exempt",
+                        "detail": detail,
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+        return True
+    except Exception:  # noqa: BLE001 - 由调用方转为致命（未留痕的豁免不得放行）
+        return False
+
+
+def check_subline_plot_source(
+    project_dir: str | Path,
+    *,
+    allow_stage_level: bool = False,
+    console: Any = None,
+) -> list[str]:
+    """校验每条 subline.md 的**章级**剧情源（确定性不变量 → fail-fast）。
+
+    ⚠ 2026-09-18 校正：此前只判「两小节**存在且非空**」⇒ 一份 180 章只给 4 行
+    阶段模板的支线也「通过」⇒ 09-18 章级意图缺位缺陷**没被启动闸拦住**，
+    一路走到写手才炸（登记单 ``20260918_章级意图缺位_细纲按阶段供给.md``）。
+    判据必须检查**粒度**，不能只检查"有没有这个段"。
+
+    判据分层（强度与修复手段配对）：
+      1. 「情节点序列 / 章节钩子设计」至少一处存在且非空 —— 缺则 **fail-fast**
+         （确定性不变量；修复手段＝重跑大纲/支线生成）
+      2. 至少一处含**逐章**契约行（``第N章：…``）—— 缺则 **fail-fast**
+         （阶段模板 ≠ 章级供给：写手拿到的"本章意图"可套用到任意一章 ⇒
+         只能自行编造 ⇒ 同质内容 ⇒ 回退重写死循环；修复手段＝用 v4 提示词重跑）
+      3. 开篇窗口逐章契约覆盖率 ≥ 90% —— 不足只**告警**
+         （分批写作的合法中间态，不应阻断）
+
+    豁免：``allow_stage_level=True`` 时判据 2 降为告警，但要求 subline **显式给出
+    阶段行**，且豁免**必须落盘留痕**（``.state/plan_gate_waivers.jsonl``）；
+    落痕失败即视为未豁免（静默放行比不放行更危险）。
 
     Returns:
         致命错误列表（空 = 通过）。
     """
     errors: list[str] = []
+    warnings: list[str] = []
+
+    def _emit(msg: str, *, fatal: bool) -> None:
+        if fatal:
+            errors.append(msg)
+        else:
+            warnings.append(msg)
+
     sublines_dir = Path(project_dir) / "sublines"
     if not sublines_dir.exists():
         return []  # 无支线结构的项目走原有流程，不在此拦截
@@ -125,6 +252,8 @@ def check_subline_plot_source(project_dir: str | Path) -> list[str]:
         except Exception:  # noqa: BLE001
             errors.append(f"sublines/{sub_dir.name}/subline.md 读取失败")
             continue  # noqa: SILENT_DEGRADE
+
+        # ---- 判据 1：剧情源段存在 ----
         if not any(_has_section(content, s) for s in _PLOT_SOURCE_SECTIONS):
             errors.append(
                 f"sublines/{sub_dir.name}/subline.md 缺少剧情源段落"
@@ -132,6 +261,67 @@ def check_subline_plot_source(project_dir: str | Path) -> list[str]:
                 "缺失时每章只能接上一章结尾自由续写，会导致剧情原地打转；"
                 "请先运行大纲/支线生成补全后再写作。"
             )
+            continue
+
+        # ---- 判据 2：章级粒度（阶段模板不算；作用域＝即将写的窗口） ----
+        chapter_lines = _chapter_line_count(content)
+        if chapter_lines == 0:
+            msg = (
+                f"sublines/{sub_dir.name}/subline.md 只有**阶段级**细纲，没有逐章契约行"
+                f"（『第N章：…』格式）。阶段模板可套用到本支线任意一章 ⇒ 写手只能"
+                f"自行编造本章内容 ⇒ 同质/注水 ⇒ 评委判不合格 ⇒ 回退重写时输入不变"
+                f" ⇒ 整窗销毁-重写死循环（2026-09-18 实证：1h51m / 净推进 0 章）。"
+            )
+            win = _write_window(project_dir)
+            lo, hi = _subline_range(content)
+            if win is not None and lo and (hi < win[0] or lo > win[1]):
+                _emit(
+                    msg + f"（本支线区间 {lo}-{hi} 尚未进入写作窗口 "
+                    f"{win[0]}-{win[1]}，本次只告警；进入窗口前必须补齐）",
+                    fatal=False,
+                )
+                continue
+            if not allow_stage_level:
+                errors.append(
+                    msg
+                    + "请用 v4 大纲提示词重跑支线生成（逐章给开篇窗口）；"
+                    "历史项目确需按阶段供给时，显式加 --allow-stage-level 豁免"
+                    "（会落盘 .state/plan_gate_waivers.jsonl 留痕）。"
+                )
+                continue
+            if not _has_stage_lines(content):
+                errors.append(
+                    f"sublines/{sub_dir.name}/subline.md 申请阶段级豁免，但连阶段级"
+                    "情节点/钩子行都没有（『铺垫阶段：…』等）—— 豁免不成立。"
+                )
+                continue
+            if not _record_waiver(
+                project_dir, sub_dir.name, "stage_level_exempt: 显式豁免，仅阶段级细纲"
+            ):
+                errors.append(
+                    f"sublines/{sub_dir.name}/subline.md 阶段级豁免**留痕落盘失败**"
+                    f"（{_WAIVER_LEDGER}）—— 未留痕的豁免一律视为未豁免"
+                    "（静默放行比不放行更危险）。"
+                )
+                continue
+            _emit(msg + "（已按 --allow-stage-level 显式豁免并留痕）", fatal=False)
+            continue
+
+        # ---- 判据 3：开篇窗口覆盖率（不足只告警） ----
+        span = _subline_span(content)
+        window = min(_OPENING_WINDOW, span) if span > 0 else _OPENING_WINDOW
+        required = max(1, int(window * _COVERAGE_MIN))
+        if chapter_lines < required:
+            _emit(
+                f"sublines/{sub_dir.name}/subline.md 逐章契约覆盖 {chapter_lines} 章，"
+                f"低于开篇窗口 {window} 章的 {int(_COVERAGE_MIN * 100)}%（{required} 章）。"
+                "分批写作时属正常中间态；若已定稿请补齐开篇窗口的逐章契约。",
+                fatal=False,
+            )
+
+    for w in warnings:
+        if console is not None:
+            console.print(f"[yellow]⚠ 规划告警：{w}[/yellow]")
     return errors
 
 
@@ -170,8 +360,17 @@ def check_route_ranges(project_dir: str | Path) -> list[str]:
     return warnings
 
 
-def prepare_for_write(project_dir: str | Path, console: Any = None) -> list[str]:
+def prepare_for_write(
+    project_dir: str | Path,
+    console: Any = None,
+    *,
+    allow_stage_level: bool = False,
+) -> list[str]:
     """写前统一入口：对齐派生物 → 恢复对账 → 不变量校验。
+
+    Args:
+        allow_stage_level: 显式豁免「细纲必须逐章供给」前置闸（历史项目按压力
+            阶段给细纲时使用）。豁免会落盘留痕；不传则默认**严格**。
 
     Returns:
         致命错误列表（空 = 可以开写）。非致命问题（对齐/告警）直接打印。
@@ -183,4 +382,6 @@ def prepare_for_write(project_dir: str | Path, console: Any = None) -> list[str]
             console.print(f"[yellow]⚠ 规划告警：{w}[/yellow]")
         else:
             print(f"⚠ 规划告警：{w}")
-    return check_subline_plot_source(project_dir)
+    return check_subline_plot_source(
+        project_dir, allow_stage_level=allow_stage_level, console=console
+    )

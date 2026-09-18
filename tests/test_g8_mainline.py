@@ -57,12 +57,24 @@ class _CountingLLM:
         return self._resp("x")
 
 
+def _chapter_lines(n: int = 20) -> str:
+    """逐章契约行（2026-09-18 起写前闸要求**章级**粒度：纯阶段模板会被 fail-fast）。
+
+    本文件测的是主线切换时机，与细纲粒度无关 —— 造数按新判据补齐即可（保持原意图）。
+    """
+    return "\n".join(
+        f"第{i}章：章首钩子=测试开场{i}｜章尾钩子=测试悬念{i}｜爽点=测试爽点"
+        f"｜目标情绪=测试情绪｜在场=测试角色｜禁=无｜验收=读者知道第{i}步"
+        for i in range(1, n + 1)
+    )
+
+
 def _subline_md(sid: str, curve_rows: list[tuple[str, str, str]] | None = None) -> str:
     body = (
         f"---\nsubline_id: \"{sid}\"\nsubline_name: \"{sid}\"\n"
         "status: \"planned\"\ncharacters: []\n---\n\n"
         "# 支线设定\n\n## 支线目标\n\n测试支线目标\n\n## 出场角色\n\n测试角色\n"
-        "\n## 情节点序列\n\n1. 测试情节点\n"
+        f"\n## 情节点序列\n\n{_chapter_lines()}\n"
     )
     if curve_rows:
         rows = "\n".join(f"| {a} | {b} | {c} |" for a, b, c in curve_rows)
