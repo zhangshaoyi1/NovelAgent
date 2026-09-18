@@ -28,6 +28,7 @@ chapter_intent），但供给端（M3 细纲提示词）要求规划者「**按�
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 #: 细纲中承载章级契约的两个小节标题（与 ``templates/subline.md.j2`` 一致）
 HOOKS_SECTION = "章节钩子设计"
@@ -139,6 +140,139 @@ def has_chapter_level_lines(subline_md: str) -> bool:
 
 
 # ============================================================
+# 章级强度档位（D2 唯一真源）—— 2026-09-18
+#
+# 命题（用户 2026-09-18）：
+#   「整体有起伏，单章可以放松……甚至可以出现部分注水的，但是不影响质量」
+#   「比如规划描述的是连续五章都是平平淡淡的，那么校验就不会把它当作注水打回」
+#
+# 缺陷（登记单 ``20260918_节奏起伏与注水章合法化_可行性论证.md``）：
+# 质检只有一把「高潮尺」⇒ 规划上本该放松的章被判注水 ⇒ 回退重写 ⇒
+# **重写输入不变**（规划没变）⇒ 整窗销毁-重写死循环。
+# 根因不是阈值宽严，是**参照系缺失**：判据不知道"本章规划上该是什么档位"。
+#
+# 本表即该参照系的唯一真源（档位名 / 张力带 / 章内要求 / 是否放松，四处同源）：
+#   - 档位名由提示词（``prompts/m3/outline.md``）产出，红线
+#     ``tests/test_pace_tier_ssot.py`` 做**成员关系**交叉核对（纪律 #19）；
+#   - ``垫片``/``日常`` 是"注水章合法化"的载体：它们不是"质量差的章"，
+#     而是"规划上本就该放松的章"——``relaxed`` 是对它的**正名**，不是放水。
+#
+# ⚠ 豁免的表达形态（设计修正，见方案文档 §11.10）
+#   初稿曾写成 ``exempt_rules=("P-11",)``，但全仓搜 ``P-11`` 于 ``*.py`` 为
+#   **零命中**——``P-11`` 只存在于提示词文本（``prompts/m5/generate.md`` 第 18 条）。
+#   用一个**没有消费者**的字符串标记豁免 ⇒ 豁免不改变任何控制流
+#   ⇒ 正是纪律 #7「凡写『供 XX 消费』的注释，必须证明该消费者存在」。
+#   ⇒ 改用具**真实消费者**的行为开关 ``relaxed``：由 ``design_brief`` 渲染端消费
+#   （写手看到"本章为放松章，允许无强钩子"），M3/M4 接管提示词分档与评委前提。
+# ============================================================
+
+
+@dataclass(frozen=True)
+class PaceTier:
+    """章级强度档位的唯一定义（渲染与解析共用）。"""
+
+    name: str              # 档位名（= 提示词产出的字面量）
+    tension_lo: float      # 张力带下界
+    tension_hi: float      # 张力带上界
+    label: str             # 渲染给人看的一句话语义
+    chapter_req: str       # 章内要求（写手自检口径）
+    relaxed: bool = False  # True = 本档位允许放松（无强钩子/无爆点）
+
+
+#: 四档（**创作语**命名，可直接写进提示词）
+PACE_TIERS: tuple[PaceTier, ...] = (
+    PaceTier(
+        name="高潮",
+        tension_lo=9.0, tension_hi=10.0,
+        label="摊牌/绝境/反转/胜负",
+        chapter_req="必须有一个明确的爆点",
+    ),
+    PaceTier(
+        name="推进",
+        tension_lo=6.0, tension_hi=8.0,
+        label="冲突升级、压力叠加",
+        chapter_req="需有实质进展或代价",
+    ),
+    PaceTier(
+        name="垫片",
+        tension_lo=4.0, tension_hi=5.0,
+        label="过渡、支线铺陈、信息释放",
+        chapter_req="允许无强钩子",
+        relaxed=True,
+    ),
+    PaceTier(
+        name="日常",
+        tension_lo=2.0, tension_hi=3.0,
+        label="缓冲、情感、世界观浸润",
+        chapter_req="允许舒展的节奏",
+        relaxed=True,
+    ),
+)
+
+#: 档位名元组（顺序即张力降序；供提示词交叉核对与解析校验）
+PACE_TIER_NAMES: tuple[str, ...] = tuple(t.name for t in PACE_TIERS)
+
+#: 档位名 → 定义（渲染端取语义用）
+PACE_TIER_BY_NAME: dict[str, PaceTier] = {t.name: t for t in PACE_TIERS}
+
+#: 逐章行里的档位字段名（与其余契约字段同构，见 ``CONTRACT_FIELDS``）
+PACE_TIER_FIELD = "档位"
+
+#: 从逐章行抠出档位值：``…｜档位=推进｜…``（容忍三种分隔符与两种竖线）
+_PACE_TIER_RE = re.compile(rf"[｜|]\s*{PACE_TIER_FIELD}\s*[=:：]\s*([^\s｜|，,、）)]+)")
+
+
+def parse_pace_tier(chapter_line: str) -> str:
+    """从**逐章契约行**里解析强度档位；无标注/未登记值返回空串。
+
+    刻意容忍 ``=``/``:``/``：`` 与全角 ``｜``/半角 ``|``：LLM 对分隔符并不稳定，
+    放宽解析不会引入歧义（档位值本身不含标点）。
+
+    Returns:
+        登记在 :data:`PACE_TIER_NAMES` 的档位名；否则空串
+        （下游按"未标档位"处理 = **沿用现有通用判据**，不放松也不收紧）。
+    """
+    if not chapter_line:
+        return ""
+    m = _PACE_TIER_RE.search(chapter_line)
+    if not m:
+        return ""
+    tier = m.group(1).strip()
+    return tier if tier in PACE_TIER_BY_NAME else ""
+
+
+def pace_tier_of(subline_md: str, chapter_num: int) -> str:
+    """取**本章**的强度档位（三端共用入口，粒度与 ``select_chapter_lines`` 一致）。
+
+    判据与取舍
+    ----------
+    ★ **写入端严格、读取端宽容**（本项目一贯口径）：
+      - 规划侧只应在「章节钩子设计」的逐章行标档位（该行字段最全，是章级契约主行）；
+      - 读取侧先查钩子小节，未命中再查情节点小节（容忍 LLM 标错小节）。
+
+    ⚠ **必须校验"确实是本章逐章行"**：``select_chapter_lines`` 的兜底语义是
+      「无逐章行 ⇒ 回退阶段行 ⇒ 再回退整段」，若不做校验，回退出的整段里若
+      碰巧含 ``｜档位=``（例如规划者把格式示例写进了阶段文本），就会被误当成
+      "本章档位" ⇒ **静默失真**（纪律 #21 同型）。取不到就返回空串。
+    """
+    try:
+        num = int(chapter_num or 0)
+    except (TypeError, ValueError):  # noqa: SILENT_DEGRADE reason=expected-skip
+        return ""
+    if num <= 0:
+        return ""
+    pat = chapter_line_pattern(num)
+    for title in (HOOKS_SECTION, POINTS_SECTION):
+        line = select_chapter_lines(subline_md, title, chapter_num=num)
+        if not line or not pat.search(line):
+            continue  # 非本章逐章行（阶段行/整段兜底）⇒ 此处没有章级档位
+        tier = parse_pace_tier(line)
+        if tier:
+            return tier
+    return ""
+
+
+# ============================================================
 # 契约字段名（唯一真源）—— 2026-09-18
 #
 # 事故：prompt v4 把契约字段名定为「章首钩子/章尾钩子/爽点/目标情绪/在场/禁/
@@ -166,6 +300,10 @@ CONTRACT_FIELDS: tuple[str, ...] = (
     "在场",
     "禁",
     "验收",
+    #: 2026-09-18 M1 新增（D2）：章级强度档位。红
+    #: ``tests/test_contract_labels_not_leaked.py::test_prompt_field_names_match_ssot``
+    #: 会自动核对"提示词字段名 ⊆ 本元组"，故登记于此即受跨模块核对保护（纪律 #19）。
+    PACE_TIER_FIELD,
 )
 
 #: 正文中不得出现的契约/批注标签（**只收正文里绝不自然出现的元词**）。
@@ -187,9 +325,16 @@ CONTRACT_LEAK_LABELS: tuple[str, ...] = (
 #: 词表只覆盖已知措辞；写手把字段名改写成「钩子：…」「情绪：…」时靠它兜住。
 #: ⚠ 只认**行首列表标记**：小说正文用 ``-``/``*`` 起行的场景只有列表，
 #:   而规划批注恰恰都是列表形态（实测泄漏行即 ``- *钩子：…*``）。
+#:
+#: ⚠ 关键词集**与 ``CONTRACT_FIELDS`` 的成员关系**由红线
+#: ``tests/test_pace_tier_ssot.py::test_fingerprint_keywords_derivable_from_ssot``
+#: 机器核对（纪律 #19）。此前它是手写字面量、无人核对 ⇒ 一次改名即双向破裂；
+#: 2026-09-18 新增 ``档位`` 时即依赖该核对发现"新字段成了泄漏新入口"。
+#:   词根来源：CONTRACT_FIELDS 成员（钩子/爽点/情绪/在场/禁/验收/档位）
+#:           + 小节名词根（伏笔任务/情节点）。
 CONTRACT_ANNOTATION_RE = re.compile(
     r"^[ \t]*[-*+•]\s*[*_]{0,2}\s*[^\n：:=]{0,10}?"
-    r"(?:钩子|爽点|情绪|在场|禁|验收|伏笔任务|情节点)"
+    r"(?:钩子|爽点|情绪|在场|禁|验收|伏笔任务|情节点|档位)"
     r"[^\n：:=]{0,8}[：:=]",
     re.M,
 )
@@ -248,13 +393,20 @@ __all__ = [
     "CONTRACT_FIELDS",
     "CONTRACT_LEAK_LABELS",
     "HOOKS_SECTION",
+    "PACE_TIER_BY_NAME",
+    "PACE_TIER_FIELD",
+    "PACE_TIER_NAMES",
+    "PACE_TIERS",
     "POINTS_SECTION",
+    "PaceTier",
     "chapter_contract",
     "chapter_line_pattern",
     "extract_section",
     "find_contract_annotations",
     "has_chapter_level_lines",
     "is_contract_annotation_line",
+    "pace_tier_of",
+    "parse_pace_tier",
     "select_chapter_lines",
     "strip_contract_annotations",
 ]
