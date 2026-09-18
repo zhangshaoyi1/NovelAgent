@@ -165,9 +165,11 @@ def autowrite(
     ),
     allow_stage_level: bool = typer.Option(
         False, "--allow-stage-level",
-        help="显式豁免「细纲必须逐章供给」前置闸：历史项目按压力阶段给细纲时使用。"
-             "豁免会落盘 .state/plan_gate_waivers.jsonl 留痕；默认严格（阶段级细纲"
-             "会让写手拿不到章级意图 ⇒ 同质内容 ⇒ 回退重写死循环）",
+        help="对「细纲只有阶段级供给（窗口内没有逐章契约行）」做**运维显式确认**。"
+             "2026-09-18 起该情形**只告警、不阻断**（阶段级是 chapter_contract 明确"
+             "支持的兼容回退，且实测 6 本在写的书靠它写成 150-350 章 ⇒ 硬拦强度过猛）；"
+             "确认会把审计记录写入 .state/plan_gate_waivers.jsonl，"
+             "计数另记 .state/plan_gate_stage_level.jsonl（应收敛下降）。"
     ),
     mode: str = typer.Option(
         "auto", "--mode", help="写章引擎档位：auto / heavy / light"

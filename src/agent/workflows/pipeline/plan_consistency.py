@@ -114,6 +114,15 @@ _STAGE_DECLARATION = "按阶段"
 #:   否则口子本身就成了缺陷的新入口（本项目纪律：为兼容历史开的口子必须可审计）。
 _WAIVER_LEDGER = Path(".state") / "plan_gate_waivers.jsonl"
 
+#: 阶段级供给的**计数台账**（C 方案 2026-09-18 拍板）：
+#: 阶段级供给是 `chapter_contract.select_chapter_lines` 明确支持的降级模式
+#: （「无逐章行 ⇒ 回退压力阶段行」），拿 fail-fast 去守它**强度超过证据**
+#: （实证：6 本在写的书靠阶段级供给写成 150–350 章；`五灵破归档` 211 章、
+#: `灵荒薪传` 59 章，支线逐章行均为 0）。
+#: ⇒ 改为「**告警 + 可下降的计数**」：不让缺陷静默，也不冻历史书。
+#: 计数应随 v4 逐章细纲（`5ee400d`）铺开而**下降**，不降即供给侧未收敛。
+_STAGE_LEVEL_LEDGER = Path(".state") / "plan_gate_stage_level.jsonl"
+
 
 def _subline_range(content: str) -> tuple[int, int]:
     """支线的章节区间 (lo, hi)：取「剧集压力曲线」表区间的最小起点/最大上界。
@@ -210,6 +219,83 @@ def _record_waiver(project_dir: str | Path, subline_id: str, detail: str) -> boo
         return False
 
 
+# ---------------------------------------------------------------- 阶段级供给计数
+# C 方案（2026-09-18 拍板）：判据强度从 fail-fast 降为「告警 + 可下降的计数」。
+# ⚠ 计数必须有**消费者**（纪律 #7）：本模块 public 读取器 `read_stage_level_supply`
+#   供体检/看板消费；`check_subline_plot_source` 每次运行也会把累计次数写进告警文本，
+#   保证运维在**每一次写章**都能看到（不许静默）。
+def record_stage_level_supply(
+    project_dir: str | Path,
+    subline_id: str,
+    scope_desc: str,
+    window_lines: int,
+    total_lines: int,
+    *,
+    window: tuple[int, int] | None = None,
+    acknowledged: bool = False,
+) -> bool:
+    """把「窗口内只有阶段级供给」记入计数台账。Returns: 是否落盘成功。
+
+    落盘失败必须由调用方转为**致命** —— 不留痕则计数不可信，宁可拒绝开工也不
+    静默放行（与 `_record_waiver` 同一条纪律：#18 缺留痕＝没有闸）。
+    """
+    from datetime import datetime, timezone
+
+    path = Path(project_dir) / _STAGE_LEVEL_LEDGER
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "subline": subline_id,
+                        "scope": scope_desc,
+                        "window": list(window) if window else None,
+                        "window_lines": int(window_lines),
+                        "total_lines": int(total_lines),
+                        "acknowledged": bool(acknowledged),
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+        return True
+    except Exception:  # noqa: BLE001 - 由调用方转为致命
+        return False
+
+
+def read_stage_level_supply(project_dir: str | Path) -> dict[str, Any]:
+    """读取阶段级供给计数台账（体检/看板消费入口）。
+
+    Returns: ``{"total": 累计条数, "by_subline": {支线: 次数}, "latest_ts": str}``
+    文件缺失/损坏一律返回空表（**不抛**：这是观测面，不该反过来阻断）。"""
+    path = Path(project_dir) / _STAGE_LEVEL_LEDGER
+    out: dict[str, Any] = {"total": 0, "by_subline": {}, "latest_ts": ""}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:  # noqa: BLE001 - 无台账＝计数为 0
+        return out  # noqa: SILENT_DEGRADE
+    for ln in lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            rec = json.loads(ln)
+        except Exception:  # noqa: BLE001 - 坏行跳过（不因一行坏掉整个观测面）
+            continue  # noqa: SILENT_DEGRADE
+        sid = str(rec.get("subline", "?"))
+        out["total"] += 1
+        out["by_subline"][sid] = int(out["by_subline"].get(sid, 0)) + 1
+        out["latest_ts"] = str(rec.get("ts", out["latest_ts"]))
+    return out
+
+
+def _stage_level_supply_count(project_dir: str | Path, subline_id: str) -> int:
+    """某支线的历史累计阶段级供给次数（用于把"可下降的计数"打进告警文本）。"""
+    return int(read_stage_level_supply(project_dir)["by_subline"].get(subline_id, 0))
+
+
 def check_subline_plot_source(
     project_dir: str | Path,
     *,
@@ -228,17 +314,28 @@ def check_subline_plot_source(
          ⇒ 只告警（远期支线不许冻住全书）；判据 2/3 的**分母分子都只算窗口内**。
       1. 「情节点序列 / 章节钩子设计」至少一处存在且非空 —— 缺则 **fail-fast**
          （确定性不变量；修复手段＝重跑大纲/支线生成）
-      2. **窗口内**含逐章契约行（``第N章：…``）—— 缺则 **fail-fast**
-         （阶段模板 ≠ 章级供给：写手拿到的"本章意图"可套用到窗口内任意一章 ⇒
-         只能自行编造 ⇒ 同质内容 ⇒ 回退重写死循环；修复手段＝用 v4 提示词重跑）
+      2. **窗口内**含逐章契约行（``第N章：…``）—— 缺则 **告警 + 记入计数台账**
+         （``.state/plan_gate_stage_level.jsonl``），**不阻断**。
+         ⚠ 强度校准（2026-09-18 端到端影响面审计后拍板为 C 方案）：
+         阶段级供给是 ``chapter_contract.select_chapter_lines`` **明确支持的降级模式**
+         （"无逐章行 ⇒ 回退压力阶段行，兼容阶段级历史数据"），且实测 **6 本在写的书
+         靠它写成了 150–350 章**（``五灵破归档`` 211 章 / ``灵荒薪传`` 59 章，支线逐章行均为 0）
+         ⇒「阶段级 ⇒ 卡死」**不成立**，它不是确定性不变量。用 fail-fast 守它＝
+         动作强度超过判据可达性（纪律 #2/#13；成书率很高时硬拦＝把阈值当摧毁扳机）。
+         改为「告警 + **可下降的计数**」：P0 的真解在供给侧（v4 逐章提示词），
+         闸门只需**不让缺陷静默**。计数读取器见 ``read_stage_level_supply``（体检/看板消费）。
          ⚠ 判定量必须是"**窗口内**的行数"而不是"全文件的行数"：只判"有没有"
          而不判"窗口内够不够"＝形同虚设（2026-09-18 两度踩坑，见下方 §判据量）。
       3. 窗口内逐章契约覆盖率 ≥ 90% —— 不足只**告警**
          （分批写作的合法中间态，不应阻断）
 
-    豁免：``allow_stage_level=True`` 时判据 2 降为告警，但要求 subline **显式给出
-    阶段行**，且豁免**必须落盘留痕**（``.state/plan_gate_waivers.jsonl``）；
-    落痕失败即视为未豁免（静默放行比不放行更危险）。
+    ★ 仍保留 fail-fast 的两条（其余一律告警）：
+      - 判据 1（剧情源段整体缺失）—— 确定性不变量破坏，写手拿不到任何依据；
+      - **计数台账落盘失败** —— 不留痕则计数不可信，宁可拒绝开工也不静默放行
+        （纪律 #18：缺留痕＝没有闸）。
+
+    豁免：``allow_stage_level=True`` 表示**运维显式确认**（C 方案下它不再决定"能不能
+    开工"，只把告警标记为已确认并写 ``.state/plan_gate_waivers.jsonl`` 审计链）。
 
     §判据量（本函数最贵的一条教训）
     ------------------------------
@@ -330,32 +427,55 @@ def check_subline_plot_source(
                 f"自行编造本章内容 ⇒ 同质/注水 ⇒ 评委判不合格 ⇒ 回退重写时输入不变"
                 f" ⇒ 整窗销毁-重写死循环（2026-09-18 实证：1h51m / 净推进 0 章）。"
             )
-            if not allow_stage_level:
-                errors.append(
-                    msg
-                    + "请用 v4 大纲提示词重跑支线生成（逐章给开篇窗口）；"
-                    "历史项目确需按阶段供给时，显式加 --allow-stage-level 豁免"
-                    "（会落盘 .state/plan_gate_waivers.jsonl 留痕）。"
-                )
-                continue
             if not _has_stage_lines(content):
-                errors.append(
-                    f"sublines/{sub_dir.name}/subline.md 申请阶段级豁免，但连阶段级"
-                    "情节点/钩子行都没有（『铺垫阶段：…』等）—— 豁免不成立。"
-                )
-                continue
-            if not _record_waiver(
+                msg += "（且连阶段级情节点/钩子行都没有 ⇒ 写手实际拿到的是整段文本）"
+
+            # ---- C 方案（2026-09-18 拍板）：告警 + 可下降的计数，**不再 fail-fast** ----
+            # 依据：① 阶段级供给是 `chapter_contract.select_chapter_lines` 明确支持的
+            #        降级模式（"无逐章行 ⇒ 回退压力阶段行，兼容阶段级历史数据"）；
+            #      ② 影响面审计：fail-fast 会拦 49/53 支线、含 6 本在写的书，而它们
+            #        **恰恰靠阶段级供给写成了 150–350 章**（五灵破归档 211 章 /
+            #        灵荒薪传 59 章，支线逐章行均为 0）⇒「阶段级 ⇒ 卡死」不成立，
+            #        它不是确定性不变量；用硬拦守它 = **动作强度超过判据可达性**（#2/#13）。
+            #      ③ P0 的真解在供给侧（v4 逐章提示词 `5ee400d`），闸门只需**不让缺陷
+            #        静默** ⇒ 用"可测量的收敛目标"替代"硬拦"（纪律 #18 的四件套齐活：
+            #        判据 / 作用域＝窗口 / 豁免＝--allow-stage-level 确认 / 留痕＝本次计数台账）。
+            if not record_stage_level_supply(
                 project_dir,
                 sub_dir.name,
-                f"stage_level_exempt: 显式豁免，{scope_desc}内仅阶段级细纲",
+                scope_desc,
+                len(scope),
+                len(nums),
+                window=win,
+                acknowledged=bool(allow_stage_level),
             ):
+                # 唯一保留的致命分支：留痕不了 ⇒ 计数不可信 ⇒ 宁可拒绝开工也不静默
                 errors.append(
-                    f"sublines/{sub_dir.name}/subline.md 阶段级豁免**留痕落盘失败**"
-                    f"（{_WAIVER_LEDGER}）—— 未留痕的豁免一律视为未豁免"
-                    "（静默放行比不放行更危险）。"
+                    f"sublines/{sub_dir.name}/subline.md 阶段级供给的**计数留痕落盘失败**"
+                    f"（{_STAGE_LEVEL_LEDGER}）—— 不留痕时计数字段不可信，"
+                    "宁可拒绝开工也不静默放行（静默放行比不放行更危险）。"
                 )
                 continue
-            _emit(msg + "（已按 --allow-stage-level 显式豁免并留痕）", fatal=False)
+
+            streak = _stage_level_supply_count(project_dir, sub_dir.name)
+            if allow_stage_level and not _record_waiver(
+                project_dir,
+                sub_dir.name,
+                f"stage_level_ack: 显式确认，{scope_desc}内仅阶段级细纲",
+            ):
+                _emit(
+                    f"sublines/{sub_dir.name}/subline.md 的 --allow-stage-level 确认"
+                    f"留痕落盘失败（{_WAIVER_LEDGER}）—— 不影响开工，但审计链缺一条。",
+                    fatal=False,
+                )
+            _emit(
+                msg
+                + f"【按 C 方案：只告警、不阻断】已记入 {_STAGE_LEVEL_LEDGER.as_posix()}"
+                f"（本支线历史累计 {streak} 次）。收敛目标：随 v4 逐章细纲铺开，"
+                "该计数应**下降**；长期不降即为供给侧未收敛，须在批末/体检中排查。"
+                + ("（已按 --allow-stage-level 显式确认）" if allow_stage_level else ""),
+                fatal=False,
+            )
             continue
 
         # ---- 判据 3：写作窗口内逐章契约覆盖率（不足只告警） ----
