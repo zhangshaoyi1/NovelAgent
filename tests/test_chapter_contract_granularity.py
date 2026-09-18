@@ -333,7 +333,21 @@ class TestPromptAnchorBinding:
         md = f"## 章节钩子设计\n\n{documented}\n"
         assert select_chapter_lines(md, HOOKS_SECTION, chapter_num=7) == documented
 
-    def test_window_outside_still_phase_annotated(self) -> None:
-        """窗口之外仍允许阶段级标注（不得把长尾也要求逐章，避免规划不可行）。"""
+    def test_long_tail_not_required_chapter_by_chapter(self) -> None:
+        """★ 长尾不得被要求逐章（避免规划不可行）——**原意图保留**，语言锚随 v5 更新。
+
+        2026-09-18 v5 把覆盖契约从「前 20 章逐章 + 窗口外回退阶段级」
+        改为「**分批滚动**（每批 20 章，至少覆盖到写作窗口之后一批；更远的可暂缺）」。
+        本断言锚点随之更新，但**被测意图不变**：
+
+        - 旧表述 `阶段：`（窗口外给阶段基调）已随 v5 退场，故不再是断言锚；
+        - 新锚点是 `暂缺`/`批次` —— 它们**同样**证明"没把长尾也要求逐章"：
+          「更远的章节（尚未进入写作窗口）可暂缺——由后续重规划补齐」。
+
+        ⚠ 判据强度未变：本条**始终**只否定"要求长尾全逐章"，从未肯定"必须有阶段行"。
+        阶段级回退仍是 ``select_chapter_lines`` 的兼容路径（历史数据），
+        但其提示词依据由 v5 的「可暂缺 + 分批滚动」承担。
+        """
         text = _prompt_text("m3.outline")
-        assert "阶段：" in text
+        assert "暂缺" in text, "提示词未声明长尾可暂缺（等于要求全书逐章，规划不可行）"
+        assert "批次" in text, "提示词未要求分批滚动（长尾覆盖契约缺失）"
