@@ -14,6 +14,7 @@ workflows 的 m5_text_hygiene 从其 re-export 保持兼容；guardrails 直接 
 from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 
 
 def strip_frontmatter(text: str) -> str:
@@ -60,8 +61,167 @@ _HARD_PLACEHOLDER_RE = re.compile(
     re.I,
 )
 
-# 5) AI 承接词（话锋转折残留，生成模型自述痕迹）
-_HARD_BRIDGE_PHRASES = ("话说回来", "你别说", "就这么着", "说起来", "总而言之")
+# ============================================================
+# 5) AI 腔 / 承接词：**唯一定义（SSOT）** + 强度与替换手段配对
+# （2026-09-18：修 ch4「AI 承接词残留：说起来」——判而不可修）
+#
+# 事故：`说起来` 在本模块判 **blocking**，但在
+# `core/quality/text_hygiene._FILLER_PHRASES` 只是 **warning**；且
+# `clean_hard_pollutions` 只清指令/标题/占位符、**不清承接词**，L1 替换表
+# 也不含它 ⇒ 「判得最死的一侧没有修复手段」⇒ 只能整章重写
+# （每轮再付一次全章生成 + 全章审稿）。同族根因：R1「动作强度 ↔ 可修复性零对账」。
+#
+# 收口口径（本表即唯一真源，全部消费点由它派生，禁止再写第二份字面量）：
+#   - level="blocking" **必须**要么给 replacement，要么显式 unrepairable=True
+#     + reason —— 由 `audit_phrase_ledger()` 强制、红线断言恒空，
+#     以此**永久禁止「判而不可修」再生**（纪律 #17）。
+#   - category="bridge"（承接词）**quote_sensitive=True**：这些词在对话里是
+#     合法口语（人物说「你别说」没问题），只有**叙述层**出现才是 AI 痕迹
+#     ⇒ 检测与替换都在**同一叙述层投影**上进行（判据与修复同投影，
+#     否则「报得出但修不掉」或「修了仍报」，两条都把人推回整章重写）。
+#   - category="ai_tone"（组合式 AI 腔）任何位置出现都生硬 ⇒ 全局替换。
+# ============================================================
+
+
+@dataclass(frozen=True)
+class PhraseSpec:
+    """AI 腔 / 承接词条目：强度、替换手段、适用层的唯一定义。"""
+
+    phrase: str
+    level: str                    # "blocking"（门禁拦）| "warning"（体检提示）
+    replacement: str = ""         # 确定性替换目标；空 = 无替换（须 unrepairable）
+    category: str = "ai_tone"     # "ai_tone"（组合式 AI 腔）| "bridge"（承接词）
+    quote_sensitive: bool = False # True = 仅叙述层命中（引号内为人物口吻，不算）
+    unrepairable: bool = False    # 无 replacement 时的显式声明（元规则强制）
+    reason: str = ""              # unrepairable=True 时必须给出理由
+
+
+HYGIENE_PHRASES: tuple[PhraseSpec, ...] = (
+    # --- 组合式 AI 腔心理描写：任何位置出现都是套路腔调（全局替换）---
+    PhraseSpec("喃喃自语", "blocking", "低声说"),
+    PhraseSpec("心中一动", "blocking", "忽然想到"),
+    PhraseSpec("若有所思", "blocking", "沉默片刻"),
+    PhraseSpec("眸光微动", "blocking", "目光一变"),
+    PhraseSpec("眸子微缩", "blocking", "眯起眼"),
+    PhraseSpec("嘴角微微上扬", "blocking", "笑了笑"),
+    PhraseSpec("心头一颤", "blocking", "心里一沉"),
+    # --- 承接词（话锋转折残留）：叙述层 AI 痕迹，对话里是合法口语 ---
+    PhraseSpec("话说回来", "blocking", "不过", "bridge", quote_sensitive=True),
+    PhraseSpec("你别说", "blocking", "别说", "bridge", quote_sensitive=True),
+    PhraseSpec("就这么着", "blocking", "这么着", "bridge", quote_sensitive=True),
+    PhraseSpec("说起来", "blocking", "这么一想", "bridge", quote_sensitive=True),
+    PhraseSpec("总而言之", "blocking", "说到底", "bridge", quote_sensitive=True),
+)
+
+
+def _specs(
+    category: str = "",
+    level: str = "",
+    require_replacement: bool = False,
+) -> tuple[PhraseSpec, ...]:
+    """按类/强度/是否带替换筛选 SSOT（派生消费点用，勿另立字面量）。"""
+    out = HYGIENE_PHRASES
+    if category:
+        out = tuple(s for s in out if s.category == category)
+    if level:
+        out = tuple(s for s in out if s.level == level)
+    if require_replacement:
+        out = tuple(s for s in out if s.replacement)
+    return out
+
+
+#: 组合式 AI 腔 → 替词（L1 硬替换表；仅 ai_tone，避免误伤对话口吻）
+AI_TONE_REPLACEMENTS: dict[str, str] = {
+    s.phrase: s.replacement for s in _specs(category="ai_tone", require_replacement=True)
+}
+
+#: 承接词 → 弱过渡替词（仅叙述层替换；弱过渡而非删除，保留口语节奏）
+BRIDGE_REPLACEMENTS: dict[str, str] = {
+    s.phrase: s.replacement for s in _specs(category="bridge", require_replacement=True)
+}
+
+#: 承接词清单（叙述层命中即 blocking；doctor 侧留一份兜底清单语义）
+_HARD_BRIDGE_PHRASES: tuple[str, ...] = tuple(
+    s.phrase for s in _specs(category="bridge", level="blocking")
+)
+
+
+def audit_phrase_ledger() -> list[str]:
+    """元规则自检：blocking 条目「有替换」或「显式 unrepairable」，二者必居其一。
+
+    Returns:
+        违规说明清单（空 = 合规）。红线测试断言恒空。
+    存在意义：把「判据强度必须与处置手段配对」从**口头纪律**变成**可执行判据**
+    ——  纪律 #17 的可验证形态。
+    """
+    bad: list[str] = []
+    for s in HYGIENE_PHRASES:
+        if s.level != "blocking" or s.replacement:
+            continue
+        if not s.unrepairable or not s.reason.strip():
+            bad.append(
+                f"{s.phrase}：blocking 级但既无 replacement 也未标 unrepairable+reason"
+                "（判而不可修 ⇒ 只能整章重写）"
+            )
+    return bad
+
+
+# ---- 叙述层投影（引号感知：判据侧与修复侧共用同一投影）----
+# ⚠ 两侧必须同投影：判据在叙述层、修复若全局做，会误改人物口语（把台词里的
+#   「你别说」也替换掉）；判据全局、修复只在叙述层做，则永远修不干净 ⇒ 死循环。
+_QUOTE_OPEN = {"“": "”", "「": "」", "『": "』", "‘": "’"}
+_QUOTE_CLOSE = {v: k for k, v in _QUOTE_OPEN.items()}
+
+#: 投影占位字符（与原文字符**等长**替换 ⇒ 偏移可直接映射回原文）
+_QUOTE_FILL = "\x00"
+
+
+def narrative_projection(text: str) -> str:
+    """返回与 ``text`` **等长**的「叙述层投影」：成对引号内的字符变为 ``\\x00``。
+
+    支持 ``“”``/``「」``/``『』``/``‘’`` 四种配对，栈式扫描，**换行符原样保留**
+    （等长 ⇒ 偏移可直接映射回原文）。
+    取向（保守）：未闭合的开引号**在行尾复位**（只屏蔽本行剩余部分）。
+    中文小说对话以段为单位、不会跨段不闭合；若因笔误漏掉一个 ``”`` 就让后半章
+    全部退出检测，检测就形同虚设（假阴性比误替换更糟：AI 腔会原样落盘）。
+    """
+    if not text:
+        return text
+    chars = list(text)
+    stack: list[str] = []
+    for i, ch in enumerate(chars):
+        if ch == "\n":
+            stack.clear()  # 行尾复位：未闭合引号只影响本行
+            continue
+        if ch in _QUOTE_OPEN:
+            stack.append(_QUOTE_OPEN[ch])
+            chars[i] = _QUOTE_FILL
+        elif ch in _QUOTE_CLOSE and stack and stack[-1] == ch:
+            stack.pop()
+            chars[i] = _QUOTE_FILL
+        elif stack:
+            chars[i] = _QUOTE_FILL
+    return "".join(chars)
+
+
+def replace_bridge_words(text: str) -> tuple[str, list[str]]:
+    """叙述层承接词确定性替换（引号内人物口吻不动）。
+
+    Returns:
+        (替换后文本, 轨迹列表，如 ``["说起来×2→这么一想"]``；未命中为空)。
+    与 ``_HARD_BRIDGE_PHRASES`` 同源同投影 —— 保证「扫得到的就修得掉」。
+    """
+    out = text
+    traced: list[str] = []
+    for phrase, rep in sorted(BRIDGE_REPLACEMENTS.items(), key=lambda kv: -len(kv[0])):
+        proj = narrative_projection(out)  # 每轮重算：替换会改变长度
+        idx = [m.start() for m in re.finditer(re.escape(phrase), proj)]
+        if not idx:
+            continue
+        for i in reversed(idx):
+            out = out[:i] + rep + out[i + len(phrase):]
+        traced.append(f"{phrase}×{len(idx)}→{rep}")
+    return out, traced
 
 
 def scan_hard_pollutions(text: str) -> list[str]:
@@ -91,7 +251,7 @@ def scan_hard_pollutions(text: str) -> list[str]:
     if ph:
         hits.append(f"占位符残留：{len(ph)} 处（裸问号/TODO/待补充等）")
 
-    bridges = [p for p in _HARD_BRIDGE_PHRASES if p in body]
+    bridges = [p for p in _HARD_BRIDGE_PHRASES if p in narrative_projection(body)]
     if bridges:
         hits.append("AI 承接词残留：" + "、".join(bridges))
 
@@ -99,11 +259,13 @@ def scan_hard_pollutions(text: str) -> list[str]:
 
 
 def clean_hard_pollutions(text: str) -> tuple[str, list[str]]:
-    """落盘前高置信清理：删【…】指令（独立行/行内）、去重标题行、清占位符。
+    """落盘前确定性清理：删【…】指令（独立行/行内）、去重标题行、清占位符、
+    替换**叙述层**承接词。
 
     Returns:
         (清理后文本, 清理轨迹列表；无命中轨迹为空)。
-    只做高置信删除/去重，绝不改动叙事正文；命中项与 scan_hard_pollutions 同源。
+    只做高置信删除/去重 + 叙述层承接词替换（弱过渡替词，不改情节/人物/设定）；
+    与 scan_hard_pollutions 同源同投影（「扫得到的就修得掉」）。
     """
     out = text
     traced: list[str] = []
@@ -127,6 +289,12 @@ def clean_hard_pollutions(text: str) -> tuple[str, list[str]]:
 
     out = _HARD_TITLE_RE.sub(_dedup_title, out)
     out = _HARD_PLACEHOLDER_RE.sub("", out)
+
+    # 2026-09-18：承接词由「只报不修（blocking）」改为「确定性替换」——
+    # 此前 ch4 因此整章重写仍未过。只在叙述层动，引号内人物口吻保留。
+    out, _bridge_traced = replace_bridge_words(out)
+    traced.extend(_bridge_traced)
+
     return out, traced
 
 

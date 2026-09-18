@@ -25,13 +25,16 @@
 - 误报控制：劈词破折号、填充词等可疑形态只记 **warning**（不阻断），
   只有确定性错误（成语误用 / 残缺比喻 / 高频复读 / 极端密度）才 blocking。
 
-依赖方向：本模块属 agent.core.quality（领域层），仅依赖标准库。
+依赖方向：本模块属 agent.core.quality（领域层），只依赖标准库 + 同层纯函数模块
+``core/story/text_hygiene``（词表唯一真源；同层不违反 R6「core 不得反向依赖上层」）。
 """
 
 from __future__ import annotations
 
 import re
 from collections import Counter
+
+from agent.core.story.text_hygiene import HYGIENE_PHRASES
 
 __all__ = ["hygiene_issues", "split_issues"]
 
@@ -60,12 +63,14 @@ _DASH_SPLIT_RE = re.compile(r"[\u4e00-\u9fff]——[\u4e00-\u9fff]")
 # ---------------------------------------------------------------------------
 # 规则 3：口语填充词裸奔（warning）
 # ---------------------------------------------------------------------------
-_FILLER_PHRASES = (
-    "就这么着",
-    "话说回来",
-    # 2026-09-13 灵荒炉火点评实证回填：ch020/021/022/024/030/033 残留
-    "你别说",
-    "说起来",
+# 2026-09-18 收口：词表由 ``core/story/text_hygiene.HYGIENE_PHRASES``（唯一真源）
+# 的 bridge 类派生。此前本处与 story 侧各写一份字面量，同一词「说起来」一处
+# warning、一处 blocking，而 blocking 侧当时**没有替换手段** ⇒ ch4 判不过只能
+# 整章重写（已在该模块补 ``replace_bridge_words`` 确定性替换）。
+# 强度分层是**场景差异**（本处＝体检提示，门禁侧＝拦截），不是口径打架；
+# 但**词表必须同源**——判据强度与修复手段分家正是「判而不可修」的成因。
+_FILLER_PHRASES: tuple[str, ...] = tuple(
+    s.phrase for s in HYGIENE_PHRASES if s.category == "bridge"
 )
 _FILLER_RE = re.compile("|".join(_FILLER_PHRASES))
 

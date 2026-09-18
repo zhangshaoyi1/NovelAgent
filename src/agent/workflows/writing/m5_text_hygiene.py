@@ -3,6 +3,12 @@ from __future__ import annotations
 import re
 from typing import Any
 
+# L1 词表的唯一真源在 core 层（guardrails 亦消费，故不能反向依赖 workflows）。
+from agent.core.story.text_hygiene import (
+    AI_TONE_REPLACEMENTS,
+    replace_bridge_words,
+)
+
 
 """M5 文本净化：G-EN 英文污染硬关卡 + 元信息清理 + 去重（由 m5_write_chapter 拆出）"""
 
@@ -446,17 +452,16 @@ class M5TextHygieneMixin:
 # L1 高置信 AI 腔短语：确定性硬拦截（2026-09-13 批间反思驱动）
 # 此前这些词只有 LLM 门禁（ai_flavor）告警 + deslop 软处理，批间反思实证
 # 三批对策均未兑现（命中复发）——改为生成后立即正则替换 + 二次校验循环。
-# 只收「高置信组合式短语」，不收单字高频词，防误杀（与 guardrails 词表口径一致）。
+# 只收「高置信组合式短语」，不收单字高频词，防误杀。
+#
+# 2026-09-18 收口：词表不再本处字面量，改为从
+# ``core/story/text_hygiene.HYGIENE_PHRASES``（唯一真源）派生 —— 此前同一批词
+# 在本处（硬替换）、``core/quality/text_hygiene._FILLER_PHRASES``（warning）与
+# ``core/story/text_hygiene._HARD_BRIDGE_PHRASES``（blocking 无替换）三处各写一份，
+# 直接导致 ch4「AI 承接词残留：说起来」**判得死却修不掉**（整章重写仍不过）。
+# 现在：ai_tone 走全局硬替换（既有行为不变），bridge 走**叙述层**替换。
 # ============================================================
-L1_AI_PHRASES: dict[str, str] = {
-    "喃喃自语": "低声说",
-    "心中一动": "忽然想到",
-    "若有所思": "沉默片刻",
-    "眸光微动": "目光一变",
-    "眸子微缩": "眯起眼",
-    "嘴角微微上扬": "笑了笑",
-    "心头一颤": "心里一沉",
-}
+L1_AI_PHRASES: dict[str, str] = dict(AI_TONE_REPLACEMENTS)
 
 
 def scan_ai_phrases(text: str) -> dict[str, int]:
@@ -469,6 +474,9 @@ def hard_replace_ai_phrases(text: str, max_iterations: int = 3) -> tuple[str, li
 
     Returns:
         (替换后文本, 替换轨迹列表，如 "喃喃自语×2→低声说"；未命中为空)。
+    另含承接词的**叙述层**替换（引号内人物口吻不动，见 core 层
+    ``replace_bridge_words``）——必须在写时门禁扫描之前完成，否则
+    ``scan_hard_pollutions`` 仍会报 blocking，把人推回「整章重写仍不过」。
     """
     replaced: list[str] = []
     for _ in range(max(1, max_iterations)):
@@ -479,6 +487,11 @@ def hard_replace_ai_phrases(text: str, max_iterations: int = 3) -> tuple[str, li
             rep = L1_AI_PHRASES[phrase]
             text = text.replace(phrase, rep)
             replaced.append(f"{phrase}×{count}→{rep}")
+
+    text, _bridge = replace_bridge_words(text)
+    if _bridge:
+        replaced.extend(_bridge)
+
     return text, replaced
 
 
