@@ -324,22 +324,36 @@ def _render_route_track(nodes: list[dict], window: tuple[int, int]) -> str:
 def _render_chapter_intent(
     subline_md: str,
     *,
+    chapter_num: int = 0,
     route_result: str = "",
     route_title: str = "",
 ) -> str:
-    """章级设计意图：支线目标 + 章节钩子设计 + 情节点序列 + 主线结果预期。"""
+    """章级设计意图：支线目标 + **本章**钩子设计 + **本章**情节点 + 主线结果预期。
+
+    2026-09-18：钩子/情节点两段改走 ``chapter_contract`` 按**本章**切分（此前整段
+    注入后按 400/500 字截断 ⇒ 细纲按章供给时评委只看得到前几章、看不到本章；
+    细纲按阶段供给时又只看到前几个阶段）。三端共用同一实现。
+    """
+    from agent.core.story.chapter_contract import (
+        HOOKS_SECTION,
+        POINTS_SECTION,
+        select_chapter_lines,
+    )
+
     parts: list[str] = []
     goal = _md_section(subline_md, "支线目标")
     if goal:
         parts.append(f"- 支线目标：{goal[:300]}")
     if route_title or route_result:
         parts.append(f"- 主线方向：{route_title}｜结果预期：{route_result}"[:300])
-    hooks = _md_section(subline_md, "章节钩子设计")
+    hooks = select_chapter_lines(subline_md, HOOKS_SECTION, chapter_num=chapter_num)
     if hooks:
-        parts.append(f"- 钩子设计（按压力阶段）：{hooks[:400]}")
-    pts = _md_section(subline_md, "情节点序列")
+        label = "本章钩子设计" if chapter_num else "钩子设计（按压力阶段）"
+        parts.append(f"- {label}：{hooks[:400]}")
+    pts = select_chapter_lines(subline_md, POINTS_SECTION, chapter_num=chapter_num)
     if pts:
-        parts.append(f"- 情节点序列：{pts[:500]}")
+        label = "本章情节点" if chapter_num else "情节点序列"
+        parts.append(f"- {label}：{pts[:500]}")
     conflicts = _md_section(subline_md, "关键冲突")
     if conflicts:
         parts.append(f"- 关键冲突：{conflicts[:240]}")
@@ -610,7 +624,10 @@ def build_design_brief(
         route_track=_clip(_render_route_track(nodes, window), "route_track"),
         chapter_intent=_clip(
             _render_chapter_intent(
-                subline_md, route_title=route_title, route_result=route_result
+                subline_md,
+                chapter_num=int(chapter_num),
+                route_title=route_title,
+                route_result=route_result,
             ),
             "chapter_intent",
         ),

@@ -268,7 +268,7 @@ class M5ContextMixin:
 
         # ---- 细纲情节点序列（m3 plot_points → subline.md「情节点序列」段；缺则空，不阻断）----
         plot_points = self._extract_plot_points(
-            subline_data.get("content", ""), pressure_stage
+            subline_data.get("content", ""), pressure_stage, chapter_num
         )
 
         # ---- 设计产出供给（2026-09-16，登记单 20260916_角色弧光规格未建立…）----
@@ -1070,43 +1070,30 @@ class M5ContextMixin:
         return m.group(1).strip() if m else ""
     @staticmethod
     def _extract_chapter_hooks(content: str, chapter_num: int) -> str:
-        """从 subline.md 提取「章节钩子设计」段；优先取与当前章号匹配的行，否则整段。
+        """从 subline.md 提取**本章**「章节钩子设计」；无逐章行时回退阶段行/整段。
 
-        细纲钩子设计（m3 chapter_hooks）可能按压力阶段给基调（如「铺垫章：…」）
-        或按章给设计（如「第1章：…」）。有逐章行时只取当前章相关行，控制 token；
-        否则整段注入（通常仅 4-6 行）。
+        2026-09-18：切分实现下沉 ``core/story/chapter_contract``（三端唯一真源，
+        此前各端各写一份正则 ⇒ 粒度漂移）。
         """
-        section = M5ContextMixin._extract_section(content, "章节钩子设计")
-        if not section:
-            return ""
-        lines = [ln.strip() for ln in section.splitlines() if ln.strip()]
-        matched = [
-            ln
-            for ln in lines
-            if re.search(rf"第\s*{chapter_num}\s*章|^\s*{chapter_num}\s*[章:]", ln)
-        ]
-        if matched:
-            return "\n".join(matched)
-        return section
+        from agent.core.story.chapter_contract import HOOKS_SECTION, select_chapter_lines
+
+        return select_chapter_lines(content, HOOKS_SECTION, chapter_num=chapter_num)
     @staticmethod
-    def _extract_plot_points(content: str, pressure_stage: str) -> str:
-        """从 subline.md 提取「情节点序列」段；优先取与当前压力阶段匹配的行，否则整段。
+    def _extract_plot_points(
+        content: str, pressure_stage: str, chapter_num: int = 0
+    ) -> str:
+        """从 subline.md 提取**本章**「情节点序列」；无逐章行时回退压力阶段行/整段。
 
-        细纲情节点序列（m3 plot_points）按压力阶段组织（如「铺垫阶段：主角查账发现异常…」），
-        写章时只取当前阶段的行（约 3-6 个动作化子事件），控制 token 且与本章直接相关；
-        无阶段匹配时整段注入作为可选用素材。
+        2026-09-18：与 ``_extract_chapter_hooks`` 对称——逐章行优先（细纲按章供给时
+        只注入本章情节点），无逐章行才按压力阶段取（兼容阶段级历史数据）。
+        切分实现同源 ``core/story/chapter_contract``。
         """
-        section = M5ContextMixin._extract_section(content, "情节点序列")
-        if not section:
-            return ""
-        if pressure_stage:
-            lines = [ln.strip() for ln in section.splitlines() if ln.strip()]
-            matched = [
-                ln for ln in lines if f"{pressure_stage}阶段" in ln or pressure_stage in ln
-            ]
-            if matched:
-                return "\n".join(matched)
-        return section
+        from agent.core.story.chapter_contract import POINTS_SECTION, select_chapter_lines
+
+        return select_chapter_lines(
+            content, POINTS_SECTION,
+            chapter_num=chapter_num, pressure_stage=pressure_stage,
+        )
     @staticmethod
     def _extract_field(content: str, field_name: str) -> str:
         """从 markdown 提取 - **字段**：值"""

@@ -797,20 +797,28 @@ def _load_eval_appeal_kwargs(
         except Exception as e:  # noqa: BLE001 - 前情缺失降级为空
             degrade("reader_appeal.eval_prev", "批末评估前情装载失败，降级为空", e)
 
-    # 3) 本章意图：当前支线细纲的「情节点序列」段——hook/payoff 达成度参照口径
+    # 3) 本章意图：当前支线细纲的**本章**章级契约（钩子设计 + 情节点序列）。
+    #    2026-09-18：改按本章切分（此前整段注入后 [:500] 截断 ⇒ 细纲按章供给时
+    #    评委只看得到前几章契约、看不到本章；按阶段供给时只见前几个阶段模板），
+    #    切分实现与写手端同源 core/story/chapter_contract（禁止各端各写正则）。
     try:
         import glob
+
+        from agent.core.story.chapter_contract import chapter_contract
 
         sub_files = sorted(glob.glob(str(d / "sublines" / "*" / "subline.md")))
         for sf in sub_files:
             content = Path(sf).read_text(encoding="utf-8")
-            m = re.search(
-                r"##\s*情节点序列\s*\n(.*?)(?=\n##\s|\Z)",
-                content,
-                re.S,
-            )
-            if m and m.group(1).strip():
-                kw["chapter_intent"] = f"【支线细纲情节点序列】\n{m.group(1).strip()[:500]}"
+            hooks, pts = chapter_contract(content, chapter_num=int(chapter_start))
+            if hooks or pts:
+                body: list[str] = []
+                if hooks:
+                    body.append(f"钩子设计：{hooks}")
+                if pts:
+                    body.append(f"情节点：{pts}")
+                kw["chapter_intent"] = (
+                    f"【第{int(chapter_start)}章细纲契约】\n" + "\n".join(body)
+                )[:1000]
                 break
     except Exception as e:  # noqa: BLE001 - 细纲缺失降级为空
         degrade("reader_appeal.eval_intent", "批末评估本章意图装载失败，降级为空", e)
