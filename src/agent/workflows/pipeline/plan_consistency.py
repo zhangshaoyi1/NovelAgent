@@ -502,6 +502,242 @@ def _has_section(content: str, section_name: str) -> bool:
     return bool(m and m.group(1).strip())
 
 
+# ---------------------------------------------------------------- 章级强度档位供给
+# M1（D2）配套闸门：2026-09-18 设计定稿于方案文档 §11.9 / §11.10 修正 A，2026-09-19 编码。
+#
+# ★ 为什么要**独立函数 + 独立台账**（不与 `check_subline_plot_source` 合并）：
+#   ① 既有红线 `test_plan_consistency_chapter_level.py::test_full_window_coverage_passes`
+#      断言「窗口已全覆盖 ⇒ 零告警」（`assert not console.lines`）——
+#      把档位告警塞进同一函数**必破该红线**（2026-09-18 读红线时发现）；
+#   ② 档位与逐章行**不同量级**：历史书逐章行为 0（阶段级供给），档位覆盖率自然
+#      也是 0；若共用阈值/同一告警，会把"历史书没有档位"与"新书忘了标档位"
+#      混为一谈（纪律 #20：闸门强度必须与证据匹配）；
+#   ③ D3（档位定档）未拍板 ⇒ 本闸**只采样、恒不阻断**，作为后续定档的数据基础。
+#
+# ★ 参数量（本闸最贵的设计点，直接沿用「只判有没有＝形同虚设」的教训）：
+#   分母 = 写作窗口内的**全部应写章**（窗口 ∩ 支线区间）
+#   分子 = 其中**标了档位**（`pace_tier_of` 非空）的章数
+#   ⇒ 含义是：「窗口内应写的章里，有多少拿到了档位这一参照系」。
+#   ★ 2026-09-19 真实项目跑闸修正：初版分母只算"有逐章行的章" ⇒ 在
+#   `灵荒薪传-重启`（已写 7 章，窗口 8-27，逐章行仅覆盖 1-5）上得 0 而跳过，
+#   但窗口 8-27 恰恰只能靠 N1「最近前文回退」拿第5章契约 ⇒ 档位必然缺失，
+#   **最该观测的区间被排除了**（纪律 #21 同型：缺口 ⇒ 静默失真）。
+#   ⇒ 改为全窗口，并把"窗口内无逐章契约"的章单独记为 `no_chapter_line`
+#     （不告警——那归判据 2 管；但必须留痕，"为何要靠回退"要在观测面可见）。
+#
+# ★ 告警收窄（避免与判据 2 重复报障）：
+#   仅当窗口内**有**章级供给、且其中有章未标档位时才告警；
+#   窗口内完全没有章级供给 ⇒ 静默（判据 2 已有「阶段级供给」告警 + 计数台账）。
+#
+# ★ 留痕：每次采样写 `.state/plan_gate_pace_tier.jsonl`（含章号集合明细，
+#   便于事后核对"到底哪几章没标档位"）。落盘失败 ⇒ **不转致命**
+#   （与 `record_stage_level_supply` 不同：那是 fail-fast 闸的留痕，
+#   本闸恒不阻断 ⇒ 留痕失败只降级为"观测缺失"，不授权拦截，纪律 #2）。
+_PACE_TIER_LEDGER = Path(".state") / "plan_gate_pace_tier.jsonl"
+
+
+def record_pace_tier_supply(
+    project_dir: str | Path,
+    subline_id: str,
+    *,
+    scope_desc: str,
+    window: tuple[int, int] | None,
+    chapter_lines: list[int],
+    tiered: list[int],
+    missing: list[int],
+    no_chapter_line: list[int] | None = None,
+) -> bool:
+    """把一次档位供给采样写入台账。Returns: 是否落盘成功。
+
+    ``no_chapter_line``：**窗口内有应写章、它们却没有逐章契约**（写手只能靠
+    N1 的「最近前文回退」拿旧契约）⇒ 档位必然缺失。这类章**不告警**
+    （归判据 2「章级供给缺位」管辖），但**必须记入台账**：
+    否则"为什么要靠回退"这件事在观测面上不可见（纪律 #21：缺口＝静默失真）。
+
+    ⚠ 与 `record_stage_level_supply` 的差异（刻意的）：落盘失败**不转致命**。
+    理由：本闸是**纯观测面**（恒不阻断），留痕失败只意味着"这次没记上"，
+    不构成对"能否开工"的证据 ⇒ 动作强度不得超过判据（纪律 #2）。
+    """
+    from datetime import datetime, timezone
+
+    path = Path(project_dir) / _PACE_TIER_LEDGER
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("a", encoding="utf-8") as f:
+            f.write(
+                json.dumps(
+                    {
+                        "ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                        "subline": subline_id,
+                        "gate": "pace_tier_supply",
+                        "scope": scope_desc,
+                        "window": list(window) if window else None,
+                        "chapter_lines": [int(n) for n in chapter_lines],
+                        "tiered": [int(n) for n in tiered],
+                        "missing": [int(n) for n in missing],
+                        "covered": len(chapter_lines),
+                        "tiered_count": len(tiered),
+                        #: 窗口内**无逐章契约**的章（靠最近前文回退 ⇒ 档位必然缺失）
+                        "no_chapter_line": [int(n) for n in (no_chapter_line or [])],
+                    },
+                    ensure_ascii=False,
+                )
+                + "\n"
+            )
+        return True
+    except Exception:  # noqa: BLE001 - 纯观测面：落盘失败不授权拦截
+        return False
+
+
+def read_pace_tier_supply(project_dir: str | Path) -> dict[str, Any]:
+    """读取档位供给采样台账。
+
+    Returns:
+        ``{"total": 采样条数, "latest_ts": str,
+           "latest": {支线: 最近一条记录}}``
+
+    文件缺失/损坏一律返回空表（**不抛**：观测面不该反过来阻断写作）。
+    """
+    path = Path(project_dir) / _PACE_TIER_LEDGER
+    out: dict[str, Any] = {"total": 0, "latest_ts": "", "latest": {}}
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except Exception:  # noqa: BLE001 - 无台账＝无采样
+        return out  # noqa: SILENT_DEGRADE
+    for ln in lines:
+        ln = ln.strip()
+        if not ln:
+            continue
+        try:
+            rec = json.loads(ln)
+        except Exception:  # noqa: BLE001 - 坏行跳过
+            continue  # noqa: SILENT_DEGRADE reason=expected-skip
+        out["total"] += 1
+        out["latest_ts"] = str(rec.get("ts", out["latest_ts"]))
+        out["latest"][str(rec.get("subline", "?"))] = rec
+    return out
+
+
+def check_pace_tier_supply(
+    project_dir: str | Path,
+    *,
+    console: Any = None,
+) -> list[str]:
+    """采样「章级强度档位」的供给覆盖率（M1/D2；**恒不阻断**）。
+
+    作用域与判定量
+    --------------
+    - **作用域** = 写作窗口 ∩ 支线区间（与 ``check_subline_plot_source`` 同口径：
+      远期支线不许因"没标档位"污染当前采样）。
+    - **分母** = 窗口内的**全部应写章**（★ 2026-09-19 真实项目跑闸后修正：
+      原口径"只算有逐章行的章"在 `灵荒薪传-重启` 上得 0 ⇒ 跳过，
+      而它窗口 8-27 内**恰好**只能靠 N1 回退拿第5章契约 ⇒ 档位必然缺失，
+      即最该观测的区间被排除 ⇒ 改为全窗口）。
+    - **分子** = 其中 ``pace_tier_of`` 返回非空的章数。
+    - **告警条件（收窄）**：仅当窗口内**有**章级供给、且其中有章未标档位时才告警。
+      窗口内完全没有章级供给 ⇒ 只记 `no_chapter_line`、**不告警**
+      （那由判据 2「章级供给缺位」管辖，本闸不重复报障、不刷屏历史书）。
+
+    强度（为什么恒不阻断）
+    ----------------------
+    D3（档位定档：覆盖率低于多少才算问题）尚未拍板，且档位是 M1 **新增**能力
+    ⇒ 所有既有书的覆盖率**必然为 0**。此时硬拦＝把阈值当摧毁扳机
+    （纪律 #13「凡不可逆动作 + 阈值型判据先问历史达成率」；<50% 即不可达）。
+    ⇒ 只采样 + 告警，把数据留给 D3 定档（方案文档 §11.9 明文"只采样"）。
+
+    留痕
+    ----
+    每次调用写 ``.state/plan_gate_pace_tier.jsonl``（含 missing 章号明细）。
+    ⚠ 落盘失败**不转致命**：本闸不阻断，留痕失败只降级为"观测缺失"；
+    若在此转致命，就等于用"观测面失败"去阻断写作——动作强度超过判据（纪律 #2）。
+
+    Returns:
+        恒返回 ``[]``（本闸不产生致命错误）。保留返回值以与同族函数同形，
+        并便于未来 D3 定档后升级为告警/拦截时**不改调用契约**。
+    """
+    sublines_dir = Path(project_dir) / "sublines"
+    if not sublines_dir.exists():
+        return []
+    win = _write_window(project_dir)
+    for sub_dir in sorted(sublines_dir.iterdir()):
+        f = sub_dir / "subline.md"
+        if not (sub_dir.is_dir() and f.exists()):
+            continue
+        try:
+            content = f.read_text(encoding="utf-8")
+        except Exception:  # noqa: BLE001 - 观测面：读不到就跳过
+            continue  # noqa: SILENT_DEGRADE reason=expected-skip
+
+        nums = _chapter_numbers(content)
+        lo, hi = _subline_range(content)
+        if win is None:
+            scope_lo, scope_hi = (min(nums), max(nums)) if nums else (0, 0)
+            scope_desc = "全支线"
+            window = None
+        else:
+            scope_lo, scope_hi = win
+            if lo:
+                scope_lo = max(scope_lo, lo)
+                scope_hi = min(scope_hi, hi)
+            scope_desc = f"写作窗口 {scope_lo}-{scope_hi}"
+            window = win
+        if scope_hi < scope_lo:
+            continue  # 空区间（支线不在本窗口）⇒ 跳过
+
+        # ---- 分母：窗口内的**全部**应写章（不只是"有逐章行"的章） ----
+        # ★ 2026-09-19 真实项目跑闸修正（原口径「只算有逐章行的章」有缺口）：
+        #   实测 `灵荒薪传-重启` 已写到第 7 章 ⇒ 窗口 8-27，而逐章行只覆盖 1-5
+        #   ⇒ 原口径分母 = 0 ⇒ **跳过**。但窗口 8-27 恰恰是档位**最该被采样**的区间：
+        #   写手在此只能靠 N1 的「最近前文回退」拿第5章契约，档位必然缺失。
+        #   原口径把最需要观测的区间恰好排除了 —— 正是纪律 #21 同型的「缺口 ⇒ 静默」。
+        #   新口径把窗口内**所有**应写章纳入分母，并把"无章级供给"单独计数。
+        all_chapters = list(range(scope_lo, scope_hi + 1))
+        chapter_lines = sorted(n for n in nums if scope_lo <= n <= scope_hi)
+        no_line = [n for n in all_chapters if n not in set(chapter_lines)]
+        tiered = [n for n in chapter_lines if _pace_tier_at(content, n)]
+        missing = [n for n in chapter_lines if n not in set(tiered)]
+        record_pace_tier_supply(
+            project_dir,
+            sub_dir.name,
+            scope_desc=scope_desc,
+            window=window,
+            chapter_lines=chapter_lines,
+            tiered=tiered,
+            missing=missing,
+            no_chapter_line=no_line,
+        )
+        # ---- 告警条件（刻意收窄，不与判据 2 重复报障） ----
+        # 仅当"窗口内**有**章级供给、但其中有章未标档位"时才告警 —— 这才是本闸
+        # 独有的增量信息。窗口内完全没有章级供给的情况由判据 2 管辖（那里已有
+        # 「阶段级供给」告警 + 计数台账），此处只记 no_chapter_line 供事后核对。
+        if not chapter_lines or not missing:
+            continue  # 无章级供给（归判据 2）或档位全覆盖 ⇒ 静默
+        if console is not None:
+            console.print(
+                f"[yellow]⚠ 规划采样：sublines/{sub_dir.name}/subline.md 在"
+                f"{scope_desc}内有 {len(chapter_lines)} 章已有逐章契约，"
+                f"其中 {len(missing)} 章未标强度档位（"
+                f"{'、'.join(f'第{n}章' for n in missing[:8])}"
+                f"{'…' if len(missing) > 8 else ''}）。"
+                "档位是评委判「本章该不该放松」的参照系（D2）；缺失时判据回到"
+                "通用口径（不放松也不收紧）。本项**只采样、不阻断**"
+                f"（D3 定档前无阈值），明细见 {_PACE_TIER_LEDGER.as_posix()}。[/yellow]"
+            )
+    return []
+
+
+def _pace_tier_at(content: str, chapter_num: int) -> str:
+    """取该章在**两个小节里**任一处标明的强度档位（读端宽容，见 ``pace_tier_of``）。
+
+    直接委托 ``chapter_contract.pace_tier_of`` —— 单一真源，禁止在此重写正则
+    （纪律 #19：跨模块共享的解析逻辑必须有唯一实现）。
+    """
+    from agent.core.story.chapter_contract import pace_tier_of
+
+    return pace_tier_of(content, chapter_num)
+
+
+
 def check_route_ranges(project_dir: str | Path) -> list[str]:
     """校验 protagonist_route.md 节点章节区间与 plan 总章数（用户文档 → 仅告警）。
 
@@ -552,6 +788,8 @@ def prepare_for_write(
             console.print(f"[yellow]⚠ 规划告警：{w}[/yellow]")
         else:
             print(f"⚠ 规划告警：{w}")
+    # M1/D2：章级强度档位供给采样（恒不阻断，只写台账 + 告警；D3 定档前无阈值）
+    check_pace_tier_supply(project_dir, console=console)
     return check_subline_plot_source(
         project_dir, allow_stage_level=allow_stage_level, console=console
     )

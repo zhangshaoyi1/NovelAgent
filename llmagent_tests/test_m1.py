@@ -74,22 +74,34 @@ class TestEventBusFull:
         assert len(events) == 2
 
     def test_archival(self):
+        import os
         import tempfile
+
         with tempfile.NamedTemporaryFile(suffix=".db", delete=False) as f:
             db_path = f.name
+        bus = None
         try:
             bus = EventBus(db_path)
             bus.append("run-1", "task.started", {"run_id": "run-1", "spec_name": "t", "kind": "LLM"})
-            # 归档所有（天数设为极大值）
-            count = bus.archive_older_than(days=0)
+            # 必须把事件时间**拨离边界**再归档。
+            # 旧写法用 days=0 ⇒ cutoff = now；而 Windows 系统时钟约 15.6ms 一跳，
+            # append 与 archive 常落在同一跳内 ⇒ created_at == cutoff ⇒
+            # 严格小于判据为假 ⇒ 归档 0 条（实测 3000 次里 2902 次为 0，即约 96.7% 偶发失败）。
+            bus._conn.execute(
+                "UPDATE events SET created_at = ?", ("2020-01-01T00:00:00+00:00",)
+            )
+            bus._conn.commit()
+            count = bus.archive_older_than(days=30)
             assert count >= 1
             # 归档后主表为空
             events = bus.get_events("run-1")
             # 归档表中应仍可查到
             assert len(events) >= 1
-            bus.close()
         finally:
-            import os
+            # 先 close 再 unlink：连接未关时在 Windows 上 unlink 会抛 PermissionError，
+            # 进而把上面真正的断言失败**掩盖**成一条次生异常（已实测发生，排查成本极高）。
+            if bus is not None:
+                bus.close()
             os.unlink(db_path)
 
     def test_query_by_type(self):
