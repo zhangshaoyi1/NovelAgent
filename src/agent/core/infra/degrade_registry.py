@@ -128,6 +128,7 @@ DEGRADE_NAMESPACES: dict[str, str] = {
     "m5.context.relation": "workflows/writing/m5_context.py",
     "m5.context.resource": "workflows/writing/m5_context.py",
     "m5.record_book_ledger": "workflows/writing/m5_persist.py",
+    "m5.record_tension": "workflows/writing/m5_persist.py",
     "m5_context.setting_canon": "workflows/writing/m5_context.py",
     "m5_persist.archive_chapter": "workflows/writing/m5_persist.py",
     "m5_persist.ledger_delta": "workflows/writing/m5_persist.py",

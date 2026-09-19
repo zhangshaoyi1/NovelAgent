@@ -1600,6 +1600,9 @@ class AgenticWriteWorkflow:
         # ---- 书级台账 hook（2026-09-12）：登场登记 + 质量基线记录（与 M5 同位，
         # 能力对账要求两侧 run 链路同名调用）；失败降级不阻断。
         m5._record_book_ledger(ctx, title, text, quality_passed, revision_attempts)
+        # ---- M6-B1 实测张力落盘（2026-09-19）：纯观测面，与档位「意图」对账。
+        # tension_curve 此前零生产调用点 ⇒ check_rhythm 永无输入；失败降级不阻断。
+        m5._record_tension(ctx, text)
         # M13 伏笔对账 hook（与 M5 同源；失败降级不阻断）
         try:
             from agent.workflows.evaluation.m13_foreshadow import sync_foreshadow_states

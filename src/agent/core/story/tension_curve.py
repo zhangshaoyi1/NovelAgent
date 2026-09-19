@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Optional
 
 
@@ -295,3 +296,99 @@ class TensionCurveManager:
 
 
 import re
+
+
+# ============================================================
+# M6-B1（2026-09-19）：实测张力落盘（纯观测面）
+#
+# 背景：``tension_curve`` 自诞生起**零生产调用点**（M6-A §19.2 取证），
+# 导致 ``check_rhythm`` 这类跨章张力分析**永远没有输入**——它不是"没做好"，
+# 是"从来没被喂过数据"。
+#
+# 定位（关键，防走错方向）：这是**观测面**，不是供给面。
+#   · 强度档位（M1–M4）= **意图**（规划标注"该写多强"）
+#   · 实测张力（本函数） = **事实**（正文统计"实际写出来多强"）
+# ⇒ 两者是「意图 vs 事实」的对账关系（纪律 #9：主链路自证的现象要独立对账）。
+# ⇒ **绝不用张力值去反推/覆盖档位**——那是系统替作者定意图，
+#    违反 ``chapter_contract.py:447`` 的既有红线。
+#
+# 纪律遵守：
+#   · 纪律 #2：落盘失败**不转致命**（纯观测面，动作强度 ≤ 判据）
+#   · 纪律 #9：与档位（意图）分属两条独立通道，互不覆盖
+# ============================================================
+
+#: 实测张力台账（纯观测面；落盘失败不转致命）。
+TENSION_LEDGER = Path(".state") / "memory" / "tension_readings.json"
+
+
+def measure_chapter_tension(chapter: int, text: str) -> float:
+    """度量单章实测张力（0-10）。**纯函数，零副作用**。
+
+    独立于 ``TensionCurveManager`` 实例状态，便于落盘链路任意调用。
+    """
+    if not text:
+        return 0.0
+    return TensionCurveManager()._compute_tension(text)
+
+
+def record_tension(
+    project_dir: str | Path, chapter: int, text: str, *, cap: int = 500
+) -> bool:
+    """把本章**实测张力**写入台账（纯观测面）。返回是否落盘成功。
+
+    ⚠ 失败返回 ``False`` 而**不抛**：本台账是观测面，落盘失败只等于
+    "这次没记上"，用观测面失败去阻断写章＝动作强度超过判据（纪律 #2）。
+    """
+    import json
+    import logging
+    import time
+
+    logger = logging.getLogger("agent.core.story.tension_curve")
+    try:
+        path = Path(project_dir) / TENSION_LEDGER
+        data: dict = {}
+        if path.exists():
+            try:
+                loaded = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    data = loaded
+            except Exception as e:  # noqa: BLE001 - 坏行当空表重来，不阻断
+                logger.warning("[degrade] tension_curve.read_ledger %r", e)
+        records = list(data.get("records") or [])
+        records.append(
+            {
+                "ch": int(chapter),
+                "tension": measure_chapter_tension(chapter, text),
+                "at": time.time(),
+            }
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_suffix(".json.tmp")
+        tmp.write_text(
+            json.dumps(
+                {"records": records[-cap:], "updated_at": time.time()},
+                ensure_ascii=False,
+                indent=1,
+            ),
+            encoding="utf-8",
+        )
+        tmp.replace(path)
+        return True
+    except Exception as e:  # noqa: BLE001 - 观测面失败不阻断写作
+        logger.warning("[degrade] tension_curve.record %r", e)
+        return False
+
+
+def read_tension(project_dir: str | Path) -> list[dict]:
+    """读回实测张力台账；缺失/坏文件返回空表（观测面不得抛）。"""
+    import json
+
+    try:
+        path = Path(project_dir) / TENSION_LEDGER
+        if not path.exists():
+            return []
+        data = json.loads(path.read_text(encoding="utf-8"))
+        records = data.get("records") if isinstance(data, dict) else None
+        return [r for r in (records or []) if isinstance(r, dict)]
+    except Exception:  # noqa: BLE001 - 观测面读取失败＝无数据
+        return []

@@ -542,8 +542,33 @@ class M5PersistMixin:
                 e,
             )
 
-    def _archive_chapter(
-        self,
+    def _record_tension(self, ctx: dict[str, Any], chapter_text: str | None = None) -> None:
+        """M6-B1 章后 hook：落盘本章**实测张力**（纯观测面，不是供给面）。
+
+        背景：``tension_curve`` 此前**零生产调用点**（M6-A 取证），
+        ``check_rhythm`` 的跨章张力分析**永远没有输入**。
+
+        ★ 定位：这是「**事实**」（正文统计）通道，与强度档位「**意图**」
+        （规划标注）分属两条独立线，**绝不用张力反推/覆盖档位**——
+        那是系统替作者定意图，违反 ``chapter_contract.py:447`` 既有红线。
+
+        失败降级不阻断写章（观测面失败 ≠ 主结论失败，纪律 #1/#2）。
+        """
+        try:
+            from agent.core.story.tension_curve import record_tension
+
+            body = _chapter_body_text(
+                int(ctx["chapter_num"]), chapter_text, self.chapters_dir
+            )
+            record_tension(self.project_dir, int(ctx["chapter_num"]), body)
+        except Exception as e:  # noqa: BLE001 - 观测面失败不阻断写章
+            degrade(
+                "m5.record_tension",
+                "实测张力落盘失败（观测面缺失，不影响本章产出）",
+                e,
+            )
+
+    def _archive_chapter(self,
         ctx: dict[str, Any],
         chapter_title: str,
         chapter_text: str | None = None,
