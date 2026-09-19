@@ -29,6 +29,11 @@ from typing import Any, Optional
 
 
 from agent.core.story.mainline_align import align_mainline_to_plan  # R6：下沉 core（workflows 再导出）
+from agent.core.story.chapter_contract import (  # 契约小节名唯一真源（纪律 #19）
+    HOOKS_SECTION as _CONTRACT_HOOKS,
+    POINTS_SECTION as _CONTRACT_POINTS,
+    TIERS_SECTION as _CONTRACT_TIERS,
+)
 
 def load_plan_total(project_dir: str | Path) -> Optional[int]:
     """读 plan.json 的 total_chapters（全书规模唯一权威）；缺失/非法返回 None。
@@ -98,7 +103,12 @@ def reconcile_chapters_with_progress(
     return notes
 
 
-_PLOT_SOURCE_SECTIONS = ("情节点序列", "章节钩子设计")
+#: 逐章契约的**供给小节**（与 ``chapter_contract`` 的真源常量同源派生，
+#: 禁止在本文件重写字面量——纪律 #19「跨模块共享的词表必须有机器交叉核对」）。
+#: ★ 2026-09-19 M1-Fix 纳入 ``TIERS_SECTION``：v6 把档位独立成节后，
+#:   若本表不含它，则"只在档位节里给了第N章"的行会被算作 **no_chapter_line**
+#:   ⇒ 采样闸看不见自己最该观测的供给 ⇒ 纪律 #21 同型的静默失真。
+_PLOT_SOURCE_SECTIONS = (_CONTRACT_POINTS, _CONTRACT_HOOKS, _CONTRACT_TIERS)
 
 #: 开篇窗口（章）—— outline.md 要求规划者逐章给「本支线开篇前 N 章」的章级契约
 _OPENING_WINDOW = 20

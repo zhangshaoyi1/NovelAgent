@@ -33,6 +33,11 @@ from dataclasses import dataclass
 #: 细纲中承载章级契约的两个小节标题（与 ``templates/subline.md.j2`` 一致）
 HOOKS_SECTION = "章节钩子设计"
 POINTS_SECTION = "情节点序列"
+#: 细纲中承载**章级强度档位**的独立小节（v6 新增；与模板一致）。
+#: ★ 为什么独立成节：档位是评委/写手共用的**参照系**，混在长钩子行里
+#:   实测会被 LLM 整段丢掉（2026-09-18：真实项目 15 条章级行、档位 0 个）。
+#:   独立小节使"丢档位"与"丢钩子"成为互不掩盖的两个失败。
+TIERS_SECTION = "章节强度档位"
 
 
 def extract_section(content: str, *titles: str) -> str:
@@ -323,9 +328,15 @@ def pace_tier_of(subline_md: str, chapter_num: int) -> str:
 
     判据与取舍
     ----------
-    ★ **写入端严格、读取端宽容**（本项目一贯口径）：
-      - 规划侧只应在「章节钩子设计」的逐章行标档位（该行字段最全，是章级契约主行）；
-      - 读取侧先查钩子小节，未命中再查情节点小节（容忍 LLM 标错小节）。
+    ★ **三级优先（v6）**——供给可以来自三处，按可靠性降序取**第一个命中**：
+      1. **独立小节** ``## 章节强度档位``（v6 新增，最可靠）：每章一行
+         ``第N章：<四档之一>``；档位与长钩子文本**解耦供给**，不会被挤掉。
+      2. ``## 章节钩子设计`` 的本章逐章行内 ``｜档位=X``（v5 形态，兼容历史数据）。
+      3. ``## 情节点序列`` 的本章逐章行内（容忍 LLM 标错小节）。
+      三级皆未命中 ⇒ 返回空串（下游按"未标档位"处理）。
+
+    ★ **写入端严格、读取端宽容**（本项目一贯口径）：规划侧三处都应给且应一致；
+      读取侧容忍只有其一处——宽容是为了**兼容历史数据**，不是为了鼓励少给。
 
     ⚠ **必须校验"确实是本章逐章行"**：``select_chapter_lines`` 的兜底语义是
       「本章逐章行 ⇒ 最近前文逐章行 ⇒ 阶段行 ⇒ 整段」，若不做校验，回退出的
@@ -344,6 +355,16 @@ def pace_tier_of(subline_md: str, chapter_num: int) -> str:
     if num <= 0:
         return ""
     pat = chapter_line_pattern(num)
+    # ① 独立档位小节（v6）：格式 `第N章：<档位>`
+    tiers_body = extract_section(subline_md, TIERS_SECTION)
+    if tiers_body:
+        line = select_chapter_lines(subline_md, TIERS_SECTION, chapter_num=num)
+        if line and not _is_marked_as_non_current(line) and pat.search(line):
+            # 该小节的**行内没有 `档位=` 字段名**（整行就是档位）⇒ 直接整行取值
+            tier = _parse_bare_tier(line)
+            if tier:
+                return tier
+    # ②③ 历史形态：钩子行内 / 情节点行内
     for title in (HOOKS_SECTION, POINTS_SECTION):
         line = select_chapter_lines(subline_md, title, chapter_num=num)
         if not line or _is_marked_as_non_current(line):
@@ -353,6 +374,31 @@ def pace_tier_of(subline_md: str, chapter_num: int) -> str:
         tier = parse_pace_tier(line)
         if tier:
             return tier
+    return ""
+
+
+def _parse_bare_tier(chapter_line: str) -> str:
+    """从**独立档位小节**的行里取值：整行可能只写档位名，也可能带 ``档位=``。
+
+    容忍三种写法（LLM 对格式并不稳定，收紧只会漏读）：
+      - ``第3章：推进``（v6 标准形态）
+      - ``第3章：档位=推进``（行内字段形态）
+      - ``第3章：推进（张力 6-8）``（带注形态）
+
+    仍要求取值 ∈ :data:`PACE_TIER_NAMES`，否则返回空串。
+    """
+    if not chapter_line:
+        return ""
+    # 先试行内字段形态
+    tier = parse_pace_tier(chapter_line)
+    if tier:
+        return tier
+    # 再去掉「第N章：」前缀与括注后，在剩余文本里找**登记过的档位名**
+    rest = re.sub(r"^\s*(?:第\s*\d+\s*章|\d+\s*章)\s*[:：]?\s*", "", chapter_line)
+    rest = re.sub(r"[（(][^）)]*[）)]", "", rest)
+    for name in PACE_TIER_NAMES:
+        if name in rest:
+            return name
     return ""
 
 
@@ -385,6 +431,36 @@ def pace_tiers_of_window(
         if tier is not None:
             out.append((n, tier))
     return out
+
+
+def pace_tier_coverage(subline_md: str, window: tuple[int, int]) -> tuple[int, int, list[int]]:
+    """窗口内**档位供给完整度**：返回 ``(已标章数, 窗口章数, 缺档章号列表)``。
+
+    ★ 为什么要它（M5 前置，纪律 #20「闸门强度必须与证据匹配」）：
+      档位供给是"能拿到才作数"的 —— 一旦缺章，**该章静默退回通用判据**
+      （不报错、不记日志）＝ 纪律 #21 的**静默失真**同型。所以要有一个
+      **逐章可检测**的完整度读数，供采样闸/巡检**度量供给质量**，
+      而不是只能看到"整体有没有档位"。
+
+    ⚠ **本函数只报数、不判罚、不补值**：
+      - 不判罚：缺档不等于违规（历史数据本就无档位，且 LLM 产出总有波动）；
+      - 不补值：绝不按 ``pressure_curve`` 反推档位——那是**系统替作者定意图**
+        （纪律 #15 消费者编造的老路），比缺档更糟。
+      调用方（M5 采样闸）自行决定"告警 / 计数 / 是否 fail-fast"。
+
+    Args:
+        subline_md: 细纲全文。
+        window: ``(lo, hi)`` 闭区间章号。
+
+    Returns:
+        ``(已标章数, 窗口内章数, [缺档章号...])``；窗口无章时 ``(0, 0, [])``。
+    """
+    lo, hi = max(1, int(window[0])), max(0, int(window[1]))
+    nums = list(range(lo, hi + 1))
+    if not nums:
+        return 0, 0, []
+    missing = [n for n in nums if not pace_tier_of(subline_md, n)]
+    return len(nums) - len(missing), len(nums), missing
 
 
 # ============================================================
@@ -515,6 +591,7 @@ __all__ = [
     "PACE_TIERS",
     "POINTS_SECTION",
     "PRIOR_CONTRACT_PREFIX",
+    "TIERS_SECTION",
     "PaceTier",
     "chapter_contract",
     "chapter_line_pattern",
@@ -522,6 +599,7 @@ __all__ = [
     "find_contract_annotations",
     "has_chapter_level_lines",
     "is_contract_annotation_line",
+    "pace_tier_coverage",
     "pace_tier_of",
     "pace_tiers_of_window",
     "parse_pace_tier",

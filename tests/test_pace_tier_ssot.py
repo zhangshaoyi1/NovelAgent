@@ -101,12 +101,23 @@ class TestPromptAnchorBinding:
         这样 ``档位=垫片/日常`` 通过、``档位=<四档之一>`` 通过，而 ``档位=缓冲`` 被拦。
 
         ⚠ 不靠"包含"匹配放宽：放宽会让真错词（``缓冲``）漏网。
+
+        ★★ 2026-09-19 判据收紧（M1-Fix 抓出的红线缺陷）：
+          原判据扫**全文**的 ``档位=X``，误把正文里的**元描述**当成取值 ——
+          v6 提示词写了两句散文（``档位 必须写在行首`` / ``档位 必须一致``），
+          被当成了"未登记档位词"而误报。
+          ⇒ 现只扫**格式模板行**（``第N章：档位=…``）里的取值。
+          配套新增反向红线：散文里**不得**出现 ``档位=X`` 的裸写法
+          （见 ``test_prose_does_not_use_bare_tier_assignment``）——正文用 ``「档位」``
+          引用字段名，避免与取值混淆。
         """
         text = _prompt_text("m3.outline")
         # 1) 剥 Markdown 行内装饰，避免反引号/星号混进取值
         clean = re.sub(r"[`*_]", "", text)
-        # 2) 取 ``档位=X`` 的 X：止于空白/竖线/中英文标点/括号
-        raw = re.findall(r"档位\s*[=:：]\s*([^\s｜|，,、。；;）)：:（(]+)", clean)
+        # 2) ★ 只取**格式模板**里的取值：``第N章：档位=X``（行首位置，v6 形态）
+        #    以及 ``…｜档位=X``（行内位置，v5 兼容形态）
+        raw = re.findall(r"第N章：档位\s*[=:：]\s*([^\s｜|，,、。；;）)：:（(]+)", clean)
+        raw += re.findall(r"｜档位\s*[=:：]\s*([^\s｜|，,、。；;）)：:（(]+)", clean)
         # 3) X 允许 ``/`` 并列，逐个元素精确比对；占位符形态除外
         cands = {w for tok in raw for w in tok.split("/") if w}
         unknown = {
@@ -116,6 +127,27 @@ class TestPromptAnchorBinding:
         assert not unknown, (
             f"提示词出现未登记的档位词 {sorted(unknown)} —— "
             f"必须在 chapter_contract.PACE_TIERS 登记，否则解析端不认"
+        )
+
+    def test_prose_does_not_use_bare_tier_assignment(self) -> None:
+        """★ 反向红线：正文里不得出现 ``档位=X`` 裸写法（只能引用 ``「档位」``）。
+
+        为什么：正文里写 ``档位= 必须写在行首`` 这类**元描述**，一是会让
+        "取值域"判据误报（本条红线就是为了钉死这个缺陷），二是**会迷惑 LLM**
+        —— 格式模板与正文说明混在一起，模型可能照抄元描述当取值。
+
+        判据：把**格式模板行**剔除后，剩余正文里不应再有 ``档位=``。
+        """
+        text = _prompt_text("m3.outline")
+        clean = re.sub(r"[`*_]", "", text)
+        # 剔除两类合法格式模板：行首形态与行内形态
+        stripped = re.sub(r"第N章：档位\s*[=:：]\s*\S+", "", clean)
+        stripped = re.sub(r"｜档位\s*[=:：]\s*\S+", "", stripped)
+        # JSON 骨架里的 ``"chapter_tiers": …`` 不含 ``档位=``，无需豁免
+        leaked = re.findall(r".{0,20}档位\s*[=:：].{0,20}", stripped)
+        assert not leaked, (
+            "提示词正文里出现裸写法 `档位=`（应改用「档位」引用字段名）—— "
+            "会同时污染取值域判据与 LLM 理解：\n" + "\n".join(leaked)
         )
 
     def test_every_tier_is_documented_in_prompt(self) -> None:
