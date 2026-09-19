@@ -64,6 +64,7 @@ from agent.core.infra.degrade import degrade
 
 __all__ = [
     "DESIGN_EXEMPTION",
+    "DESIGN_EXEMPTION_PACE",
     "DesignBrief",
     "build_design_brief",
     "render_quality_rubric",
@@ -76,6 +77,9 @@ _BUDGET = {
     "rubric": 900,
     "route_track": 900,
     "chapter_intent": 1200,
+    #: M4：窗口逐章档位块。行数 = 窗口章数（行由代码生成、单行有界），
+    #: 预算按 eval_window=20 的极端值给足，正常（5 章）永不触发截断。
+    "window_pace_tiers": 1200,
     "setting_facts": 2800,
     "character_facts": 2000,
     "expectation": 700,
@@ -95,6 +99,28 @@ DESIGN_EXEMPTION = (
     "不计人设崩坏 / 设定冲突 / 逻辑漏洞；仅当变化**超出**登记轨迹"
     "（倒退、跳档、无契机、与设定台账直接冲突）才计 issue。"
     "判 issue 前先确认它**不是**设计轨里已登记的内容。"
+)
+
+#: 强度维判定前提（M4，2026-09-18）——**仅在窗口内确有登记档位时**才追加。
+#:
+#: ★ 为什么单独一条、且**条件追加**而不是并进 :data:`DESIGN_EXEMPTION`：
+#:   - 「设计内转变免罪」讲的是**内容变化**（性格/境界/能力/关系沿轨推进）；
+#:     「规划内放松 ≠ 注水」讲的是**节奏强度**（本章规划上就该平淡）。
+#:     两者判据不同，混在一条里会让评委把"放松"误读成"内容变了也免罪"。
+#:   - 老数据**无**档位 ⇒ 本条**不出现** ⇒ 评委端文本逐字等同改造前
+#:     （纪律 #4：新机制只对新数据生效，历史路径零改动）。
+#:
+#: ★ 本条措辞刻意**不点名**任何具体档位：哪些档算"放松"由
+#:   :data:`DESIGN_EXEMPTION_PACE` 引用的【本窗口各章强度档位】块给出，
+#:   该块由 ``chapter_contract.PaceTier.relaxed`` 派生——提示词里若抄一份
+#:   档位名单，一次改名即双向破裂（纪律 #19）。
+DESIGN_EXEMPTION_PACE = (
+    "【判定前提·规划内的放松章 ≠ 注水】上面【本窗口各章强度档位】是规划端登记的"
+    "**节奏安排**：登记为**放松章**的那些章，节奏舒展、无强钩子、无爆点"
+    "属**规划内的放松**，不得按高强度章的爆点/钩子标准判它们注水或追读力不达标；"
+    "仍须服务该章登记的章内要求。仅当**偏离**登记档位才计 issue"
+    "（登记放松却通篇无信息增量、或登记高强度却写得平淡）。"
+    "未给出强度档位的章，按原标尺判，不放松也不收紧。"
 )
 
 
@@ -192,6 +218,10 @@ class DesignBrief:
     #: ★ 写手提示词只消费**这个布尔**，不消费档位名 —— 否则"哪些档算放松"
     #: 会在提示词里出现第二份真源，改名即双向破裂（纪律 #19）。
     pace_relaxed: bool = False
+    #: 窗口内**逐章**强度档位（M4：评委端判定参照系，渲染好的文本块）。
+    #: ★ **只进评委端**：写手一次只写一章，给它整窗档位既无用又剧透
+    #: （纪律 #18：供给必须定义作用域）。老数据无档位 ⇒ 空串 ⇒ 不渲染。
+    window_pace_tiers: str = ""
     setting_facts: str = ""      # 设定真源（冻结段 + 台账 + 已知冲突）
     character_facts: str = ""    # 角色真源（内核/动机/弧光/关系/语言指纹）
     design_expectation: str = ""  # 落盘期望（本章设计上应推进的状态）
@@ -235,6 +265,10 @@ class DesignBrief:
         评委必须与写手**拿到同一份设计轨**，否则判据互斥、回退不收敛。
         """
         blocks: list[str] = []
+        # 档位参照系**放最前**：它是其余判据的尺子，且本块整体有预算，
+        # 放在后面没有额外收益、只有被挤出 prompt 的风险（"注入了但被截断"＝没注入）。
+        if self.window_pace_tiers:
+            blocks.append(self.window_pace_tiers)
         if self.setting_facts:
             blocks.append(self.setting_facts)
         if self.character_facts:
@@ -250,6 +284,9 @@ class DesignBrief:
             blocks.append("【本作达标判据（判定时对标，勿自设更严口径）】\n" + self.rubric)
         if blocks:
             blocks.append(DESIGN_EXEMPTION)
+            # 强度维前提**只在真有档位时**追加（纪律 #4：不给老数据加新前提）
+            if self.window_pace_tiers:
+                blocks.append(DESIGN_EXEMPTION_PACE)
         return "\n\n".join(blocks)
 
     def render_for_persist(self) -> str:
@@ -391,7 +428,9 @@ def _render_chapter_intent(
 
     2026-09-18（M1/D2）：新增**本章强度档位**。这是"整体有起伏、单章可以放松、
     部分注水不影响质量"的落点——档位是判据的**参照系**：
-    标了 ``垫片``/``日常`` 的章，评委就不该按高潮尺判它"没爆点/没钩子"。
+    规划登记为**放松档**的章，评委就不该按高强度章的标准判它"没爆点/没钩子"。
+    ⚠ 具体哪些档算放松由 ``chapter_contract.PaceTier.relaxed`` 定义，本文件
+    **不写档位名单**（纪律 #19：一次改名即双向破裂）。
     ⚠ 档位缺失（老数据 / 规划未标）时**不渲染该行**，判据回到通用口径
     （不放松也不收紧），保证"为兼容历史开的口子只挡历史"（纪律 #4）。
     """
@@ -442,6 +481,38 @@ def _render_chapter_intent(
     if conflicts:
         parts.append(f"- 关键冲突：{conflicts[:240]}")
     return "\n".join(parts)
+
+
+def _render_window_pace_tiers(tiers: list[tuple[int, Any]]) -> str:
+    """评委端判定参照系：**窗口内逐章**强度档位（M4，2026-09-18）。
+
+    ★ 这是「整体有起伏、单章可以放松、部分注水不影响质量」在**质检侧**的落点。
+      此前评委只拿得到 ``chapter_intent`` 里的「本章强度档位」（1 章），
+      却要一次判 ``eval_window``（默认 5）章 —— 供给粒度 ≠ 消费粒度
+      （纪律 #15 同型）⇒ 其余四章按高潮尺判 ⇒ 规划登记的放松章被判注水
+      ⇒ 回退重写且**输入不变** ⇒ 死循环。
+
+    ⚠ 「是否放松」一律由 ``PaceTier.relaxed`` 派生，**不在本文件写档位名单**
+      （纪律 #19）：档位表改名/改档，本渲染自动跟随。
+    """
+    if not tiers:
+        return ""
+    rows: list[str] = []
+    for num, tier in tiers:
+        row = (
+            f"- 第{num}章：**{tier.name}**（{tier.label}；"
+            f"张力 {tier.tension_lo:g}-{tier.tension_hi:g}；{tier.chapter_req}）"
+        )
+        # ★ 直接读属性（不用 ``getattr(tier, "relaxed")``）：字符串键不受改名
+        #   保护，且会绕过红线 ``test_relaxed_marks_are_derived_not_hardcoded``
+        #   的派生关系检测（纪律 #19 要求判据是"成员/派生关系"）。
+        if tier.relaxed:
+            row += "  ← 放松章（规划登记，非注水）"
+        rows.append(row)
+    return (
+        "【本窗口各章强度档位（**判定的参照系**：逐章按登记的档位判，"
+        "不得整窗套用同一把尺）】\n" + "\n".join(rows)
+    )
 
 
 def _render_setting_facts(project_dir: Path) -> str:
@@ -704,14 +775,25 @@ def build_design_brief(
     # ---- M3：本章强度档位（写手侧平权规则分叉的唯一信号源）----
     # 与 ``_render_chapter_intent`` 内渲染用的档位**同源**（都走 pace_tier_of），
     # 冗余解析由红线 ``test_pace_tier_matches_rendered_intent`` 做机器交叉核对。
-    from agent.core.story.chapter_contract import PACE_TIER_BY_NAME, pace_tier_of
+    from agent.core.story.chapter_contract import (
+        PACE_TIER_BY_NAME,
+        pace_tier_of,
+        pace_tiers_of_window,
+    )
 
     _tier = pace_tier_of(subline_md, int(chapter_num)) if int(chapter_num) else ""
     _tier_obj = PACE_TIER_BY_NAME.get(_tier)
+    # ---- M4：评委端参照系 = 窗口内**逐章**档位（只进评委端，不进写手端）----
+    # 与本章档位**同源**（都走 pace_tier_of），冗余解析由红线
+    # ``test_window_tiers_match_pace_tier_of`` 做机器交叉核对。
+    _window_tiers = pace_tiers_of_window(subline_md, window) if subline_md else []
 
     return DesignBrief(
         chapter_num=int(chapter_num),
         window=window,
+        window_pace_tiers=_clip(
+            _render_window_pace_tiers(_window_tiers), "window_pace_tiers"
+        ),
         rubric=_clip(render_quality_rubric(plan.get("quality_targets")), "rubric"),
         route_track=_clip(_render_route_track(nodes, window), "route_track"),
         pace_tier=_tier,

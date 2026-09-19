@@ -356,6 +356,36 @@ def pace_tier_of(subline_md: str, chapter_num: int) -> str:
     return ""
 
 
+def pace_tiers_of_window(
+    subline_md: str, window: tuple[int, int]
+) -> list[tuple[int, PaceTier]]:
+    """取**窗口内逐章**的强度档位（评委端参照系；未标档位的章不返回）。
+
+    ★ 为什么必须逐章（M4，2026-09-18）：
+      评委一次判 ``eval_window``（默认 5）章，而 :func:`pace_tier_of` 只给
+      **本章**一档 ⇒ 供给粒度（1 章）≠ 消费粒度（N 章）⇒ 评委拿**最后一章**
+      的尺量整窗 —— 正是纪律 #15 的「章级槽位由阶段级文本供给＝没供给」同型。
+      用户命题「规划描述的是连续五章平平淡淡，校验就不该把它当注水打回」，
+      若只给第 5 章的档位，其余四章**仍然**被高潮尺判注水 ⇒ 死循环原样复现。
+
+    ⚠ 兼容性（纪律 #4）：老数据无逐章档位 ⇒ 返回空列表 ⇒ 评委端不渲染该块，
+      判据回到通用口径（不放松也不收紧）。
+
+    Returns:
+        ``[(章号, PaceTier), ...]``，按章号升序；无任何登记档位时为空列表。
+    """
+    try:
+        lo, hi = int(window[0]), int(window[1])
+    except (TypeError, ValueError, IndexError):  # noqa: SILENT_DEGRADE reason=expected-skip
+        return []
+    out: list[tuple[int, PaceTier]] = []
+    for n in range(max(1, lo), max(0, hi) + 1):
+        tier = PACE_TIER_BY_NAME.get(pace_tier_of(subline_md, n))
+        if tier is not None:
+            out.append((n, tier))
+    return out
+
+
 # ============================================================
 # 契约字段名（唯一真源）—— 2026-09-18
 #
@@ -492,6 +522,7 @@ __all__ = [
     "has_chapter_level_lines",
     "is_contract_annotation_line",
     "pace_tier_of",
+    "pace_tiers_of_window",
     "parse_pace_tier",
     "select_chapter_lines",
     "strip_contract_annotations",
