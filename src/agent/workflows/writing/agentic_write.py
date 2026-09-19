@@ -379,6 +379,11 @@ class AgenticWriteWorkflow:
             prev_chapter_summary=ctx["prev_chapter_summary"],
             rag_context=rag_context_text,
             open_debts=open_debts_text,
+            # ---- M3：写手侧平权规则分叉信号（唯一变量，布尔）----
+            # 不传档位名：档位名已在 design_block 里给过写手，模板只负责「放松与否」
+            # 的分叉，避免「哪些档算放松」在提示词里出现第二份真源（纪律 #19）。
+            # False/缺失 ⇒ 渲染出**改动前的原规则**逐字不变（纪律 #4）。
+            pace_relaxed=bool(ctx.get("pace_relaxed")),
         )
         # ---- 长线一致性底座（设计稿第一期·A/D）：批间复规划裁决 + 三账注入 ----
         # ---- 设计产出（2026-09-16）：本章设计意图 + 弧线轨迹 + 达标判据 ----

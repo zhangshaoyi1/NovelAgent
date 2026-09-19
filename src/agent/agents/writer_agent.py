@@ -47,8 +47,16 @@ from agent.core.quality.scoring.quality_checker import (
     resolve_min_cjk_words,
 )
 
-# 写作人设（与 M5 创作系统提示同源，保证风格一致）
-_WRITER_BASE = (
+# 写作人设（WriterAgent system 提示骨架：第 3-6 条平权规则**不在此硬编码**）
+#
+# ★ M3（2026-09-19）拆分原因：写作要求第 3-6 条此前**同时存在两份真源**——
+#   本文件的硬编码字符串，与 ``prompts/m5/generate.md`` 的 ``# system`` 段
+#   （注释还写着"与 M5 创作系统提示同源，保证风格一致"，但靠手工同步）。
+#   更严重的是：**只有本文件这一份是 live 的**——``m5.generate`` 全仓只有
+#   ``render_user`` 一个调用点，它的 system 段在 autowrite 主路径上从未被渲染
+#   （死锁：改 generate.md 等于改一份死文件）。
+#   ⇒ 第 3-6 条抽到 ``prompts/m5/pace_rules.md`` 单一真源，此处只做装配。
+_WRITER_HEAD = (
     "【输出协议 · 最高优先级，任何违反都会导致本章作废】\n"
     "你的每一次输出都必须且只能是**单个裸 JSON 信封对象**，字段名逐字一致：\n"
     '{"think": "简短思考", "action": "finish 或 tool_call", "tool": null, '
@@ -62,10 +70,12 @@ _WRITER_BASE = (
     "写作要求：\n"
     "1. 严格遵守设定集（文风/视角/节奏/字数/禁用词/禁用元素）\n"
     "2. 本章必须属于当前压力曲线阶段，按阶段控制张力\n"
-    "3. 前 500 字内出现冲突/悬念/反差之一\n"
-    "4. 本章至少含一个爽/虐/燃/甜/惊锚点\n"
-    "5. 章末必须有悬念/反转/期待之一\n"
-    "6. 场景+动作+环境描写合计 ≥ 30%\n"
+)
+
+# ---- 第 3-6 条由 ``_writer_base`` 从 ``prompts/m5/pace_rules.md`` 装配后插入，
+#      故 TAIL 自第 7 条起。绝不可把 3-6 条再写回本文件——那就是两份真源
+#      （原注释写"与 M5 创作系统提示同源"，靠手工同步，实则已分叉）。
+_WRITER_TAIL = (
     "7. 【禁用词与AI腔】禁用词\"突然/忽然/就在这时/微微一笑\"全章 ≤ 2 次；"
     "以下高频AI腔词句全章 = 0 次：喃喃自语、嘴角微微上扬、嘴角勾起、心中一动、心头一震、"
     "语气平静、缓缓开口、若有所思、眼底闪过一丝、眼中闪过、深吸一口气、映入眼帘、沉声道——"
@@ -91,6 +101,24 @@ _WRITER_BASE = (
     "你拥有若干工具（见下方动作协议中的可用工具）。写之前可调用工具核对设定 / 召回前文 / "
     "自检字数 / 自评质量；准备好后，把 action 设为 'finish' 并在 draft 中提交**完整章节正文**。"
 )
+
+def _writer_base(pace_relaxed: bool = False) -> str:
+    """装配 Writer system 提示：第 3-6 条按**本章强度档位**分叉。
+
+    - ``pace_relaxed=False``（未标档位 / 非放松档）⇒ 与改造前**逐字一致**：
+      红线 ``test_writer_base_unchanged_when_not_relaxed`` 用改造前原文做快照比对
+      （纪律 #4：为兼容历史开的口子不得改变当前行为）。
+    - ``pace_relaxed=True``（规划登记的放松档）⇒ 降低的是**强度**而非"有没有"：
+      仍要求一个情绪落点与章末去向感，避免制造"判而不可修"的死结（纪律 #17）。
+
+    真源缺失（提示词文件读不到）时**不静默放宽**：``pm.get`` 直接抛错由调用方
+    显性失败——比悄悄少 4 条硬要求更安全（纪律 #1）。
+    """
+    from agent.core.infra.prompt_manager import pm
+
+    rules = pm.get("m5.pace_rules").render_system(pace_relaxed=bool(pace_relaxed))
+    return _WRITER_HEAD + rules.strip() + "\n" + _WRITER_TAIL
+
 
 # 各 tier 的最大起草次数（含首稿；修订次数 = 起草次数 - 1）
 TIER_MAX_DRAFTS: dict[str, int] = {
@@ -505,8 +533,8 @@ class WriterAgent:
     # 单轮起草（携带或不携带审稿意见）
     # ------------------------------------------------------------------
     def _draft(self, task: str, critique: str | None, min_words: int | None = None,
-               max_words: int | None = None) -> str:
-        system_prompt = self._system_prompt(critique, min_words, max_words)
+               max_words: int | None = None, pace_relaxed: bool = False) -> str:
+        system_prompt = self._system_prompt(critique, min_words, max_words, pace_relaxed=pace_relaxed)
 
         loop = AgentLoop(
             tools=self.tools,
@@ -546,8 +574,8 @@ class WriterAgent:
         return result.draft
 
     async def _draft_async(self, task: str, critique: str | None, min_words: int | None = None,
-                           max_words: int | None = None) -> str:
-        system_prompt = self._system_prompt(critique, min_words, max_words)
+                           max_words: int | None = None, pace_relaxed: bool = False) -> str:
+        system_prompt = self._system_prompt(critique, min_words, max_words, pace_relaxed=pace_relaxed)
 
         loop = AgentLoop(
             tools=self.tools,
@@ -581,11 +609,14 @@ class WriterAgent:
         return result.draft
 
     def _system_prompt(self, critique: str | None = None, min_words: int | None = None,
-                       max_words: int | None = None) -> str:
-        """组装 Writer 系统提示。在 _WRITER_BASE 基础上，把**具体字数数字**作为强约束
+                       max_words: int | None = None, pace_relaxed: bool = False) -> str:
+        """组装 Writer 系统提示。在写手人设基础上，把**具体字数数字**作为强约束
         注入（否则模型只看到相对描述『目标字数×0.8~1.2』，不知具体下限而产出偏短）。
+
+        ``pace_relaxed``：本章是否为规划登记的放松档——决定第 3-6 条平权规则
+        的分叉（真源 ``prompts/m5/pace_rules.md``）。
         """
-        system_prompt = _WRITER_BASE
+        system_prompt = _writer_base(pace_relaxed=pace_relaxed)
         if min_words is not None and max_words is not None and max_words >= min_words:
             system_prompt += (
                 f"\n17. 【字数硬性约束】本章正文的中文字数**必须**在 {min_words}-{max_words} 字"
@@ -721,7 +752,10 @@ class WriterAgent:
             (final_text, revision_attempts, quality_passed)
         """
         min_words, max_words = self._word_budget(ctx)
-        draft = self._draft(task, critique=None, min_words=min_words, max_words=max_words)
+        # M3：本章强度档位（写手侧平权规则分叉信号）；未标档位 ⇒ False ⇒ 走原规则
+        _relaxed = bool(isinstance(ctx, dict) and ctx.get("pace_relaxed"))
+        draft = self._draft(task, critique=None, min_words=min_words, max_words=max_words,
+                    pace_relaxed=_relaxed)
         revision_attempts = 0
         passed, report = self._gate(draft, ctx)
 
@@ -749,11 +783,11 @@ class WriterAgent:
                         f"[dim]  · 定向修订失败（{e}），回退整章重写[/dim]"
                     )
                     draft = self._draft(
-                        task, critique=critique, min_words=min_words, max_words=max_words
+                        task, critique=critique, min_words=min_words, max_words=max_words, pace_relaxed=_relaxed
                     )  # noqa: SILENT_DEGRADE
             else:
                 draft = self._draft(
-                    task, critique=critique, min_words=min_words, max_words=max_words
+                    task, critique=critique, min_words=min_words, max_words=max_words, pace_relaxed=_relaxed
                 )
             revision_attempts = r
             passed, report = self._gate(draft, ctx)
@@ -798,7 +832,10 @@ class WriterAgent:
 
     async def run_async(self, task: str, ctx: Any = None) -> tuple[str, int, bool]:
         min_words, max_words = self._word_budget(ctx)
-        draft = await self._draft_async(task, critique=None, min_words=min_words, max_words=max_words)
+        # M3：本章强度档位（写手侧平权规则分叉信号）；未标档位 ⇒ False ⇒ 走原规则
+        _relaxed = bool(isinstance(ctx, dict) and ctx.get("pace_relaxed"))
+        draft = await self._draft_async(task, critique=None, min_words=min_words, max_words=max_words,
+                               pace_relaxed=_relaxed)
         revision_attempts = 0
         passed, report = self._gate(draft, ctx)
 
@@ -826,11 +863,11 @@ class WriterAgent:
                         f"[dim]  · 定向修订失败（{e}），回退整章重写[/dim]"
                     )
                     draft = await self._draft_async(
-                        task, critique=critique, min_words=min_words, max_words=max_words
+                        task, critique=critique, min_words=min_words, max_words=max_words, pace_relaxed=_relaxed
                     )  # noqa: SILENT_DEGRADE
             else:
                 draft = await self._draft_async(
-                    task, critique=critique, min_words=min_words, max_words=max_words
+                    task, critique=critique, min_words=min_words, max_words=max_words, pace_relaxed=_relaxed
                 )
             revision_attempts = r
             passed, report = self._gate(draft, ctx)

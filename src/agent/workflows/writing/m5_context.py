@@ -277,12 +277,19 @@ class M5ContextMixin:
         # （写完才知道被打回）。此处与评委端、落盘端共用同一装配
         # （``core/story/design_brief``），禁止各端自行抽取。
         design_brief_text = ""
+        # M3：本章强度档位 —— 写手侧「平权规则」分叉的唯一信号源。
+        # ★ 只透传**布尔** relaxed，不透传档位名：档位名已由 design_block
+        #   （`_render_chapter_intent`）渲染给写手；若提示词再拿一份档位名，
+        #   「哪些档算放松」就会出现第二份真源，改名即双向破裂（纪律 #19）。
+        pace_relaxed = False
         try:
-            design_brief_text = build_design_brief(
+            _brief = build_design_brief(
                 self.project_dir,
                 chapter_num,
                 subline_id=subline_id,
-            ).render_for_writer()
+            )
+            design_brief_text = _brief.render_for_writer()
+            pace_relaxed = bool(_brief.pace_relaxed)
         except Exception as e:  # noqa: BLE001 - 设计产出缺失不得阻断写章
             degrade(
                 "m5.context.design_brief",
@@ -342,6 +349,9 @@ class M5ContextMixin:
             # ---- 设计产出（2026-09-16）：本章设计意图 + 弧线轨迹 + 达标判据 ----
             # 与评委端同源的预渲染文本块（`render_for_writer`）；缺失为空串。
             "design_brief": design_brief_text,
+            # ---- M3：写手侧平权规则是否按放松档分叉（False＝未标档位/非放松档）----
+            # 恒为布尔，缺失即 False ⇒ 提示词渲染出**原规则**（纪律 #4：不放松也不收紧）
+            "pace_relaxed": pace_relaxed,
         }
     def _load_batch_directive(self) -> dict[str, Any]:
         """读批间复规划裁决（.state/batch_directive.json）；缺失/损坏 → 空降级。"""

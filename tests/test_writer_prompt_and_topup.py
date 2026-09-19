@@ -188,7 +188,7 @@ def test_run_fallback_tops_up_before_raise(monkeypatch, tmp_path: Path) -> None:
         targeted_revise=False,  # 聚焦验证兜底补字路径，排除定向修订消耗 mock 片段
     )
     monkeypatch.setattr(
-        agent, "_draft", lambda task, critique=None, min_words=None, max_words=None: "稿" * 300
+        agent, "_draft", lambda task, critique=None, min_words=None, max_words=None, pace_relaxed=False: "稿" * 300
     )
     text, rev, passed = agent.run("写一章", ctx={"chapter_length": "2000"})
     assert "补" * 10 in text  # 续写内容已拼入
@@ -267,7 +267,7 @@ def test_run_compresses_overlong_draft(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         agent, "_draft",
-        lambda task, critique=None, min_words=None, max_words=None: "长" * 12000,
+        lambda task, critique=None, min_words=None, max_words=None, pace_relaxed=False: "长" * 12000,
     )
     text, _rev, passed = agent.run("写一章", ctx={"chapter_length": "2500"})
     assert text == "压" * 2200
@@ -291,7 +291,7 @@ def test_run_no_compress_within_hard_cap(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         agent, "_draft",
-        lambda task, critique=None, min_words=None, max_words=None: "长" * 4000,
+        lambda task, critique=None, min_words=None, max_words=None, pace_relaxed=False: "长" * 4000,
     )
     text, _rev, passed = agent.run("写一章", ctx={"chapter_length": "2500"})
     assert text == "长" * 4000
@@ -318,7 +318,7 @@ def test_run_overlong_compress_failure_keeps_original(monkeypatch) -> None:
     )
     monkeypatch.setattr(
         agent, "_draft",
-        lambda task, critique=None, min_words=None, max_words=None: "长" * 12000,
+        lambda task, critique=None, min_words=None, max_words=None, pace_relaxed=False: "长" * 12000,
     )
     text, _rev, passed = agent.run("写一章", ctx={"chapter_length": "2500"})
     assert text == "长" * 12000  # 保留原稿，不因压缩失败而拒绝落盘

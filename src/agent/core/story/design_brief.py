@@ -183,6 +183,15 @@ class DesignBrief:
     rubric: str = ""             # 达标判据（阈值 + 维度语义）
     route_track: str = ""        # 弧线轨迹（全书路线节点成长序列 + 当前位置）
     chapter_intent: str = ""     # 章级设计意图（钩子/情节点/支线目标/主线结果）
+    #: 本章强度档位（M3：写手侧平权规则分叉的**唯一信号源**）。
+    #: 由 ``build_design_brief`` 从 ``chapter_contract.pace_tier_of`` 取，
+    #: 严禁各端自行解析细纲（红线 ``test_design_brief_reaches_all_consumers``）。
+    #: 老数据/未标档位 ⇒ 空串 ⇒ 写手侧走原规则（纪律 #4）。
+    pace_tier: str = ""
+    #: 本章档位是否**放松档**（``PaceTier.relaxed``，真源在 ``chapter_contract``）。
+    #: ★ 写手提示词只消费**这个布尔**，不消费档位名 —— 否则"哪些档算放松"
+    #: 会在提示词里出现第二份真源，改名即双向破裂（纪律 #19）。
+    pace_relaxed: bool = False
     setting_facts: str = ""      # 设定真源（冻结段 + 台账 + 已知冲突）
     character_facts: str = ""    # 角色真源（内核/动机/弧光/关系/语言指纹）
     design_expectation: str = ""  # 落盘期望（本章设计上应推进的状态）
@@ -692,11 +701,21 @@ def build_design_brief(
             route_result = str(mb.get("result") or "")
             break
 
+    # ---- M3：本章强度档位（写手侧平权规则分叉的唯一信号源）----
+    # 与 ``_render_chapter_intent`` 内渲染用的档位**同源**（都走 pace_tier_of），
+    # 冗余解析由红线 ``test_pace_tier_matches_rendered_intent`` 做机器交叉核对。
+    from agent.core.story.chapter_contract import PACE_TIER_BY_NAME, pace_tier_of
+
+    _tier = pace_tier_of(subline_md, int(chapter_num)) if int(chapter_num) else ""
+    _tier_obj = PACE_TIER_BY_NAME.get(_tier)
+
     return DesignBrief(
         chapter_num=int(chapter_num),
         window=window,
         rubric=_clip(render_quality_rubric(plan.get("quality_targets")), "rubric"),
         route_track=_clip(_render_route_track(nodes, window), "route_track"),
+        pace_tier=_tier,
+        pace_relaxed=bool(_tier_obj and _tier_obj.relaxed),
         chapter_intent=_clip(
             _render_chapter_intent(
                 subline_md,
