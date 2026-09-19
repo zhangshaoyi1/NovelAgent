@@ -50,6 +50,15 @@ class RhythmAlert:
 class TensionCurveManager:
     """高潮曲线管理器"""
 
+    #: ★ M6-B4（2026-09-19）：参与评分所需的**最少句数**。
+    #:
+    #: 实证：残缺章（只有标题行，1 句）在"按句归一"下拿满分 5.00，
+    #: 三个项目因此出现虚假 `max`（真实内容章上限 3.00）。
+    #: 阈值 3 的依据：本阈值只判"**有没有足够文本可供统计**"，
+    #: 与"张力高低"无关 ⇒ 取得很低即可，避免把合法短章（附录/间章）排除。
+    #: 低于此值 ⇒ 返回 0.0（**无数据**语义），细则见 ``_compute_tension``。
+    MIN_SENTENCES_FOR_SCORE: int = 3
+
     # 弧级模型
     ARC_PHASES: list[dict] = [
         {"phase": "build_up", "ratio_start": 0.0, "ratio_end": 0.15,
@@ -119,54 +128,159 @@ class TensionCurveManager:
         self._arcs.append(arc)
         return arc
 
-    def check_rhythm(self, window: int = 10) -> list[RhythmAlert]:
-        """检查节奏异常"""
+    def check_rhythm(self, window: int = 10, *, corpus: list[float] | None = None) -> list[RhythmAlert]:
+        """检查节奏异常。
+
+        ★★ M6-B4（2026-09-19）：三条阈值**全部重标定 + 改为相对判据**。
+        ------------------------------------------------------------------
+        标定实证（M6-B4，8 项目 1251 章 / 1179 个窗口）：
+
+        | 判据 | 原阈值 | 真实触发率 | 原判定 |
+        |---|---|---|---|
+        | ``no_climax``（最高 < 7.0） | 7.0 | **0.0%** | ❌ 不可达（#13 摧毁扳机）|
+        | ``no_aftermath``（首个 ≥ 8.0）| 8.0 | **0 次** | ❌ 不可达 |
+        | ``flat``（极差 < 1.0） | 1.0 | **74.6%** | ❌ 几乎全覆盖（同样不可用）|
+
+        ⇒ **三条没有一条可用**。根因不是数字选错，是**度量与文体不匹配**：
+        真实网文张力分布集中在 **p50=0.90 / p95=1.50 / max=3.00**，
+        而量程设计是 0–10 ⇒ 任何按全量程标定的绝对阈值都不可能可达。
+
+        ★ 候选 D vs 候选 E 的可比对取证（同批语料）：
+
+        | 方案 | 读数 | 触发率 | 判定 |
+        |---|---|---|---|
+        | D：绝对阈值 = 全局 p95(1.50) | 近 10 章无 ≥1.50 | **72.3%** | ❌ 仍近乎全覆盖 |
+        | E：相对判据 = 项目内 top-decile | 近 10 章无达标章 | **28.2%** | ✅ 既可达又有区分度 |
+
+        且**项目间 p95 极差＝1.30**（`gouzailuanshi` 2.40 vs `changan-binyiguan` 1.10）
+        ⇒ 单一绝对阈值**无法跨项目通用**（每本书文体不同）。
+        ⇒ 采用**候选 E**（纪律 #13①：达成率既非 0% 也非 100%）。
+
+        Args:
+            window: 滚动窗口章数。
+            corpus: **全书张力序列**（相对判据的分母）。缺省时退回 ``self._scores``
+                ——⚠ 仅为兼容既有单测；生产侧应由调用方显式传入全书序列，
+                否则"相对"退化为"窗口内相对"，语义变弱。
+
+        ⚠ 本方法**只产出告警、不做动作**（观测面）。接线为闸门须另立登记单
+          （纪律 #17：判据强度必须与修复手段配对）。
+        """
         self._alerts.clear()
 
-        if len(self._scores) < window:
+        scores = list(self._scores)
+        if len(scores) < window:
             return self._alerts
 
-        recent = self._scores[-window:]
-
-        # 1. 连续平缓（无波动）
+        recent = scores[-window:]
         tensions = [s.tension for s in recent]
-        if max(tensions) - min(tensions) < 1.0:
+
+        # ---- 相对判据的基准线：全书 top-decile 门槛 ----
+        ref = list(self._corpus_tensions(corpus))
+        if len(ref) >= RELATIVE_MIN_CORPUS:
+            clim_thr = self._quantile(ref, 0.90)
+            flat_thr = self._flat_threshold(ref, window)
+            mode = "relative"
+        else:
+            # 语料不足以定分位 ⇒ **退回绝对阈值 + 显式降级**（不静默）
+            clim_thr = RELATIVE_MIN_CORPUS_FALLBACK_HIGH
+            flat_thr = RELATIVE_MIN_CORPUS_FALLBACK_SPREAD
+            mode = "absolute-fallback"
+            self._alerts.append(RhythmAlert(
+                alert_type="corpus_insufficient",
+                message=f"全书语料 {len(ref)} 章不足以标定相对判据（需 ≥{RELATIVE_MIN_CORPUS}），"
+                        f"本次退回绝对阈值（高潮线 {clim_thr:.2f} / 波动线 {flat_thr:.2f}）",
+                severity="info",
+                start_chapter=recent[0].chapter,
+                end_chapter=recent[-1].chapter,
+            ))
+
+        # 1. 连续平缓（无波动）—— 相对化：极差小于全书下四分位的"跨度"
+        if (max(tensions) - min(tensions)) < flat_thr:
             self._alerts.append(RhythmAlert(
                 alert_type="flat",
-                message=f"连续 {window} 章紧张度无波动（{min(tensions):.1f}-{max(tensions):.1f}）",
+                message=f"连续 {window} 章紧张度无波动（{min(tensions):.2f}-{max(tensions):.2f}"
+                        f"，波动线 {flat_thr:.2f}，基准 {mode}）",
                 severity="warning",
                 start_chapter=recent[0].chapter,
                 end_chapter=recent[-1].chapter,
             ))
 
-        # 2. 持续上升无爆发
-        if len(tensions) >= window:
-            increasing = all(
-                tensions[i] <= tensions[i + 1]
-                for i in range(len(tensions) - 1)
-            )
-            if increasing and tensions[-1] < 7.0:
-                self._alerts.append(RhythmAlert(
-                    alert_type="no_climax",
-                    message=f"连续 {window} 章持续上升但未达到高潮（最高 {tensions[-1]:.1f}）",
-                    severity="critical",
-                    start_chapter=recent[0].chapter,
-                    end_chapter=recent[-1].chapter,
-                ))
+        # 2. ★ 缺高潮（原 no_climax）—— 重定义为**因果判据**：
+        #    「本窗口内没有任何章进入全书 top-decile」＝该有高潮却没写出来。
+        #    （原实现"持续上升且未达 7.0"既不可达、又与语义无关）
+        if all(t < clim_thr for t in tensions):
+            self._alerts.append(RhythmAlert(
+                alert_type="no_climax",
+                message=f"连续 {window} 章均未进入全书前 10% 张力区"
+                        f"（本窗最高 {max(tensions):.2f} < 门槛 {clim_thr:.2f}，基准 {mode}）",
+                severity="warning",
+                start_chapter=recent[0].chapter,
+                end_chapter=recent[-1].chapter,
+            ))
 
-        # 3. 高潮后无余波
-        if len(self._scores) >= 3:
-            last_three = self._scores[-3:]
-            if last_three[0].tension >= 8.0 and all(s.tension >= 7.0 for s in last_three[1:]):
+        # 3. ★ 高潮后无余波 —— 相对化：峰值触及 top-decile 后未回落
+        if len(scores) >= 3:
+            last_three = scores[-3:]
+            t3 = [s.tension for s in last_three]
+            if t3[0] >= clim_thr and all(t >= clim_thr * AFTERMATH_DECAY_RATIO for t in t3[1:]):
                 self._alerts.append(RhythmAlert(
                     alert_type="no_aftermath",
-                    message="高潮后连续多章未降紧张度，缺少余波收尾",
+                    message=f"高潮后连续多章未降紧张度（门槛 {clim_thr:.2f}，"
+                            f"需回落至 {clim_thr * AFTERMATH_DECAY_RATIO:.2f} 以下）",
                     severity="info",
                     start_chapter=last_three[0].chapter,
                     end_chapter=last_three[-1].chapter,
                 ))
 
         return self._alerts
+
+    def _corpus_tensions(self, corpus: list[float] | None) -> list[float]:
+        """取用于标定分位的**全书张力序列**（相对判据的分母）。"""
+        if corpus is not None:
+            return [float(x) for x in corpus]
+        return [s.tension for s in self._scores]
+
+    @staticmethod
+    def _quantile(values: list[float], q: float) -> float:
+        """线性插值分位数（与标定脚本同口径，避免两处各写一份）。"""
+        if not values:
+            return 0.0
+        s = sorted(values)
+        k = (len(s) - 1) * q
+        lo = int(k)
+        hi = min(lo + 1, len(s) - 1)
+        return s[lo] + (s[hi] - s[lo]) * (k - lo)
+
+    @staticmethod
+    def _flat_threshold(ref: list[float], window: int) -> float:
+        """``flat`` 的**相对阈值**：全书「窗口内极差」的低分位（M6-B4）。
+
+        ★ 为什么不能直接拿样本分位（如 p25=0.70）当极差阈值：
+          「极差」是 **window 个样本** 的统计量，其期望**必然小于**单个样本的
+          分位跨度 —— 直接比会系统性误报（实证：真实尺度序列波动 ±0.25 时，
+          10 章极差约 0.45 < p25=0.70 ⇒ 100% 误报）。
+
+        正确做法：**在全书真实序列上模拟滑动窗口**，取其极差的低分位
+          （默认 p10）作阈值 ⇒ 只有"比全书 90% 的窗口都更平"才告警。
+
+        ⚠ 这是"相对判据"该有的形态（纪律 #13①）：达成率由分位**设计保证**
+          在 10% 左右，而不是靠拍一个绝对数字。
+        """
+        if len(ref) < window:
+            return RELATIVE_MIN_CORPUS_FALLBACK_SPREAD
+        spreads = [
+            max(ref[i:i + window]) - min(ref[i:i + window])
+            for i in range(len(ref) - window + 1)
+        ]
+        if not spreads:
+            return RELATIVE_MIN_CORPUS_FALLBACK_SPREAD
+        thr = TensionCurveManager._quantile(spreads, FLAT_SPREAD_QUANTILE)
+        # ★ 全书恒定（所有窗口极差 = 0）⇒ p10 也是 0 ⇒ 严格 `<` 永不成立
+        #   （与纪律 #24 同型的边界失效）。此时恒零波动本身就是平的
+        #   ⇒ 给一个**极小的正值**，使"与全书一样平"也能被标出。
+        if thr <= 0.0:
+            return FLAT_SPREAD_ZERO_EPSILON
+        return thr
 
     def get_suggestions(self, arc: ArcPlan) -> list[str]:
         """获取调整建议"""
@@ -217,6 +331,23 @@ class TensionCurveManager:
         新实现：三个分量**全部按「每句」归一**，与章长解耦。
           - 分量上界不变（5.0 + 3.0 + 2.0 = 10.0），量程语义不变；
           - 常量按「每句期望值」重标（见各分量注释的标定依据）。
+
+        ★★ M6-B4（2026-09-19）：**短文本不参与评分**（此前空章被判满分）。
+        ------------------------------------------------------------
+        标定实证（M6-B4 真实语料复查，1266 章）：三个 `max=5.00` 的章
+        **全是残缺文件**——
+          · ``gouzailuanshi/ch015`` = 15 字、1 句 ⇒ 5.00
+          · ``xiuxian-performance/ch150`` = 44 字、1 句 ⇒ 5.00
+          · ``五灵破归档/ch198`` = 24 字、1 句 ⇒ 5.00
+        内容只有标题行（``# 第 N 章 · …``）。根因：``n_sent=1`` 时
+        任何含冲突词的单句都会算出 ``密度=1.0`` ⇒ **满分**。
+        ⇒ **空章/占位章会成为全书的"最高潮"**，污染一切分位标定与相对判据
+          （纪律 #21 静默失真；真实内容章的上限实为 3.00）。
+
+        处置：句数 < ``MIN_SENTENCES_FOR_SCORE`` ⇒ 返回 **0.0 且不进样本**。
+        ⚠ 为什么不"按字数补齐分母"：那是**替空章编造张力**（纪律 #2/#15
+          同族——消费者不能编造）；空章的正确语义是"**无数据**"，
+          而不是"给了个低分"。由调用方按 0.0 与 `is_measureable()` 区分。
         """
         if not text:
             return 0.0
@@ -227,7 +358,10 @@ class TensionCurveManager:
             for s in text.replace("！", "。").replace("？", "。").split("。")
             if s.strip()
         ]
-        n_sent = max(1, len(sentences))
+        # ★ M6-B4：样本量不足 ⇒ 无数据（不评分，防"1 句满分"的脏读数）
+        if len(sentences) < self.MIN_SENTENCES_FOR_SCORE:
+            return 0.0
+        n_sent = len(sentences)
 
         score = 0.0
 
@@ -352,15 +486,60 @@ import re
 #: 实测张力台账（纯观测面；落盘失败不转致命）。
 TENSION_LEDGER = Path(".state") / "memory" / "tension_readings.json"
 
+#: ★ M6-B4：标定相对判据所需的**最少全书章数**（低于此值改用绝对兜底）。
+#: 依据：分位数在 n<20 时极不稳定（一个极值就移动门槛），
+#: 而"相对判据"的前提是分母可信。不足时**显式降级**（发 corpus_insufficient 告警），
+#: 不静默退回绝对阈值（纪律 #1）。
+RELATIVE_MIN_CORPUS = 20
+
+#: ★ M6-B4：语料不足时的**兜底绝对阈值**（仅作降级路径，非主判据）。
+#: 取自 M6-B4 真实分布：p95=1.50 作高潮线、p25 跨度=0.20 作波动线。
+#: ⚠ 这两个值**跨项目不通用**（项目间 p95 极差 1.30），故只用于"冷启动"，
+#: 一旦语料 ≥ RELATIVE_MIN_CORPUS 即切回相对判据。
+RELATIVE_MIN_CORPUS_FALLBACK_HIGH = 1.50
+RELATIVE_MIN_CORPUS_FALLBACK_SPREAD = 0.20
+
+#: ★ M6-B4：高潮后"余波"的回落比例（相对门槛的倍数）。
+#: 原实现写死 8.0/7.0（绝对，不可达）；改为"回落到门槛的 70% 以下"。
+AFTERMATH_DECAY_RATIO = 0.70
+
+#: ★ M6-B4：``flat`` 判据的极差分位（相对阈值）。
+#: 取 0.10 ⇒ 只有"比全书 90% 的窗口都更平"才告警 ⇒ 达成率设计在 ≈10%。
+#: ⚠ 不能用**样本分位**代替"窗口极差分位"（见 ``_flat_threshold`` 注释）。
+FLAT_SPREAD_QUANTILE = 0.10
+
+#: ★ M6-B4：全书**恒定零波动**时的兜底阈值（见 ``_flat_threshold``）。
+#: 严格 `<` 在阈值 0 下永不成立（纪律 #24 同型的边界失效）⇒ 给极小正值。
+FLAT_SPREAD_ZERO_EPSILON = 1e-9
+
 
 def measure_chapter_tension(chapter: int, text: str) -> float:
     """度量单章实测张力（0-10）。**纯函数，零副作用**。
 
     独立于 ``TensionCurveManager`` 实例状态，便于落盘链路任意调用。
+
+    ⚠ M6-B4：文本不足以统计时返回 ``0.0``（= **无数据**，非"低张力"）。
+    需要区分这两种情形时用 :func:`is_measureable`。
     """
     if not text:
         return 0.0
     return TensionCurveManager()._compute_tension(text)
+
+
+def is_measureable(text: str) -> bool:
+    """该文本是否**有足够样本**参与张力统计（M6-B4）。
+
+    用途（纪律 #15 同族）：区分「**无数据**」与「**低张力**」。
+    残缺章（只有标题行）不得被当作"最平缓的章"参与分位标定或相对判据
+    ——那会让"没写"看起来像"写得很平"，两种失败互相掩盖（纪律 #1）。
+    """
+    if not text:
+        return False
+    n = len([
+        s for s in text.replace("！", "。").replace("？", "。").split("。")
+        if s.strip()
+    ])
+    return n >= TensionCurveManager.MIN_SENTENCES_FOR_SCORE
 
 
 def record_tension(
