@@ -374,10 +374,11 @@ def pace_tiers_of_window(
     Returns:
         ``[(章号, PaceTier), ...]``，按章号升序；无任何登记档位时为空列表。
     """
-    try:
-        lo, hi = int(window[0]), int(window[1])
-    except (TypeError, ValueError, IndexError):  # noqa: SILENT_DEGRADE reason=expected-skip
-        return []
+    # ★ 刻意**不加** ``try/except + # noqa: SILENT_DEGRADE`` 防御：
+    #   ``window`` 由 ``design_brief.build_design_brief`` 用 ``(max(1, ch-win+1), ch)``
+    #   构造，形状确定；为不可能的输入开一条降级豁免，等于给棘轮（豁免只减不增）
+    #   加计数、且让"真异常"也被静默吞掉（纪律 #1）。
+    lo, hi = int(window[0]), int(window[1])
     out: list[tuple[int, PaceTier]] = []
     for n in range(max(1, lo), max(0, hi) + 1):
         tier = PACE_TIER_BY_NAME.get(pace_tier_of(subline_md, n))
