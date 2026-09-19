@@ -12,6 +12,12 @@ from agent.core.story.volume import estimate_chapters
 # 消除"设计只进不出"。本模块只渲染，不产生真源。
 from agent.core.story.design_brief import build_design_brief
 from agent.core.infra.degrade import degrade
+# M6-B（2026-09-19）：压力阶段词表**单一真源**（纪律 #19/#22）。
+# 下游 agentic_write 用 `== "高潮"` 做字面量分支 ⇒ 阶段词必须先归一再流出。
+from agent.core.story.chapter_contract import (
+    PRESSURE_STAGES,
+    normalize_pressure_stage,
+)
 import frontmatter
 
 from agent.core.registry.genre_pack import GenrePackRegistry
@@ -939,15 +945,35 @@ class M5ContextMixin:
             return self._position_based_stage(chapter_num, 1, default_hi)
 
         bands: list[tuple[str, int, int, str]] = []
+        dropped_rows: list[str] = []
         for line in section.splitlines():
             if line.startswith("|") and "阶段" not in line and "---" not in line:
                 parts = [p.strip() for p in line.split("|")]
-                if len(parts) >= 4:
-                    range_match = re.match(r"(\d+)[-~](\d+)", parts[2])
-                    if range_match:
-                        bands.append(
-                            (parts[1], int(range_match.group(1)), int(range_match.group(2)), parts[3])
-                        )
+                if len(parts) < 4 or not parts[1]:
+                    continue
+                cell = parts[2]
+                range_match = re.match(r"(\d+)[-~](\d+)", cell)
+                if range_match:
+                    bands.append(
+                        (parts[1], int(range_match.group(1)), int(range_match.group(2)), parts[3])
+                    )
+                    continue
+                # ── M6-B（2026-09-19）：单章写法（如 ``| 高潮 | 50 | 高 |``）──
+                # 此前只认 ``a-b`` ⇒ 单章行**被静默丢弃**（实测全语料 40/280 行 = 14%）。
+                # 语义：该列在此形态下是**里程碑章号**（"第 50 章为高潮"），
+                # 不是区间 ⇒ 按零宽区间 [n, n] 收，使其至少能被精确命中。
+                single_match = re.match(r"^\s*(\d+)\s*$", cell)
+                if single_match:
+                    n = int(single_match.group(1))
+                    bands.append((parts[1], n, n, parts[3]))
+                    dropped_rows.append(f"{parts[1]}@{n}")
+                    continue
+                dropped_rows.append(f"{parts[1]}@{cell!r}(无法解析)")
+        if dropped_rows:
+            logger.warning(
+                "[pacing] 「剧集压力曲线」含 %d 个单章/异常写法条目（已按零宽区间收）: %s",
+                len(dropped_rows), dropped_rows[:8],
+            )
         if not bands:
             logger.warning(
                 "[pacing] subline「剧集压力曲线」无可解析区间，第 %d 章按位置推导",
@@ -955,17 +981,49 @@ class M5ContextMixin:
             )
             return self._position_based_stage(chapter_num, 1, default_hi)
 
-        # 整体跨度
+        # 整体跨度（含零宽里程碑 ⇒ 用 max/min 仍然正确）
         min_lo = min(b[1] for b in bands)
         max_hi = max(b[2] for b in bands)
+
+        # ── M6-B（2026-09-19）：**区间语义统一** ──────────────────────
+        # 表格有两种写法，此前只处理第一种：
+        #   ① 区间式 ``| 冲突 | 51-57 |``   ⇒ 直接是 [51,57]
+        #   ② 里程碑式 ``| 高潮 | 50 |``    ⇒ 原被丢弃（实测 40/280 行）
+        # 里程碑式的**正确语义**：该章是这一阶段的**起点**，
+        # 阶段延续到下一个里程碑之前（与位置推导的"分段"一致）。
+        # 例：``铺垫@48-49, 冲突@50, 高潮@50, 结局@50``
+        #   ⇒ 同一章被三个阶段声明 —— **以最后声明者为准**（表格书写顺序
+        #     即"剧情推进顺序"，最后一行代表该章结束时的阶段）。
+        # ⇒ 统一方案：零宽里程碑向后扩展，直到下一个"锚点"章号为止。
+        resolved = self._resolve_bands(bands, max_hi)
+
         # 命中区间优先
-        for stage, lo, hi, tension in bands:
+        for stage, lo, hi, tension in resolved:
             if lo <= chapter_num <= hi:
+                # ---- M6-B（2026-09-19）：阶段词**归一**（单一真源）----
+                # 此前 stage 原样 return ⇒ 曲线表写「舒缓/收束」时，
+                # 下游 agentic_write.py:339/809 的 `== "高潮"` 静默为假
+                # （无报错无日志）。归一保证下游字面量比较语义正确。
+                canon = normalize_pressure_stage(stage)
+                if not canon:
+                    logger.warning(
+                        "[pacing] 第 %d 章压力曲线阶段词 %r 未登记且无法归一"
+                        "（合法值 %s）——本章按位置推导阶段",
+                        chapter_num, stage, PRESSURE_STAGES,
+                    )
+                    return self._position_based_stage(chapter_num, min_lo, max_hi)
+                if canon != stage:
+                    logger.warning(
+                        "[pacing] 第 %d 章压力曲线阶段词 %r 归一到 %r"
+                        "（未登记变体；主词表 %s）",
+                        chapter_num, stage, canon, PRESSURE_STAGES,
+                    )
                 # 退化检测：铺垫段过长且存在后续阶段 → 视为平坦曲线，改按位置推导
-                setup_bands = [b for b in bands if b[0] == "铺垫"]
-                has_later = any(b[0] != "铺垫" for b in bands)
+                _SETUP_WORD = PRESSURE_STAGES[2]  # 「铺垫」——从 SSOT 取，勿手写
+                setup_bands = [b for b in bands if b[0] == _SETUP_WORD]
+                has_later = any(b[0] != _SETUP_WORD for b in bands)
                 if (
-                    stage == "铺垫"
+                    canon == _SETUP_WORD
                     and has_later
                     and setup_bands
                     and (setup_bands[0][2] - setup_bands[0][1] + 1)
@@ -979,26 +1037,105 @@ class M5ContextMixin:
                         chapter_num,
                     )
                     return self._position_based_stage(chapter_num, min_lo, max_hi)
-                return stage, tension
+                return canon, tension
         # 未命中任何区间 → 按位置推导
         logger.warning(
             "[pacing] 第 %d 章未被任何压力曲线区间覆盖（全书 %d-%d），按位置推导",
             chapter_num, min_lo, max_hi,
         )
         return self._position_based_stage(chapter_num, min_lo, max_hi)
+
+    @staticmethod
+    def _resolve_bands(
+        bands: list[tuple[str, int, int, str]], max_hi: int
+    ) -> list[tuple[str, int, int, str]]:
+        """把「区间式 + 里程碑式」混合的 band 列表统一成**互不重叠的覆盖区间**。
+
+        ★ M6-B（2026-09-19）新增。动机（实测 280 行中 40 行 = 14%）：
+        LLM 写压力曲线表时会混用两种写法——
+          · 区间式 ``| 冲突 | 51-57 |``
+          · 里程碑式 ``| 高潮 | 50 |``（该章是阶段起点）
+        里程碑式此前被**静默丢弃**，导致这些章节落到「未被任何区间覆盖」
+        路径（走位置推导），**作者标注的意图被无声忽略**。
+
+        归一规则（确定性、可测）：
+          1. 区间式保持原样；
+          2. 里程碑式 ``@n`` 从 n 起，延续到**下一个 > n 的锚点**之前；
+             无后续锚点则延续到 ``max_hi``；
+          3. 同一章被多条声明时，**表格靠后者胜**（书写顺序 = 剧情推进顺序）；
+          4. 输出的区间按起点升序，互不重叠。
+
+        为什么要「靠后者胜」而不是报错：里程碑式表格的语义就是
+        "在这一章到达该阶段"，多条同章是**作者在描述同一章的转折**，
+        取最后一个 = 取该章结束时的状态，与下游
+        ``pressure_stage``（章末状态）的口径一致。
+        """
+        if not bands:
+            return []
+
+        # 里程碑 = 零宽（lo == hi）；区间 = lo < hi
+        milestones = sorted({b[1] for b in bands if b[1] == b[2]})
+        # 全部锚点章号（区间起点 + 里程碑），用于确定扩展边界
+        anchors = sorted({b[1] for b in bands})
+
+        def _next_anchor_after(n: int) -> int | None:
+            for a in anchors:
+                if a > n:
+                    return a
+            return None
+
+        out: list[tuple[str, int, int, str]] = []
+
+        # ---- ① 区间式：原样保留 ----
+        for stage, lo, hi, tension in bands:
+            if lo < hi:
+                out.append((stage, lo, hi, tension))
+
+        # ---- ② 里程碑式：向后扩展 ----
+        # 同章多条 ⇒ 靠后者胜（按 bands 原顺序取最后一条）
+        by_chapter: dict[int, tuple[str, int, int, str]] = {}
+        for b in bands:
+            if b[1] == b[2]:
+                by_chapter[b[1]] = b  # 后写覆盖前写
+        for ch, (stage, _lo, _hi, tension) in sorted(by_chapter.items()):
+            nxt = _next_anchor_after(ch)
+            end = (nxt - 1) if nxt is not None else max_hi
+            if end < ch:
+                end = ch
+            out.append((stage, ch, end, tension))
+
+        # ---- ③ 排序 + 去重叠（先到先得，后到让位）----
+        out.sort(key=lambda x: (x[1], x[2]))
+        merged: list[tuple[str, int, int, str]] = []
+        for stage, lo, hi, tension in out:
+            if merged and lo <= merged[-1][2]:
+                # 与上一条重叠 ⇒ 从上一条的终点之后开始（保持不重叠）
+                lo = merged[-1][2] + 1
+            if lo > hi:
+                continue
+            merged.append((stage, lo, hi, tension))
+        return merged
+
     @staticmethod
     def _position_based_stage(chapter_num: int, lo: int, hi: int) -> tuple[str, str]:
-        """按章节在 [lo, hi] 跨度中的位置推导爬升压力阶段（铺垫→冲突→高潮→舒缓）。"""
+        """按章节在 [lo, hi] 跨度中的位置推导爬升压力阶段（铺垫→冲突→高潮→舒缓）。
+
+        ★ M6-B（2026-09-19）：四个阶段名**从 SSOT 取**（``PRESSURE_STAGES``），
+        不再手写字面量——此前与 ARC_PHASES/下游比较各写一份（纪律 #22）。
+        """
+        # 阶段名索引：0=铺垫 1=冲突 2=高潮 3=舒缓（与 PRESSURE_STAGES 顺序一致）
+        _SETUP, _CONFLICT, _CLIMAX, _RELAX = PRESSURE_STAGES[2], PRESSURE_STAGES[1], PRESSURE_STAGES[0], PRESSURE_STAGES[3]
         if hi <= lo:
-            return "铺垫", "低"
+            return _SETUP, "低"
         frac = (chapter_num - lo) / (hi - lo)
         if frac < 0.15:
-            return "铺垫", "低"
+            return _SETUP, "低"
         if frac < 0.5:
-            return "冲突", "中"
+            return _CONFLICT, "中"
         if frac < 0.85:
-            return "高潮", "高"
-        return "舒缓", "低"
+            return _CLIMAX, "高"
+        return _RELAX, "低"
+
     # ============================================================
     # E2 题材动态注入
     # ============================================================

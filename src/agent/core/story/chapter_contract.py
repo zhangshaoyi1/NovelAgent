@@ -296,6 +296,97 @@ PACE_TIER_BY_NAME: dict[str, PaceTier] = {t.name: t for t in PACE_TIERS}
 #: 逐章行里的档位字段名（与其余契约字段同构，见 ``CONTRACT_FIELDS``）
 PACE_TIER_FIELD = "档位"
 
+# ============================================================
+# 压力阶段词表（PressureStage）—— 单一真源（2026-09-19，M6-B 新增）
+#
+# ★ 为什么要在这里定义（纪律 #19/#22）：
+#   「压力阶段」此前是**没有登记表的自由文本**：`m5_context._determine_pressure_stage`
+#   把 subline.md 压力曲线表的第 1 列**原样** return，下游三处按字面量比较：
+#       · ``agentic_write.py:339``  ``ctx["pressure_stage"] == "高潮"`` → 加载爽点技法
+#       · ``agentic_write.py:809``  ``ctx["pressure_stage"] == "高潮"`` → is_climax
+#         ⇒ 直接进入评委提示词（``is_climax="是"/"否"``）与质检分支
+#       · ``m5_quality_gate.py:47`` / ``m5_persist.py:821`` 拼文案
+#   ⇒ 曲线表里写「舒缓/收束」，下游 ``== "高潮"`` 比较即静默为假，
+#     **无报错、无日志**（纪律 #21「静默失真」的形态）。
+#
+# ★ 实测（M6-B 取证，70 份含压力曲线表的 subline.md）：
+#     · 主词表（52 项目）：铺垫 / 冲突 / 高潮 / 舒缓
+#     · **未登记变体**：``舒缓/收束``（2 项目）、``结局/收束``（1 项目）
+#     · 影响章节：3 个支线（jipin-yixian S03/S04/S05）
+#   ⇒ 变体全部来自 `_duplicate_backup` 备份目录；**活跃项目落盘值
+#     （1694 章）全在四主词内** ⇒ 当前是**潜在缺陷**而非已发生故障。
+#
+# ★ 处置口径（纪律 #20：闸门强度必须与证据匹配）：
+#   采用「**归一 + 告警**」，不采用「fail-fast 硬拦」——因为
+#   ① 变体是**合法创作语义**（「舒缓/收束」= 舒缓收束期），硬拦会误伤；
+#   ② 历史数据已含该形态，硬拦 = 挡合法历史（纪律 #18 缺豁免）。
+#   ⇒ 归一到主词（保下游 ``== "高潮"`` 语义正确）+ 留痕告警（可观测）。
+# ============================================================
+
+#: 压力阶段**主词表**（顺序即张力降序，与 ``PACE_TIERS`` 同轴）。
+#: ⚠ 改动本元组必须同步 ``_PRESSURE_STAGE_ALIASES`` 且跑
+#:   ``tests/test_pressure_stage_ssot.py``（成员/派生关系机器核对）。
+PRESSURE_STAGES: tuple[str, ...] = ("高潮", "冲突", "铺垫", "舒缓")
+
+#: 张力序位（数字越大越紧张）——**由 PRESSURE_STAGES 派生**，勿手写。
+PRESSURE_STAGE_RANK: dict[str, int] = {
+    name: len(PRESSURE_STAGES) - i for i, name in enumerate(PRESSURE_STAGES)
+}
+
+#: 未登记变体 → 主词（归一表）。**键必须在真实语料中出现过**才算证据。
+#: ⚠ 新增别名必须写明来源项目与章节，否则是"猜的兼容"（纪律 #4）。
+PRESSURE_STAGE_ALIASES: dict[str, str] = {
+    "舒缓/收束": "舒缓",   # 实测 jipin-yixian S03/S04（备份区）
+    "结局/收束": "舒缓",   # 实测 jipin-yixian S05（备份区）
+}
+
+#: 归一表允许的**目标**必须是主词（防"别名指向别名"的链式漂移）。
+for _alias, _canon in PRESSURE_STAGE_ALIASES.items():
+    if _canon not in PRESSURE_STAGES:
+        raise ValueError(
+            f"PRESSURE_STAGE_ALIASES[{_alias!r}] 指向未登记主词 {_canon!r}；"
+            f"合法主词 = {PRESSURE_STAGES}"
+        )
+
+
+def normalize_pressure_stage(raw: str) -> str:
+    """把压力曲线表里的阶段词归一到 :data:`PRESSURE_STAGES` 主词。
+
+    ★ 这是**唯一**的阶段词归一入口：下游任何按词表比较/分支的地方
+      都必须先过本函数（否则就是纪律 #22「靠调用方猜对语义」）。
+
+    归一规则（**显式且可测**）：
+      1. 去空白；空串 → 空串（不臆造）
+      2. 精确命中主词 → 原样返回
+      3. 命中 :data:`PRESSURE_STAGE_ALIASES` → 返回对应主词
+      4. **含主词作为前缀**（如「舒缓收束」「高潮段」）→ 返回该主词
+      5. 其余 → 空串（**不猜**；由调用方决定回退，见 ``stage_normalization_note``）
+
+    ⚠ 为什么规则 5 返回空串而不是原样：返回原样会让"未登记值"
+      继续流到下游的字面量比较里，缺陷被掩盖。宁可显性丢失并告警。
+    """
+    if not raw:
+        return ""
+    s = str(raw).strip()
+    if not s:
+        return ""
+    if s in PRESSURE_STAGES:
+        return s
+    alias = PRESSURE_STAGE_ALIASES.get(s)
+    if alias:
+        return alias
+    # 前缀命中（长主词优先，避免「高潮」被更短的词抢先）
+    for name in sorted(PRESSURE_STAGES, key=len, reverse=True):
+        if s.startswith(name):
+            return name
+    return ""
+
+
+def is_registered_pressure_stage(value: str) -> bool:
+    """值是否为**已登记**主词（不含别名）。供红线与告警使用。"""
+    return value in PRESSURE_STAGES
+
+
 #: 从逐章行抠出档位值：``…｜档位=推进｜…``（容忍三种分隔符与两种竖线）
 #: ⚠ 终止符须含中英文句读（``，,、。；;`` 等）：档位常出现在行尾，
 #:   其后紧邻句号/逗号（如 ``｜档位=日常。``）——不收会把标点吞进取值。
@@ -590,6 +681,9 @@ __all__ = [
     "PACE_TIER_NAMES",
     "PACE_TIERS",
     "POINTS_SECTION",
+    "PRESSURE_STAGES",
+    "PRESSURE_STAGE_ALIASES",
+    "PRESSURE_STAGE_RANK",
     "PRIOR_CONTRACT_PREFIX",
     "TIERS_SECTION",
     "PaceTier",
@@ -599,6 +693,8 @@ __all__ = [
     "find_contract_annotations",
     "has_chapter_level_lines",
     "is_contract_annotation_line",
+    "is_registered_pressure_stage",
+    "normalize_pressure_stage",
     "pace_tier_coverage",
     "pace_tier_of",
     "pace_tiers_of_window",
