@@ -7,6 +7,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
 
+from agent.core.story.chapter_contract import PRESSURE_STAGE_FRACTIONS
+
 
 @dataclass
 class TensionScore:
@@ -60,16 +62,26 @@ class TensionCurveManager:
     MIN_SENTENCES_FOR_SCORE: int = 3
 
     # 弧级模型
+    # ★ Task #27（2026-09-19）：边界不再手写——build_up/escalate 的交界(=铺垫|冲突)、
+    #   escalate/climax 的交界(=冲突|高潮)、aftermath 的起点(=高潮|舒缓)三处
+    #   **必须**与写手端 4 阶段切分同源（``PRESSURE_STAGE_FRACTIONS``，纪律 #19）。
+    #   仅 climax→peak 的 0.75 是 5 阶段模型内部切分（4 阶段无对应），留本模块常量。
+    _PEAK_SPLIT: float = 0.75
     ARC_PHASES: list[dict] = [
-        {"phase": "build_up", "ratio_start": 0.0, "ratio_end": 0.15,
+        {"phase": "build_up", "ratio_start": 0.0,
+         "ratio_end": PRESSURE_STAGE_FRACTIONS[0],
          "label": "建立期待", "tension_min": 2, "tension_max": 3},
-        {"phase": "escalate", "ratio_start": 0.15, "ratio_end": 0.50,
+        {"phase": "escalate", "ratio_start": PRESSURE_STAGE_FRACTIONS[0],
+         "ratio_end": PRESSURE_STAGE_FRACTIONS[1],
          "label": "逐步升温", "tension_min": 4, "tension_max": 6},
-        {"phase": "climax", "ratio_start": 0.50, "ratio_end": 0.75,
+        {"phase": "climax", "ratio_start": PRESSURE_STAGE_FRACTIONS[1],
+         "ratio_end": _PEAK_SPLIT,
          "label": "冲突升级", "tension_min": 7, "tension_max": 8},
-        {"phase": "peak", "ratio_start": 0.75, "ratio_end": 0.85,
+        {"phase": "peak", "ratio_start": _PEAK_SPLIT,
+         "ratio_end": PRESSURE_STAGE_FRACTIONS[2],
          "label": "高潮爆发", "tension_min": 9, "tension_max": 10},
-        {"phase": "aftermath", "ratio_start": 0.85, "ratio_end": 1.0,
+        {"phase": "aftermath", "ratio_start": PRESSURE_STAGE_FRACTIONS[2],
+         "ratio_end": 1.0,
          "label": "余波收尾", "tension_min": 3, "tension_max": 5},
     ]
 

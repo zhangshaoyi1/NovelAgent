@@ -14,7 +14,10 @@ from agent.core.story.design_brief import build_design_brief
 from agent.core.infra.degrade import degrade
 # M6-B（2026-09-19）：压力阶段词表**单一真源**（纪律 #19/#22）。
 # 下游 agentic_write 用 `== "高潮"` 做字面量分支 ⇒ 阶段词必须先归一再流出。
+# Task #27：位置→阶段的切分比例也同源（PRESSURE_STAGE_FRACTIONS，
+# 与 tension_curve.ARC_PHASES 共享，防两边各写一份静默漂移）。
 from agent.core.story.chapter_contract import (
+    PRESSURE_STAGE_FRACTIONS,
     PRESSURE_STAGES,
     normalize_pressure_stage,
 )
@@ -1122,17 +1125,21 @@ class M5ContextMixin:
 
         ★ M6-B（2026-09-19）：四个阶段名**从 SSOT 取**（``PRESSURE_STAGES``），
         不再手写字面量——此前与 ARC_PHASES/下游比较各写一份（纪律 #22）。
+        ★ Task #27（2026-09-19）：三条切分边界同样**从 SSOT 取**
+          （``PRESSURE_STAGE_FRACTIONS``）——与 ``tension_curve.ARC_PHASES``
+          同源，改一边不改另一边会被 R8 交叉核对红线拦住（纪律 #19）。
         """
         # 阶段名索引：0=铺垫 1=冲突 2=高潮 3=舒缓（与 PRESSURE_STAGES 顺序一致）
         _SETUP, _CONFLICT, _CLIMAX, _RELAX = PRESSURE_STAGES[2], PRESSURE_STAGES[1], PRESSURE_STAGES[0], PRESSURE_STAGES[3]
+        _F_SETUP, _F_CONFLICT, _F_CLIMAX = PRESSURE_STAGE_FRACTIONS
         if hi <= lo:
             return _SETUP, "低"
         frac = (chapter_num - lo) / (hi - lo)
-        if frac < 0.15:
+        if frac < _F_SETUP:
             return _SETUP, "低"
-        if frac < 0.5:
+        if frac < _F_CONFLICT:
             return _CONFLICT, "中"
-        if frac < 0.85:
+        if frac < _F_CLIMAX:
             return _CLIMAX, "高"
         return _RELAX, "低"
 

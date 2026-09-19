@@ -349,6 +349,16 @@ for _alias, _canon in PRESSURE_STAGE_ALIASES.items():
         )
 
 
+#: ★ 章程位置→阶段的**切分比例**（归一位置 [0,1] 的三条边界，Task #27）：
+#:   [0,f0)=铺垫、[f0,f1)=冲突、[f1,f2)=高潮、[f2,1]=舒缓。
+#: ★ 这是**写手端 4 阶段**（``m5_context._position_based_stage``）与
+#:   **弧级 5 阶段**（``tension_curve.ARC_PHASES``）的**共享真源**——
+#:   此前 0.15/0.50/0.85 在两边各写一份、互不校验（纪律 #19：
+#:   一次单边改动即静默漂移）。改本值必须同步跑
+#:   ``tests/test_pressure_stage_ssot.py`` 的 R8 交叉核对。
+PRESSURE_STAGE_FRACTIONS: tuple[float, float, float] = (0.15, 0.50, 0.85)
+
+
 def normalize_pressure_stage(raw: str) -> str:
     """把压力曲线表里的阶段词归一到 :data:`PRESSURE_STAGES` 主词。
 

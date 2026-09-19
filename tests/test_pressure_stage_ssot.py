@@ -39,6 +39,7 @@ import pytest
 from agent.core.story.chapter_contract import (
     PRESSURE_STAGES,
     PRESSURE_STAGE_ALIASES,
+    PRESSURE_STAGE_FRACTIONS,
     PRESSURE_STAGE_RANK,
     is_registered_pressure_stage,
     normalize_pressure_stage,
@@ -282,3 +283,155 @@ class TestConsumersUseSSOT:
             "发现未登记的阶段词字面量比较（消费者清单未同步）：\n"
             + "\n".join(f"  {u}" for u in unregistered)
         )
+
+
+# ── R8 双模型交叉核对（★ Task #27：写手端 4 阶段 vs 弧级 5 阶段同源） ─────
+class TestCrossModelAlignment:
+    """两套阶段模型必须共享同一切分真源（``PRESSURE_STAGE_FRACTIONS``）。
+
+    · **写手端 4 阶段**：``m5_context._position_based_stage`` 按章程位置切
+      铺垫/冲突/高潮/舒缓（章粒度）；
+    · **弧级 5 阶段**：``tension_curve.ARC_PHASES`` 按弧内比例切
+      build_up/escalate/climax/peak/aftermath（弧粒度）。
+
+    此前 0.15/0.50/0.85 在两边各写一份、互不校验（纪律 #19：一次单边改动
+    ⇒ 两套模型的阶段归属**静默漂移** ⇒ 消费者读数互相矛盾且无报错）。
+    本红线锁的是**派生关系**（边界成员一致 + 字面量禁写 + 行为相容），
+    不是"数值相等"——两边是同一常量的两个消费者，不是两个碰巧相等的数字。
+    """
+
+    FRACTIONS = ("0.15", "0.5", "0.85")  # 禁写清单（AST 比对用源码形态）
+    CTX = REPO_ROOT / "src/agent/workflows/writing/m5_context.py"
+    TENSION = REPO_ROOT / "src/agent/core/story/tension_curve.py"
+
+    # 5 阶段 → 4 阶段主词的**登记映射**（语义相容契约；改模型必须显式跟改）
+    PHASE_TO_STAGE = {
+        "build_up": "铺垫",
+        "escalate": "冲突",
+        "climax": "高潮",
+        "peak": "高潮",
+        "aftermath": "舒缓",
+    }
+
+    def test_arc_phases_derive_from_shared_fractions(self) -> None:
+        """R8a：ARC_PHASES 边界必须与共享常量成员一致且连续（无空洞/重叠）。"""
+        from agent.core.story.tension_curve import TensionCurveManager
+
+        f0, f1, f2 = PRESSURE_STAGE_FRACTIONS
+        phases = TensionCurveManager.ARC_PHASES
+        starts = [p["ratio_start"] for p in phases]
+        ends = [p["ratio_end"] for p in phases]
+        # 连续性：首 0 末 1，每段起点 == 上一段终点
+        assert starts[0] == 0.0 and ends[-1] == 1.0
+        for i in range(len(phases) - 1):
+            assert ends[i] == starts[i + 1], f"第 {i}/{i+1} 段边界不连续"
+        # ★ 交界对齐：4 阶段三条边界 == 5 阶段三个对应交界
+        assert starts[1] == f0, "铺垫|冲突 交界 ≠ build_up|escalate（漂移）"
+        assert starts[2] == f1, "冲突|高潮 交界 ≠ escalate|climax（漂移）"
+        assert starts[4] == f2, "高潮|舒缓 交界 ≠ aftermath 起点（漂移）"
+        # 5 阶段内部切分（climax→peak）不得越界
+        assert f1 < starts[3] < f2, "climax/peak 内部切分必须落在 (f1, f2) 内"
+
+    def test_phase_mapping_is_registered_and_total(self) -> None:
+        """R8b-0：映射表必须覆盖全部 5 阶段，且值都是 4 阶段主词。"""
+        from agent.core.story.tension_curve import TensionCurveManager
+
+        phase_names = {p["phase"] for p in TensionCurveManager.ARC_PHASES}
+        assert set(self.PHASE_TO_STAGE) == phase_names, "映射表与模型阶段不一致"
+        for stage in self.PHASE_TO_STAGE.values():
+            assert stage in PRESSURE_STAGES, f"映射目标 {stage!r} 不是主词"
+
+    @classmethod
+    def _position_host_cls(cls):
+        """定位 ``_position_based_stage`` 宿主类（与 R7 的类发现模式同构）。"""
+        import agent.workflows.writing.m5_context as mod
+
+        for name in dir(mod):
+            obj = getattr(mod, name)
+            if isinstance(obj, type) and hasattr(obj, "_position_based_stage"):
+                return obj
+        raise AssertionError("未找到实现 _position_based_stage 的类")
+
+    def test_midpoint_probes_are_semantically_compatible(self) -> None:
+        """R8b：同一跨度上，5 阶段各段**中点章**的 4 阶段归属必须语义相容。
+
+        取段中点（离边界 ≥1 章）规避 int()/ceil 的 ±1 章舍入差；
+        若中点探针都不相容，说明两边真的切到了不同的地方（纪律 #19 漂移）。
+        """
+        from agent.core.story.tension_curve import TensionCurveManager
+
+        lo, hi = 1, 100
+        cls = self._position_host_cls()
+        for p in TensionCurveManager.ARC_PHASES:
+            span = int((hi - lo + 1) * p["ratio_end"]) - int(
+                (hi - lo + 1) * p["ratio_start"]
+            )
+            if span <= 0:
+                continue
+            mid = lo + int((hi - lo + 1) * p["ratio_start"]) + span // 2
+            expected_stage = self.PHASE_TO_STAGE[p["phase"]]
+            got_stage, _level = cls._position_based_stage(mid, lo, hi)
+            assert got_stage == expected_stage, (
+                f"{p['phase']!r} 段中点第 {mid} 章：弧级期望 {expected_stage!r}，"
+                f"写手端给出 {got_stage!r} —— 两套模型漂移（纪律 #19）"
+            )
+
+    def test_no_hardcoded_boundaries_on_either_side(self) -> None:
+        """R8c（AST 级）：两个消费点内禁写阶段边界字面量（0.75 是 5 阶段
+        内部切分、4 阶段无对应，允许留在 tension_curve）。
+
+        派生关系无法只靠数值断言证明（两边都还是旧值时"相等"可能只是巧合）；
+        禁写字面量 ⇒ 消费者只能引用常量 ⇒ 派生关系成立。
+        ⚠ 作用域收窄（纪律 #18）：只扫 ``_position_based_stage`` 函数体与
+        ``TensionCurveManager`` 的**类属性赋值区**，不扫全文——全文扫会把
+        无关的 0.5/0.15 业务阈值误伤进来（纪律 #28：误报默认多于真阳性；
+        实证 m5_context:1033 的覆盖率 0.5 与阶段边界无关）。
+        """
+        for path, scope in (
+            (self.CTX, ("func", "_position_based_stage")),
+            (self.TENSION, ("class_props", "TensionCurveManager")),
+        ):
+            kind, name = scope
+            tree = ast.parse(path.read_text(encoding="utf-8"))
+            target = None
+            for node in ast.walk(tree):
+                if kind == "func" and isinstance(node, ast.FunctionDef) \
+                        and node.name == name:
+                    target = node
+                    break
+                if kind == "class_props" and isinstance(node, ast.ClassDef) \
+                        and node.name == name:
+                    # 类属性赋值区：body 直接子节点里的 Assign/AnnAssign
+                    #（不走进方法体，防误伤方法内的无关数值）
+                    target = ast.Module(
+                        body=[n for n in node.body
+                              if isinstance(n, (ast.Assign, ast.AnnAssign))],
+                        type_ignores=[],
+                    )
+                    break
+            assert target is not None, f"{path.name} 未找到 {name}"
+            offenders: list[str] = []
+            for node in ast.walk(target):
+                if isinstance(node, ast.Constant) and isinstance(node.value, float):
+                    if repr(node.value) in self.FRACTIONS:
+                        offenders.append(f"{path.name}:{node.lineno} {node.value}")
+            assert not offenders, (
+                f"手写阶段边界字面量 {offenders}——"
+                f"必须引用 PRESSURE_STAGE_FRACTIONS（纪律 #19）"
+            )
+
+    def test_fractions_drive_writer_side(self, monkeypatch) -> None:
+        """R8d（行为级试金石）：改常量 ⇒ 写手端切分跟着变（派生而非巧合）。
+
+        注：tension 侧为类体一次性构造，其派生由 R8a（成员一致）+ R8c（禁
+        字面量）共同保证；本条只对运行时读常量的写手端做真变体验证。
+        """
+        import agent.workflows.writing.m5_context as mod
+
+        cls = self._position_host_cls()
+        lo, hi = 1, 100
+        # 默认常量下：第 50 章 frac=(50-1)/99≈0.495 ∈ [f0, f1) ⇒ 冲突
+        assert cls._position_based_stage(50, lo, hi)[0] == "冲突"
+        # 改常量 ⇒ 同一章改判（证明函数体消费的是常量，不是写死的数）
+        monkeypatch.setattr(mod, "PRESSURE_STAGE_FRACTIONS", (0.2, 0.4, 0.45))
+        assert cls._position_based_stage(50, lo, hi)[0] == "舒缓"
