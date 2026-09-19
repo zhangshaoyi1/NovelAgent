@@ -187,6 +187,33 @@ class _PipelinePlanningMixin:
                 return
             self._advance_state_to(State.CHARACTER_DESIGN)
 
+        # ---- M5 规划评委（采样模式，**恒不阻断**）----
+        # ★ 这是首轮规划链 M1→M2→M14→M3→M4 的**唯一评审闸门**：
+        #   `plan_managers` 的四管理者只挂在批间复规划（batch_replan:152），
+        #   首轮规划此前零评审。落点对齐 plan_managers.py:11 自认缺口
+        #   「语义类判断（这条弧线是否合理推进传承线）留给 LLM 管理者（未落地）」。
+        # ★ 只记录不拦（§8.3 D3 前置纪律）：跑采样统计误报率 + 历史达成率，
+        #   供 M8 定档。此处**绝不允许**据其结论阻断（动作强度 ≤ 判据）。
+        try:
+            from agent.core.story.plan_critic import review_plan
+
+            plan_obj = None
+            try:
+                from agent.agents.planner import PlannerAgent
+
+                plan_obj = PlannerAgent(self.project_dir, console=self.console).load_plan()
+            except Exception:  # noqa: BLE001  # noqa: SILENT_DEGRADE reason=观测面：规划对象缺失时只跑机器统计判据
+                plan_obj = None
+            review_plan(
+                self.project_dir,
+                arcs=getattr(plan_obj, "episode_tree", []) if plan_obj else [],
+                current_chapter=0,  # 首轮规划：尚无已写章
+                llm=llm,
+                console=self.console,
+            )
+        except Exception as e:  # noqa: BLE001 - 观测面异常绝不阻断规划
+            self.console.print(f"[yellow]规划评委异常（忽略）：{e}[/yellow]")  # noqa: SILENT_DEGRADE
+
         # 规划完成：推进到 WRITING（对齐拍板 #6），写章循环在 CHARACTER_DESIGN/WRITING 下运行。
         self._advance_state_to(State.WRITING)
 

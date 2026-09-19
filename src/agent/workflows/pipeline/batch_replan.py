@@ -166,6 +166,25 @@ def maybe_replan(
             report.retried = True
         save_audit_report(project_dir, report)
 
+        # ---- M5 规划评委（采样模式，**恒不阻断**）----
+        # ★ 与上面的四管理者**职责不重叠**：四管理者判确定性结构（弧线衔接/
+        #   重叠/空洞/越界），本层判**语义**（弧线是否合理推进母题）与
+        #   **规划产出粒度**（段级+章级双级、档位覆盖）。
+        # ★ 只记录不拦（§8.3）：其结果**绝不进入**下面的 BLOCK 判定。
+        #   放在四管理者**之后**：即使语义评审炸了也不影响既有拦截链。
+        try:
+            from agent.core.story.plan_critic import review_plan
+
+            review_plan(
+                project_dir,
+                arcs=plan.episode_tree,
+                current_chapter=current,
+                llm=planner.llm if hasattr(planner, "llm") else None,
+                console=console,
+            )
+        except Exception as e:  # noqa: BLE001 - 观测面异常绝不阻断复规划
+            degrade("autowire.plan_critic", "规划评委评审失败，本次采样缺失（不影响写作）", e)
+
         if report.passed:
             console.print(
                 f"[cyan]Planner 批间复规划完成（第 {current} 章后剩余弧线已重排，"
