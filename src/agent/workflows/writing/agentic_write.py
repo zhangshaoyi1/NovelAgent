@@ -1601,7 +1601,7 @@ class AgenticWriteWorkflow:
         # 能力对账要求两侧 run 链路同名调用）；失败降级不阻断。
         m5._record_book_ledger(ctx, title, text, quality_passed, revision_attempts)
         # ---- M6-B1 实测张力落盘（2026-09-19）：纯观测面，与档位「意图」对账。
-        # tension_curve 此前零生产调用点 ⇒ check_rhythm 永无输入；失败降级不阻断。
+        # tension_curve 此前零生产调用点；本 hook 只写台账，不喂 check_rhythm（见方法注释）。
         m5._record_tension(ctx, text)
         # M13 伏笔对账 hook（与 M5 同源；失败降级不阻断）
         try:

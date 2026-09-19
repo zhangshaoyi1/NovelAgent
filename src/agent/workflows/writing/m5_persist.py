@@ -546,11 +546,18 @@ class M5PersistMixin:
         """M6-B1 章后 hook：落盘本章**实测张力**（纯观测面，不是供给面）。
 
         背景：``tension_curve`` 此前**零生产调用点**（M6-A 取证），
-        ``check_rhythm`` 的跨章张力分析**永远没有输入**。
+        本 hook 是它第一条生产链路。
 
         ★ 定位：这是「**事实**」（正文统计）通道，与强度档位「**意图**」
         （规划标注）分属两条独立线，**绝不用张力反推/覆盖档位**——
         那是系统替作者定意图，违反 ``chapter_contract.py:447`` 既有红线。
+
+        ⚠ 消费者说明（纪律 #7，2026-09-19 复核修正）：
+        本 hook **只写台账**（``TENSION_LEDGER`` = ``.state/memory/tension_readings.json``）。
+        ``TensionCurveManager.check_rhythm`` 读的是**内存 state** ``self._scores``，
+        而 ``_scores`` 只由 ``evaluate_chapter()`` 填充 —— 该入口**当前仍是零生产调用点**。
+        ⇒ **本 hook 与 ``check_rhythm`` 不相通**，它不是 ``check_rhythm`` 的输入源。
+        台账的读取方是 ``read_tension()``（见 C 项待收口）。
 
         失败降级不阻断写章（观测面失败 ≠ 主结论失败，纪律 #1/#2）。
         """
