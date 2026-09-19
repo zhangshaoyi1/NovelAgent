@@ -17,6 +17,8 @@
 from __future__ import annotations
 
 from agent.core.infra.prompt_manager import pm
+import json
+import logging
 import re
 from dataclasses import dataclass, field
 from datetime import datetime
@@ -38,7 +40,21 @@ from agent.core.registry.genre_pack import first_genre, first_genre_label
 from agent.core.engine.workflow_registry import workflow
 from agent.utils import parse_llm_json
 
+logger = logging.getLogger(__name__)
+
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
+
+#: ★ Task #43（2026-09-20，方案 C）：逐支线**供给完整度台账**。
+#: 实证（真实 LLM 取证）：M3 三条款叠加过载 ⇒ 5 条支线只有 1 条给了逐章数据
+#: （chapter_hooks 4/5=0、chapter_tiers 5/5 全缺、plot_points 5/5 全缺），
+#: 且**无报错无日志**（纪律 #21 静默失真）。本台账让「哪条支线缺什么」永远可见。
+#: 语义＝**只告警不拦**（纪律 #20：闸门强度与证据匹配——字段级缺失的处置
+#: 是提示词供给分层（v7 方案 B），不是阻断；逐章行有无已有 plan_consistency 管）。
+SUPPLY_LEDGER_RELPATH = Path(".state") / "plan_gate_subline_supply.jsonl"
+
+#: 逐章行识别：`第N章：`（容忍空格与全/半角冒号）。批次标注行
+#: `批次2（第21-40章）：` 不命中——`第\d+章` 后跟的是 `-`/`）` 不是冒号。
+_CHAPTER_LINE_RE = re.compile(r"第\s*\d+\s*章\s*[：:]")
 
 
 @dataclass
@@ -329,6 +345,62 @@ class M3OutlineWorkflow:
         )
 
     @staticmethod
+    def _count_chapter_lines(text: str) -> int:
+        """统计逐章行数（`第N章：` 形态；批次标注行不计）。"""
+        return len(_CHAPTER_LINE_RE.findall(str(text or "")))
+
+    @staticmethod
+    def _supply_verdict(hooks: int, tiers: int, plot: int) -> str:
+        """三字段供给判定（显性三态，不猜）：
+        full=三字段齐｜partial=有逐章钩子但其余有缺｜hooks_missing=连钩子都没有。
+        """
+        if hooks <= 0:
+            return "hooks_missing"
+        if tiers > 0 and plot > 0:
+            return "full"
+        return "partial"
+
+    def _write_supply_ledger(self, rows: list[dict[str, Any]]) -> None:
+        """把逐支线供给读数追加写入台账（JSONL，每行一支线）。
+
+        失败**不阻断**主流程（console + logging 双通道显性警告，不静默——
+        台账是可观测性设施，写不进去时用户必须知道，但 M3 产出本身不受影响）。
+        """
+        if not rows:
+            return
+        try:
+            out = self.project_dir / SUPPLY_LEDGER_RELPATH
+            out.parent.mkdir(parents=True, exist_ok=True)
+            lines = []
+            for r in rows:
+                r2 = dict(r)
+                r2.setdefault("ts", datetime.now().isoformat(timespec="seconds"))
+                lines.append(json.dumps(r2, ensure_ascii=False))
+            with out.open("a", encoding="utf-8") as f:
+                f.write("\n".join(lines) + "\n")
+        except Exception as e:  # noqa: BLE001 - 台账失败不阻断，但必须显性
+            # 显性双通道：console（人眼）+ logging（机器可读，降级可见性契约认可）
+            logger.warning("M3 供给台账写入失败（不影响 M3 产出）：%s", e)
+            self.console.print(
+                f"[yellow]⚠ 供给完整度台账写入失败（不影响 M3 产出）：{e}[/yellow]"
+            )
+
+    def _report_supply_gaps(self, rows: list[dict[str, Any]]) -> None:
+        """台账的 console 侧告警：只报不完整支线（full 不打印，少噪音）。"""
+        gaps = [r for r in rows if r.get("verdict") != "full"]
+        if not gaps:
+            return
+        parts = [
+            f"{r['subline']}（{r['verdict']}：hooks={r['hooks_lines']}"
+            f" tiers={r['tiers_lines']} plot={r['plot_lines']}）"
+            for r in gaps
+        ]
+        self.console.print(
+            "[yellow]⚠ 逐章供给不完整（详见 .state/plan_gate_subline_supply.jsonl）："
+            + "｜".join(parts) + "[/yellow]"
+        )
+
+    @staticmethod
     def _empty_subline(name: str) -> dict[str, Any]:
         return {
             "subline_name": name,
@@ -378,6 +450,7 @@ class M3OutlineWorkflow:
 
         paths: list[Path] = []
         used_ids: set[str] = set()
+        supply_rows: list[dict[str, Any]] = []
         for idx, s in enumerate(sublines, 1):
             name = s.get("subline_name", f"支线{idx}")
             # subline_id: S01_镜灵觉醒（特殊字符替换为下划线）
@@ -414,6 +487,33 @@ class M3OutlineWorkflow:
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")
             paths.append(path)
+            # ★ Task #43 方案 C：逐支线供给完整度读数（显性化，不阻断）
+            supply_rows.append(
+                {
+                    "subline": subline_id,
+                    "hooks_lines": self._count_chapter_lines(s.get("chapter_hooks")),
+                    "tiers_lines": self._count_chapter_lines(s.get("chapter_tiers")),
+                    "plot_lines": self._count_chapter_lines(s.get("plot_points")),
+                    "verdict": self._supply_verdict(
+                        self._count_chapter_lines(s.get("chapter_hooks")),
+                        self._count_chapter_lines(s.get("chapter_tiers")),
+                        self._count_chapter_lines(s.get("plot_points")),
+                    ),
+                }
+            )
+        # 台账落盘 + console 告警（渲染全部完成后统一执行）。
+        # ★ 防御深度：可观测性设施在任何一层失败都**不得阻断 M3 产出**，
+        #   但必须显性（console+logging 双通道）——纪律 #1「失败显性化」与主流程隔离并行。
+        if supply_rows:
+            try:
+                self._write_supply_ledger(supply_rows)
+                self._report_supply_gaps(supply_rows)
+            except Exception as e:  # noqa: BLE001 - 报告失败不阻断，但必须显性
+                # 显性双通道：console（人眼）+ logging（机器可读，降级可见性契约认可）
+                logger.warning("M3 供给完整度报告失败（不影响 M3 产出）：%s", e)
+                self.console.print(
+                    f"[yellow]⚠ 供给完整度报告失败（不影响 M3 产出）：{e}[/yellow]"
+                )
         return paths
 
     @staticmethod
