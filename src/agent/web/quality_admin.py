@@ -107,7 +107,14 @@ def activation_summary(project: str) -> dict[str, Any]:
                 "note": f"threshold {(policy.get('golden_three') or {}).get('threshold', 60)}",
             },
             {"id": "review_multi", "name": "多视角对抗评审", "active": "手动", "note": "review-book"},
-            {"id": "supervisor", "name": "监督体系（Supervisor）", "active": "事件驱动", "note": "M26"},
+            {
+                "id": "supervisor",
+                "name": "监督体系（Supervisor）",
+                # 2026-09-19 接线：批末自动（_run_supervisor_batch_end）+ 手动（supervisor-check）。
+                # 此前 SupervisorEngine 全仓零调用点，本行声称「事件驱动」属假把关者。
+                "active": "批末+手动",
+                "note": "M26 已接线（supervisor-check / autowrite 批末）",
+            },
         ],
     }
     return {"ok": True, "project": str(pdir), "profile": profile, "layers": layers}

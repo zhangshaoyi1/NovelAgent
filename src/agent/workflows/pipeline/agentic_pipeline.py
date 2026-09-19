@@ -961,6 +961,12 @@ class AgenticPipelineWorkflow(
             except Exception as ref_e:  # noqa: BLE001
                 degrade("pipeline.batch_reflection", "批末反思调用异常", ref_e)
 
+            # ---- M26 批末监督（2026-09-19 接线，修复 SupervisorEngine 零消费点）----
+            # 只读确定性扫描（零 LLM）；advisory 语义：告警+留痕+SUPERVISOR_ALERT
+            # 事件，**不阻断不 escalated** —— checker 阈值未经真实项目标定
+            # （纪律 #13/#26：动作强度≤判据可达性），阻断需先跑阈值分位表。
+            self._run_supervisor_batch_end(result)
+
         # ---- G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）----
         self._finalize_cost(result)
         # ---- G8（拍板 6）：主线推进/结局模式摘要（纯读 state，异常降级占位不阻断）----

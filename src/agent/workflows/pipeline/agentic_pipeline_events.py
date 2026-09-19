@@ -394,3 +394,30 @@ class _PipelineEventsMixin:
         except Exception:  # noqa: BLE001 - 成本汇总失败不阻断主流程（G3）
             result.cost = None  # noqa: SILENT_DEGRADE
 
+    # ---------------------------------------------------------------- M26 批末监督
+    def _run_supervisor_batch_end(self, result: PipelineResult) -> None:
+        """M26 批末监督（2026-09-19 接线，修复 SupervisorEngine 零消费点）。
+
+        语义（advisory）：只读确定性扫描（零 LLM）→ 告警打印 + memory 留痕 +
+        ``supervisor.alert`` 事件（引擎内 emit）；**不阻断、不 escalated** ——
+        内置 checker 的阈值未经真实项目分位标定（纪律 #13/#26：动作强度≤
+        判据可达性），升级为阻断前必须先跑阈值标定。
+        任何异常显性降级（degrade 留痕），不阻断批末收尾。
+        """
+        try:
+            from agent.core.supervisor.supervisor import create_default_engine
+
+            engine = create_default_engine(str(self.project_dir))
+            report = engine.check_all(max(int(result.final_chapter or 0), 0))
+            if report.issues:
+                self.console.print(
+                    f"[yellow]监督体系：{report.summary}"
+                    f"（详情：agent supervisor-check -d {self.project_dir}）[/yellow]"
+                )
+            try:
+                self.memory.log("supervisor", "批末监督", report.to_dict())
+            except Exception:  # noqa: BLE001 - 留痕失败不影响告警本身
+                pass  # noqa: SILENT_DEGRADE
+        except Exception as sup_e:  # noqa: BLE001 - 监督失败不阻断批末收尾
+            degrade("pipeline.supervisor", "批末监督调用异常", sup_e)
+

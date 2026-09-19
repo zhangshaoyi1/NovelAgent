@@ -24,6 +24,17 @@ class SupervisionIssue:
     details: dict = field(default_factory=dict)
     timestamp: datetime = field(default_factory=lambda: datetime.now(timezone.utc))
 
+    def to_dict(self) -> dict:
+        """序列化（供 memory 留痕与 CLI JSON 输出；datetime 转 ISO 字符串）。"""
+        return {
+            "dimension": self.dimension,
+            "severity": self.severity,
+            "message": self.message,
+            "chapter": self.chapter,
+            "details": self.details,
+            "timestamp": self.timestamp.isoformat(),
+        }
+
 
 @dataclass
 class SupervisionReport:
@@ -31,6 +42,14 @@ class SupervisionReport:
     issues: list[SupervisionIssue] = field(default_factory=list)
     healthy: bool = True
     summary: str = ""
+
+    def to_dict(self) -> dict:
+        """序列化（``to_dict`` 只增不删）。"""
+        return {
+            "healthy": self.healthy,
+            "summary": self.summary,
+            "issues": [i.to_dict() for i in self.issues],
+        }
 
 
 class SupervisorPlugin(ABC):
@@ -151,3 +170,32 @@ class SupervisorEngine:
             parts.append(f"警告 {warning} 个")
         parts.append(f"信息 {len(issues) - critical - warning} 个")
         return "，".join(parts) if parts else "全部通过"
+
+
+# ---------------------------------------------------------------- 默认装配
+def create_default_engine(project_dir: str) -> SupervisorEngine:
+    """创建并注册全部内置监督插件的引擎（**唯一默认装配点**）。
+
+    2026-09-19 前 ``SupervisorRegistry.register`` 全仓零调用——4 个内置
+    checker 只在 ``dimensions.py`` 定义、从未进引擎 ⇒ ``check_all`` 恒空转、
+    Web ``/quality`` 页却声称「监督体系 active: 事件驱动」（假把关者）。
+    本工厂是修复：所有消费方（批末管线 / CLI supervisor-check）一律经此
+    装配，使「注册了哪些插件」有一处定义、多处可达（红线见
+    ``tests/test_supervisor_wiring.py``）。
+    """
+    from agent.core.supervisor.dimensions import (
+        LanguageGuardChecker,
+        PlotProgressChecker,
+        StyleDriftChecker,
+        TropePayoffChecker,
+    )
+
+    engine = SupervisorEngine(project_dir)
+    for plugin in (
+        PlotProgressChecker(),
+        LanguageGuardChecker(),
+        StyleDriftChecker(),
+        TropePayoffChecker(),
+    ):
+        engine.registry.register(plugin)
+    return engine

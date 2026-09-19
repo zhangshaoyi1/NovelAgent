@@ -374,6 +374,3 @@ class TropePayoffChecker(SupervisorPlugin):
                         nums.append(int(match.group(1)))
                 return max(nums) if nums else 0
         return 0
-
-
-import re
