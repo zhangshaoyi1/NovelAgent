@@ -51,6 +51,7 @@ from agent.core.story.chapter_contract import (
     pace_tier_coverage,
     pace_tier_of,
     pace_tiers_of_window,
+    parse_pace_tier,
 )
 
 _PROMPTS = Path(agent.__file__).parent / "prompts"
@@ -163,7 +164,167 @@ class TestIndependentTiersSection:
 
 
 # ============================================================
-# 二、向后兼容（纪律 #4：口子只挡历史）
+# 二、解析式必须吃下 v6 行首形态（2026-09-19 真实 LLM 取证修复）
+# ============================================================
+class TestLineHeadTierIsParsed:
+    """★★ P0 回归：``第N章：档位=X｜…``（行首、前导是**冒号**）必须被解析。
+
+    事故（真实 LLM 取证，非构造）
+    -----------------------------
+    提示词 v6（``prompts/m3/outline.md:33``）刻意把 ``档位`` 挪到**行首**
+    （紧跟 ``第N章：``），理由是 v5 放行尾会被长 ``验收=`` 挤掉。
+    但解析式 ``_PACE_TIER_RE`` 当时写成 ``[｜|]\\s*档位…`` —— **要求前导是竖线**。
+
+    真实 LLM 实测（``.workbuddy/diag/i_verify/m3_outline_raw.txt``，43997 字符）：
+
+        逐章行 239 条｜``档位`` 字样 239 处｜**解析命中 0 条**
+        值分布 = 推进82 / 日常53 / 高潮53 / 垫片51  ← 产出本身完全合格
+
+    ⇒ 档位供给链（M2 装配 / M3 写手分叉 / M4 评委参照系）在真实链路 **100% 空转**，
+      而当时 164 条档位红线**全绿**（样本用 v5 行中形态）。
+
+    ★ 这是纪律 #3「语言锚与解析式是同一件事的两半」+ #20「单点单测绿 ≠ 链路口子通」
+      的双料案例：**改提示词位置时没改解析式**，且**样本与真形态不符**。
+
+    本类断言的重点不是"某个字符串能解析"，而是**四种前导分隔符都吃得下**：
+    全角 ``：``（真形态）/ 半角 ``:`` / 全角 ``｜``（历史）/ 半角 ``|``。
+    """
+
+    @pytest.mark.parametrize(
+        "sep",
+        ["：", ":", "： ", "：\t"],
+        ids=["fullwidth-colon", "halfwidth-colon", "colon-space", "colon-tab"],
+    )
+    def test_line_head_after_colon(self, sep: str) -> None:
+        """★ 真形态：``第N章`` + 分隔符 + ``档位=`` —— 四种变体都必须命中。"""
+        line = f"第1章{sep}档位=日常｜章首钩子=开局｜章尾钩子=发现疑点｜验收=读者知道处境"
+        assert parse_pace_tier(line) == "日常", (
+            f"行首档位（分隔符 {sep!r}）解析失败 —— v6 提示词就是这种形态，"
+            "解析式若要求前导竖线则整条档位链路空转"
+        )
+
+    def test_line_head_via_pace_tier_of(self) -> None:
+        """★ 端到端：行首形态经 ``pace_tier_of`` 也要拿得到（不只 parse 层）。"""
+        md = (
+            "# 支线设定\n\n"
+            f"## {HOOKS_SECTION}\n\n"
+            "第1章：档位=日常｜章首钩子=开局｜章尾钩子=发现疑点\n"
+            "第2章：档位=推进｜章首钩子=被扣配额｜章尾钩子=灵力入体\n"
+            "第3章：档位=高潮｜章首钩子=摊牌｜章尾钩子=胜负定\n"
+        )
+        assert pace_tier_of(md, 1) == "日常"
+        assert pace_tier_of(md, 2) == "推进"
+        assert pace_tier_of(md, 3) == "高潮"
+        # 覆盖度读数必须同步（否则采样闸看不见供给）
+        assert pace_tier_coverage(md, (1, 3)) == (3, 3, [])
+
+    def test_line_head_without_independent_section(self) -> None:
+        """★★ 关键：**没有独立小节**时行首形态仍须可读。
+
+        这正是真实事故形态 —— 真实 LLM 产出里 ``chapter_tiers`` 字段
+        与 ``## 章节强度档位`` 小节**都不存在**（实测 count=0），
+        唯一可用供给就是 ``chapter_hooks`` 的行首档位。
+        若修复只依赖独立小节，等于**没修**。
+        """
+        md = (
+            f"## {HOOKS_SECTION}\n\n"
+            "第1章：档位=垫片｜章首钩子=暗流｜章尾钩子=只露疑点\n"
+        )
+        assert pace_tier_of(md, 1) == "垫片"
+
+    def test_lead_anchor_does_not_swallow_later_positions(self) -> None:
+        """★★ 防回归：前导约束**不得**因 ``^`` 分支而拒掉行中位置。
+
+        修复过程中踩到的坑：把前导写成 ``(?:^|[｜|【\\s])`` 时，
+        ``^`` 作为**零宽分支**会在位置 0 成功然后整体失败，引擎前移到
+        ``：`` 之后时 ``^`` 不成立、字符集又不含 ``：`` ⇒ **整体 None**。
+        实测该写法下 ``第1章：档位=日常`` 命中 0，而 ``｜档位=日常`` 命中
+        ⇒ **同一模式对不同位置敏感**（正是最隐蔽的一类缺陷）。
+
+        本断言用**同一行的两种前导**对照，锁死"位置不改变可解析性"。
+        """
+        head = "第1章：档位=推进｜章首钩子=开局"
+        mid = "第1章：章首钩子=开局｜档位=推进"
+        assert parse_pace_tier(head) == "推进", "行首形态失效（前导约束把 ^ 分支写成消费式）"
+        assert parse_pace_tier(mid) == "推进", "行中形态失效（历史数据能力倒退，违反纪律 #4）"
+
+
+class TestTierFieldBoundary:
+    """前导约束的**反面**：同后缀词不得被误命中（放宽前导的代价必须守住）。"""
+
+    @pytest.mark.parametrize(
+        "bad",
+        ["我方档位=日常", "副档位=推进", "验收档位=高潮", "设定档位=垫片"],
+        ids=["woward", "sub-tier", "acceptance-tier", "setting-tier"],
+    )
+    def test_rejects_prefixed_words(self, bad: str) -> None:
+        """左侧紧邻**汉字**的 ``XX档位=`` 不是档位字段 ⇒ 必须拒绝。
+
+        放宽前导（允许行首 / ``：``）时最容易误伤这里：若直接删掉前导约束，
+        ``我方档位=日常`` 会被当成档位供给 ⇒ **静默失真**（纪律 #21 同型）。
+        """
+        assert parse_pace_tier(bad) == "", f"{bad!r} 不是档位字段，不得被解析"
+
+    @pytest.mark.parametrize(
+        "line",
+        ["第1章：档位=缓冲｜章首钩子=开局", "第1章：档位=｜章首钩子=开局"],
+        ids=["unregistered", "empty-value"],
+    )
+    def test_unregistered_or_empty_value_is_empty(self, line: str) -> None:
+        """未登记值 / 空值 ⇒ 空串（下游按"未标档位"处理，不猜）。"""
+        assert parse_pace_tier(line) == ""
+
+
+class TestRealLlmShapeFixture:
+    """★ 用**真实 LLM 产物**做样本，杜绝"构造样本与真形态不符"再次发生。
+
+    纪律 #23：构造单测通过 ≠ 真实项目验证。本类直接从取证产物里取行，
+    若产物不在本机（CI）则跳过 —— 但**只要在就一定跑**。
+    """
+
+    _RAW = (
+        Path(agent.__file__).parent.parent.parent.parent
+        / ".workbuddy" / "diag" / "i_verify" / "m3_outline_raw.txt"
+    )
+
+    def test_real_llm_line_head_parses(self) -> None:
+        """真实 LLM 的 239 条逐章行必须全部可解析（修复前 = 0）。"""
+        if not self._RAW.exists():
+            pytest.skip("真实 LLM 取证产物不在本机（CI 环境）")
+        raw = self._RAW.read_text(encoding="utf-8", errors="replace")
+        unescaped = raw.replace("\\n", "\n").replace('\\"', '"')
+        from agent.core.story.chapter_contract import PACE_TIER_NAMES
+
+        lines = [
+            ln.strip()
+            for ln in unescaped.splitlines()
+            if re.match(r"^第\s*\d+\s*章\s*[：:]\s*档位\s*[=:：]", ln.strip())
+        ]
+        assert lines, "取证产物里没有行首档位行 —— 样本或产物已变，需重新取证"
+        parsed = [(ln, parse_pace_tier(ln)) for ln in lines]
+        failed = [(ln[:60], t) for ln, t in parsed if t not in PACE_TIER_NAMES]
+        assert not failed, (
+            f"真实 LLM 行首档位解析失败 {len(failed)}/{len(parsed)} 条：{failed[:3]}"
+        )
+
+    def test_real_llm_produced_no_independent_field(self) -> None:
+        """★ 记录事实：真实 LLM **未产出** ``chapter_tiers`` 独立字段与小节。
+
+        这条断言的价值是**锁住缺陷证据**：它证明"独立小节"这条路在真实
+        LLM 上没走通 ⇒ 修复**不能只依赖**独立小节（见
+        ``test_line_head_without_independent_section``）。
+        若将来提示词强化后 LLM 开始产出，本断言会失败 —— 那时应改为
+        "两者都要求"，而不是删掉它。
+        """
+        if not self._RAW.exists():
+            pytest.skip("真实 LLM 取证产物不在本机（CI 环境）")
+        raw = self._RAW.read_text(encoding="utf-8", errors="replace")
+        assert "chapter_tiers" not in raw, "LLM 已开始产出 chapter_tiers ⇒ 需更新本断言口径"
+        assert "## 章节强度档位" not in raw, "LLM 已开始产出独立小节 ⇒ 需更新本断言口径"
+
+
+# ============================================================
+# 三、向后兼容（纪律 #4：口子只挡历史）
 # ============================================================
 class TestLegacyStillWorks:
     def test_v5_inline_form_still_readable(self) -> None:
