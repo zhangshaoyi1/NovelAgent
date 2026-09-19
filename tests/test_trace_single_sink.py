@@ -22,7 +22,7 @@ import pytest
 
 from agent.base.llm import LLMConfig, LLMResponse
 from agent.client.gateway_adapter import _GatewayModelProvider
-from agent.client.llm_usage import set_llm_usage_hook
+from agent.client.llm_usage import set_llm_usage_hook, usage_epoch
 from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
 from agent.core.llmops.trace import TraceStore, get_tracer, set_tracer
 from agent.core.llmops.traced_llm import TracedLLMClient
@@ -169,3 +169,123 @@ def test_span_model_is_real_model_name(sink: TraceStore) -> None:
     assert span.model == _MODEL, "真实模型名来自 route.model/payload，不是硬编码标签"
     assert span.meta.get("provider") == "fake"
     assert "cache_hit" in span.meta, "缓存命中留痕（HA-Eval L1）不得丢"
+
+
+# ------------------------- ⑥⑦ 记账失败方向：漏记不得被当作「已记账」（2026-09-19）
+class _FailOnceStore(TraceStore):
+    """首次 ``record`` 抛异常（模拟写盘失败），其后恢复 —— 用于验证兜底真的接管。"""
+
+    def __init__(self, *args: Any, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.attempts = 0
+        self._failed = False
+
+    def record(self, span: Any) -> None:
+        self.attempts += 1
+        if not self._failed:
+            self._failed = True
+            raise OSError("simulated disk full")
+        return super().record(span)
+
+
+class _AlwaysFailStore(TraceStore):
+    """``record`` 永远抛异常（磁盘一直满）—— 用于验证「失败不被算作已记账」。"""
+
+    def record(self, span: Any) -> None:
+        raise OSError("simulated disk full (always)")
+
+
+def _sink_with(store: TraceStore, tmp_path: Any) -> TraceStore:
+    prev = get_tracer()
+    wire_llm_event_hook(str(tmp_path))
+    set_tracer(store)
+    return prev
+
+
+def test_epoch_does_not_grow_when_record_fails(tmp_path: Any) -> None:
+    """⑥ 收口**写盘失败** ⇒ 计数不得增长（否则包装层误判「已覆盖」⇒ 静默漏记）。
+
+    反例（修复前）：``notify_llm_usage`` 先 ``epoch += 1`` 再调 hook，而 hook 内部
+    ``except: pass`` 吞掉写盘异常 ⇒ epoch 增长但 span 从未落盘 ⇒ 包装层放弃兜底
+    ⇒ 该次 LLM 调用 **0 span 且无任何日志**（实测探针已确证）。
+
+    注意判据只断言「**收口未记账 ⇒ 计数不增**」这一因果；兜底侧不经 hook，
+    故不参与计数（其正确性由 ⑦ 用 span 数断言）。
+    """
+    store = _AlwaysFailStore(tmp_path)
+    prev = _sink_with(store, tmp_path)
+    try:
+        adapter = _GatewayModelProvider("fake", _FakeProvider())
+        client = TracedLLMClient(_GatewayLikeFake(adapter), model="creative-strong")
+        e0 = usage_epoch()
+        # A 侧写盘失败被 hook 吞掉；B 侧兜底也失败 ⇒ 异常冒泡（**显性**，非静默）
+        with pytest.raises(OSError):
+            client.chat_creative([{"role": "user", "content": "写"}])
+        e1 = usage_epoch()
+
+        assert e1 == e0, "收口写盘失败 ⇒ 不得计入（否则包装层误判已覆盖而不兜底）"
+    finally:
+        set_tracer(prev)
+        set_llm_usage_hook(None)
+
+
+def test_write_failure_still_yields_exactly_one_span(tmp_path: Any) -> None:
+    """⑦ 收口写盘失败 ⇒ 兜底补记接管 ⇒ 仍恰 1 span（**既不漏记也不虚增**）。"""
+    store = _FailOnceStore(tmp_path)
+    prev = _sink_with(store, tmp_path)
+    try:
+        adapter = _GatewayModelProvider("fake", _FakeProvider())
+        client = TracedLLMClient(_GatewayLikeFake(adapter), model="creative-strong")
+        client.chat_creative([{"role": "user", "content": "写"}])
+
+        assert store.attempts >= 2, "应至少尝试 2 次：收口失败 1 次 + 兜底 1 次"
+        tot = store.totals()
+        assert tot["calls"] == 1, "写盘失败不得导致漏记（0 span）或虚增（2 span）"
+        assert tot["tokens_in"] == _TOKENS_IN
+    finally:
+        set_tracer(prev)
+        set_llm_usage_hook(None)
+
+
+def test_null_tracer_reports_not_recorded() -> None:
+    """⑧ 未装配 TraceStore（NullTracer）⇒ hook 显式报「未记账」⇒ 计数不增。
+
+    这条钉死 `_usage_hook_factory` 的返回值契约：hook 必须在**没有真正写 span**
+    时返回 False，否则包装层永远不会兜底 ⇒ 裸入口（未 set_tracer）全部静默漏记。
+    """
+    from agent.core.event_sourcing.llm_wiring import _usage_hook_factory
+    from agent.core.llmops.trace import NullTracer
+
+    hook = _usage_hook_factory()
+    set_tracer(NullTracer())
+    try:
+        assert hook({"type": "llm.usage", "model": "m"}) is False, (
+            "NullTracer 下未写入 span ⇒ 必须返回 False，供包装层兜底"
+        )
+    finally:
+        set_tracer(None)
+
+
+def test_legacy_hook_without_return_value_keeps_counting() -> None:
+    """⑨ 旧式 hook（无返回值）⇒ 按**已记账**处理，不得由 `is True` 判定。
+
+    若用 `recorded is True` 作判据，legacy hook 的 `None` 会被误读为「漏记」⇒
+    包装层额外补记 ⇒ **把刚修掉的虚增 100% 改回来**。故判据只用 `is False`
+    作显式哨兵，`None` 保守计为已记账。
+    """
+    from agent.client.llm_usage import notify_llm_usage
+
+    calls: list[dict] = []
+
+    def _legacy(payload: dict) -> None:  # 旧契约：无返回值
+        calls.append(payload)
+
+    set_llm_usage_hook(_legacy)
+    try:
+        e0 = usage_epoch()
+        notify_llm_usage({"type": "llm.usage", "model": "m"})
+        e1 = usage_epoch()
+        assert len(calls) == 1
+        assert e1 - e0 == 1, "legacy hook（None）应按已记账处理，避免把虚增改回来"
+    finally:
+        set_llm_usage_hook(None)

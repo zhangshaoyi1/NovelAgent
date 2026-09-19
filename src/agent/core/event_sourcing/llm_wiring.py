@@ -63,7 +63,16 @@ def _usage_hook_factory():
     红线见 ``tests/test_trace_single_sink.py``。
     """
 
-    def _hook(payload: dict) -> None:
+    def _hook(payload: dict) -> bool:
+        """投递一次用量事件。
+
+        Returns:
+            **TraceStore 是否真的写入了 span**。该返回值经
+            ``llm_usage.notify_llm_usage`` 决定 ``usage_epoch()`` 是否增长 ——
+            包装层据此判定「是否需要兜底补记」。若本 hook 吞掉写盘异常却
+            返回 True，包装层会误判「已记账」而放弃补记 ⇒ 静默漏记
+            （2026-09-19 实证：`TraceStore.record` 抛 OSError ⇒ 0 span、无日志）。
+        """
         # 1) EventBus（.events/events.jsonl）
         try:
             EventBus.get_instance().emit_event(
@@ -80,7 +89,9 @@ def _usage_hook_factory():
 
             tracer = get_tracer()
             if isinstance(tracer, NullTracer):
-                return
+                # 未装配 TraceStore：本次**没有**写入 span ⇒ 报 False，
+                # 由包装层兜底补记（保证「有调用必有 span」）。
+                return False
             tracer.record(
                 TraceSpan(
                     model=str(payload.get("model", "")),
@@ -103,6 +114,9 @@ def _usage_hook_factory():
                 )
             )
         except Exception:  # noqa: BLE001 - 追踪失败不阻断调用
-            pass  # noqa: SILENT_DEGRADE
+            # 写盘失败（磁盘满/权限/文件锁）：**必须报 False**，不得让上层
+            # 误以为已记账。业务调用仍不受影响（异常不外抛）。
+            return False
+        return True
 
     return _hook

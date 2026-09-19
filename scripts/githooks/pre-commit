@@ -13,6 +13,17 @@ set -u
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
 cd "$ROOT" || exit 0
 
+# ---- 提交前是否跑架构红线：默认跑；设 NOVELAGENT_SKIP_ARCH=1 跳过本提交 ----
+# 用法（想跳过时）：NOVELAGENT_SKIP_ARCH=1 git commit -m "..."
+# 注意：跳过属「显性绕过」，须在当日工作日志记明原因（AGENTS.md 第 10 条，不许静默）。
+if [ "${NOVELAGENT_SKIP_ARCH:-}" = "1" ]; then
+    echo ""
+    echo "⚠ [pre-commit] NOVELAGENT_SKIP_ARCH=1 —— 已跳过架构红线（本次提交未执行测试）。"
+    echo "  提醒：须在当日工作日志记明跳过原因，勿静默绕过。"
+    echo ""
+    exit 0
+fi
+
 # ---- 解释器探测：必须真的能 import pytest 才算可用 ----
 # 踩坑实证：本机 `python`/`python3` 指向托管解释器（无 pytest），
 # 只有 Windows 启动器 `py` 落到 D:\env\python\python.exe 才带 pytest。
