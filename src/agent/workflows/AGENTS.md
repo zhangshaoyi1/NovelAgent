@@ -21,6 +21,20 @@
 - 回退预算跨批持久化（`rollback_budget.py`）
 - 桥段禁用清单（`beat_sketch.py`，回滚率削减 P0）
 
+### 规划监理链（M1–M6，2026-09-18~19）
+
+| 里程碑 | 落点 |
+|---|---|
+| M1 + Fix | 章级强度档位供给（规划端独立小节 + 行首字段）；采样闸 `plan_gate_pace_tier.jsonl`，**恒不阻断** |
+| M3 | 写手侧：7 条平权规则按档位分叉（`prompts/m5/pace_rules.md` + `writer_agent._writer_base(pace_relaxed)`） |
+| M4 | 评委侧：`pace_tiers_of_window` 逐章供档，**只进评委端** |
+| M5 | 规划评委（采样模式，**恒不阻断**） |
+| M6 | 章后 hook `m5_persist._record_tension`，唯一生产入口在 `agentic_write.py`；纯**观测面**，失败降级不阻断 |
+
+> ⚠ **M6：写章链路新增章后 hook 时，必须同时登记 `degrade_registry.py`**（`m5.record_tension` 已登记），
+> 且观测面的失败**只降级不阻断**——不得让统计类逻辑影响本章产出。
+> ⚠ **档位（意图）与张力（事实）是两条独立线**，禁止在写章链路上用张力反推/覆盖档位。
+
 > ⚠️ 禁止在 `workflows/` 根目录新增平铺 .py 文件——一律放入对应域子包。
 
 ## 注册机制
