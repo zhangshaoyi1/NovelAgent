@@ -35,6 +35,11 @@
    （红线钉住它的字面量集合）；
 7. **与 ``plan_managers`` 作用域不重叠**：本模块**不产 BLOCK**、不重复报
    弧线衔接/重叠/空洞（那归确定性四管理者）。
+8. **无数据 ≠ 通过**（2026-09-19 D 项 D1 追加）：``read_plan_critic`` 以
+   ``status`` 区分「没审」（``no_data``/``empty``）与「审了没问题」（``ok``），
+   ``aggregate_readings`` 无样本时返回 ``{"__status__": "no_data", ...}``
+   **而非 `{}`** —— 空表会被读成"全判据可达"（纪律 #1）。
+   该语义的专项红线见 ``tests/architecture/test_plan_review_reachability.py``。
 """
 
 from __future__ import annotations
@@ -397,8 +402,17 @@ class TestReadings:
         out = aggregate_readings(tmp_path, confirmed_by_judge={"A": False})
         assert out["A"]["false_positive_rate"] == 1.0
 
-    def test_empty_ledger_gives_empty_readings(self, tmp_path: Path) -> None:
-        assert aggregate_readings(tmp_path) == {}
+    def test_empty_ledger_gives_no_data_sentinel(self, tmp_path: Path) -> None:
+        """★ 无台账 ⇒ **不得**返回 `{}`（D1：`{}` 会被读成"全判据可达"）。
+
+        2026-09-19 D 项修正：旧实现返回 `{}`，其天然读法是「没有任何判据有问题」
+        ⇒ 若 M8 据此定档，会把「从未采样」读成「所有判据都可达」，
+        正是纪律 #13 最怕的「阈值变摧毁扳机」的前置条件。
+        ⇒ 改为返回自曝其缺的哨兵 ``{"__status__": "no_data", "total": 0}``。
+        """
+        out = aggregate_readings(tmp_path)
+        assert out == {"__status__": "no_data", "total": 0}
+        assert "__status__" not in {k for k in out if k != "__status__"}
 
 
 # ============================================================

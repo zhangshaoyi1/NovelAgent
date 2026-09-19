@@ -452,17 +452,43 @@ def record_plan_critic(
 def read_plan_critic(project_dir: str | Path) -> dict[str, Any]:
     """读取规划评审台账（供体检/看板/ M8 定档消费）。
 
-    Returns:
-        ``{"total": 条数, "latest_ts": str, "latest": {judge: 最近一次该判据的发现}}``
+    ★★ **无数据 ≠ 通过**（D1，纪律 #1）
+    ----------------------------------
+    本函数返回的 ``status`` **必须**被消费端当作出结论的前置条件：
 
-    文件缺失/损坏一律返回空表（**不抛**：观测面不该反过来阻断写作）。
+    ==================  =======  ==============================================
+    ``status``          含义     消费端**必须**怎么做
+    ==================  =======  ==============================================
+    ``"ok"``            有台账   可以据 ``latest`` / ``records`` 下结论
+    ``"empty"``         有台账但全坏行 / 全空行 ⇒ 无有效记录 ⇒ 等同无数据
+                        **不得**读成"规划无问题"
+    ``"no_data"``       台账文件**不存在** ⇒ **从未评审过** ⇒ 更不得读成"没问题"
+    ==================  =======  ==============================================
+
+    ⚠ 旧实现只返回 ``total: 0``：调用方**无法区分**「评审过、没发现问题」
+      与「从未评审过」。这正是本仓一号病（把"没数据"读成"通过"）的温床
+      —— 而 ``plan_critic`` 恰好是**从未在生产跑过**的模块（D 项立项事实），
+      所以这个区分在本模块上是**必答题，不是加分题**。
+
+    Returns:
+        ``{"status": "ok"|"empty"|"no_data", "total": 条数, "latest_ts": str,
+           "latest": {judge: 最近一次该判据的发现}, "records": [...]}``
+
+    文件缺失/损坏一律**不抛**（观测面不该反过来阻断写作），但必须以 ``status``
+    显式标注「无数据」，不得静默返回一个看起来"干净"的空表（纪律 #1）。
     """
     path = Path(project_dir) / CRITIC_LEDGER
-    out: dict[str, Any] = {"total": 0, "latest_ts": "", "latest": {}, "records": []}
+    out: dict[str, Any] = {
+        "status": "no_data",
+        "total": 0,
+        "latest_ts": "",
+        "latest": {},
+        "records": [],
+    }
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
-    except Exception:  # noqa: BLE001 - 无台账＝无采样
-        return out  # noqa: SILENT_DEGRADE
+    except Exception:  # noqa: BLE001 - 无台账＝从未评审（**≠ 通过**）
+        return out  # noqa: SILENT_DEGRADE reason=expected-skip
     for ln in lines:
         ln = ln.strip()
         if not ln:
@@ -478,6 +504,8 @@ def read_plan_critic(project_dir: str | Path) -> dict[str, Any]:
             judge = str((f or {}).get("judge", ""))
             if judge:
                 out["latest"][judge] = f
+    # 文件存在但零有效行 ⇒ "empty"（同样**不得**读成通过）
+    out["status"] = "ok" if out["total"] > 0 else "empty"
     return out
 
 
@@ -496,6 +524,20 @@ def aggregate_readings(
       （纪律 #7：凡写"供 XX 消费"的注释，必须证明该消费者存在 ——
        消费者＝M8 定档流程 / 体检报告 / 看板）。
 
+    ⚠⚠ **空表 ≠ 全部可达**（D1，纪律 #1）
+    --------------------------------
+    返回 ``{}`` 有两种含义，消费端**绝不允许**混为一谈：
+
+    - 「采样过，但每条判据都没被触发过」⇒ 此时**不应该是 `{}`**，
+      因为 ``aggregate_readings`` 只要有一次采样就会为出现过的判据建槽；
+    - 「**从未采样过**（无台账）」⇒ 真正的 ``{}`` ⇒ **必须读成"无数据、
+      不可定档"，而不是"所有判据都可达、可以放心升 blocking"**。
+      ⇒ 这正是 D 项立项时 M8 卡住的那一环（无数据 ⇒ 拿不到达成率）。
+
+    因此本函数在无数据时**不返回 `{}`**，而是返回一个自曝其缺的哨兵结构
+    （键 ``__status__``），使调用方无法把"没数据"误读成"全绿"。
+    需要纯字典语义的调用方请显式跳过 ``__status__``。
+
     两个读数
     --------
     - **历史达成率**（``achieved_rate``）：该判据在历史采样中**曾被达成过**的比例。
@@ -513,8 +555,12 @@ def aggregate_readings(
     Returns:
         ``{判据id: {"samples": n, "flagged": m, "achieved_rate": r,
                      "false_positive_rate": Optional[f], "unreachable_risk": bool}}``
+        无采样时返回 ``{"__status__": "no_data", "total": 0}``（**不是 `{}`**）。
     """
     data = read_plan_critic(project_dir)
+    if data.get("status") != "ok":
+        # ★ 纪律 #1：无数据必须显性化，不得让消费端把 `{}` 读成"全判据可达"
+        return {"__status__": str(data.get("status") or "no_data"), "total": 0}
     records: list[dict] = data.get("records") or []
     per_judge: dict[str, dict[str, Any]] = {}
     for rec in records:
