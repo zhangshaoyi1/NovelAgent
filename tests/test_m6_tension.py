@@ -62,6 +62,32 @@ class TestMeasureTension:
         measure_chapter_tension(1, _HIGH)
         assert not (tmp_path / TENSION_LEDGER).exists()
 
+    def test_scale_is_length_invariant(self) -> None:
+        """★★ M6-B3 核心红线：量纲必须与**章长解耦**。
+
+        旧实现里冲突词按「每百字」归一、悬念词却是**绝对计数**
+        ⇒ 量纲自相矛盾且随章长漂移（M6-B2 标定：真实 max 仅 4.40）。
+
+        本红线钉死：**同一「每句密度」的文本，无论多少句，得分必须一致**。
+        这是候选 B（改量纲）的验收标准，不是「得分变高」。
+        """
+        unit = "杀！危！逃！"  # 3 短句，全含冲突词，密度固定
+        scores = [
+            measure_chapter_tension(1, unit * mul)
+            for mul in (1, 4, 10, 40)
+        ]
+        assert len(set(scores)) == 1, f"量纲随章长漂移：{scores}"
+
+    def test_high_density_reaches_upper_range(self) -> None:
+        """★ 量程可达性：高密度样本必须能进入高分区（否则判据不可达）。
+
+        ⚠ 注意本测试断的是**构造样本**的可达性，**不是**真实语料——
+        真实语料 p100 仅 5.0（M6-B3 标定），那是文体与度量匹配度问题，
+        不可用构造样本的可达性去掩盖（纪律 #23）。
+        """
+        dense = ("杀！危！逃！追！怒！" * 8) + ("突然！竟然！难道！" * 8)
+        assert measure_chapter_tension(1, dense) >= 7.0
+
 
 class TestRecord:
     """落盘：观测面台账，可读回、可累积。"""

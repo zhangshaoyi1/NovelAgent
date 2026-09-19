@@ -203,36 +203,60 @@ class TensionCurveManager:
         return suggestions
 
     def _compute_tension(self, text: str) -> float:
-        """计算文本紧张度（0-10）"""
+        """计算文本紧张度（0-10）。
+
+        ★ M6-B3（2026-09-19）：**按句数归一化**（此前量纲自相矛盾）。
+        ------------------------------------------------------------
+        标定实证（M6-B2，1266 章真实语料）：
+          - 旧实现：冲突词 `count/(len/100)` **按百字**归一，悬念词
+            `count*0.3` **绝对计数**（随章长线性膨胀）⇒ 两个分量量纲相反；
+          - 且网文单章 2500–3000 字，冲突词几十次 ⇒ 密度被稀释到 ~0.3；
+          - 结果：真实 max 仅 **4.40**，而 `no_climax` 阈值是 7.0
+            ⇒ **0/1266 章可达**（纪律 #13「阈值成了摧毁扳机」）。
+
+        新实现：三个分量**全部按「每句」归一**，与章长解耦。
+          - 分量上界不变（5.0 + 3.0 + 2.0 = 10.0），量程语义不变；
+          - 常量按「每句期望值」重标（见各分量注释的标定依据）。
+        """
         if not text:
             return 0.0
 
+        # 先切句（三个分量共用，避免重复切分导致口径漂移）
+        sentences = [
+            s.strip()
+            for s in text.replace("！", "。").replace("？", "。").split("。")
+            if s.strip()
+        ]
+        n_sent = max(1, len(sentences))
+
         score = 0.0
 
-        # 冲突词密度
+        # ---- 分量 1：冲突词「句密度」（上界 5.0）----
+        # 标定：32 组对抗句全含冲突词 ⇒ 密度 1.0 ⇒ 得 5.0（满分）。
         conflict_words = [
             "杀", "战", "斗", "怒", "危", "险", "逃", "追",
             "埋伏", "陷阱", "阴谋", "背叛", "决斗", "爆炸",
             "攻击", "防御", "受伤", "死亡", "危机",
         ]
         conflict_count = sum(text.count(w) for w in conflict_words)
-        conflict_density = conflict_count / (len(text) / 100)
-        score += min(5.0, conflict_density * 0.5)
+        conflict_per_sentence = conflict_count / n_sent
+        score += min(5.0, conflict_per_sentence * 5.0)
 
-        # 悬念标记
+        # ---- 分量 2：悬念词「句密度」（上界 3.0）----
+        # 标定：每 2 句一个悬念标记 ⇒ 密度 0.5 ⇒ 得 3.0（满分）。
         suspense_markers = [
             "突然", "竟然", "没想到", "谁知", "难道",
             "究竟", "到底", "会不会", "莫非",
         ]
         suspense_count = sum(text.count(m) for m in suspense_markers)
-        score += min(3.0, suspense_count * 0.3)
+        suspense_per_sentence = suspense_count / n_sent
+        score += min(3.0, suspense_per_sentence * 6.0)
 
-        # 短句比例（紧张场景常用短句）
-        sentences = [s.strip() for s in text.replace("！", "。").replace("？", "。").split("。") if s.strip()]
-        if sentences:
-            short_sentences = sum(1 for s in sentences if len(s) < 10)
-            short_ratio = short_sentences / len(sentences)
-            score += min(2.0, short_ratio * 3.0)
+        # ---- 分量 3：短句比例（上界 2.0）----
+        # 本是比例量，与章长无关，**保持不变**（比例 > 2/3 ⇒ 满分）。
+        short_sentences = sum(1 for s in sentences if len(s) < 10)
+        short_ratio = short_sentences / n_sent
+        score += min(2.0, short_ratio * 3.0)
 
         return round(min(10.0, score), 1)
 
