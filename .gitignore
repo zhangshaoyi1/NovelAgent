@@ -63,12 +63,14 @@ _debug_safe_remove.py
 #   - githooks/          提交关卡，换机器即失效 → 必须入库
 #   - baseline_diff.py   基线归因工具，AGENTS.md 第 13 条指定入口
 #   - ssot_audit.py      单一真源巡检工具，AGENTS.md 第 16 条指定入口
+#   - full_regression.py 全量回归关卡（G1/B2），判定"回归是否可信"并绑 commit
 # ⚠ 不能写 "scripts/"：git 不会进入被忽略的目录，负向规则也无效。
 scripts/*
 !scripts/*.md
 !scripts/githooks/
 !scripts/baseline_diff.py
 !scripts/ssot_audit.py
+!scripts/full_regression.py
 _final_commit_msg.txt
 
 # 一次性调试/恢复脚本统一放入 scripts/，不写在根目录
