@@ -39,6 +39,7 @@ def cost(
 
     workflow_console = make_quiet_console() if json_output else console
     from agent.core.llmops import CostModel, EvalHarness, TraceStore
+    from agent.core.llmops.trace import DEDUPE_WINDOW_S
 
     proj = Path(project_dir)
     trace = TraceStore(proj)
@@ -47,12 +48,24 @@ def cost(
 
     totals = trace.totals()
     by_use = trace.by_use()
+    # 2026-09-20：跨 provider 判据抽检 / P0-1 前缀缓存分析的分组维度
+    by_provider = trace.by_provider()
+    by_model = trace.by_model()
+    # trace 完整性：双记 ⇒ totals 被虚增 ⇒ 熔断阈值成了"摧毁扳机"（纪律 #16）
+    dup_pairs = trace.duplicate_pairs()
     baseline = cost_model.estimate_book(tier, chapters)
     alert = cost_model.alert_if_over(totals["tokens_total"], tier, chapters)
 
     summary = {
         "trace_totals": totals,
         "trace_by_use": by_use,
+        "trace_by_provider": by_provider,
+        "trace_by_model": by_model,
+        "trace_integrity": {
+            "duplicate_pairs": len(dup_pairs),
+            "window_s": DEDUPE_WINDOW_S,
+            "trustworthy": len(dup_pairs) == 0,
+        },
         "cost_baseline": baseline.to_dict(),
         "cost_alert": alert,
         "eval_runs": len(harness.history()),
@@ -67,6 +80,24 @@ def cost(
     workflow_console.print(
         f"调用次数：{totals['calls']}　token：{totals['tokens_total']:,}（in {totals['tokens_in']:,} / out {totals['tokens_out']:,}）"
     )
+    # trace 完整性（先于读数呈现——读数不可信时不让人先看到数字）
+    if dup_pairs:
+        workflow_console.print(
+            f"[yellow]⚠ trace 完整性：{len(dup_pairs)} 对重复 span（窗口 "
+            f"{DEDUPE_WINDOW_S}s）⇒ totals 被虚增，熔断读数不可信[/yellow]"
+        )
+    else:
+        workflow_console.print("[green]trace 完整性：无重复 span[/green]")
+    # 分维度（2026-09-20）：provider / model
+    for label, group in (("provider", by_provider), ("model", by_model)):
+        if len(group) > 1 or "<unknown>" in group:
+            workflow_console.print(f"[bold]按 {label}：[/bold]")
+            for key, v in sorted(group.items(), key=lambda x: -x[1]["tokens_total"]):
+                flag = "　[yellow](缺 provider ⇒ 补记路径)[/yellow]" if key == "<unknown>" else ""
+                workflow_console.print(
+                    f"  {key}：{v['calls']} 次 · {v['tokens_total']:,} token"
+                    f"（失败 {v['failures']}）{flag}"
+                )
     workflow_console.print(
         f"失败：{totals['failures']}　平均延迟：{totals['avg_latency_ms']} ms　已耗成本估算：${totals['cost']:.2f}"
     )

@@ -18,7 +18,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any, Optional, Sequence
 
 
 @dataclass
@@ -70,6 +70,64 @@ class TraceSpan:
             at=float(d.get("at", 0.0)),
             meta=dict(d.get("meta", {}) or {}),
         )
+
+
+#: 双记认定的时间窗（秒）。见 :func:`find_duplicate_pairs` 的实测依据。
+DEDUPE_WINDOW_S = 2.0
+
+
+def _span_field(span: Any, name: str, default: Any = 0) -> Any:
+    """兼容 ``TraceSpan`` 对象与 dict（分析脚本常直接吃 jsonl 行）。"""
+    if isinstance(span, dict):
+        return span.get(name, default)
+    return getattr(span, name, default)
+
+
+def find_duplicate_pairs(spans: Sequence[Any]) -> list[tuple[int, int]]:
+    """找出「同一次物理调用被记两次」的下标对（**纯函数**：不改数据、不聚合）。
+
+    判定：``(tokens_in, tokens_out)`` 完全相同 **且** ``at`` 相差 ≤
+    :data:`DEDUPE_WINDOW_S`。用 token 元组做键的理由：双记的两条来自同一次
+    物理调用，token 逐字相同是事故的**直接指纹**（2026-09-18 双收口事故
+    即"虚增恰好 100%"）。
+
+    ⚠ 旧口径 ``round(at, 1)`` **实测失效**（9 项目 8513 条 span 复核）：
+    两条 span 的 ``at`` 相差 **≈89ms** —— 唯一收口写于 provider 返回时、
+    包装层补记写于包装层返回时，差值即包装层开销 —— 于是
+    ``…469.399`` 与 ``…469.488`` 会 round 到不同值而**折叠不掉**。
+    故本口径用**时间窗**而非取整。
+
+    为什么需要它：熔断读 :meth:`TraceStore.totals` —— 若该读数被双记虚增，
+    阈值就成了"摧毁扳机"（纪律 #16：读数驱动动作的链条须先有唯一性红线）。
+    本函数把这个唯一性缺口变成**可观测**，而**不静默修改数据**
+    （静默去重会让"虚增"与"漏记"两种相反失真都不可见）。
+    """
+    order = sorted(
+        range(len(spans)), key=lambda i: float(_span_field(spans[i], "at", 0.0))
+    )
+    used = [False] * len(spans)
+    pairs: list[tuple[int, int]] = []
+    for pos, i in enumerate(order):
+        if used[i]:
+            continue
+        key = (
+            int(_span_field(spans[i], "tokens_in", 0)),
+            int(_span_field(spans[i], "tokens_out", 0)),
+        )
+        t_i = float(_span_field(spans[i], "at", 0.0))
+        for j in order[pos + 1:]:
+            if used[j]:
+                continue
+            if float(_span_field(spans[j], "at", 0.0)) - t_i > DEDUPE_WINDOW_S:
+                break  # order 已按 at 升序 ⇒ 后续只会更远
+            if (
+                int(_span_field(spans[j], "tokens_in", 0)),
+                int(_span_field(spans[j], "tokens_out", 0)),
+            ) == key:
+                used[j] = True
+                pairs.append((i, j))
+                break
+    return pairs
 
 
 class TraceStore:
@@ -143,6 +201,44 @@ class TraceStore:
             d["tokens_total"] += s.tokens_in + s.tokens_out
             d["cost"] += s.cost
         return out
+
+    def by_provider(self) -> dict[str, dict[str, Any]]:
+        """按 provider 聚合（2026-09-20 新增）。
+
+        为什么需要：跨 provider 判据稳健性（阈值/分位表是否可跨 provider 复用）
+        与 P0-1 类成本优化（写章侧前缀缓存是否生效）**都以 provider 为分组维度**，
+        而此前只有 ``by_use``。provider 取自 ``span.meta["provider"]``
+        （唯一收口写真实 provider；补记路径 2026-09-20 起亦写，见 ``traced_llm``）。
+        缺失时归入 ``"<unknown>"`` —— **不编造**，且该桶非空即是缺口信号。
+        """
+        return self._group_by(lambda s: str((s.meta or {}).get("provider") or "<unknown>"))
+
+    def by_model(self) -> dict[str, dict[str, Any]]:
+        """按模型名聚合（同上；模型名直接取 span.model）。"""
+        return self._group_by(lambda s: str(s.model or "<unknown>"))
+
+    def _group_by(self, key_of: Any) -> dict[str, dict[str, Any]]:
+        out: dict[str, dict[str, Any]] = {}
+        for s in self.spans():
+            key = key_of(s)
+            d = out.setdefault(
+                key,
+                {"calls": 0, "tokens_in": 0, "tokens_out": 0,
+                 "tokens_cached": 0, "tokens_total": 0, "failures": 0, "cost": 0.0},
+            )
+            d["calls"] += 1
+            d["tokens_in"] += s.tokens_in
+            d["tokens_out"] += s.tokens_out
+            d["tokens_cached"] += s.tokens_cached
+            d["tokens_total"] += s.tokens_in + s.tokens_out
+            d["cost"] += s.cost
+            if not s.ok:
+                d["failures"] += 1
+        return out
+
+    def duplicate_pairs(self) -> list[tuple[int, int]]:
+        """本次 trace 中被**记了两次**的物理调用（观测面，不改数据）。"""
+        return find_duplicate_pairs(self.spans())
 
     def clear(self) -> None:
         with self._lock:

@@ -150,7 +150,7 @@ def build_cost_summary(
     内部 except Exception 降级返回「无追踪数据」占位，不阻断主流程（仿 _check_budget）。
     """
     from agent.core.story.chapters import list_chapter_files
-    from agent.core.llmops.trace import TraceStore, get_tracer
+    from agent.core.llmops.trace import DEDUPE_WINDOW_S, TraceStore, get_tracer
 
     try:
         tracer = get_tracer()
@@ -165,6 +165,26 @@ def build_cost_summary(
         model = CostModel()
         low, high = model.baseline_tokens(tier, chapters)
         alert = model.alert_if_over(totals.get("tokens_total", 0), tier, chapters)
+        # ---- 分维度读数（2026-09-20）----
+        # 为什么加：跨 provider 判据抽检与 P0-1（写章侧前缀缓存）分析**都以
+        # provider/model 为分组维度**，而此前只有 by_use。仅在 tracer 支持时
+        # 给出（旧式 stub tracer 无此方法 ⇒ 字段缺席，**不编造**）。
+        extra: dict[str, object] = {}
+        for name in ("by_provider", "by_model", "by_use"):
+            fn = getattr(tracer, name, None)
+            if callable(fn):
+                extra[name] = fn()
+        # trace 完整性：双记 ⇒ totals 被虚增 ⇒ 熔断阈值成了"摧毁扳机"
+        # （纪律 #16）。**披露而非静默修数**：静默去重会让"虚增"与"漏记"
+        # 两种相反失真同时不可见。
+        dup_fn = getattr(tracer, "duplicate_pairs", None)
+        if callable(dup_fn):
+            dup = dup_fn()
+            extra["trace_integrity"] = {
+                "duplicate_pairs": len(dup),
+                "window_s": DEDUPE_WINDOW_S,
+                "trustworthy": len(dup) == 0,
+            }
         return {
             "calls": totals.get("calls", 0),
             "tokens_in": totals.get("tokens_in", 0),
@@ -177,6 +197,7 @@ def build_cost_summary(
             "baseline_high": high,
             "alert": alert,
             "tracked": True,
+            **extra,
         }
     except Exception:  # noqa: BLE001 - 降级占位不阻断（仿 _check_budget）
         return {
@@ -184,5 +205,9 @@ def build_cost_summary(
             "failures": 0, "avg_latency_ms": 0.0, "cost": 0.0,
             "baseline_low": 0.0, "baseline_high": 0.0, "alert": None,
             "tracked": False,
+            # ★ 不知道 ≠ 可信：降级路径的 trustworthy 必须是 None（三态）
+            "trace_integrity": {
+                "duplicate_pairs": 0, "window_s": DEDUPE_WINDOW_S, "trustworthy": None,
+            },
             "note": "本次调用未追踪（仅统计已有记录）",
         }

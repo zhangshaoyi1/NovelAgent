@@ -43,6 +43,34 @@ def _extract_tokens(resp: Any) -> tuple[int, int]:
     return est // 3, est // 3
 
 
+def _span_meta(resp: Any, cache_hit: bool, cache_key: str) -> dict[str, Any]:
+    """补记 span 的 ``meta``：**键契约与唯一收口保持一致**（纪律 #19 同族）。
+
+    2026-09-20 修正：唯一收口（``agent/core/event_sourcing/llm_wiring.py``）的
+    meta **无条件**含 ``provider``，而本层补记只写 ``cache_hit``/``cache_key``
+    ⇒ 两个写入者的 **meta 键集不同**。后果（真实数据实测）：走补记路径的 span
+    缺 provider，任何按 provider 分组的分析（成本核算、跨 provider 判据抽检）
+    都会把它们整体归入"未知"，而**没有任何报错**（静默失真）。
+
+    ``resp`` 为 ``None``（失败路径）时 provider 记空串 —— 不编造。
+    """
+    return {
+        "provider": str(getattr(resp, "provider", "") or ""),
+        "cache_hit": bool(cache_hit),
+        "cache_key": str(cache_key or ""),
+    }
+
+
+def _span_model(resp: Any, fallback: str) -> str:
+    """补记 span 的 ``model``：优先 provider 回传的**真实路由模型**。
+
+    旧实现写死构造参数（``self.model``，恒为 ``creative-strong``），于是补记
+    span 的 model 与实际被路由到的模型可能不一致（同族：日志说 A、实际走 B）。
+    取不到时回落到构造参数（显性降级，不编造）。
+    """
+    return str(getattr(resp, "model", "") or fallback)
+
+
 class TracedLLMClient:
     """可追踪 LLM 包装。
 
@@ -110,7 +138,7 @@ class TracedLLMClient:
             if usage_epoch() <= epoch0:
                 tracer.record(
                     TraceSpan(
-                        model=self.model,
+                        model=self.model,  # 失败路径无响应 ⇒ 无真实路由模型可取
                         use=use,
                         tokens_in=0,
                         tokens_out=0,
@@ -118,7 +146,8 @@ class TracedLLMClient:
                         cost=self.cost_per_call,
                         ok=ok,
                         error=err,
-                        meta={"cache_hit": cache_hit, "cache_key": cache_key},
+                        # meta 键集与唯一收口一致（provider 记空串，不编造）
+                        meta=_span_meta(None, cache_hit, cache_key),
                     )
                 )
             raise
@@ -129,7 +158,8 @@ class TracedLLMClient:
         if usage_epoch() <= epoch0:
             tracer.record(
                 TraceSpan(
-                    model=self.model,
+                    # 优先 provider 回传的真实路由模型（取不到才回落构造参数）
+                    model=_span_model(resp, self.model),
                     use=use,
                     tokens_in=tin,
                     tokens_out=tout,
@@ -137,7 +167,8 @@ class TracedLLMClient:
                     cost=self.cost_per_call,
                     ok=ok,
                     error=err,
-                    meta={"cache_hit": cache_hit, "cache_key": cache_key},
+                    # meta 键集与唯一收口一致：provider / cache_hit / cache_key
+                    meta=_span_meta(resp, cache_hit, cache_key),
                 )
             )
         return resp
