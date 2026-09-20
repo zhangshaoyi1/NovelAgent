@@ -22,11 +22,12 @@ from agent.core.infra import counter_action_audit as caa
 
 SRC = Path(__file__).resolve().parents[2] / "src" / "agent"
 
-#: ④ 真实扫描的候选数下界（2026-09-20 实测 11）。扫描器被削弱时本断言会失败。
-CANDIDATE_FLOOR = 11
-#: ⑤ 未复核数上限（2026-09-20 实测 8 = 11 候选 − 3 已复核）。
-#: 只减不增：复核完一条就把它写进 KNOWN_CHAINS 并下调本值。
-UNREVIEWED_CEILING = 8
+#: ④ 真实扫描的候选数下界（2026-09-20 精度收紧后实测 **4**）。
+#: 扫描器被削弱时本断言会失败；**若因判据收紧而下调本值，必须同时说明理由**。
+CANDIDATE_FLOOR = 4
+#: ⑤ 未复核数上限：**0（已收敛，2026-09-20）**。
+#: 只减不增：新出现的候选必须先人工复核并写进 KNOWN_CHAINS，否则红线失败。
+UNREVIEWED_CEILING = 0
 
 
 def _scan_all() -> list[caa.Chain]:
@@ -68,6 +69,58 @@ class TestScannerDetectsRealChains:
 
     def test_syntax_error_is_tolerated(self) -> None:
         assert caa.scan_chains("def broken(:\n", "x.py") == []
+
+
+class TestPrecisionTightening:
+    """2026-09-20 复核 11 条候选后按证据收紧判据（治 4 条假阳性），逐条锁住。"""
+
+    def test_sum_assignment_is_not_an_increment(self) -> None:
+        """``total = a + b`` 是求和赋值，不是自增（曾造出 is_tripped 假候选）。"""
+        src = (
+            "def f(self, s):\n"
+            "    total = s['success'] + s['fail']\n"
+            "    if total < self.min_samples:\n"
+            "        return False\n"
+        )
+        assert caa.scan_chains(src, "x.py") == []
+
+    def test_scaling_is_not_an_increment(self) -> None:
+        """``x *= margin`` 是缩放，不是自增（曾造出 _check_budget 假候选）。"""
+        src = (
+            "def f(self):\n"
+            "    token_limit *= self._budget_margin\n"
+            "    if used > token_limit:\n"
+            "        return True\n"
+        )
+        assert caa.scan_chains(src, "x.py") == []
+
+    def test_list_extend_is_not_an_increment(self) -> None:
+        """``xs += f(...)`` 是列表累积，不是计数器（曾造出 _hygiene_warn 假候选）。"""
+        src = (
+            "def f(self):\n"
+            "    warns += collect_warnings()\n"
+            "    if len(warns) > self.max_len:\n"
+            "        return warns\n"
+        )
+        assert caa.scan_chains(src, "x.py") == []
+
+
+class TestReadonlyConsumers:
+    def test_entries_point_to_real_functions(self) -> None:
+        """台账条目必须指向真实存在的函数（防文档过期后仍被当依据）。"""
+        import ast
+
+        for key in caa.READONLY_CONSUMERS:
+            rel, _, func = key.partition("::")
+            path = SRC / rel
+            assert path.exists(), f"{key}: 文件不存在"
+            tree = ast.parse(path.read_text(encoding="utf-8", errors="replace"))
+            names = {
+                n.name for n in ast.walk(tree)
+                if isinstance(n, (ast.FunctionDef, ast.AsyncFunctionDef))
+            }
+            assert func.split(".")[-1] in names, f"{key}: 函数已不存在"
+
 
 
 class TestTriageLedger:

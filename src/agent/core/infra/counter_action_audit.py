@@ -73,8 +73,23 @@ class Chain:
 
 
 def _aug_targets(node: ast.AST) -> list[str]:
-    """取出 AugAssign(+=1) 的目标名（含属性访问的末段）。"""
-    if not isinstance(node, ast.AugAssign):
+    """取出 ``x += 1`` 形态的目标名（**必须**是 ``+`` 且加的是整数字面量）。
+
+    ★ 精度收紧（2026-09-20，复核 11 条候选后按证据调整）：首版把**任何**
+    ``AugAssign`` 都当自增，于是把 ``token_limit *= self._budget_margin``（缩放）、
+    ``_hygiene_warn += check_debut_echo(...)``（**列表**累积）、
+    ``total += len(sents)``（统计分子）都算成"计数器自增"——4 条假阳性。
+    现要求 ``op is Add`` 且右值是 ``int`` 字面量：这正是"计数器"的形态。
+
+    ⚠ 已知召回边界（刻意保留，勿"顺手补全"）：``counter += len(xs)`` 这类
+    **非字面量**自增不再匹配。普查工具宁可少报也不要噪音淹没真阳性
+    （纪律 #28：假阳性会让人不再看报告），未匹配形态由人工巡检兜。
+    """
+    if not isinstance(node, ast.AugAssign) or not isinstance(node.op, ast.Add):
+        return []
+    val = node.value
+    if not (isinstance(val, ast.Constant) and isinstance(val.value, int)
+            and not isinstance(val.value, bool)):
         return []
     t = node.target
     if isinstance(t, ast.Name):
@@ -87,14 +102,21 @@ def _aug_targets(node: ast.AST) -> list[str]:
 
 
 def _assign_plus_one_targets(node: ast.AST) -> list[str]:
-    """``x = x + 1`` 形态。"""
+    """``x = x + …`` 形态的目标名（**必须自引用**）。
+
+    ★ 精度收紧（2026-09-20）：首版只要求右侧是 ``Add``，于是把
+    ``total = s["success"] + s["fail"]``（求和赋值）误判为自增，
+    凭空造出 ``ModelRouter.is_tripped`` 这个"候选"。现要求右侧
+    **出现同名标识符**（``x = x + …``）才算自增。
+    """
     if not isinstance(node, ast.Assign) or not isinstance(node.value, ast.BinOp):
         return []
     if not isinstance(node.value.op, ast.Add):
         return []
+    referenced = {n.id for n in ast.walk(node.value) if isinstance(n, ast.Name)}
     out: list[str] = []
     for t in node.targets:
-        if isinstance(t, ast.Name):
+        if isinstance(t, ast.Name) and t.id in referenced:
             out.append(t.id)
     return out
 
@@ -152,20 +174,47 @@ def scan_chains(text: str, rel: str) -> list[Chain]:
 
 #: 复核台账：key = ``rel::函数``（与 :func:`scan_chains` 的 ``Chain.key`` 同构）
 #: → 结论（**写清为什么不是缺陷，或已如何守**）。
-#: 新增条目必须写明复核依据；僵尸条目（已扫不到）由红线拦截。
+#: 新增条目必须写明复核依据（最好含行号）；僵尸条目（已扫不到）由红线拦截。
 KNOWN_CHAINS: dict[str, str] = {
-    "workflows/pipeline/agentic_pipeline_cost.py::_PipelineCostMixin._check_budget":
-        "复核（本轮，读过函数体）：本函数是**读数消费者**而非自增点——读 "
-        "_used_tokens()/get_tracer().totals() 后与 token_limit 比较决定熔断。"
-        "读数唯一性由 #6 用量记账唯一收口负责（虚增 100% ⇒ 假熔断 的根因已收口），"
-        "故本链条的 #31① 由上游收口保证；本处仅消费，不再自增。",
-    "workflows/pipeline/agentic_pipeline_cost.py::_PipelineCostMixin._maybe_downgrade_tier":
-        "复核（本轮，读过函数体）：同为读数消费者（读 totals + 比较 ⇒ 降档）。"
-        "动作强度有显式闸：--no-auto-downgrade 可关、未知档位/异常一律 False（保守）、"
-        "最低档仍超限则退回既有熔断 ⇒ 与判据可达性匹配（纪律 #13）。",
+    "agents/evaluator.py::EvaluatorAgent.evaluate_with_repair":
+        "★ 已守（本轮读函数体，最高危项——它控制**不可逆回退**的上限）："
+        "attempts += 1 **只在副作用成功后**（L534 在 rewriter 正常返回后；"
+        "L576 在 trigger_rollback 已 rolled_back（L553 校验）且 rewriter 成功后）；"
+        "三条失败路径（L529 定向修复失败 / L554 回退被前置闸拒 / L571 重写失败）"
+        "一律先 escalate + 写 escalated_reason 再 return，**不自增**；"
+        "阈值检查（L512 attempts >= max）在动作**之前**。⇒ 符合纪律 #31① ②。",
+    "core/project_lock.py::acquire_project_lock":
+        "非缺陷：stale_rounds（L143）计的是**重试轮次**（确认陈旧锁之后才自增），"
+        "达上限后的动作（L144）是**保守拒绝**（raise ProjectLockBusy，绝不双写），"
+        "不是不可逆动作；陈旧锁删除被 safe-delete 护栏拦时走 degrade"
+        "（L155，namespace project_lock.acquire 已登记）⇒ #31② 满足。",
+    "core/quality/scoring/quality_checker.py::QualityChecker.revise_loop":
+        "已守：attempts += 1（L574）位于 revise_fn（L572）+ 复检（L573）**之后** ⇒ "
+        "只在动作完成后自增；循环上界由 L571 条件（attempts < MAX_REVISION_ATTEMPTS）"
+        "保证，达界即返回当时文本与报告（不静默继续）。",
+    "workflows/pipeline/agentic_pipeline_events.py::_PipelineEventsMixin._note_gate_blind":
+        "已守（且是「计数器跨运行」的正面样本）：计数按来源**分桶**"
+        "（write_gate_streak / blind_streak，防章末 `_note_gate_ok` 互相清零）"
+        "+ 落盘跨运行累计（L109 _gate_blind_save）；save/load 均有 degrade 留痕"
+        "（registry: pipeline.gate_blind.save / .load）；有行为级红线 "
+        "tests/test_gate_signal_reachability.py 覆盖。",
+}
+
+#: **读数消费者**（有"读数 → 阈值 → 动作"但**不产生自增**）：扫描器按设计不产出
+#: 它们的候选（判据只看自增），但它们是 #31 真正关心的"读数驱动动作"链条
+#: ⇒ 在此**建档**，供复核者一眼看清"测量点在哪、唯一性靠谁"。
+#: 红线断言这些 key 仍指向真实函数（防文档过期）。
+READONLY_CONSUMERS: dict[str, str] = {
     "client/router.py::ModelRouter.is_tripped":
-        "复核（本轮，读过函数体）：纯读 self._stats 后返回布尔，**不产生自增**；"
-        "自增与阈值计数在记录侧（record_* 家族），本条不是链条端点。",
+        "纯读者：total = success + fail（L133）后与 min_samples / "
+        "circuit_breaker_threshold 比较，**无自增**；计数在记录侧累加。",
+    "workflows/pipeline/agentic_pipeline_cost.py::_PipelineCostMixin._check_budget":
+        "读数消费者：读 _used_tokens()/get_tracer().totals() 与 token_limit 比较 ⇒ 熔断。"
+        "**读数唯一性由 #6 用量记账唯一收口负责**（token 虚增 100% ⇒ 假熔断的根因已收口），"
+        "本处不自增 ⇒ #31① 由上游客服保证。",
+    "workflows/pipeline/agentic_pipeline_cost.py::_PipelineCostMixin._maybe_downgrade_tier":
+        "同族读数消费者（读 totals + 比较 ⇒ 降档）；动作强度有显式闸："
+        "--no-auto-downgrade 可关、未知档位/异常一律 False（保守）、最低档仍超限退回既有熔断。",
 }
 
 #: 历史事故（**文档性**，不参与僵尸检查——它们未必命中扫描器的名字启发式）。
