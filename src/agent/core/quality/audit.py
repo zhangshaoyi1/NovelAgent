@@ -30,6 +30,8 @@ from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any, Iterable
 
+from agent.core.quality.pass_scope import PASS_SCOPE_BOOK, PASS_SCOPE_KEY
+
 
 # ============================================================
 # 证据状态（三态；纪律 #1「无数据 ≠ 通过」）
@@ -85,14 +87,18 @@ class AuditRecord:
     score: float = 0.0
     #: 证据状态三态：``ok`` / ``no_data``（旧行为无此字段，载入时按维度重算）
     evidence_status: str = EVIDENCE_OK
+    #: ★ B4（H3）作用域标签：本审计写的是**批级/全书体检**结论，
+    #: 与「章级写时门禁」的通过严格区分（防同名混淆）
+    pass_scope: str = PASS_SCOPE_BOOK
 
     def to_dict(self) -> dict[str, Any]:
-        # 只增不删：新增 evidence_status，原有键保持
+        # 只增不删：新增 evidence_status / pass_scope，原有键保持
         return {
             "at": self.at,
             "overall_pass": self.overall_pass,
             "score": round(self.score, 2),
             "evidence_status": self.evidence_status,
+            PASS_SCOPE_KEY: self.pass_scope,
             "dimensions": [d.to_dict() for d in self.dimensions],
         }
 
@@ -162,6 +168,8 @@ def record_from_report(report: Any) -> AuditRecord:
         score=float(getattr(report, "score", 0.0)),
         dimensions=dims,
         evidence_status=status,
+        # 本函数只在**全书体检**报告上调用 ⇒ 作用域固定为批级（H3/B4）
+        pass_scope=PASS_SCOPE_BOOK,
     )
 
 
@@ -205,6 +213,8 @@ def load_records(project_dir: str | Path) -> list[AuditRecord]:
                     score=float(raw.get("score", 0.0)),
                     dimensions=dims,
                     evidence_status=status,
+                    # 旧行无 pass_scope ⇒ 本审计历史上只写全书体检结论，按批级补
+                    pass_scope=str(raw.get(PASS_SCOPE_KEY) or PASS_SCOPE_BOOK),
                 )
             )
     except (json.JSONDecodeError, OSError):  # noqa: BLE001

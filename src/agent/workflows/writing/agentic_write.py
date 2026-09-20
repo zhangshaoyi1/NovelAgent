@@ -49,6 +49,7 @@ from agent.core.quality.scoring.quality_checker import (
     resolve_max_cjk_words,
 )
 from agent.core.quality.guardrails import is_architecture_confirmed
+from agent.core.quality import pass_scope
 from agent.workflows.writing.m5_quality_gate import (
     GOLDEN_WRITE_GATE_FLOOR,
     GOLDEN_WRITE_GATE_FIRST_N,
@@ -1099,6 +1100,9 @@ class AgenticWriteWorkflow:
         else:
             report = self._nine_item_review(cleaned, ctx, wi, is_climax)
         passed = bool(report.get("overall_pass", True))
+        # ★ B4（H3）：章级判定必须带作用域标签——两类「通过」（章级规则门禁 vs
+        #   批级全书体检）不得同名无标签，否则消费方会把章级通过读成全书通过。
+        pass_scope.stamp(report, pass_scope.PASS_SCOPE_CHAPTER)
 
         # ---- L2：生成残留硬污染硬关卡（2026-09-13，标题重复/AI指令泄漏/占位符/AI承接词）----
         # 与 m5_quality_gate 同族确定性扫描；agentic 路径此前未接入，导致
