@@ -95,3 +95,7 @@ class TestGateIsWired:
         assert "return 0 if verdict.ok else 1" in src, (
             "关卡未以判定结果决定退出码——不可信结果会被放过"
         )
+        assert "--save-raw" in src, (
+            "缺少原始输出落盘选项：判定为『不可信』时没有输出就无法归因"
+            "（2026-09-20 实测一次 rc=1 且无汇总行的运行因未留存而无法定位）"
+        )

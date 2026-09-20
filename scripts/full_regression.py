@@ -44,6 +44,12 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument("--record-baseline", action="store_true",
                     help="判定通过时把本次读数写回 --baseline 指定的文件")
     ap.add_argument("--report", default="", help="把判定结果 JSON 写到该路径")
+    ap.add_argument(
+        "--save-raw", default="",
+        help="把 pytest 原始输出写到该路径（**建议总是带上**：判定为『不可信』时，"
+             "没有原始输出就无法归因——2026-09-20 实测遇过一次 rc=1 且无汇总行的"
+             "运行，因未留存输出而无法定位，只能重跑）",
+    )
     ap.add_argument("--timeout", type=int, default=5400, help="pytest 超时秒数")
     ns = ap.parse_args(argv)
 
@@ -52,6 +58,12 @@ def main(argv: list[str] | None = None) -> int:
 
     print(f"[full-regression] cwd={REPO_ROOT} args={' '.join(args)}", flush=True)
     stdout, rc = run_pytest(args, cwd=REPO_ROOT, timeout=ns.timeout)
+
+    if ns.save_raw:
+        raw_path = Path(ns.save_raw)
+        raw_path.parent.mkdir(parents=True, exist_ok=True)
+        raw_path.write_text(stdout, encoding="utf-8")
+        print(f"[full-regression] 原始输出已存：{raw_path}")
 
     baseline = None
     if ns.baseline and Path(ns.baseline).exists():
