@@ -180,3 +180,72 @@ def test_term_like_filters_dialogue_fragments():
     assert is_term_like("镇灵符")
     for junk in ["能恢复。", "我知道。", "撤不撤。", "加两成？", "没有醒。"]:
         assert not is_term_like(junk), f"对白片段被判为术语：{junk}"
+
+
+# ============================================================
+# A2 红线（2026-09-20）：注入窗口必须取「最近确立」而非「最老一批」
+# ============================================================
+def _entry(subject: str, value: str, chapter: int, updated: int = 0) -> SettingEntry:
+    return SettingEntry(subject=subject, attribute="", value=value,
+                        chapter=chapter, updated_chapter=updated)
+
+
+class TestPromptWindowRecency:
+    """原实现 ``sorted(...)[:limit]`` 升序 = 只给最老的一批（实测最脏的碎片），
+    而最近确立的设定才是最需要防「重新发明」的对象。
+
+    ⚠ 断言用零填充名（``设定01``），避免 `"设定1" ⊂ "设定10"` 的**子串陷阱**
+    ——首版用 `"设定1" not in text` 直接假失败（误报）。
+    """
+
+    def _canon(self, n: int = 10) -> SettingCanon:
+        canon = SettingCanon(project_dir=".")
+        for i in range(1, n + 1):
+            canon.entries[f"{i:02d}|"] = _entry(f"设定{i:02d}", f"值{i:02d}", chapter=i)
+        return canon
+
+    def test_includes_most_recent(self) -> None:
+        """R1：窗口必须含**最高章号**的条目（最近的设定不得缺席）。"""
+        text = self._canon(10).render_for_prompt(limit=3)
+        assert "设定10" in text and "设定09" in text and "设定08" in text
+
+    def test_excludes_oldest_when_over_limit(self) -> None:
+        """R2：超限时最老的一批应被裁掉（它们是实测最脏的早期碎片）。"""
+        text = self._canon(10).render_for_prompt(limit=3)
+        assert "设定01" not in text
+        assert "设定02" not in text
+
+    def test_presents_in_chronological_order(self) -> None:
+        """R3：呈现顺序仍为旧→新（便于阅读）。"""
+        text = self._canon(10).render_for_prompt(limit=3)
+        assert text.index("设定08") < text.index("设定09") < text.index("设定10")
+
+    def test_under_limit_gives_all(self) -> None:
+        """R4：条数不超限时全给（不得退化）。"""
+        text = self._canon(4).render_for_prompt(limit=10)
+        for i in range(1, 5):
+            assert f"设定{i:02d}" in text
+
+    def test_recency_uses_updated_chapter(self) -> None:
+        """R5：被重申/改写过的条目按 updated_chapter 计新鲜度（与 render 展示口径一致）。"""
+        canon = SettingCanon(project_dir=".")
+        canon.entries["old|"] = _entry("旧设定", "v", chapter=1)
+        for i in range(2, 6):
+            canon.entries[f"{i:02d}|"] = _entry(f"中{i:02d}", "v", chapter=i)
+        canon.entries["old|"].updated_chapter = 99  # 第 99 章被重申
+        text = canon.render_for_prompt(limit=2)
+        assert "旧设定" in text, "被重申过的老条目应按新鲜度入选"
+
+    def test_sync_to_world_md_still_writes_all(self) -> None:
+        """R6：回写 world.md 仍写**全部**条目（窗口只影响提示词注入）。"""
+        import tempfile
+        from pathlib import Path
+
+        canon = self._canon(10)
+        with tempfile.TemporaryDirectory() as td:
+            canon.project_dir = Path(td)
+            assert canon.sync_to_world_md() is True
+            text = (Path(td) / "world.md").read_text(encoding="utf-8")
+        for i in range(1, 11):
+            assert f"设定{i:02d}" in text, f"world.md 漏了设定{i:02d}"
+

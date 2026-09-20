@@ -379,10 +379,23 @@ class SettingCanon:
 
     # ---- 消费 ----
     def render_for_prompt(self, limit: int = 40) -> str:
-        """渲染成 Writer 可直接注入的「设定硬约束」文本。"""
+        """渲染成 Writer 可直接注入的「设定硬约束」文本。
+
+        ★ A2（2026-09-20）：取**最近确立**的 ``limit`` 条。
+        原实现按 ``(chapter, subject)`` **升序**取前 ``limit`` ⇒ 只给**最老**的一批，
+        而实测最老条目恰是早期抽取留下的**断句碎片**（最脏），且「最近才确立、
+        尚未沉淀进 world.md 的设定」才是最需要防"重新发明"的对象。
+        选取后按章序（旧→新）呈现，便于阅读。
+        """
         if not self.entries:
             return ""
-        items = sorted(self.entries.values(), key=lambda e: (e.chapter, e.subject))[:limit]
+
+        def _recency(e: SettingEntry) -> tuple[int, str]:
+            # 与 render() 的展示口径一致：重申/改写过的按 updated_chapter 计
+            return (e.updated_chapter or e.chapter, e.subject)
+
+        ordered = sorted(self.entries.values(), key=_recency)
+        items = ordered[-limit:] if limit > 0 else list(ordered)
         lines = ["【设定台账·已确立，禁止改写或重新发明】"]
         lines.extend(e.render() for e in items)
         return "\n".join(lines)

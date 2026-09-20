@@ -32,6 +32,26 @@ from typing import Any, Iterable
 
 
 # ============================================================
+# 证据状态（三态；纪律 #1「无数据 ≠ 通过」）
+# ============================================================
+#: 至少一维可信证据（``confidence > 0``）。
+EVIDENCE_OK = "ok"
+#: 无任何可信证据（无维度，或全部维度 ``confidence <= 0``）。
+#: 真实事故：上游网关间歇 404 ⇒ 多维 ``confidence=0``，旧实现仍写出
+#: ``overall_pass=True score=100`` ⇒ 审计记录本身误导（gate 由 ``recheck`` 兜住，
+#: 但**读数不可信**）。与 D1（``plan_critic`` 的 ``status`` 哨兵）同一范式。
+EVIDENCE_NO_DATA = "no_data"
+
+
+def derive_evidence_status(dims: Iterable["AuditDimension"]) -> str:
+    """由维度证据推导三态：``ok`` / ``no_data``（不猜、不默认通过）。"""
+    items = list(dims)
+    if not items:
+        return EVIDENCE_NO_DATA
+    return EVIDENCE_OK if any(d.confidence > 0 for d in items) else EVIDENCE_NO_DATA
+
+
+# ============================================================
 # 数据结构
 # ============================================================
 @dataclass
@@ -53,18 +73,26 @@ class AuditDimension:
 
 @dataclass
 class AuditRecord:
-    """一轮体检的审计快照。"""
+    """一轮体检的审计快照。
+
+    ``overall_pass`` 为 ``None`` 表示**未知**（证据不可信 / 报告未给），
+    与 ``False``（明确不通过）严格区分——见模块常量 ``EVIDENCE_*``。
+    """
 
     at: float
-    overall_pass: bool
+    overall_pass: bool | None
     dimensions: list[AuditDimension] = field(default_factory=list)
     score: float = 0.0
+    #: 证据状态三态：``ok`` / ``no_data``（旧行为无此字段，载入时按维度重算）
+    evidence_status: str = EVIDENCE_OK
 
     def to_dict(self) -> dict[str, Any]:
+        # 只增不删：新增 evidence_status，原有键保持
         return {
             "at": self.at,
             "overall_pass": self.overall_pass,
             "score": round(self.score, 2),
+            "evidence_status": self.evidence_status,
             "dimensions": [d.to_dict() for d in self.dimensions],
         }
 
@@ -100,6 +128,11 @@ def record_from_report(report: Any) -> AuditRecord:
 
     对 ``DimensionResult`` 只读访问 ``name/value/source/evidence``，不依赖具体类，
     故可用在测试中构造最小对象。
+
+    ★ 纪律 #1「失败/未知不得被解读为通过」：证据不可信（``evidence_status ==
+    no_data``）或报告未给 ``overall_pass`` 时，记 ``None``（**未知**），
+    **绝不默认 True**——旧实现的 ``getattr(..., True)`` 正是「404 无证据 ⇒
+    审计写成 pass=True score=100」的代码级根因。
     """
     dims: list[AuditDimension] = []
     for d in getattr(report, "dimensions", []) or []:
@@ -117,11 +150,18 @@ def record_from_report(report: Any) -> AuditRecord:
                 response_hash=str(getattr(evidence, "response_hash", "")),
             )
         )
+    status = derive_evidence_status(dims)
+    reported = getattr(report, "overall_pass", None)
+    if status == EVIDENCE_NO_DATA or reported is None:
+        overall_pass: bool | None = None
+    else:
+        overall_pass = bool(reported)
     return AuditRecord(
         at=time.time(),
-        overall_pass=bool(getattr(report, "overall_pass", True)),
+        overall_pass=overall_pass,
         score=float(getattr(report, "score", 0.0)),
         dimensions=dims,
+        evidence_status=status,
     )
 
 
@@ -137,24 +177,34 @@ def load_records(project_dir: str | Path) -> list[AuditRecord]:
             if not line:
                 continue
             raw = json.loads(line)
+            dims = [
+                AuditDimension(
+                    name=str(x.get("name", "?")),
+                    value=float(x.get("value", 0.0)),
+                    source=str(x.get("source", "")),
+                    unit=str(x.get("unit", "")),
+                    confidence=float(x.get("confidence", 1.0)),
+                    cache_hit=bool(x.get("cache_hit", False)),
+                    prompt_hash=str(x.get("prompt_hash", "")),
+                    response_hash=str(x.get("response_hash", "")),
+                )
+                for x in raw.get("dimensions", [])
+            ]
+            # 旧行无 evidence_status ⇒ 按维度重算（兼容历史，且不把 no_data 读成 ok）
+            status = str(raw.get("evidence_status") or "") or derive_evidence_status(dims)
+            raw_pass = raw.get("overall_pass")
+            # 不变式与写入端一致：no_data ⇒ overall_pass = None（未知，非通过）
+            if status == EVIDENCE_NO_DATA or raw_pass is None:
+                loaded_pass: bool | None = None
+            else:
+                loaded_pass = bool(raw_pass)
             out.append(
                 AuditRecord(
                     at=float(raw.get("at", 0.0)),
-                    overall_pass=bool(raw.get("overall_pass", True)),
+                    overall_pass=loaded_pass,
                     score=float(raw.get("score", 0.0)),
-                    dimensions=[
-                        AuditDimension(
-                            name=str(x.get("name", "?")),
-                            value=float(x.get("value", 0.0)),
-                            source=str(x.get("source", "")),
-                            unit=str(x.get("unit", "")),
-                            confidence=float(x.get("confidence", 1.0)),
-                            cache_hit=bool(x.get("cache_hit", False)),
-                            prompt_hash=str(x.get("prompt_hash", "")),
-                            response_hash=str(x.get("response_hash", "")),
-                        )
-                        for x in raw.get("dimensions", [])
-                    ],
+                    dimensions=dims,
+                    evidence_status=status,
                 )
             )
     except (json.JSONDecodeError, OSError):  # noqa: BLE001
