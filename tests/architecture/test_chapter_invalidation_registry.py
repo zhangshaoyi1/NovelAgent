@@ -47,6 +47,8 @@ KNOWN_CHAPTER_KEYED: frozenset[str] = frozenset({
     "rag_index",
     "issue_debts",
     "foresight_beats",
+    # A5（2026-09-20）：规划变更后仍在正文里的旧计划产出（MODE_DETECT，只报数）
+    "written_chapters_after_plan_change",
 })
 
 

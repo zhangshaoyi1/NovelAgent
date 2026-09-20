@@ -291,6 +291,58 @@ def _detect_foresight_beats(project_dir: Path, nums: list[int]) -> int:
     return hits
 
 
+def _detect_written_chapters(project_dir: Path, nums: list[int]) -> int:
+    """``chapters/chNNN.md``：统计**规划变更后仍存在的正文**章数（只报数）。
+
+    语义（A5，2026-09-20）：复规划会重排弧线/档位/逐章排期，但这些章节的正文
+    是**在旧计划下写成的**。正文本身不因计划改变而失效 ⇒ **绝不能机械重写**
+    （那是不可逆销毁），但必须让"哪些已写章节的契约基准变了"可见：只报数，
+    由人工/后续体检决定是否回退。
+    """
+    ch_dir = project_dir / "chapters"
+    if not ch_dir.is_dir():
+        return 0
+    return sum(1 for n in nums if (ch_dir / f"ch{n:03d}.md").exists())
+
+
+def _as_chapter_num(value: Any) -> int | None:
+    """把章号字段解析为 int；不可解析返回 ``None``。
+
+    刻意**不用 try/except**：异常驱动的控制流在这里既无必要，也会被
+    降级可见性契约视为"静默吞异常"（``continue`` 不在白名单内）。
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        s = value.strip()
+        if s.lstrip("-").isdigit():
+            return int(s)
+    return None
+
+
+def plan_chapter_digest(project_dir: Path | str) -> dict[int, str]:
+    """读取当前**计划侧逐章排期**的摘要（章号 → 内容指纹）。
+
+    A5 用途：复规划前后各取一次，比对出**真正变更**的已写章节——
+    否则"每次复规划都报全书已写章节"会造成告警疲劳（纪律 #20）。
+    """
+    path = Path(project_dir) / ".state" / "payoff_script.json"
+    data = _load_json(path)
+    if not isinstance(data, dict):
+        return {}
+    out: dict[int, str] = {}
+    for c in data.get("chapters") or []:
+        if not isinstance(c, dict):
+            continue
+        num = _as_chapter_num(c.get("chapter"))
+        if num is None:
+            continue
+        out[num] = json.dumps(c, ensure_ascii=False, sort_keys=True)
+    return out
+
+
 # ============================================================
 # 登记表（SSOT：章节变更必须清算的派生状态）
 # ============================================================
@@ -341,6 +393,12 @@ REGISTRY: tuple[DerivedState, ...] = (
         "foresight_beats", ".state/foresight.json", MODE_DETECT,
         "伏笔节拍锚点（涉及 plant/payoff 提交语义，不自动回滚状态）→ 只报数交人工",
         detect=_detect_foresight_beats,
+    ),
+    DerivedState(
+        "written_chapters_after_plan_change", "chapters", MODE_DETECT,
+        "规划变更后仍在正文里的旧计划产出（复规划重排弧线/档位，正文却是旧契约下"
+        "写的）→ 只报数交人工；正文不因计划改变而失效，机械重写＝不可逆销毁",
+        detect=_detect_written_chapters,
     ),
     DerivedState(
         "golden_score_cache", ".state/golden_score_cache.json", MODE_NONE,
@@ -437,3 +495,37 @@ def invalidate_chapters(
                 )
             )
     return report
+
+
+# ============================================================
+# A5：规划变更的失效扇出（原实现只在「回滚」时触发）
+# ============================================================
+#: 规划变更影响的状态——**刻意窄**：只含「计划派生」一件 + 一件只报数的侦测。
+#:
+#: 为什么不含 ``chapter_fingerprints`` / ``rag_index`` / ``chapter_quality_flags`` /
+#: ``foreshadow_sync_watermark``：这些是**正文派生**的，规划变更**不动正文**
+#: ⇒ 它们仍然有效；把它们一并清掉属于越权销毁（会把有效索引/指纹当垃圾丢掉，
+#: 且指纹清掉反而制造"与自己上一版撞相似度"的假阳性）。
+#: 安全边界：规划变更只能清算「因计划而存在」的状态。
+PLAN_CHANGE_STATES: tuple[str, ...] = (
+    "payoff_script",
+    "written_chapters_after_plan_change",
+)
+
+
+def invalidate_for_plan_change(
+    project_dir: Path | str,
+    chapters: Iterable[int],
+) -> InvalidationReport:
+    """**规划变更**后清算受影响章节（与回滚共用同一套登记表，作用域不同）。
+
+    Args:
+        project_dir: 项目根目录。
+        chapters: 计划发生变更、且可能已被写入的章号集合。
+
+    Returns:
+        :class:`InvalidationReport`——``changed`` 为被机械清算的状态
+        （``payoff_script``），``stale`` 为检测到但**只能交人工**的
+        （``written_chapters_after_plan_change``：正文已存在，不机械重写）。
+    """
+    return invalidate_chapters(project_dir, chapters, only=PLAN_CHANGE_STATES)

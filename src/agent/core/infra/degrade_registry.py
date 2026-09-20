@@ -73,6 +73,7 @@ DEGRADE_NAMESPACES: dict[str, str] = {
     "batch_reflection.input.regress": "core/quality/batch_reflection.py",
     "batch_reflection.record": "core/quality/batch_reflection.py",
     "batch_replan.reverify": "workflows/pipeline/batch_replan.py",
+    "batch_replan.plan_change_fanout": "workflows/pipeline/batch_replan.py",
     "batch_replan.summary.debts": "workflows/pipeline/batch_replan.py",
     "batch_replan.summary.intro_rate": "workflows/pipeline/batch_replan.py",
     "batch_replan.summary.lessons": "workflows/pipeline/batch_replan.py",

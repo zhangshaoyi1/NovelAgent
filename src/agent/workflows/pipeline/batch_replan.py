@@ -185,6 +185,37 @@ def maybe_replan(
         except Exception as e:  # noqa: BLE001 - 观测面异常绝不阻断复规划
             degrade("autowire.plan_critic", "规划评委评审失败，本次采样缺失（不影响写作）", e)
 
+        # ---- A5：规划变更 → 失效扇出（原实现只在「回滚」时触发）----
+        # ★ 缺口（2026-09-20 立项）：`chapter_invalidation` 建成后**只在
+        #   `m10_rollback` 被调用** ⇒ 规划改了、下游派生状态与已写章节不知情。
+        # ★ 作用域**刻意窄**：只清算「计划派生」的 payoff_script + 对已写正文
+        #   只报数（正文不因计划改变而失效，机械重写＝不可逆销毁）。
+        # ★ 只对「有计划排期、且正文已存在」的章触发（否则是空转）。
+        try:
+            from agent.core.story.chapter_invalidation import (
+                invalidate_for_plan_change,
+                plan_chapter_digest,
+            )
+
+            ch_dir = project_dir / "chapters"
+            affected = [
+                c for c in sorted(plan_chapter_digest(project_dir))
+                if (ch_dir / f"ch{c:03d}.md").exists()
+            ]
+            if affected:
+                inv = invalidate_for_plan_change(project_dir, affected)
+                if inv.stale:
+                    console.print(
+                        f"[yellow]⚠ 规划已变更：{inv.summary()}"
+                        f"——已写章节仍在旧计划契约下产出，仅报数不自动重写[/yellow]"
+                    )
+        except Exception as e:  # noqa: BLE001 - 扇出异常绝不阻断复规划
+            degrade(
+                "batch_replan.plan_change_fanout",
+                "规划变更后的失效扇出失败（本批继续，影响面待人工核查）",
+                e,
+            )
+
         if report.passed:
             console.print(
                 f"[cyan]Planner 批间复规划完成（第 {current} 章后剩余弧线已重排，"
