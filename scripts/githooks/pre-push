@@ -1,12 +1,24 @@
 #!/bin/sh
 # NovelAgent pre-push 关卡：全量回归（AGENTS.md 第 10 条）
 #
-# 全量 = pytest 无参数（testpaths = tests + llmagent_tests），约 2315 项 / 760 秒。
+# ★ 判据**不只看退出码**（2026-09-20 升级，B2）：
+#   历史教训——(a) 出现过「rc=1 且无汇总行」的运行，旧钩子只能说"未通过"，
+#   无法区分"测试失败"与"取证不完整/被截断"；(b) rc 单独一项挡不住
+#   "通过数掉下基线"（有测试未被收集/被跳过，看起来反而更干净）。
+#   现统一交给 scripts/full_regression.py 判定：
+#     ① 必须有 pytest **汇总行**（缺 ⇒ 取证不完整 ⇒ 不可信）；
+#     ② failed/errors 必须为 0（看 FAILED 行，不看退出码）；
+#     ③ 若存在基线文件，通过数**不得低于**基线；
+#     ④ 结论**绑定 commit**（纪律 #23③）；
+#     ⑤ 原始输出落盘（不可信时用于归因——"偶发"最需要留证）。
+#
 # 与 pre-commit 分工：pre-commit 挡架构红线（秒级），pre-push 挡行为回归（分钟级）。
-# push 频率远低于 commit，760 秒可接受。
+# push 频率远低于 commit，全量（当前约 2940 项 / 1100 秒）可接受。
 #
 # 显式跳过：NOVELAGENT_SKIP_FULL=1 git push
 #   —— 跳过是显性行为，须在当日日志记明原因（AGENTS.md 第 10 条）。
+# 记录基线：判据②通过后跑
+#   python scripts/full_regression.py --baseline <baseline.json> --record-baseline
 set -u
 
 ROOT=$(git rev-parse --show-toplevel 2>/dev/null) || exit 0
@@ -36,19 +48,33 @@ if [ -z "$PY" ]; then
     exit 0
 fi
 
-echo "[pre-push] 全量回归：pytest（约 760 秒，解释器 $PY）"
-CODEBUDDY_SAFE_DELETE_ENABLED=0 "$PY" -m pytest -q -p no:cacheprovider
+GDIR=$(git rev-parse --git-path novelagent-regression)
+mkdir -p "$GDIR" 2>/dev/null || true
+RAW="$GDIR/last_run.txt"
+BASE="$GDIR/baseline.json"
+
+set -- --save-raw "$RAW" --report "$GDIR/last_verdict.json"
+if [ -f "$BASE" ]; then
+    set -- "$@" --baseline "$BASE"
+else
+    echo "[pre-push] 提示：尚无基线（$BASE）。记录一次："
+    echo "  $PY scripts/full_regression.py --baseline $BASE --record-baseline"
+fi
+
+echo "[pre-push] 全量回归：走证据型关卡（scripts/full_regression.py，解释器 $PY）"
+CODEBUDDY_SAFE_DELETE_ENABLED=0 "$PY" scripts/full_regression.py "$@"
 rc=$?
 
 if [ "$rc" -ne 0 ]; then
     echo ""
-    echo "✗ [pre-push] 全量回归未通过 —— push 已阻断（AGENTS.md 第 10 条）。"
+    echo "✗ [pre-push] 全量回归【不可信/未通过】—— push 已阻断（AGENTS.md 第 10 条）。"
+    echo "  原始输出：$RAW（判定为不可信时先看这份再归因）"
     echo "  ① 先归因（第 13 条）：$PY scripts/baseline_diff.py --base <基线sha>"
-    echo "  ② 判定看 FAILED 行，不看退出码；异常数字先重跑一次再采信。"
+    echo "  ② 看 FAILED 行与汇总行；缺汇总行＝取证不完整，须重跑。"
     echo "  确需推送：NOVELAGENT_SKIP_FULL=1 git push（并在当日日志记明原因）。"
     echo ""
     exit 1
 fi
 
-echo "[pre-push] 全量回归通过"
+echo "[pre-push] 全量回归可信 ✅"
 exit 0

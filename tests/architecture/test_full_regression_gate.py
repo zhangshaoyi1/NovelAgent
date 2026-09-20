@@ -99,3 +99,23 @@ class TestGateIsWired:
             "缺少原始输出落盘选项：判定为『不可信』时没有输出就无法归因"
             "（2026-09-20 实测一次 rc=1 且无汇总行的运行因未留存而无法定位）"
         )
+
+
+class TestPrePushHookUsesTheGate:
+    """⑥ 关卡必须真的挂在流程上，且判据是"证据型"而非只判退出码。
+
+    事实（2026-09-20 取证）：pre-push 钩子**早就存在**并会跑全量，但判据是
+    ``rc != 0`` ⇒ ① 无法区分"测试失败"与"取证不完整/被截断"；
+    ② 挡不住"通过数掉下基线"（漏跑看起来更干净）。本次把关卡接进钩子。
+    """
+
+    def test_hook_delegates_to_evidence_gate(self) -> None:
+        hook = Path(__file__).resolve().parents[2] / "scripts" / "githooks" / "pre-push"
+        assert hook.exists(), "受版本控制的 pre-push 不见了"
+        src = hook.read_text(encoding="utf-8")
+        assert "scripts/full_regression.py" in src, (
+            "pre-push 未走证据型关卡——退回只判退出码的旧判据"
+        )
+        assert "--save-raw" in src, "pre-push 未保存原始输出 ⇒ 不可信时无法归因"
+        assert "--baseline" in src, "pre-push 未接基线比对 ⇒ 通过数掉下基线不会被发现"
+        assert "NOVELAGENT_SKIP_FULL" in src, "缺少显式跳过开关（跳过必须是显性行为）"
