@@ -291,13 +291,47 @@ def force_terminate(
     return ok
 
 
+def _heartbeat_state(task_id: str, hb: Any) -> str:
+    """任务心跳三态：``fresh`` / ``stale`` / ``unknown``。
+
+    ★ B3（H5）：「不知道」必须与「确证过期」分开——前者保守接管，后者才授权杀。
+    ``unknown``（缺失 / 不可解析）**显性留痕**，不静默（纪律 #1、#2）。
+    """
+    if not hb:
+        degrade(
+            "process_manager.heartbeat_unknown",
+            f"任务 {task_id} 心跳缺失，无法判定新鲜度 ⇒ 按未知处理（保守接管）",
+        )
+        return "unknown"
+    try:
+        age = time.time() - datetime.fromisoformat(str(hb)).timestamp()
+    except (TypeError, ValueError):
+        degrade(
+            "process_manager.heartbeat_unknown",
+            f"任务 {task_id} 心跳不可解析，无法判定新鲜度 ⇒ 按未知处理（保守接管）",
+        )
+        return "unknown"
+    return "fresh" if age < HEARTBEAT_MAX_AGE else "stale"
+
+
 def recover_running(project_dir: Path | str) -> int:
     """崩溃恢复（先杀后标/重新接管）：扫描 running 任务。
 
     对每个 running 任务：
     - pid 存活 且 心跳新鲜 → 重新接管（保持 running，由后续 daemon 继续监督）；
-    - pid 存活 但 心跳过期 → 孤儿进程仍在跑 → 杀进程树 + 标记 orphan_killed + 锁清；
+    - pid 存活 且 心跳**确证过期** → 孤儿进程仍在跑 → 杀进程树 + 标记 orphan_killed + 锁清；
+    - pid 存活 但 心跳**缺失/不可解析** → **保守接管，不杀**（见下）；
     - pid 已死 → 标记 orphan_died + 锁清。
+
+    ★ B3（2026-09-20，H5）：原实现把「心跳读不到/解析失败」也判 ``fresh=False``
+    ⇒ 与"确证过期"共用同一条 **杀** 分支。后果：**心跳只是落盘失败**（磁盘/权限
+    瞬时问题，`update_task_heartbeat` 写不进去）或字段格式异常时，进程明明还活着，
+    却被"先杀后标"杀掉——即"心跳落盘失败 ⇒ 误杀健康任务"。
+    判据强度必须与证据匹配（纪律 #2/#13）：「不知道」不得升级成不可逆动作。
+    现拆开：只有**确证存在且超窗**的心跳才授权杀；未知一律保守接管，并由
+    `should_timeout` / `should_stall` 在后续监督中兜底（判据可见、可解释）。
+    双写风险：接管期间若有 pending 任务被认领，同项目由 project-lock + 写命令
+    串行兜住（本就存在的护栏），不因本改动新增敞口。
 
     Returns:
         处理的任务数。
@@ -308,18 +342,14 @@ def recover_running(project_dir: Path | str) -> int:
         pid = int(task.get("pid") or 0)
         task_id = task.get("task_id", "")
         alive = _pid_alive(pid)
-        hb = task.get("heartbeat_at")
-        fresh = True
-        if hb:
-            try:
-                fresh = (time.time() - datetime.fromisoformat(hb).timestamp()) < HEARTBEAT_MAX_AGE
-            except (TypeError, ValueError):  # noqa: SILENT_DEGRADE - 解析失败回退默认/跳过
-                fresh = False
-        if alive and fresh:
+        # 三态：fresh（确证新鲜）/ stale（确证过期）/ unknown（读不到、解析不了）
+        state = _heartbeat_state(task_id, task.get("heartbeat_at"))
+        if alive and state in ("fresh", "unknown"):
             # 重新接管：任务仍由（新）daemon 监督，保持 running
+            # （unknown 的留痕已在 _heartbeat_state 内完成，不静默、不升级为杀）
             continue
         if alive:
-            # 孤儿进程仍在跑：先杀后标（防与新任务抢写）
+            # 孤儿进程仍在跑（心跳**确证过期**）：先杀后标（防与新任务抢写）
             force_terminate(
                 project_dir, task_id, pid,
                 note="daemon 崩溃恢复：孤儿进程已终止（先杀后标）",

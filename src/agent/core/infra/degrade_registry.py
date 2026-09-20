@@ -163,6 +163,7 @@ DEGRADE_NAMESPACES: dict[str, str] = {
     "planner.replan.consolidate": "agents/planner.py",
     "power_scale.render": "core/story/entity_ledger.py",
     "process_manager.kill": "daemon/process_manager.py",
+    "process_manager.heartbeat_unknown": "daemon/process_manager.py",
     "project_lock.acquire": "core/project_lock.py",
     "project_lock.release": "core/project_lock.py",
     "reader_appeal.canon_without_design": "core/quality/scoring/reader_appeal.py",
