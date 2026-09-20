@@ -90,6 +90,7 @@ DEGRADE_NAMESPACES: dict[str, str] = {
     "closure_plan.roster": "core/story/closure_plan.py",
     "compose.closure_plan": "core/infra/compose_runner.py",
     "consistency.recheck_rule": "core/quality/consistency/checker.py",
+    "daemon.ensure_daemon.log": "daemon/core.py",
     "design_brief.characters": "core/story/design_brief.py",
     "design_brief.chapters": "core/story/design_brief.py",
     "design_brief.plan": "core/story/design_brief.py",

@@ -28,7 +28,7 @@ def daemon_start(
         info = tq.read_heartbeat(data_root) or {}
         console.print(f"[bold green]✓[/bold green] daemon 已启动（pid={info.get('pid')}）")
     else:
-        console.print("[bold red]✗[/bold red] daemon 启动失败，请查看 <root>/.daemon/ 日志")
+        console.print("[bold red]✗[/bold red] daemon 启动失败，请查看 <root>/.daemon/daemon.log")
         raise typer.Exit(code=1)
 
 

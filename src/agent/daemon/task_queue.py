@@ -324,6 +324,17 @@ def heartbeat_path(root: Path | str) -> Path:
     return Path(root) / ".daemon" / "heartbeat.json"
 
 
+def daemon_log_path(root: Path | str) -> Path:
+    """daemon **自身** stdout/stderr 的落盘位置。
+
+    ★ A3（2026-09-20）：daemon 被 detached 拉起时若把 stdout/stderr 指向
+    ``DEVNULL``，则 ``degrade()`` 的 WARNING（无 handler 时经 ``logging.lastResort``
+    落 stderr）与所有 ``print`` 全部丢失 ⇒ 降级/熔断/落盘失败在运行时**不可见**
+    （而 CLI 却提示用户「请查看 <root>/.daemon/ 日志」）。此处给出统一落点。
+    """
+    return Path(root) / ".daemon" / "daemon.log"
+
+
 def write_heartbeat(root: Path | str, pid: int) -> None:
     _atomic_write_json(
         heartbeat_path(root),

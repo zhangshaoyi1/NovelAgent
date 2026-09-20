@@ -17,6 +17,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import subprocess
 import sys
@@ -25,8 +26,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from agent.core.infra.degrade import degrade
 from agent.daemon import task_queue as tq
 from agent.daemon import process_manager as pm
+
+logger = logging.getLogger(__name__)
 
 #: agent 仓库根（含 src/ 与 scripts/）：本文件位于 <root>/src/agent/daemon/core.py
 REPO_ROOT = Path(__file__).resolve().parents[3]
@@ -397,7 +401,8 @@ def ensure_daemon(roots: list[Path | str]) -> bool:
     roots = [Path(r) for r in roots]
     if any(tq.daemon_alive(r) for r in roots):
         return True
-    args = [sys.executable, "-m", "agent.daemon"]
+    # -u：daemon 是常驻进程，必须禁缓冲——否则崩溃前最后几行（含 degrade 告警）留不下
+    args = [sys.executable, "-u", "-m", "agent.daemon"]
     for r in roots:
         args += ["--root", str(r)]
     # 环境隔离：daemon 是常驻进程，禁止继承宿主的 safe-delete 护栏 shim
@@ -405,11 +410,25 @@ def ensure_daemon(roots: list[Path | str]) -> bool:
     # 2026-09-11 事故族）。显式关闭后关键路径的 unlink 退化为普通删除，进程不受影响。
     child_env = dict(os.environ)
     child_env["CODEBUDDY_SAFE_DELETE_ENABLED"] = "0"
+    child_env["PYTHONUNBUFFERED"] = "1"
+    # ★ A3（2026-09-20）：daemon 自身的 stdout/stderr 必须**落盘**（原为 DEVNULL）。
+    #   DEVNULL 会让 degrade() 的 WARNING（无 handler 时经 logging.lastResort 落
+    #   stderr）与所有 print 全部丢失 ⇒ 降级/熔断/落盘失败在运行时完全不可见；
+    #   而 CLI 失败提示却指向「<root>/.daemon/ 日志」，那里原本空无一物。
+    log_path = tq.daemon_log_path(roots[0])
+    log_fh: Any = subprocess.DEVNULL
+    try:
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_fh = open(log_path, "ab", buffering=0)  # noqa: SIM115 - 生命周期与子进程绑定
+    except OSError as e:
+        # 真实降级点：daemon 输出将失去落盘目的地（退回 DEVNULL）⇒ 必须走契约登记
+        degrade("daemon.ensure_daemon.log", "daemon 日志落盘不可用，输出退回 DEVNULL", e)
+        log_fh = subprocess.DEVNULL
     kwargs: dict[str, Any] = {
         "cwd": str(REPO_ROOT),
         "stdin": subprocess.DEVNULL,
-        "stdout": subprocess.DEVNULL,
-        "stderr": subprocess.DEVNULL,
+        "stdout": log_fh,
+        "stderr": subprocess.STDOUT,
         "close_fds": True,
         "env": child_env,
     }
@@ -425,6 +444,13 @@ def ensure_daemon(roots: list[Path | str]) -> bool:
         subprocess.Popen(args, **kwargs)
     except Exception:  # noqa: BLE001
         return False
+    finally:
+        # 子进程已继承句柄副本；父侧副本及时关闭，避免句柄泄漏
+        if log_fh is not subprocess.DEVNULL:
+            try:
+                log_fh.close()
+            except OSError:
+                logger.debug("daemon 日志句柄关闭失败（不影响已拉起的子进程）", exc_info=True)
     # 启动探针：心跳不仅要「出现」，还必须在窗口内「推进」≥1 次。
     # 只写一次心跳便退出的 daemon（历史事故：误吞陈旧 stop.flag 后静默优雅
     # 退出）也是心跳文件存在且新鲜，旧判据会误报 True，掩盖拉起失败。
