@@ -27,16 +27,22 @@ from difflib import SequenceMatcher
 from pathlib import Path
 from typing import Any
 
+# ★ 超短章阈值**派生**自写时门禁的唯一真源（纪律 #19）：门禁与体检必须同源，
+#   故不在此重写字面量（红线 tests/test_chapter_length_ssot.py R2 用 AST 禁写拦截）。
+from agent.core.quality.length_policy import ABSOLUTE_MIN_CJK_WORDS
+
 #: pressure_stage 连续同值章数上限（超过即告警）
 DEFAULT_STAGE_STREAK_LIMIT = 8
 #: 配角连续出场章数上限（超过即工具人风险告警）
+#: 依据：9 个真实项目 865 条配对 streak 的实测分位（p50=2 p75=3 p90=6 p95=9 p99=25）
+#: ⇒ 10 ≈ p95，即恒报约 5% 的配对，属可承受信噪比。
 DEFAULT_CHAR_STREAK_LIMIT = 10
 #: 章末钩子近重复判定相似度阈值
 DEFAULT_HOOK_SIMILARITY = 0.85
 #: 伏笔账龄宽限章数（预期回收点之后仍可容忍的章数）
 DEFAULT_FORESHADOW_GRACE = 10
-#: 超短章阈值（正文字符数）
-DEFAULT_MIN_CHAPTER_CHARS = 1500
+#: 超短章阈值（正文字符数）—— 与写时门禁硬下限**同一真源**
+DEFAULT_MIN_CHAPTER_CHARS = ABSOLUTE_MIN_CJK_WORDS
 
 #: 章尾套话短语清单（差评实证：三本书 101 个章尾命中"风暴/倒计时"式预告）。
 #: 相似度聚类抓不到措辞变体（"真正的风暴，才刚刚开始" vs "风暴正在酝酿"），
@@ -219,10 +225,25 @@ def check_foreshadow_aging(
     }
 
 
-def _load_character_names(project_dir: Path) -> list[tuple[str, str]]:
-    """从 characters/*.md 取 (角色名, role)；role 取自 frontmatter，缺省 "support"。
+#: :func:`check_character_stagnation` 的**作用域**（纪律 #18：闸门须定义作用域）。
+#: 配角三种写法都算：数据里实际用 ``supporting``，而 ``_load_character_names``
+#: 的缺省值是单数 ``support``（两者并存，不统一会漏检）。
+#: 具名非配角角色（protagonist/antagonist/mentor/system…）**不在**作用域内 ——
+#: 它们的连续出场是叙事结构要求，实测已造成 27–30 章的误报。
+_SUPPORT_ROLES = frozenset({"support", "supporting", ""})
 
-    缺 frontmatter 的角色档案按配角处理（显性化交给 meta 检查，不在此处报错）。
+
+def _load_character_names(project_dir: Path) -> list[tuple[str, str]]:
+    """从 characters/*.md 取 (角色名, role)；role 取自 frontmatter 的 ``role`` 键。
+
+    缺 frontmatter / 缺 ``role`` 键 ⇒ ``"support"``（按配角处理，显性化交给
+    meta 检查，不在此处报错）。
+
+    ★ 2026-09-20 修正：旧实现**只区分** ``protagonist`` 与"其余一律 support"，
+    于是 ``antagonist`` / ``mentor`` / ``system`` 全被归为配角 ⇒ 下游
+    :func:`check_character_stagnation` 无法按作用域排除它们（实测真事故：
+    changan「杜从云」role=antagonist 被当成配角报"工具人"，27–30 章）。
+    现返回**真实 role 值**（小写），由消费者决定作用域。
     """
     chars_dir = project_dir / "characters"
     if not chars_dir.is_dir():
@@ -231,8 +252,10 @@ def _load_character_names(project_dir: Path) -> list[tuple[str, str]]:
     for p in sorted(chars_dir.glob("*.md")):
         role = "support"
         m = _FRONTMATTER_RE.match(p.read_text(encoding="utf-8", errors="replace"))
-        if m and re.search(r"^\s*role\s*:\s*[\"']?protagonist", m.group(1), re.M):
-            role = "protagonist"
+        if m:
+            r = re.search(r"^\s*role\s*:\s*[\"']?([A-Za-z_]+)", m.group(1), re.M)
+            if r:
+                role = r.group(1).strip().lower()
         result.append((p.stem, role))
     return result
 
@@ -240,16 +263,34 @@ def _load_character_names(project_dir: Path) -> list[tuple[str, str]]:
 def check_character_stagnation(
     project_dir: Path, chapters: list[dict[str, Any]], limit: int
 ) -> dict[str, Any]:
-    """指标 3：配角连续出场章数（工具人风险）。
+    """指标 3：**配角**连续出场章数（工具人风险）。
 
-    以"角色名在正文中连续被提及的章数"为代理指标——纯规则无法判断"成长"，
-    但超长连续出场叠加零状态变化登记，即差评中的"外置扬声器"画像。
-    主角（frontmatter ``role: protagonist``）不在本指标范围。
+    以"角色名在正文中连续被提及的章数"为代理指标。
+
+    ★ 作用域（纪律 #18：闸门必须定义作用域）：**只针对配角**
+    （``role`` ∈ {support, supporting, 缺省}）。具名非配角角色
+    （``protagonist`` / ``antagonist`` / ``mentor`` / ``system``）的连续出场是
+    **叙事结构要求**——对抗线/导师线必须持续在场，把它们判成"工具人"是作用域
+    错配。实测真事故（2026-09-20）：changan「杜从云」(antagonist) 30 章、
+    goudao「血刀门主」(antagonist) 27 章被误报；而「阿福/老周/阿阮」(supporting)
+    是真信号，**保留**。
+
+    ★ 阈值依据（纪律 #26：阈值型判据须有实测分布，勿拍脑袋）：9 个真实项目
+    865 条配对 streak 的实测分位 p50=2 / p75=3 / p90=6 / p95=9 / p99=25
+    ⇒ 默认 10 ≈ p95（恒报约 5% 的配对）。**短书无需另设门槛**：全书章数
+    < limit 时不可能产出达阈值的 streak，判据自然为空，故**刻意不加**语料
+    门槛（2026-09-20 一次试行版本的 `len<limit*3 ⇒ 清空` 属无依据的额外阈值，
+    且会破坏既有 13 章夹具的红线，已撤除）。
+
+    ⚠ 已知局限（显性声明，勿据此误判）：docstring 原本承诺的"叠加**零状态变化
+    登记**"**尚未实现** —— 当前只判出场连续性。故报出 ≠ 已确认工具人，需人工
+    结合角色弧光复核。若报出的"配角"实为主角，则属**档案 ``role`` 标注缺失**，
+    正确处置是补档案而非改本判据。
     """
     names = _load_character_names(project_dir)
     streaks: list[dict[str, Any]] = []
     for name, role in names:
-        if role == "protagonist":
+        if role not in _SUPPORT_ROLES:
             continue
         present = [bool(name and name in c["body"]) for c in chapters]
         for s in _longest_streaks(present):
@@ -267,6 +308,7 @@ def check_character_stagnation(
         "metric": "character_stagnation",
         "label": "配角连续出场",
         "limit": limit,
+        "scope": "supporting-only",
         "characters": len(names),
         "violations": streaks,
     }
@@ -536,6 +578,71 @@ _SPEAKER_GENERIC = frozenset(
      "少年", "老人", "孩子", "中年", "青年", "自己", "个声音", "的声音",
      "弟子", "散修", "修士", "太监", "宫女"}
 )
+#: 候选前导功能词（len>2 时剥离）
+_SPEAKER_FUNC_STRIP = set("着他她它那这或就还但和与跟对把被让等又便才只却都已然突倏随继接竟")
+#: 候选前导**代词**：以代词开头的是主语短语而非人名（实测「我听」⊂「我听说」）。
+_SPEAKER_PRONOUN_PREFIX = set("我你您咱俺他她它牠")
+#: 候选**左边界**：真人名在句中作主语，左侧必然是句读/引号/空白/行首。
+#: 实测误报「起一抹」⊂「嘴角勾起一抹冷笑」——此处的「冷笑」是**名词**，
+#: 不是归属动词，候选实为更长短语的尾片段（左侧是动词「勾/扯」，非边界）。
+_SPEAKER_LEFT_BOUNDARY = set(
+    "，。！？；：、…—·,.;:!?~～\"'“”‘’「」『』（）()《》〈〉 \t\r\n"
+)
+#: 人名**首字**集：中文人名首字几乎必为姓氏（百家姓）或前缀式（老周/阿福/小七/大牛）。
+#: ★ 这是**构词事实**的结构判据，不是逐案黑名单 —— 一条判据同时拒掉整类词频噪声。
+#: 实测残余误报「一边/随即/口中/心中/嘴里/声音/人影/仍狞/咧嘴/中年人」首字均非姓氏。
+#: 刻意**不收**「后/边/相」等兼作虚词的罕见姓 —— 它们会漏进「后他/一边」类噪声。
+_SPEAKER_SURNAME_HEAD = frozenset(
+    "赵钱孙李周吴郑王冯陈褚卫蒋沈韩杨朱秦尤许何吕施张孔曹严华金魏陶姜"
+    "谢邹喻柏窦章云苏潘葛奚范彭郎鲁韦昌马苗凤花方俞任袁柳鲍史唐费廉岑"
+    "薛雷贺倪汤滕殷罗毕郝安常乐于时傅皮卞齐康伍余元卜顾孟平黄和穆萧尹"
+    "姚邵汪祁毛禹狄米贝明臧计伏成戴谈宋茅庞熊纪舒屈项祝董梁杜阮蓝闵席"
+    "季麻强贾路娄危江童颜郭梅盛林刁钟徐邱骆高夏蔡田樊胡凌霍虞万支柯管"
+    "卢莫房裘缪干解应宗丁宣邓郁单杭洪包诸左石崔吉龚程邢裴陆荣翁荀羊"
+    "惠甄曲封芮储靳汲邴糜松井段富巫乌焦巴弓牧隗山谷车侯蓬全郗班仰秋"
+    "仲伊宫宁仇栾暴甘厉戎祖武符刘景詹束龙叶幸司韶郜黎蓟薄印宿白怀蒲邰"
+    "从鄂索咸籍赖卓蔺屠蒙池乔阴胥能苍双闻莘党翟谭贡劳逄姬申扶堵冉宰郦"
+    "雍璩桑桂濮牛寿通扈燕冀郏浦尚农温庄晏柴瞿阎充慕连茹习宦艾鱼"
+    "容向古易慎戈廖庾终暨居衡步都耿满弘匡国广禄阙东欧殳沃利蔚越夔"
+    "隆师巩聂晁勾敖融冷訾辛阚那简饶空曾毋沙养鞠须丰巢关蒯荆"
+    "红游竺权逯盖益桓公"
+)
+#: 前缀式人名首字（老周/阿福/小七/大牛）与排行字
+_SPEAKER_PREFIX_HEAD = frozenset("老阿小大二三四五六七八九十")
+_SPEAKER_HEAD_OK = _SPEAKER_SURNAME_HEAD | _SPEAKER_PREFIX_HEAD
+
+
+def _speaker_name_ok(n: str, prev: str) -> tuple[bool, str]:
+    """结构判据：候选是否**像一个人名**。返回 ``(是否通过, 未通过的原因)``。
+
+    四条各自封堵一类**实测**误报，且都是结构判据（纪律 #22：不靠"猜语义"）：
+
+    ① **左边界**：左侧须为句读/引号/空白/行首 —— 封堵"长词尾片段"型
+       （「起一抹」⊂「勾起一抹冷笑」，「冷笑」在此是名词）。
+    ② **叠字特征**（缓缓/淡淡/默默）：候选**含**任意叠字 ⇒ 状语，不是人名
+       （判「含」而非「等于」—— 3 字窗会截出「安淡淡」⊂「李承安淡淡说道」）。
+    ③ **前导代词**（我/你/您/咱/俺…）—— 封堵主语短语型（「我听」⊂「我听说」）。
+    ④ **首字必为姓氏/前缀式**（见 :data:`_SPEAKER_HEAD_OK`）—— 封堵词频噪声型
+       （一边/随即/口中/心中/嘴里/声音/人影/咧嘴）。这是中文人名的**构词事实**。
+
+    已知漏检方向：① 会拒掉左侧为动词的**合法**归属（如「只见老周说道」）；
+    ④ 会拒掉非姓氏命名的角色（绰号如「苍狼」，但 2–3 字窗通常也捕不到）。
+    可接受：本指标要求跨 ≥2 章出现，其余出现仍可命中；且本闸只告警不阻断。
+    """
+    if len(n) < 2:
+        return False, "too_short"
+    if prev and prev not in _SPEAKER_LEFT_BOUNDARY:
+        return False, "left_boundary"
+    # ② 含任意叠字 ⇒ 状语特征。注意判「含」而非「等于」——3 字窗会截出
+    #    「安淡淡」（⊂「李承安淡淡说道」），整词 AA 判定抓不到。
+    if any(n[i] == n[i + 1] for i in range(len(n) - 1)):
+        return False, "aa_adverb"
+    if n[0] in _SPEAKER_PRONOUN_PREFIX:
+        return False, "pronoun_prefix"
+    if n[0] not in _SPEAKER_HEAD_OK:
+        return False, "not_name_head"
+    return True, ""
+
 
 
 def _iter_chapter_bodies(chapters: list[dict[str, Any]]):
@@ -619,6 +726,20 @@ def check_speaker_registry(
     「……」X 说/道/开口 中的 X 是高置信人名信号（无需分词）。跨
     ≥min_chapters 章出现却不在 characters/ 登记簿与正典中的说话人 =
     配角漏登记（差评实证：周长老/王执事/苏清雪/赵铁/孙小豆）。
+
+    ★ 2026-09-20 收口（9 个真实项目实测 **229 → 55 条，削减 76%**，且核心真阳
+    全保留 —— 灵荒炉火那批差评实证名 周长老/孙小豆/王执事/苏清雪 一条未丢）：
+    旧判据只做
+    「归属动词前 2–3 字」的**局部位置**匹配，于是把状语/短语尾片段当人名。
+    实测三类误报（9 项目抽取）：
+
+    - 「**起一抹**」⊂「嘴角勾起一抹冷笑」——「冷笑」此处是**名词**
+    - 「**我听**」⊂「我听说」——主语短语
+    - 「**缓缓**」⊂「缓缓说道」——AA 式状语
+
+    现加四条**结构判据**（见 :func:`_speaker_name_ok`：左边界 / AA 状语 /
+    前导代词 / 首字必为姓氏），并在返回值里给出 ``filtered`` 逐规则计数，
+    使过滤本身可被观测（不静默丢样本）。
     """
     chars_dir = project_dir / "characters"
     registered = {p.stem for p in chars_dir.glob("*.md")} if chars_dir.is_dir() else set()
@@ -628,14 +749,21 @@ def check_speaker_registry(
         re.findall(r"[\u4e00-\u9fa5]{2,3}(?=" + _ATTR_VERB_RE.pattern + r")", canon)
     )
     speakers: dict[str, set[int]] = {}
+    filtered: dict[str, int] = {}
     for ch, body in _iter_chapter_bodies(chapters):
         for m in re.finditer(r"([\u4e00-\u9fa5]{2,3})(?=" + _ATTR_VERB_RE.pattern + r")", body):
             n = m.group(1)
-            while len(n) > 2 and n[0] in "着他她它那这或就还但和与跟对把被让等又便才只却都已然突倏随继接竟":
+            # 左边界取**原始匹配位**的前一字符（剥离前导功能词不改变边界事实）
+            prev = body[m.start() - 1] if m.start() > 0 else ""
+            while len(n) > 2 and n[0] in _SPEAKER_FUNC_STRIP:
                 n = n[1:]
             if len(n) < 2 or n in known or n in _SPEAKER_GENERIC:
                 continue
             if n[-1] in _SPEAKER_TAIL_NOISE or any(z in n for z in _SPEAKER_CONTAIN_NOISE):
+                continue
+            ok, why = _speaker_name_ok(n, prev)
+            if not ok:
+                filtered[why] = filtered.get(why, 0) + 1
                 continue
             speakers.setdefault(n, set()).add(ch)
     unregistered = [
@@ -651,6 +779,7 @@ def check_speaker_registry(
         "metric": "speaker_registry",
         "label": "未注册说话人",
         "registered": len(registered),
+        "filtered": filtered,
         "unregistered": unregistered,
     }
 

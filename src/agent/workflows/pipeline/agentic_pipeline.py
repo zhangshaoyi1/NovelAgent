@@ -967,6 +967,14 @@ class AgenticPipelineWorkflow(
             # （纪律 #13/#26：动作强度≤判据可达性），阻断需先跑阈值分位表。
             self._run_supervisor_batch_end(result)
 
+            # ---- S6 跨章集成检查（2026-09-20 接线）----
+            # 十项跨章**确定性**指标（节奏连续 / 伏笔账龄 / 配角停滞 / 实体漂移 /
+            # 章末钩子重复 / 超短章…）此前**只有 CLI 手动入口**，而批末自动跑的
+            # evaluator 七维只判"不崩"正确性 ⇒「读者可见质量」自动覆盖为 0。
+            # advisory：**只告警不阻断**（第五部分纪律：小说要创造性生长，
+            # 照搬软件 blocking 会一拦全冻；事后观测面不得越权阻断）。
+            self._run_book_checkup_batch_end(result)
+
         # ---- G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）----
         self._finalize_cost(result)
         # ---- G8（拍板 6）：主线推进/结局模式摘要（纯读 state，异常降级占位不阻断）----

@@ -421,3 +421,65 @@ class _PipelineEventsMixin:
         except Exception as sup_e:  # noqa: BLE001 - 监督失败不阻断批末收尾
             degrade("pipeline.supervisor", "批末监督调用异常", sup_e)
 
+    # ------------------------------------------------- S6 跨章集成检查（批末全书体检）
+    def _run_book_checkup_batch_end(self, result: PipelineResult) -> None:
+        """S6 跨章集成检查（2026-09-20 接线）：全书视野的**确定性**结构性体检。
+
+        为什么要在这里接线
+        ------------------
+        ``core/quality/book_checkup.py`` 的十项跨章指标（节奏连续 / 伏笔账龄 /
+        配角停滞 / 实体漂移 / 章末钩子重复 / 章尾套话 / 字数分布…）**能力齐备，
+        但此前只有 CLI 手动入口** —— 而批末自动跑的是 ``evaluator`` 七维
+        「不崩」套件，它只判**正确性**，不含节奏与漂移。⇒「读者可见质量」
+        这一类此前**自动覆盖为 0**（9 项目实测该体检报出 309 条 = 24.3 条/百章，
+        却从未被自动执行过）。
+
+        语义（advisory）：**只告警、不阻断、不 escalated**。
+        理由（项目第五部分纪律）：小说要的是**创造性生长**，照搬软件流程的
+        blocking 会"一拦全冻"；且本书检是**事后**观测面，动作强度不得超过
+        判据可达性（纪律 #2/#13），升级为阻断前必须先跑真实分位表。
+        任何异常显性降级（degrade 留痕），不阻断批末收尾。
+        """
+        try:
+            from agent.core.quality.book_checkup import run_book_checkup
+
+            rep = run_book_checkup(self.project_dir)
+            if not rep.get("success"):
+                degrade(
+                    "pipeline.book_checkup",
+                    "批末全书体检未完成"
+                    f"（{rep.get('error', {}).get('code', 'unknown')}）",
+                )
+                return
+            issues = rep.get("issues") or []
+            degraded = rep.get("degraded") or []
+            if issues or degraded:
+                by_metric: dict[str, int] = {}
+                for it in issues:
+                    key = str(it.get("metric", "?"))
+                    by_metric[key] = by_metric.get(key, 0) + 1
+                self.console.print(
+                    f"[yellow]全书体检（S6 跨章）：{len(issues)} 条结构性问题 + "
+                    f"{len(degraded)} 项读数降级"
+                    f"（详情：agent book-checkup -d {self.project_dir}）[/yellow]"
+                )
+                for it in issues[:5]:
+                    self.console.print(
+                        f"[yellow]  · [{it.get('metric', '?')}] {it.get('detail', '')}[/yellow]"
+                    )
+                if len(issues) > 5:
+                    self.console.print(f"[yellow]  · …另有 {len(issues) - 5} 条[/yellow]")
+                # 留痕：观测面（失败则走外层 except ⇒ degrade 显性，不静默）
+                self.memory.log(
+                    "book_checkup",
+                    "批末全书体检",
+                    {
+                        "chapter_count": rep.get("chapter_count"),
+                        "issues": len(issues),
+                        "degraded": len(degraded),
+                        "by_metric": by_metric,
+                    },
+                )
+        except Exception as bc_e:  # noqa: BLE001 - 体检失败不阻断批末收尾
+            degrade("pipeline.book_checkup", "批末全书体检调用异常", bc_e)
+

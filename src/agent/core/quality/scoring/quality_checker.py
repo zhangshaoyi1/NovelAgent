@@ -15,6 +15,10 @@ from __future__ import annotations
 
 from agent.core.infra.prompt_manager import pm
 from agent.core.infra.degrade import degrade
+# ★ 字数下限的**唯一真源**（纪律 #19）：全书体检 book_checkup 从同源派生，
+#   切勿在本文件重写字面量——单边改名会让「写时门禁」与「全书体检」静默分叉
+#   （红线 tests/test_chapter_length_ssot.py R2 用 AST 禁写拦截）。
+from agent.core.quality.length_policy import ABSOLUTE_MIN_CJK_WORDS
 import re
 from dataclasses import dataclass, field
 from enum import Enum
@@ -84,7 +88,7 @@ MIN_SCENE_RATIO = 0.30
 # 下限随每章目标字数 chapter_length 伸缩：max(ABSOLUTE_MIN, round(目标 * MIN_WORD_RATIO))，
 # 未知目标时取绝对下限。上限 = round(目标 * MAX_WORD_RATIO)（超限仅告警，不阻断）。
 # 目标值可通过 ctx["chapter_length"] / ctx["world_info"]["chapter_length"] 传入。
-ABSOLUTE_MIN_CJK_WORDS = 1500   # 恒硬下限（对应 MIN_CHAPTER_LENGTH）
+# ABSOLUTE_MIN_CJK_WORDS 由 core/quality/length_policy.py 导入（唯一真源，纪律 #19）
 MIN_WORD_RATIO = 0.8            # 目标字数的 80% 视为达标下限（保留合理余量）
 MAX_WORD_RATIO = 1.2            # 目标字数的 120% 视为合理上限（超限仅提示，非硬阻断）
 # 硬上限（2026-09-15）：目标×200%。超过它触发「定向压缩」（对称于下限的续写补字）。
