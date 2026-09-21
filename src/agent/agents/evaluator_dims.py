@@ -364,6 +364,15 @@ class _EvaluatorDimensionsMixin:
             if d.name.startswith((APPEAL_GATE_PREFIX, GOLDEN_GATE_PREFIX, "padding_",
                                   "mainline_", "ending_")):
                 continue
+            # ★ G2（2026-09-21 灵荒工坊实验实锤）：证据不可信（confidence=0）的维度
+            #   value 是**降级默认**（评分维满分 100 / 计数维 0），不是真实读数——
+            #   参与平均会把「不知道」洗成真分数（实测 readability conf=0 value=100
+            #   把综合分抬到 85.71，掩盖了真实短板）。处置层已保证 conf=0 ⇒
+            #   gate=recheck ⇒ 只复评不处置（L4 规则①），此处把「不知道」从
+            #   **展示分**里同样摘除：不进分母，与 A1 evidence_status 三态对齐。
+            _ev = getattr(d, "evidence", None)
+            if _ev is not None and float(getattr(_ev, "confidence", 1.0) or 0.0) <= 0.0:
+                continue
             if d.direction == ">=":
                 norm.append(min(1.0, d.value / d.threshold) if d.threshold else 1.0)
             else:

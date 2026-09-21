@@ -129,7 +129,14 @@ def _dim_issue_lines(dim: Any, max_issues: int = 8, max_desc: int = 200) -> list
         typ = str(it.get("type", "") or "").strip()
         tag = f"[{sev}] " if sev else ""
         prefix = f"{typ}：" if typ else ""
-        lines.append(f"  · {tag}{prefix}{desc[:max_desc]}")
+        # ★ 2026-09-21（灵荒工坊实验）：quote（原文定位）此前被丢弃——计数维
+        #   （人设/设定/逻辑）的 issues **必须带 quote 才计入 value**（
+        #   ``_count_gated_issues``），却只把 desc 编进 hint ⇒ Writer 知道
+        #   "有 3 处冲突"但定位不到原文，只能盲改 ⇒ 重写引入新冲突（实测
+        #   设定冲突 1→0→3 越修越多）。补上 quote 让 Writer 精确定位。
+        quote = str(it.get("quote", "") or "").strip()
+        tail = f"｜原文：「{quote[:80]}」" if quote else ""
+        lines.append(f"  · {tag}{prefix}{desc[:max_desc]}{tail}")
     return lines
 
 
@@ -177,6 +184,12 @@ def build_rewrite_hint(report: Any, chapter_nums: list[int]) -> str:
     for s in (appeal.get("suggestions") or [])[:3]:
         if isinstance(s, str) and s.strip():
             lines.append(f"- 读者吸引力建议：{s.strip()[:200]}")
+    lines.append(
+        "【既定事实约束（重写红线）】本次未回退的章节与设定台账是**既定事实**："
+        "重写章节必须与它们保持一致，不得为绕开冲突而改动其他章节已确立的"
+        "人物言行/境界/金手指规则/事件结果。若冲突源于重写章与保留章矛盾，"
+        "以保留章为准修改重写章；若冲突源于重写章内部自相矛盾，按世界观设定修复。"
+    )
     lines.append(
         "请在重写时针对以上维度改善（如补全伏笔回收、修复人设/设定冲突、"
         "提升连贯与追读节奏、控制注水），并保持与世界观/角色档案一致。"

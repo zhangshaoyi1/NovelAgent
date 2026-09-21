@@ -25,6 +25,7 @@ from typing import Any
 
 # 契约字段名的唯一真源（同层 core ⇒ 不违反 R6「core 不得反向依赖上层」）
 from agent.core.story.chapter_contract import (
+    CONTRACT_FIELDS,
     CONTRACT_LEAK_LABELS,
     find_contract_annotations,
 )
@@ -74,6 +75,16 @@ _JUNK_SIGNATURES: list[str] = [
 TITLE_RULE_ID: str = "title_placeholder"
 _TITLE_RE = re.compile(r"^#\s*第\s*(\d+)\s*章\s*·\s*(.*?)\s*$", re.MULTILINE)
 _TITLE_MIN_LEN = 4          # 标题正文（·之后）最少字数
+
+#: ★ G3（2026-09-21）：细纲契约的**字段名**出现在章节标题 = 写作元指令泄漏的
+#: 标题形态（实测 ch004「档位=垫片」恰 4 字符躲过 _TITLE_MIN_LEN）。
+#: 词表**由契约真源派生**（``chapter_contract.CONTRACT_FIELDS``，纪律 #19——
+#: 不再手写第二份字面量），且只匹配「字段名 + 赋值号」形态：
+#: 正文「他站在场边」「验收了药材」不含 ``字段名=`` ⇒ 不误杀（与既有红线
+#: ``test_common_short_words_not_in_wordlist`` 的口径一致）。
+_TITLE_CONTRACT_LABEL_RE = re.compile(
+    "(?:" + "|".join(re.escape(f) for f in CONTRACT_FIELDS) + ")\\s*[=＝]"
+)
 _TITLE_MAX_REPEAT = 2       # 标题与已发布标题重复即判违规
 # 3) 跨章段落去重：全书指纹库比对（去空白+标点归一化 hash，≥40字长段落，相似度>0.85）
 DUP_RULE_ID: str = "paragraph_dup"
@@ -606,6 +617,16 @@ class Guardrails:
         # 占位标题：标题正文等于/包含「第N章」自身（如「第5章·第5章」）
         if title_body == f"第{m.group(1)}章" or title_body.startswith(f"第{m.group(1)}章"):
             return f"章节标题为占位（「第{m.group(1)}章·第{m.group(1)}章」），必须改写为场景化标题"
+        # ★ G3（2026-09-21 灵荒工坊实验实锤）：写手把细纲契约标签当标题
+        #   （ch004 落盘「第 4 章 · 档位=垫片」）——「档位=垫片」恰 4 字符
+        #   躲过 _TITLE_MIN_LEN。与正文元指令泄漏（G14）同级：细纲字段名
+        #   （档位/章首钩子/章尾钩子/爽点/在场/禁/验收）是给写手的**指令**，
+        #   不是小说文本，出现在标题即判失败打回重写。
+        if _TITLE_CONTRACT_LABEL_RE.search(title_body):
+            return (
+                f"章节标题含细纲契约标签（「{title_body}」）——字段名是写作指令"
+                "不是正文，必须改写为场景化标题"
+            )
         # 与全书已发布标题重复
         if title_body in self.published_titles:
             return f"章节标题与已发布章节重复：{title_body!r}"
