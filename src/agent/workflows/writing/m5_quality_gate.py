@@ -23,6 +23,10 @@ from __future__ import annotations
 import logging
 from typing import Any
 
+# ★ 唯一真源（纪律 #19）：本文件此前用注释「与 B4 golden_three_threshold 默认一致」
+#   担保一致性 —— 注释不参与断言，单边改名即双向破裂。
+from agent.core.quality.golden_policy import SIX_DIM_FLOOR, SIX_DIM_PASS_LINE
+
 logger = logging.getLogger(__name__)
 
 MAX_REVISIONS = 2
@@ -31,8 +35,8 @@ MAX_REVISIONS = 2
 # 此前金三只在批末评估（evaluator golden gate），写时 9 项规则质检不含吸引力维度，
 # 导致低质量开局照样落盘、批末必然熔断且修不到开头（五灵破 19+7 次实证）。
 GOLDEN_WRITE_GATE_FIRST_N = 3
-GOLDEN_WRITE_GATE_TOTAL = 60  # 综合合格线（与 B4 golden_three_threshold 默认一致）
-GOLDEN_WRITE_GATE_FLOOR = 40  # 单维触底线（与 golden_three_floor 默认一致）
+GOLDEN_WRITE_GATE_TOTAL = SIX_DIM_PASS_LINE  # 综合合格线（派生自唯一真源，非本文件字面量）
+GOLDEN_WRITE_GATE_FLOOR = SIX_DIM_FLOOR      # 单维触底线（同上）
 
 
 class M5QualityGateMixin:

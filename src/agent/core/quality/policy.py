@@ -27,6 +27,14 @@ import json
 from pathlib import Path
 from typing import Any
 
+# ★ 金三 / 迷爱看阈值**唯一真源**（纪律 #19）：本文件此前与 evaluator /
+#   m5_quality_gate / agentic_pipeline / autowrite 各写一份 60/40，
+#   用注释担保一致 = 待爆形态。红线 tests/test_golden_threshold_ssot.py 锁派生关系。
+from agent.core.quality.golden_policy import (
+    GOLDEN_THREE_FLOOR,
+    GOLDEN_THREE_TOTAL,
+)
+
 # ---------------------------------------------------------------- 全局默认
 DEFAULT_QUALITY_POLICY: dict[str, Any] = {
     "quality_profile": "standard",  # light / standard / strict
@@ -37,8 +45,8 @@ DEFAULT_QUALITY_POLICY: dict[str, Any] = {
     },
     "golden_three": {
         "gate": True,
-        "threshold": 60,
-        "floor": 40,
+        "threshold": GOLDEN_THREE_TOTAL,
+        "floor": GOLDEN_THREE_FLOOR,
     },
     "deslop": {"enabled": True},
     "cost": {

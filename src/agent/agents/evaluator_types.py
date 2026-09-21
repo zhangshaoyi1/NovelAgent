@@ -5,6 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Callable, Optional, Protocol
 
+# ★ 六维门禁阈值唯一真源（纪律 #19）：本文件渲染层的 .get(..., 60/40) 回落值
+#   此前是第 9、10 份字面量副本。
+from agent.core.quality.golden_policy import SIX_DIM_FLOOR, SIX_DIM_PASS_LINE
+
 from agent.core.quality.scoring.reader_appeal import (  # to_markdown 子块渲染用
     APPEAL_LABELS,
     GOLDEN_GATE_PREFIX,
@@ -426,7 +430,7 @@ class NovelHealthReport:
                 lines.append("## 迷爱看（读者吸引力六维）")
                 verdict = a.get("verdict", "")
                 lines.append(
-                    f"- **综合分**：{a.get('total_score', 0)}/{a.get('threshold', 60)}"
+                    f"- **综合分**：{a.get('total_score', 0)}/{a.get('threshold', SIX_DIM_PASS_LINE)}"
                     f"（{verdict}）　**达标**：{'✓' if a.get('passed') else '✗'}"
                 )
                 lines.append("")
@@ -434,11 +438,11 @@ class NovelHealthReport:
                 lines.append("|---|---|---|---|")
                 dims = a.get("dimensions", {})
                 for k, v in dims.items():
-                    ok = v.get("score", 0) >= v.get("floor", 40)
+                    ok = v.get("score", 0) >= v.get("floor", SIX_DIM_FLOOR)
                     mark = "✓" if ok else "✗"
                     lines.append(
                         f"| {APPEAL_LABELS.get(k, k)} | {v.get('score', 0)} "
-                        f"| {v.get('floor', 40)} | {mark} |"
+                        f"| {v.get('floor', SIX_DIM_FLOOR)} | {mark} |"
                     )
                 if a.get("one_liner"):
                     lines.append(f"> {a.get('one_liner')}")
@@ -460,7 +464,7 @@ class NovelHealthReport:
                     else "每章独立评分取最差（超长回退）"
                 )
                 lines.append(
-                    f"- **综合分**：{g.get('total_score', 0)}/{g.get('threshold', 60)}"
+                    f"- **综合分**：{g.get('total_score', 0)}/{g.get('threshold', SIX_DIM_PASS_LINE)}"
                     f"（{g.get('verdict', '')}）　**达标**：{'✓' if g.get('passed') else '✗'}　"
                     f"（{mode_txt} · source={g.get('source', 'llm')}）"
                 )
@@ -468,11 +472,11 @@ class NovelHealthReport:
                 lines.append("| 维度 | 得分 | 触底线 | 达标 |")
                 lines.append("|---|---|---|---|")
                 for k, v in g.get("dimensions", {}).items():
-                    ok = v.get("score", 0) >= v.get("floor", 40)
+                    ok = v.get("score", 0) >= v.get("floor", SIX_DIM_FLOOR)
                     mark = "✓" if ok else "✗"
                     lines.append(
                         f"| {APPEAL_LABELS.get(k, k)} | {v.get('score', 0)} "
-                        f"| {v.get('floor', 40)} | {mark} |"
+                        f"| {v.get('floor', SIX_DIM_FLOOR)} | {mark} |"
                     )
                 if g.get("one_liner"):
                     lines.append(f"> {g.get('one_liner')}")

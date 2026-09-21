@@ -44,6 +44,9 @@ from agent.client.gateway_adapter import (
 )
 from agent.core.infra.prompt_manager import pm
 from agent.core.infra.degrade import degrade
+# ★ 六维评分门禁阈值**唯一真源**（纪律 #19）：此前 60/40 在 8 处各写一份，
+#   本文件与金三门禁/写时门禁同源，单边改名会静默分叉（test_golden_threshold_ssot）。
+from agent.core.quality.golden_policy import SIX_DIM_FLOOR, SIX_DIM_PASS_LINE
 from agent.core.quality.dimension_registry import (
     EVAL_WINDOW_CHAPTERS,
     clamp_value,
@@ -128,8 +131,8 @@ APPEAL_WEIGHTS = {
 }
 
 # G5 门禁合格线（主理人拍板 #3：综合线 + 单维触底兜底）
-APPEAL_PASS_LINE: int = 60        # 综合分合格线（可被 --appeal-threshold 覆盖）
-APPEAL_DIM_FLOOR: int = 40        # 单维触底兜底线
+APPEAL_PASS_LINE: int = SIX_DIM_PASS_LINE   # 综合分合格线（可被 --appeal-threshold 覆盖）
+APPEAL_DIM_FLOOR: int = SIX_DIM_FLOOR       # 单维触底兜底线
 APPEAL_GATE_PREFIX: str = "appeal_"   # 六维 DimensionResult 名前缀
 APPEAL_LABELS: dict[str, str] = {     # 短中文标签（展示 + is_pass 失败维命名）
     "hook_strength": "钩子强度",
@@ -141,9 +144,9 @@ APPEAL_LABELS: dict[str, str] = {     # 短中文标签（展示 + is_pass 失�
 }
 
 # ---- G6：黄金三章门禁常量（主理人拍板 #3：复用 G5 阈值 60/40，可被 CLI 覆盖）----
-GOLDEN_PASS_LINE: int = 60          # 三章拼接综合分合格线（--golden-three-threshold 覆盖）
+GOLDEN_PASS_LINE: int = SIX_DIM_PASS_LINE  # 三章拼接综合分合格线（--golden-three-threshold 覆盖）
 GOLDEN_BORDERLINE_BAND: int = 5     # 贴线复核带宽：首评落在 threshold±5 触发二次采样（优化登记 20260913）
-GOLDEN_DIM_FLOOR: int = 40          # 单维触底线（--golden-three-floor 覆盖）
+GOLDEN_DIM_FLOOR: int = SIX_DIM_FLOOR      # 单维触底线（--golden-three-floor 覆盖）
 GOLDEN_GATE_PREFIX: str = "golden_" # golden_* DimensionResult 名前缀
 GOLDEN_JOIN_CHAR_LIMIT: int = 10000 # 与 score_chapter 截断（行 315）对齐；超长 fallback 每章独立评分
 

@@ -72,6 +72,7 @@ scripts/*
 !scripts/ssot_audit.py
 !scripts/full_regression.py
 !scripts/audit_counter_action_chains.py
+!scripts/provider_judge_probe.py
 _final_commit_msg.txt
 
 # 一次性调试/恢复脚本统一放入 scripts/，不写在根目录

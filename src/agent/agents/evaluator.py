@@ -40,6 +40,19 @@ from rich.console import Console
 
 from agent.core.story.chapters import iter_chapter_texts  # G6：公共章节读取 helper（根因 B6-3）
 from agent.core.engine.state_machine import StateMachine
+# ★ 六维门禁阈值唯一真源（纪律 #19）：本类构造参数默认值此前手写 60/40
+from agent.core.quality.golden_policy import SIX_DIM_FLOOR, SIX_DIM_PASS_LINE
+# ★ 七维合格线唯一真源（纪律 #19）：此前与 planner.QualityTargets 各写一份，
+#   两处注释都写着"两处同步" —— 注释不参与断言，单边改名即静默分叉。
+from agent.core.quality.eval_targets import (
+    COHERENCE_MIN,
+    FORESHADOW_RECYCLE_MIN,
+    HARD_DIM_MAX,
+    LOGIC_HOLES_MAX,
+    PACING_ABNORMAL_MAX,
+    READABILITY_MIN,
+    SETTING_HARD_DIM_MAX,
+)
 from agent.core.infra.degrade import degrade  # F-1 降级可见化统一出口
 # D-J（2026-08-29）：不再在 agents 层直接 import workflows（违反依赖方向）。
 # 回退能力经 ``rollback_provider`` 构造注入（见 RollbackProvider），未注入时懒加载兜底。
@@ -110,13 +123,13 @@ class EvaluatorAgent(
         # ---- G5 新增：迷爱看六维双闸注入 ----
         appeal_scorer: "ReaderAppealScorer" | None = None,
         appeal_gate: bool = True,
-        appeal_threshold: int = 60,
+        appeal_threshold: int = SIX_DIM_PASS_LINE,
         appeal_window: int = 1,
         # ---- G6 新增：B4 黄金三章 + B6 防注水（与 appeal_* 并列独立）----
         golden_scorer: "ReaderAppealScorer | None" = None,  # 复用六维评分器（同一实例，评前三章）
         golden_three_gate: bool = True,                     # B4 开关（默认开）
-        golden_three_threshold: int = 60,                   # 综合合格线（--golden-three-threshold）
-        golden_three_floor: int = 40,                       # 单维触底线（--golden-three-floor）
+        golden_three_threshold: int = SIX_DIM_PASS_LINE,    # 综合合格线（--golden-three-threshold）
+        golden_three_floor: int = SIX_DIM_FLOOR,            # 单维触底线（--golden-three-floor）
         padding_gate: bool = True,                          # B6 开关（默认开）
         padding_threshold: float = 0.30,                    # 重复句占比阈值（--padding-threshold）
         # ---- G7 新增：人话总结层展示开关（默认开；--no-human-summary 关闭）----
@@ -156,14 +169,18 @@ class EvaluatorAgent(
         self.last_failed_report: "Optional[NovelHealthReport]" = None
         qt = dict(quality_targets or {})
         self.qt = {
-            "character_stability_high": float(qt.get("character_stability_high", 0)),
-            "setting_consistency_high": float(qt.get("setting_consistency_high", 0)),
-            "foreshadow_recycle_rate": float(qt.get("foreshadow_recycle_rate", 0.90)),
-            # G2 收紧 80→85 / 75→80（与 planner_agent.QualityTargets 默认两处同步）
-            "coherence": float(qt.get("coherence", 85.0)),
-            "readability": float(qt.get("readability", 80.0)),
-            "pacing_abnormal": float(qt.get("pacing_abnormal", 0.03)),
-            "logic_holes": float(qt.get("logic_holes", 0)),
+            "character_stability_high": float(qt.get("character_stability_high", HARD_DIM_MAX)),
+            "setting_consistency_high": float(
+                qt.get("setting_consistency_high", SETTING_HARD_DIM_MAX)
+            ),
+            "foreshadow_recycle_rate": float(
+                qt.get("foreshadow_recycle_rate", FORESHADOW_RECYCLE_MIN)
+            ),
+            # 唯一真源 core/quality/eval_targets.py（纪律 #19）
+            "coherence": float(qt.get("coherence", COHERENCE_MIN)),
+            "readability": float(qt.get("readability", READABILITY_MIN)),
+            "pacing_abnormal": float(qt.get("pacing_abnormal", PACING_ABNORMAL_MAX)),
+            "logic_holes": float(qt.get("logic_holes", LOGIC_HOLES_MAX)),
         }
         # G5：迷爱看六维双闸
         self.appeal_scorer = appeal_scorer

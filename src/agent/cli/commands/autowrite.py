@@ -16,6 +16,8 @@ from typing import Any
 from agent.cli._app import app, command, console, typer
 from agent.cli._shared import *  # enforce_gate / emit_result / make_quiet_console
 from agent.core.engine.state_machine import State
+# ★ 六维门禁阈值唯一真源（纪律 #19）：本文件 typer 选项默认值与回落值此前手写 60/40
+from agent.core.quality.golden_policy import SIX_DIM_FLOOR, SIX_DIM_PASS_LINE
 
 
 def _cli_value(v: Any, default: Any) -> Any:
@@ -212,7 +214,7 @@ def autowrite(
         False, "--no-appeal-gate", help="关闭迷爱看双闸终门禁"
     ),
     appeal_threshold: int = typer.Option(
-        60, "--appeal-threshold", help="迷爱看综合分合格线（默认 60）"
+        SIX_DIM_PASS_LINE, "--appeal-threshold", help="迷爱看综合分合格线（默认 60）"
     ),
     appeal_window: int = typer.Option(
         1, "--appeal-window", help="迷爱看评测末 N 章（默认 1，仅末章）"
@@ -225,10 +227,10 @@ def autowrite(
         False, "--no-golden-three-gate", help="关闭黄金三章门禁"
     ),
     golden_three_threshold: int = typer.Option(
-        60, "--golden-three-threshold", help="黄金三章综合分合格线（默认 60，复用 G5 档位）"
+        SIX_DIM_PASS_LINE, "--golden-three-threshold", help="黄金三章综合分合格线（默认 60，复用 G5 档位）"
     ),
     golden_three_floor: int = typer.Option(
-        40, "--golden-three-floor", help="黄金三章单维触底线（默认 40）"
+        SIX_DIM_FLOOR, "--golden-three-floor", help="黄金三章单维触底线（默认 40）"
     ),
     ai_gate: bool = typer.Option(
         True, "--ai-gate", help="开启去 AI 味护栏（B5，默认开）"
@@ -549,8 +551,8 @@ def autowrite(
         #   （实测：0 章写出）。此处与上方 CLI 层调用同一开关，保证只有一个语义。
         plan_gate_allow_stage_level=bool(_cli_value(allow_stage_level, False)),
         golden_three_gate=_golden_gate,
-        golden_three_threshold=int(_cli_value(golden_three_threshold, 60)),
-        golden_three_floor=int(_cli_value(golden_three_floor, 40)),
+        golden_three_threshold=int(_cli_value(golden_three_threshold, SIX_DIM_PASS_LINE)),
+        golden_three_floor=int(_cli_value(golden_three_floor, SIX_DIM_FLOOR)),
         padding_gate=_padding_gate,
         padding_threshold=float(_cli_value(padding_threshold, 0.30)),
         # ---- G7 新增：人话总结层展示开关（拍板 6：默认开，--no-human-summary 关闭）----

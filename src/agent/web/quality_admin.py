@@ -10,6 +10,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+# ★ 六维门禁阈值唯一真源（纪律 #19）：本页展示的 `.get('threshold', 60)` 回落值
+#   此前是又一份字面量副本。
+from agent.core.quality.golden_policy import SIX_DIM_PASS_LINE
+
 from agent.core.quality.policy import (
     DEFAULT_QUALITY_POLICY,
     PROFILE_PRESETS,
@@ -104,7 +108,7 @@ def activation_summary(project: str) -> dict[str, Any]:
                 "id": "golden3",
                 "name": "黄金三章评分",
                 "active": bool((policy.get("golden_three") or {}).get("gate", True)),
-                "note": f"threshold {(policy.get('golden_three') or {}).get('threshold', 60)}",
+                "note": f"threshold {(policy.get('golden_three') or {}).get('threshold', SIX_DIM_PASS_LINE)}",
             },
             {"id": "review_multi", "name": "多视角对抗评审", "active": "手动", "note": "review-book"},
             {

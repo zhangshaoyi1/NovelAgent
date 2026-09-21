@@ -33,6 +33,8 @@ from llmagent.gateway import Gateway
 from agent.core.base.exceptions import is_fatal_provider_error
 from agent.core.engine.state_machine import Event, State, StateMachine, TRANSITIONS
 from agent.core.infra.degrade import degrade
+# ★ 六维门禁阈值唯一真源（纪律 #19）：本类构造参数默认值此前手写 60/40
+from agent.core.quality.golden_policy import SIX_DIM_FLOOR, SIX_DIM_PASS_LINE
 from agent.core.story.setting_manager import SettingManager
 from agent.core.quality.guardrails import is_architecture_confirmed
 from agent.core.engine.workflow_registry import workflow
@@ -110,12 +112,12 @@ class AgenticPipelineWorkflow(
         on_progress: Callable[[str, int, int], None] | None = None,
         # G5 新增参数（迷爱看六维双闸）
         appeal_gate: bool = True,
-        appeal_threshold: int = 60,
+        appeal_threshold: int = SIX_DIM_PASS_LINE,
         appeal_window: int = 1,
         # ---- G6 新增参数 ----
         golden_three_gate: bool = True,
-        golden_three_threshold: int = 60,
-        golden_three_floor: int = 40,
+        golden_three_threshold: int = SIX_DIM_PASS_LINE,
+        golden_three_floor: int = SIX_DIM_FLOOR,
         padding_gate: bool = True,
         padding_threshold: float = 0.30,
         # ---- G7 新增参数（人话总结层展示开关；--no-human-summary 关闭）----

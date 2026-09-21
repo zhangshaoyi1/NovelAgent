@@ -31,6 +31,16 @@ from agent.core.infra.prompt_manager import pm
 from agent.core.story.method_style import load_method_text  # G11：写作方法模板
 from agent.core.story.setting_manager import SettingManager
 from agent.core.base.structured_output import StructuredOutputError
+# ★ 七维合格线唯一真源（纪律 #19）：本类各 Field 默认值此前与 evaluator.qt 各写一份
+from agent.core.quality.eval_targets import (
+    COHERENCE_MIN,
+    FORESHADOW_RECYCLE_MIN,
+    HARD_DIM_MAX,
+    LOGIC_HOLES_MAX,
+    PACING_ABNORMAL_MAX,
+    READABILITY_MIN,
+    SETTING_HARD_DIM_MAX,
+)
 
 
 # ============================================================
@@ -39,14 +49,14 @@ from agent.core.base.structured_output import StructuredOutputError
 class QualityTargets(BaseModel):
     """七维"不崩"合格线（对应设计文档 §1.2；标 not_relaxable 的不可放宽）。"""
 
-    character_stability_high: int = Field(default=0, description="人设硬伤高严重度数，=0 不可放宽")
-    setting_consistency_high: int = Field(default=0, description="设定一致性高严重度冲突，=0 不可放宽")
-    foreshadow_recycle_rate: float = Field(default=0.90, description="伏笔回收率下限，默认 90%")
-    # G2 收紧 80→85 / 75→80（与 evaluator_agent.qt 默认两处同步）
-    coherence: float = Field(default=85.0, description="连贯性自评下限（/100）")
-    readability: float = Field(default=80.0, description="追读力综合评分下限（/100）")
-    pacing_abnormal: float = Field(default=0.03, description="异常章节（注水/赶进度）比例上限")
-    logic_holes: int = Field(default=0, description="逻辑漏洞（死亡复活/道具凭空），=0 不可放宽")
+    character_stability_high: int = Field(default=HARD_DIM_MAX, description="人设硬伤高严重度数，=0 不可放宽")
+    setting_consistency_high: int = Field(default=SETTING_HARD_DIM_MAX, description="设定一致性高严重度冲突，=0 不可放宽")
+    foreshadow_recycle_rate: float = Field(default=FORESHADOW_RECYCLE_MIN, description="伏笔回收率下限，默认 90%")
+    # 唯一真源 core/quality/eval_targets.py（纪律 #19）
+    coherence: float = Field(default=COHERENCE_MIN, description="连贯性自评下限（/100）")
+    readability: float = Field(default=READABILITY_MIN, description="追读力综合评分下限（/100）")
+    pacing_abnormal: float = Field(default=PACING_ABNORMAL_MAX, description="异常章节（注水/赶进度）比例上限")
+    logic_holes: int = Field(default=LOGIC_HOLES_MAX, description="逻辑漏洞（死亡复活/道具凭空），=0 不可放宽")
 
 
 class CharacterSketch(BaseModel):

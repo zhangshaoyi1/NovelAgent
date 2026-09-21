@@ -41,6 +41,10 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Iterable
 
+# ★ 六维门禁阈值唯一真源（纪律 #19）：量纲契约里的 appeal_/golden_ 两组阈值
+#   此前手写 40.0/60.0，与 reader_appeal / evaluator / m5_quality_gate 各写一份。
+from agent.core.quality.golden_policy import SIX_DIM_FLOOR, SIX_DIM_PASS_LINE
+
 
 class Unit(str, Enum):
     """量纲。决定 value 的合法值域与语义。"""
@@ -485,12 +489,12 @@ def make_prefixed_specs(
 
 
 DIMENSIONS.update(make_prefixed_specs(
-    "appeal_", dim_threshold=40.0, total_threshold=60.0,
+    "appeal_", dim_threshold=float(SIX_DIM_FLOOR), total_threshold=float(SIX_DIM_PASS_LINE),
     eval_timing=EvalTiming.EVERY_WINDOW, repairability=Repairability.WINDOW,
     stat_scope=StatScope.WINDOW, group_label="迷",
 ))
 DIMENSIONS.update(make_prefixed_specs(
-    "golden_", dim_threshold=40.0, total_threshold=60.0,
+    "golden_", dim_threshold=float(SIX_DIM_FLOOR), total_threshold=float(SIX_DIM_PASS_LINE),
     eval_timing=EvalTiming.FIRST_CHAPTERS, repairability=Repairability.HEAD,
     stat_scope=StatScope.HEAD, group_label="金三",
 ))
