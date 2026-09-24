@@ -16,6 +16,7 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import subprocess
@@ -26,6 +27,8 @@ from typing import Any
 
 from agent.core.infra.degrade import degrade
 from agent.daemon import task_queue as tq
+
+_logger = logging.getLogger(__name__)
 
 # 默认超时：写命令 2h（长任务），非写命令 30min（短任务兜底，防止僵尸堵串行队列）
 # 2026-09-12：写命令默认上限改为**按提交章数缩放**（基础 1h + 15min/章），
@@ -50,6 +53,32 @@ _PROGRESS_SIGNALS = (
     ".state/tasks/logs",   # 目录：任一任务日志 mtime
     "chapters",            # 目录：任一章节文件 mtime
 )
+
+# ── 进展证据分级（2026-09-25）
+# ★ 病灶：上面这条清单把"活动痕迹"与"产出"混为一谈——原 docstring 明写
+#   「事件/进度/章节/日志任一有更新即视为健康推进」。于是心跳与巡检事件持续写
+#   .events/events.jsonl、日志持续滚动，mtime 一直新 ⇒ 停滞熔断永不触发。
+#   同族问题：trace 虚增 99%（把心跳当调用）、心跳 unknown 误杀（把存活当进展）。
+# ★ 借鉴 Chat On Steroids 的负面清单形态（AGENTS.md:2388-2391）：
+#   "Page presence, reloads, metadata revisions and replayed starts do not [renew the clock]."
+#   即：**只有产出算进展；痕迹一律不算**。负面清单不需要标定阈值，
+#   因此不受"绝对阈值跨对象离散度"影响（纪律 #26/#27）。
+PROGRESS_SIGNALS_OUTPUT: tuple[str, ...] = (
+    "chapters",  # 唯一产出型信号：真正的章节/稿件文件
+)
+PROGRESS_SIGNALS_TRACE: tuple[str, ...] = (
+    ".state/progress.json",        # 状态文件刷新（mtime 变 ≠ 章产出）
+    ".events/events.jsonl",        # 事件流（含巡检/心跳事件）
+    ".state/quality_audit.jsonl",  # 审计流
+    ".state/tasks/logs",           # 任务日志滚动
+)
+# 进展证据闭集（三值，每个值都 load-bearing）
+EVIDENCE_REAL = "real"            # 有产出型信号 —— 唯一可续期停滞时钟的证据
+EVIDENCE_TRACE_ONLY = "trace_only"  # 只有活动痕迹 —— 不算进展
+EVIDENCE_NONE = "none"            # 连痕迹都没有 —— 保守交给墙钟判定
+# 严格模式开关：默认**关**（纪律 #20：闸门强度必须与证据匹配，
+# 直接硬拦会误伤非写命令与冷启动；先留痕观察，确认后再考虑默认开）
+STRICT_PROGRESS_ENV = "NOVEL_STRICT_PROGRESS"
 
 
 def has_explicit_max_time(argv: list[str]) -> bool:
@@ -152,13 +181,71 @@ def _latest_progress_mtime(project_dir: Path | str) -> float:
     return latest
 
 
-def should_stall(task: dict[str, Any], now: float | None = None) -> bool:
+def _latest_mtime_of(root: Path, rels: tuple[str, ...]) -> float:
+    """给定相对路径清单中的最新 mtime（全部缺失/不可读返回 0.0）。"""
+    latest = 0.0
+    for rel in rels:
+        p = root / rel
+        if p.is_file():
+            latest = max(latest, _safe_mtime(p))
+        elif p.is_dir():
+            try:
+                for child in p.iterdir():
+                    latest = max(latest, _safe_mtime(child))
+            except OSError:  # noqa: SILENT_DEGRADE reason=expected-skip - 目录不存在/不可列举时跳过该信号
+                continue
+    return latest
+
+
+def progress_evidence(project_dir: Path | str) -> tuple[str, float]:
+    """进展证据分级：``(等级, 产出型最新 mtime)``。
+
+    ★ 语义（负面清单形态，纪律 #1/#16/#22）：
+      - ``real``：有产出型信号 —— **唯一允许续期停滞时钟的证据**
+      - ``trace_only``：只有活动痕迹在刷新 —— **不算进展**，且显性留痕
+      - ``none``：连痕迹都没有 —— 保守，交给墙钟 ``should_timeout`` 判定
+
+    注意本函数**不做时间窗判定**，只回答"证据属于哪一档"；这让调用方可以
+    分别处置（留痕 / 续期 / 保守），也便于单测在不拨时间轴的前提下断言。
+    """
+    root = Path(project_dir)
+    out_latest = _latest_mtime_of(root, PROGRESS_SIGNALS_OUTPUT)
+    if out_latest > 0:
+        return EVIDENCE_REAL, out_latest
+    if _latest_mtime_of(root, PROGRESS_SIGNALS_TRACE) > 0:
+        return EVIDENCE_TRACE_ONLY, 0.0
+    return EVIDENCE_NONE, 0.0
+
+
+def _is_writer_task(task: dict[str, Any]) -> bool:
+    """任务是否属于写命令族（严格模式的作用域边界，纪律 #18）。"""
+    writers = set(tq.writer_commands())
+    cmd = str(task.get("command") or "")
+    if cmd in writers:
+        return True
+    return any(str(a) in writers for a in (task.get("argv") or []))
+
+
+def _env_bool_strict() -> bool:
+    """严格进展模式：环境变量 ``NOVEL_STRICT_PROGRESS``（默认关）。"""
+    return os.environ.get(STRICT_PROGRESS_ENV, "").strip().lower() in {"1", "true", "on", "yes"}
+
+
+def should_stall(task: dict[str, Any], now: float | None = None, strict: bool | None = None) -> bool:
     """进度停滞判定（每章重置语义）：running 且项目进度产物超过窗口无更新。
 
     与墙钟 should_timeout 互补：墙钟兜"整体超预算"，停滞兜"单点挂死"。
-    只要流水线还在产出（事件/进度/章节/日志任一有更新），即视为健康推进，
-    无论已运行多久——效果等价于"每写一章就重置超时"。
-    项目无任何进度产物（如冷启动前期）时保守返回 False，交给墙钟判定。
+
+    ★ 2026-09-25 修正：原实现把"事件/进度/章节/日志任一有更新"当作健康推进，
+    导致心跳与巡检事件持续写 ``.events/events.jsonl``、日志持续滚动时 mtime 恒新，
+    停滞熔断永不触发。现引入证据分级：
+
+    - **默认路径（兼容，行为不变）**：仍沿用任一信号的最新 mtime；
+      但当发现"只有痕迹在刷新"时**显性留痕**，让假进展可见（纪律 #1）。
+    - **严格模式**（``strict=True`` 或 ``NOVEL_STRICT_PROGRESS=1``）：
+      只有**产出型**信号（chapters）能续期停滞时钟；且**仅作用于写命令**，
+      避免误伤不产出章节的评估/统计类命令（纪律 #18 缺作用域＝误伤）。
+      严格模式默认关——闸门强度必须与证据匹配（纪律 #20），先观察再硬化。
     """
     if task.get("status") != tq.STATUS_RUNNING:
         return False
@@ -166,6 +253,19 @@ def should_stall(task: dict[str, Any], now: float | None = None) -> bool:
         return False
     now_ts = now if now is not None else time.time()
     window = _env_int_stall()
+    level, out_latest = progress_evidence(task["project_dir"])
+    if level == EVIDENCE_TRACE_ONLY:
+        _logger.warning(
+            "[progress:trace-only] 项目 %s 只有活动痕迹在刷新、无产出型信号 ⇒ "
+            "痕迹不计入进展（严格模式下将判定停滞）",
+            task.get("project_dir"),
+        )
+    if strict is None:
+        strict = _env_bool_strict()
+    if strict and _is_writer_task(task):
+        if out_latest <= 0:
+            return False  # 冷启动尚无产出：保守，交给墙钟
+        return (now_ts - out_latest) > window
     latest = _latest_progress_mtime(task["project_dir"])
     if latest <= 0:
         return False
