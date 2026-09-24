@@ -173,6 +173,30 @@ def _write_window(project_dir: str | Path, *, size: int = _OPENING_WINDOW) -> tu
     return (cur + 1, cur + size)
 
 
+def write_window(project_dir: str | Path, *, size: int = _OPENING_WINDOW) -> tuple[int, int] | None:
+    """接下来要写的章节窗口 ``(起, 止)``（**公开口径**，供补供给端与门禁共用）。
+
+    薄委托 :func:`_write_window`——**同一实现**，读不到进度返回 ``None``。
+    ★ 为什么必须同源（2026-09-24）：补供给端（``subline_contract``）若自算窗口，
+    一旦与门禁口径分叉就会"补了行但门禁仍判缺位"，白烧 token 且缺陷被掩盖。
+    """
+    return _write_window(project_dir, size=size)
+
+
+def subline_range(content: str) -> tuple[int, int]:
+    """支线的章节区间 ``(lo, hi)``（公开口径，委托 :func:`_subline_range`）。"""
+    return _subline_range(content)
+
+
+def chapter_numbers(content: str) -> set[int]:
+    """逐章契约行覆盖的章号集合（公开口径，委托 :func:`_chapter_numbers`）。
+
+    ★ 2026-09-24：补供给端（``subline_contract``）必须与门禁用**同一函数**判定
+    "窗口内有几章补上了"——各写一份正则就会出现"补了行但门禁看不见"的静默失真。
+    """
+    return _chapter_numbers(content)
+
+
 def _chapter_numbers(content: str) -> set[int]:
     """逐章契约行覆盖的**章号集合**（与章级契约真源 ``chapter_contract`` 同源）。
 

@@ -110,11 +110,20 @@ def structure_feedback(feedback: str, chapter: int) -> RewriteInstruction:
     return RewriteInstruction(chapter=chapter, goal=goal, issues=issues, raw_feedback=feedback)
 
 
-def render_instruction(inst: RewriteInstruction) -> str:
-    """渲染为入 prompt 的标准"修改指令"块（替代原始反馈注入）。"""
+def render_instruction(inst: RewriteInstruction, *, keep_others: bool = True) -> str:
+    """渲染为入 prompt 的标准"修改指令"块（替代原始反馈注入）。
+
+    ``keep_others=False`` 供**整章重写**模式使用：整章重写要按本章契约重写全篇，
+    指令块里不能再出现「未提及的内容一律保留原样」——那与"整章重写"直接矛盾
+    （模型会据此把原文段落原样搬回，正是要消除的雷同）。默认 ``True`` 保持既有
+    定向修补语义（零回归）。
+    """
     lines: list[str] = [f"【结构化修改指令（第 {inst.chapter} 章）】", f"改写目标：{inst.goal}"]
     if inst.issues:
-        lines.append("问题清单（逐条命中，未提及的内容一律保留原样）：")
+        if keep_others:
+            lines.append("问题清单（逐条命中，未提及的内容一律保留原样）：")
+        else:
+            lines.append("问题清单（逐条命中；本章为**整章重写**，不受「仅改本清单」限制）：")
         for i, issue in enumerate(inst.issues, 1):
             lines.append(f"  {i}. [{issue.type}|{issue.position}] {issue.instruction}")
     else:

@@ -247,9 +247,10 @@ def test_g6_golden_join_fallback_worst(tmp_path: Path) -> None:
     dims_c = {k: 50 for k in APPEAL_DIMENSIONS}
     dims_c["emotion_curve"] = 30
     stub = _StubSequenceScorer([
-        _make_report(dims_a),
-        _make_report(dims_b),
-        _make_report(dims_c),
+        # ★ 2026-09-25：回退路径逐章采 GOLDEN_FALLBACK_SAMPLES(2) 次取均值后再取最差
+        _make_report(dims_a), _make_report(dims_a),
+        _make_report(dims_b), _make_report(dims_b),
+        _make_report(dims_c), _make_report(dims_c),
     ])
     report = gate_first_chapters(stub, tmp_path, 3)
     assert report.fallback is True
@@ -343,6 +344,51 @@ def test_g6_golden_constants() -> None:
     assert GOLDEN_PASS_LINE == 60
     assert GOLDEN_DIM_FLOOR == 40
     assert GOLDEN_JOIN_CHAR_LIMIT == 10000
+
+
+# ============================================================
+# 8. 金三标定来源（2026-09-25）：CLI 显式 > 项目策略 > 全局真源
+# ============================================================
+def test_golden_settings_precedence_and_validation() -> None:
+    """项目策略 ``.state/quality_policy.json`` 的 golden_three 必须**真正驱动**门禁。
+
+    此前该字段只被 Web 质量面板显示、无人消费 ⇒「页面显示 55、门禁按 60 判」的假一致。
+    慢热开篇的书需要各自标定（灵荒工坊 55/30），而全局真源仍只 golden_policy 一处。
+    """
+    from agent.core.quality.golden_policy import SIX_DIM_FLOOR, SIX_DIM_PASS_LINE
+    from agent.core.quality.policy import golden_three_settings
+
+    # 无策略 → 全局真源
+    assert golden_three_settings(None) == {
+        "gate": True, "threshold": SIX_DIM_PASS_LINE, "floor": SIX_DIM_FLOOR,
+    }
+    # 项目策略生效
+    cfg = golden_three_settings({"golden_three": {"threshold": 55, "floor": 30}})
+    assert (cfg["threshold"], cfg["floor"]) == (55, 30)
+    # CLI 显式优先于策略
+    cfg = golden_three_settings(
+        {"golden_three": {"threshold": 55, "floor": 30}}, cli_threshold=70
+    )
+    assert (cfg["threshold"], cfg["floor"]) == (70, 30)
+    # 非法/越界回落真源（项目策略文件是用户可编辑边界）
+    cfg = golden_three_settings({"golden_three": {"threshold": "abc", "floor": 999}})
+    assert (cfg["threshold"], cfg["floor"]) == (SIX_DIM_PASS_LINE, SIX_DIM_FLOOR)
+    # gate：策略可关；CLI 显式关优先
+    assert golden_three_settings({"golden_three": {"gate": False}})["gate"] is False
+    assert (
+        golden_three_settings({"golden_three": {"gate": True}}, cli_gate=False)["gate"] is False
+    )
+
+
+def test_autowrite_uses_policy_for_golden_thresholds() -> None:
+    """autowrite 必须经 policy 解析入口取金三标定（不得写死 60/40）。"""
+    from pathlib import Path as _Path
+
+    from agent.cli.commands import autowrite as aw
+
+    src = _Path(aw.__file__).read_text(encoding="utf-8")
+    assert "golden_three_settings(" in src, "autowrite 未接 policy 解析入口"
+    assert '_golden_cfg["threshold"]' in src and '_golden_cfg["floor"]' in src
 
 
 def test_g6_golden_three_subblock(tmp_path: Path) -> None:

@@ -66,6 +66,15 @@ def test_render_instruction_block() -> None:
     assert "未提及的内容一律保留原样" in block
 
 
+def test_render_instruction_without_keep_others() -> None:
+    """整章重写模式（``keep_others=False``）：不得再出现"原样保留"这类与整章重写矛盾的措辞。"""
+    inst = structure_feedback("与下一章雷同，整章重写", 7)
+    block = render_instruction(inst, keep_others=False)
+    assert "【结构化修改指令（第 7 章）】" in block
+    assert "未提及的内容一律保留原样" not in block
+    assert "整章重写" in block  # 明确告知不受"仅改本清单"限制
+
+
 # ---------------------------------------------------------------- 确认闸口
 def test_confirm_rejected_skips_llm_and_keeps_chapter(tmp_path: Path) -> None:
     rewriter, d = _make_rewriter(tmp_path, _fake_llm())
@@ -101,3 +110,79 @@ def test_no_confirm_fn_still_structures(tmp_path: Path) -> None:
     rewriter, _d = _make_rewriter(tmp_path, _fake_llm())
     res = rewriter.rewrite(2, "太拖了，删水")
     assert res.llm_used is True and res.changed_summary.startswith("按反馈重写")
+
+
+# ---------------------------------------------------------------- CLI 展示层契约
+def test_print_result_tolerates_str_error_and_surfaces_reason() -> None:
+    """``error`` 为 str（降级原因，如 LLM 不可达）时不得崩，须透出原因。
+
+    ``RewriteResult.to_dict()`` **恒带** ``"error"`` 键（无错时为空串），旧实现按
+    dict 取值 ⇒ ``AttributeError: 'str' object has no attribute 'get'``（实测
+    ``rewrite --chapter 15`` 崩在 rewrite.py:177）。
+    """
+    from agent.cli.commands.rewrite import _print_result
+
+    c = MagicMock()
+    _print_result(
+        c,
+        {
+            "chapter": 15,
+            "rewritten": False,
+            "blocked": False,
+            "error": "Provider openai 调用失败: Connection error.",
+            "old_word_count": 2450,
+            "new_word_count": 2450,
+            "changed_summary": "未改写",
+            "guardrail_passed": True,
+            "guardrail_report": {},
+        },
+    )
+
+    printed = "\n".join(str(call.args[0]) for call in c.print.call_args_list)
+    assert "Connection error." in printed  # 降级原因透出，不被吞掉
+
+
+def test_print_result_reports_structural_error_as_failure() -> None:
+    """``error`` 为 dict（结构性失败，如章节不存在）时按失败展示且不再取后续字段。"""
+    from agent.cli.commands.rewrite import _print_result
+
+    c = MagicMock()
+    _print_result(
+        c,
+        {"success": False, "error": {"code": "chapter_not_found", "message": "第 999 章不存在"}},
+    )
+
+    printed = "\n".join(str(call.args[0]) for call in c.print.call_args_list)
+    assert "第 999 章不存在" in printed
+    assert c.print.call_count == 1  # 无结果可展示，直接返回
+
+
+def test_print_result_surfaces_error_violations_from_report() -> None:
+    """护栏报告取 violations（非 errors 子键），仅透出 error 级。"""
+    from agent.cli.commands.rewrite import _print_result
+
+    c = MagicMock()
+    _print_result(
+        c,
+        {
+            "chapter": 15,
+            "rewritten": True,
+            "blocked": False,
+            "error": "",
+            "old_word_count": 2439,
+            "new_word_count": 2410,
+            "changed_summary": "按反馈重写",
+            "guardrail_passed": False,
+            "guardrail_report": {
+                "passed": False,
+                "violations": [
+                    {"rule_id": "paragraph_dup", "severity": "error", "message": "跨章重复"},
+                    {"rule_id": "ai_flavor", "severity": "warn", "message": "AI 腔"},
+                ],
+            },
+        },
+    )
+
+    printed = "\n".join(str(call.args[0]) for call in c.print.call_args_list)
+    assert "paragraph_dup" in printed
+    assert "ai_flavor" not in printed

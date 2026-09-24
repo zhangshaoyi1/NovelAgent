@@ -207,3 +207,147 @@ class TestSingleSourceOfDesignSupply:
         assert not _re.search(r'plan\.json"\)\.read_text|"plan\.json"', judge), (
             "评委端自行解析 plan.json = 又一条抽取通路，必将与 design_brief 漂移"
         )
+
+
+# ============================================================
+# 承接=（章首状态结转）三端供给（2026-09-21）
+# ============================================================
+class TestCarriedStateThreeEndSupply:
+    def test_design_brief_carries_opening_state_field(self) -> None:
+        """DesignBrief 必须携带承接=块（裁判一致性对齐的权威起点）。"""
+        from agent.core.story.design_brief import DesignBrief
+
+        assert "opening_state" in DesignBrief.__dataclass_fields__, (
+            "承接=（opening_state）未成为设计产出的一部分——评委拿不到权威章首状态"
+        )
+
+    def test_judge_render_injects_carried_state(self) -> None:
+        """评委端渲染必须把承接=置于对齐起点（CARRIED_TO_JUDGE），不得只靠旧台账。"""
+        src = _read("core/story/design_brief.py")
+        judge = _func_source("core/story/design_brief.py", "render_for_judge")
+        assert "CARRIED_TO_JUDGE" in judge, (
+            "render_for_judge 未注入承接=判定前提——评委会拿旧台账当标尺"
+        )
+        # 承接块必须出现在档位块之前（对齐起点最先可见）
+        assert judge.index("CARRIED_TO_JUDGE") < judge.index("window_pace_tiers"), (
+            "承接=应置于评委端判定参照系**之前**（作为对齐起点，最不易被预算挤出）"
+        )
+
+    def test_persist_render_injects_carried_state(self) -> None:
+        """落盘端渲染必须携带承接=结转核对基线（CARRIED_TO_PERSIST）。"""
+        persist = _func_source("core/story/design_brief.py", "render_for_persist")
+        assert "CARRIED_TO_PERSIST" in persist, (
+            "render_for_persist 未注入承接=结转核对——落盘端只写不读"
+        )
+
+    def test_opening_state_assembled_from_continuity_singleton(self) -> None:
+        """承接=必须与写手端 continuity_projection **同源**（core/continuity 投影）。
+        禁止另起抽取通路，否则评委与写手又漂移。
+        """
+        snippet = _func_source("core/story/design_brief.py", "_render_opening_state")
+        assert "core.continuity" in snippet, "承接=未从 core/continuity 账本投影装配"
+        assert "project_to_text" in snippet, "承接=必须复用 project_to_text（与写手端同源）"
+
+    def test_writer_render_injects_carried_anchor(self) -> None:
+        """写手端必须注入承接=的**硬约束锚**（CARRIED_TO_WRITER），且置于块首。
+
+        2026-09-21：ch25 实证 ``continuity_projection`` 只是**说明性**投影，给不到
+        写手"这是权威起点、只能连续演进"的硬约束力 ⇒ 引灵中期被连跳两级到淳真期初期。
+        故 ``render_for_writer`` 必须在最前注入写手专用锚。CARRIED_TO_JUDGE/PERSIST
+        系评委/落盘专用，不得混入写手端；写手锚必须优先于设计意图（连续起点最先可见）。
+        """
+        src = _read("core/story/design_brief.py")
+        writer = _func_source("core/story/design_brief.py", "render_for_writer")
+        assert "CARRIED_TO_WRITER" in writer, (
+            "render_for_writer 未注入写手端承接=硬约束锚——写手看不到权威章首境界，越级会复发"
+        )
+        assert "CARRIED_TO_JUDGE" not in writer and "CARRIED_TO_PERSIST" not in writer, (
+            "写手端不得混入评委/落盘专用锚（防止语义错位）"
+        )
+        assert writer.index("CARRIED_TO_WRITER") < writer.index("chapter_intent"), (
+            "承接=写手锚应置于设计意图**之前**（连续起点最先可见、最不易被预算挤出）"
+        )
+        assert "CARRIED_TO_WRITER" in src, (
+            "CARRIED_TO_WRITER 常量必须存在于 design_brief——否则写手锚无正文"
+        )
+
+
+# ============================================================
+# 阶段级 vs 章级粒度标注 + 优先级仲裁（2026-09-24）
+# ============================================================
+class TestStageDirectionGranularity:
+    """事故：ch41 一章内 引灵→淳真 连跳两境。
+
+    根因是 ``_render_chapter_intent`` 把**阶段级**（跨多章）的「支线目标/主线方向」
+    与本章级内容混排，而写手端标题声称整块「本章须落实」——两者冲突且无仲裁，
+    写手服从"须落实" ⇒ 把阶段目标挤进一章。本组断言把粒度标注钉死。
+    """
+
+    def test_stage_level_lines_are_labeled_cross_chapter(self) -> None:
+        from agent.core.story.design_brief import _render_chapter_intent
+
+        md = "## 支线目标\n用三条支线把工坊做成全州最大的灵材供应方\n"
+        out = _render_chapter_intent(
+            md, chapter_num=41, route_title="规模化深化", route_result="占据散修市场"
+        )
+        staged = [
+            ln for ln in out.splitlines()
+            if ln.startswith("- ") and ("支线目标" in ln or "主线方向" in ln)
+        ]
+        assert len(staged) == 2, f"支线目标/主线方向两行应都在，实际：{out!r}"
+        for ln in staged:
+            assert "跨多章" in ln and "本章不必完成" in ln, (
+                "阶段级（跨多章）目标必须自带粒度标注——否则写手会把它当"
+                "「本章须落实」，在一章内做完整条阶段目标（ch41 越级跳变复发）"
+            )
+
+    def test_stage_direction_label_does_not_reuse_non_current_token(self) -> None:
+        """粒度标注**不得**复用「非本章」三字。
+
+        「非本章」是 ``chapter_contract.NON_CURRENT_LABEL_SUFFIX`` 的既有专义
+        （"回退到最近前文、证据弱"）。阶段方向复用同词 ⇒ 提示词里出现两个同词异义的
+        参照系（写手/评委都要猜是"证据弱"还是"别在本章做完"）——这正是纪律 #20
+        警告的参照系错位。此断言在 2026-09-24 首版措辞（"非本章须完成"）上曾失败。
+        """
+        from agent.core.story.chapter_contract import NON_CURRENT_LABEL_SUFFIX
+        from agent.core.story.design_brief import _render_chapter_intent
+
+        md = "## 支线目标\n在青石镇站住脚\n"
+        out = _render_chapter_intent(
+            md, chapter_num=3, route_title="立足", route_result="第一笔口碑"
+        )
+        assert NON_CURRENT_LABEL_SUFFIX not in out, "阶段方向不得携带弱证据标注"
+        assert "非本章" not in out, (
+            "「非本章」是弱证据（回退到最近前文）的专义，阶段方向复用会造成同词异义"
+        )
+
+    def test_chapter_level_lines_not_labeled_cross_chapter(self) -> None:
+        """粒度标注不得泛化到章级行（钩子/情节点），否则章级目标被写手忽略。"""
+        snippet = _func_source("core/story/design_brief.py", "_render_chapter_intent")
+        assert snippet.count("阶段方向·跨多章") == 2, (
+            "「跨多章」标注只应出现在阶段级两行（支线目标/主线方向）——"
+            "出现次数不符说明标注被误加到了章级行（钩子/情节点）"
+        )
+
+    def test_writer_intent_heading_is_neutral(self) -> None:
+        writer = _func_source("core/story/design_brief.py", "render_for_writer")
+        assert "【本章设计意图（规划端已登记，本章须落实；不得自行改道）】" not in writer, (
+            "写手端设计意图标题不得再声称整块都「本章须落实」——"
+            "块内含阶段级信息，该措辞与承接锚的「禁止越级跳变」直接冲突且无仲裁"
+        )
+        assert "跨多章" in writer, (
+            "写手端标题必须显式声明「标注跨多章的禁止在单章内完成」"
+        )
+
+
+class TestCarriedPriorityArbitration:
+    """承接=（CARRIED_TO_WRITER）必须给出**冲突仲裁**，否则并列信息仍靠模型自行取舍。"""
+
+    def test_arbitration_clause_present(self) -> None:
+        from agent.core.story.design_brief import CARRIED_TO_WRITER
+
+        assert "优先级仲裁" in CARRIED_TO_WRITER, (
+            "承接锚缺【优先级仲裁】段——设计意图与承接状态冲突时无判定口径"
+        )
+        for kw in ("至多从承接值推进一境", "不得在单章内完成"):
+            assert kw in CARRIED_TO_WRITER, f"仲裁段缺少关键约束：{kw}"

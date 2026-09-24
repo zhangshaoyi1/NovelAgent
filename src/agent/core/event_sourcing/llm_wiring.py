@@ -54,6 +54,37 @@ def wire_llm_event_hook(project_dir: str) -> None:
     set_llm_usage_hook(_usage_hook_factory())
 
 
+def wire_prompt_capture(project_dir: str) -> None:
+    """按当前书的 per-book 开关装配「提示词全文捕获」。
+
+    - 开启：注入 client 层捕获 flag（后续用量事件附带 prompt/response 全文），
+      并在 EventBus 上注册 ``PromptFileConsumer``（落 prompt → prompts.jsonl）。
+    - 关闭：默认 no-op（不附带全文、不注册消费者）。
+
+    须在 ``wire_llm_event_hook`` 之后（或其本身就含 EventBus.configure）调用，
+    且位于进程内「当前激活书籍」的 AgentService 初始化路径上，使 flag 与
+    consumer 与当前书对齐。若后续切换书籍，需再次按新书调用本函数覆盖。
+    """
+    from agent.client.llm_usage import set_llm_capture_prompts
+
+    # per-book 开关（core 层读取；client 层不依赖 core，故在此中转）。
+    from agent.core.event_sourcing.prompt_capture import (
+        PromptFileConsumer,
+        capture_enabled,
+    )
+
+    enabled = capture_enabled(project_dir)
+    if not enabled:
+        # 关闭时显式复位 flag 并卸载消费者（避免切换书籍后残留旧状态）。
+        set_llm_capture_prompts(False)
+        EventBus.get_instance().consumer_registry.unregister("prompt_file")
+        return
+    set_llm_capture_prompts(True)
+    EventBus.get_instance().consumer_registry.register(
+        PromptFileConsumer(project_dir)
+    )
+
+
 def _usage_hook_factory():
     """用量 hook：llm.usage 事件落 EventBus + TraceSpan 落全局 TraceStore。
 

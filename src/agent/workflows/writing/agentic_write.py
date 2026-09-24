@@ -907,12 +907,15 @@ class AgenticWriteWorkflow:
         # 此前只在落盘后 pipeline gate + 完本 fullbook_dup_scan 才扫，命中仅贴 flag
         # 保留该章（changan 书 672 处相似段落事后人工修复实证）。指纹库命中 → blocking。
         try:
-            from agent.core.quality.guardrails import Guardrails, load_fingerprints
-
-            _fpdb = load_fingerprints(
-                Path(self.project_dir) / ".state" / "chapter_fingerprints.json"
+            from agent.core.quality.guardrails import (
+                Guardrails,
+                load_book_fingerprints,
             )
-            _fpdb.pop(str(ctx.get("chapter_num")), None)  # 打回重写时排除本章旧指纹
+
+            # 2026-09-24：按章文件重建指纹库（缓存可能因带外改动过期，盲信会漏检真重复）
+            _fpdb = load_book_fingerprints(
+                self.project_dir, exclude=ctx.get("chapter_num")
+            )
             if _fpdb:
                 _dup_gr = Guardrails(
                     check_junk=False, check_title=False, check_dup=True,

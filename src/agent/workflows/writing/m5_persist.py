@@ -12,6 +12,7 @@ from rich.panel import Panel
 
 from agent.core.infra.degrade import degrade
 from agent.core.quality.consistency import ConflictReport
+from agent.core.quality.consistency.checker import derive_realm_fact
 from agent.core.story.evidence_chain import EvidenceChain, EvidenceRef
 from agent.workflows.writing.m5_text_hygiene import hard_replace_english  # noqa: F401 - 兼容旧导入路径
 
@@ -109,8 +110,25 @@ _DISPOSITION_ALT = "|".join(re.escape(s) for s in _DISPOSITION_VERBS)
 # 于是「三枚镇魔符」「三个黑衣人」抽得到，而「钉入大地的桩」这类描写被挡下。
 _NUM_ALT = r"[0-9一二两三四五六七八九十百千几半]+"
 _UNIT_ALT = r"[人多双名只条枚颗道把柄根张块片具件样重层个]"
-# 名词里出现这些虚词/副词即判为切错的片段（「接着一人」「正在灵」）
-_NOUN_BAD = re.compile(r"[的了着过在正接来去又并将被把对向从和与或是那此]")
+# 名词里出现这些字即判为切错的片段——三类：
+#   1) 虚词 / 副词：「接着一人」「正在灵」；
+#   2) 比况词 / 能愿动词 / 动词：「四个字像烙印」（比况）、「能翻盘」「身穿灰袍」
+#      「伸手探向」「一个数字钉死」「二层已解锁」；
+#   3) 数量修饰：「半个月有人」「一个半人高」「一条线五个人」。
+# ★ 2026-09-25 扩充（灵荒工坊 ch47 判定事故）：旧表只有虚词，于是「『属性对冲』四个字
+#   像烙印一样刻在他记忆里」被抽成 ``world/字像烙印.count=四个``，评委据此把 ch51 的
+#   「符号出现在三个地方」判成**数量矛盾**（``logic_holes`` 硬指标不达标，整轮 escalated）。
+#   宁可少抽（漏一条 count 事实无害）也不可抽错（脏实体进账本会持续污染评委判定）。
+#   ★ 尺度：只收「不可能出现在实体名里」的字。实测反例——「劣」曾被误收，
+#     于是「三枚劣品灵石」（正当实体）被一并挡掉；凡有反例的字一律不进本表。
+_NOUN_BAD = re.compile(
+    r"[的了着过在正接来去又并将被把对向从和与或是那此"  # 虚词 / 副词
+    r"像似能翻伸呈都已穿嵌解有"                          # 比况 / 能愿 / 动词
+    r"数个半]"                                          # 数量修饰
+)
+#: 只在「傀儡」里成词、从不单独作名词收尾的汉字——候选以此收尾即说明名词被截断
+#: （「十二具标准化傀儡」曾抽成 ``标准化傀``、「一具粗劣傀儡」曾抽成 ``粗劣傀``）。
+_INCOMPLETE_CHARS = frozenset("傀")
 # 实体性收尾（人物 / 法器 / 器物）
 _ENTITY_SUFFIX = re.compile(
     r"(人|者|众|手|弟子|门人|守卫|侍卫|兵|卒|符|剑|刀|丹|印|令|旗|阵|盘|卷|"
@@ -128,6 +146,9 @@ def _pick_noun(run_text: str, entities: set[str], max_len: int = 4) -> str:
     for length in range(upper, 1, -1):
         cand = run_text[:length]
         if _NOUN_BAD.search(cand):
+            continue
+        # 截断守卫：末字是「只作构词成分」的汉字（傀，须与「儡」连用）说明名词被切短，丢弃
+        if cand[-1] in _INCOMPLETE_CHARS:
             continue
         if cand in entities or _ENTITY_SUFFIX.search(cand):
             return cand
@@ -228,9 +249,13 @@ def _present_characters(body: str, ctx: dict[str, Any]) -> list[str]:
 
 
 def _extract_chapter_facts(
-    chapter_num: int, body: str, ctx: dict[str, Any]
+    chapter_num: int, body: str, ctx: dict[str, Any], project_dir: Path | None = None
 ) -> tuple[list[tuple[str, str, str, str, str]], list[str], list[str]]:
     """确定性抽取最小事实集（P0-2 实体锚定版）。
+
+    Args:
+        project_dir: 项目目录；给出时才启用「主角境界推进·跨句兜底」（见步骤 6b，
+            需要读 world.md 境界体系 / plan.json 主角 / 账本承接值）。
 
     Returns:
         (facts_raw, must_carry, next_chapter_constraints)
@@ -336,6 +361,22 @@ def _extract_chapter_facts(
         if not m or _negated(body, m.start(1)):
             continue
         _emit("character", name, "realm", m.group(2), m.group(0))
+
+    # 6b) 主角境界推进·跨句兜底（2026-09-24 灵荒工坊 ch043 实证）
+    #     步骤 6 要求「角色名与境界名**同句**」；正文把突破写成对白里的独立短句
+    #     （`"突破了。栖气期初期。"`）时两者不在同一句 ⇒ 漏抽，且 LLM 结算也没记
+    #     ⇒ 承接锚点在账本里永不前进 ⇒ 后续章节按旧境界写 ⇒ 与已发生正文自相矛盾。
+    #     只追认主角「承接 + 恰好 1 档」的推进（越级留给 realm_span 规则 BLOCK）。
+    if project_dir is not None:
+        derived = derive_realm_fact(project_dir, body)
+        if derived:
+            _emit(
+                "character",
+                derived["subject_id"],
+                derived["field"],
+                derived["value"],
+                derived["evidence"],
+            )
 
     # 7) 设计维度·关系演变（≤4）：character/<角色名>.relation
     #    角色档案「关系」段登记的是**演变方向**（"从排斥到认可"）；不落盘则
@@ -599,7 +640,9 @@ class M5PersistMixin:
             commit_id = f"ch{chapter_num:03d}"
 
             body = _chapter_body_text(chapter_num, chapter_text, self.chapters_dir)
-            facts_raw, must_carry, constraints = _extract_chapter_facts(chapter_num, body, ctx)
+            facts_raw, must_carry, constraints = _extract_chapter_facts(
+                chapter_num, body, ctx, self.project_dir
+            )
             facts = [
                 ContinuityFact(
                     domain=domain,

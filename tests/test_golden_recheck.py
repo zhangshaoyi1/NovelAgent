@@ -91,21 +91,39 @@ def _patch_read_chapters(monkeypatch, tmp_path: Path, texts: list[str]) -> None:
 
 def test_gate_first_chapters_borderline_triggers_second_sample(monkeypatch, tmp_path) -> None:
     texts = ["第一章内容" * 200, "第二章内容" * 200, "第三章内容" * 200]
-    # 拼接超长 → fallback 逐章取最差；首评 total=59 贴线，复采样 65 → 均值 62
-    responses = []
-    for _ in range(2):  # 两次采样 × 3 章
-        responses.append(_dims(_appeal(59)))
-        responses.append(_dims(_appeal(65)))
-        responses.append(_dims(_appeal(65)))
-    llm = _FakeLLM(responses)
+    # 拼接未超 10000 → 主路径（拼接评一次）；首评 59 贴线 → 复采样 65 → 逐维均值 62
+    llm = _FakeLLM([_dims(_appeal(59)), _dims(_appeal(65))])
     scorer = _make_scorer(monkeypatch, llm)
     _patch_read_chapters(monkeypatch, tmp_path, texts)
     report = gate_first_chapters(scorer, tmp_path, 3, threshold=60)
     assert report.llm_used is True
     assert "复核" in report.one_liner
-    # 逐维均值：最差维 59 与 65 均值 = 62
+    assert not llm.responses, "贴线必须触发第二次采样"
+    # 逐维均值：(59+65)/2 = 62
     assert report.total_score == 62
     assert set(report.dimensions) == set(APPEAL_DIMENSIONS)
+
+
+def test_gate_first_chapters_fallback_uses_per_chapter_mean(monkeypatch, tmp_path) -> None:
+    """超长回退：逐章须先取**多次采样均值**再参与取最差（消除单样本 min 的系统性低估）。
+
+    旧实现直接对单次采样取 min，判定噪声 σ≈8-10 ⇒ min-of-3 低估 7-10 分，
+    达标书被误熔断（灵荒工坊实证：单次 min 综合 57/爽点 38 vs 逐章均值 min ≈68/42）。
+    """
+    texts = ["第一章内容" * 700, "第二章内容" * 700, "第三章内容" * 700]  # 拼接 > 10000 → 回退
+    responses = [
+        _dims(_appeal(70)), _dims(_appeal(90)),   # 第 1 章：单次 70 会低估，均值 80
+        _dims(_appeal(90)), _dims(_appeal(90)),
+        _dims(_appeal(90)), _dims(_appeal(90)),
+    ]
+    llm = _FakeLLM(responses)
+    scorer = _make_scorer(monkeypatch, llm)
+    _patch_read_chapters(monkeypatch, tmp_path, texts)
+    report = gate_first_chapters(scorer, tmp_path, 3, threshold=60)
+    assert report.fallback is True
+    assert not llm.responses, "每章应采 GOLDEN_FALLBACK_SAMPLES 次"
+    assert report.dimensions["hook_strength"] == 80, report.dimensions
+    assert report.total_score == 80, report.total_score
 
 
 def test_gate_first_chapters_far_from_borderline_single_sample(monkeypatch, tmp_path) -> None:
@@ -119,6 +137,64 @@ def test_gate_first_chapters_far_from_borderline_single_sample(monkeypatch, tmp_
     assert report.one_liner != "贴线二次采样复核：首评 80/复核 80，取逐维均值"
     assert len(report.one_liner) >= 0
     assert "复核" not in report.one_liner
+
+
+# ============================================================
+# ★ 2026-09-25：单维触底线也要复核（此前只看综合分）
+# ============================================================
+def _appeal_with_payoff(total: int, payoff: int) -> str:
+    """构造报告 JSON：除爽点外各维取 total，便于精确控制触底维。"""
+    dims = {k: total for k in APPEAL_DIMENSIONS}
+    dims["payoff_density"] = payoff
+    return _dims({"dimensions": dims, "one_liner": "t", "suggestions": []})
+
+
+def test_gate_first_chapters_dim_floor_triggers_second_sample(monkeypatch, tmp_path) -> None:
+    """综合分远离贴线带，但**单维触底**时同样必须复核。
+
+    旧实现只看综合分 ⇒ 单维触底（爽点 38 < 触底线 40）永不复核；而单维得分方差
+    远大于总分（灵荒工坊 ch002 实测同一内容爽点 35↔58）——「1 分之差」误熔断，
+    与本函数存在的理由同型（灵荒薪传 59/60）。
+    """
+    texts = ["第一章内容" * 200]
+    llm = _FakeLLM([_appeal_with_payoff(80, 38), _appeal_with_payoff(80, 52)])
+    scorer = _make_scorer(monkeypatch, llm)
+    _patch_read_chapters(monkeypatch, tmp_path, texts)
+    report = gate_first_chapters(scorer, tmp_path, 1, threshold=60)
+    assert not llm.responses, "单维触底必须触发第二次采样（responses 应被耗尽）"
+    assert "复核" in report.one_liner
+    assert report.dimensions["payoff_density"] == 45, report.dimensions  # (38+52)/2
+
+
+def test_gate_first_chapters_dim_far_from_floor_single_sample(monkeypatch, tmp_path) -> None:
+    """各维都远离触底线（且总分远离贴线带）→ 维持单次采样，不做无谓复核。"""
+    texts = ["第一章内容" * 200]
+    llm = _FakeLLM([_appeal_with_payoff(80, 70)])
+    scorer = _make_scorer(monkeypatch, llm)
+    _patch_read_chapters(monkeypatch, tmp_path, texts)
+    report = gate_first_chapters(scorer, tmp_path, 1, threshold=60)
+    assert not llm.responses, "应只采一次"
+    assert "复核" not in report.one_liner
+
+
+def test_recheck_borderline_dim_floor_triggers(monkeypatch) -> None:
+    """写时金三门禁同口径：综合分决定性（80），但单维触底（爽点 38）→ 仍复核。"""
+    from agent.core.quality.scoring.reader_appeal import (
+        ReaderAppealReport,
+        recheck_borderline,
+    )
+
+    dims = {k: 80 for k in APPEAL_DIMENSIONS}
+    dims["payoff_density"] = 38
+    base = ReaderAppealReport(
+        dimensions=dims, total_score=80, one_liner="t", suggestions=[],
+        llm_used=True, source="llm",
+    )
+    llm = _FakeLLM([_appeal_with_payoff(80, 52)])
+    scorer = _make_scorer(monkeypatch, llm)
+    out = recheck_borderline(scorer, "正文" * 100, base)
+    assert out is not None, "单维触底必须触发写时复核"
+    assert out.dimensions["payoff_density"] == 45, out.dimensions
 
 
 def test_gate_first_chapters_cached_borderline_gets_recheck(monkeypatch, tmp_path) -> None:

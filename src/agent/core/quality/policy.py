@@ -98,6 +98,57 @@ def apply_profile(policy: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _policy_int(value: Any, fallback: int) -> int:
+    """策略值归一为合法分数（0-100 分制）；非法/越界一律回落（项目策略是用户可编辑边界）。"""
+    try:
+        n = int(value)
+    except (TypeError, ValueError):
+        return fallback
+    return n if 1 <= n <= 100 else fallback
+
+
+def golden_three_settings(
+    policy: dict[str, Any] | None,
+    *,
+    cli_threshold: Any = None,
+    cli_floor: Any = None,
+    cli_gate: bool | None = None,
+) -> dict[str, Any]:
+    """金三门禁的**生效标定**，唯一解析入口：CLI 显式 > 项目策略 > 全局真源。
+
+    ★ 2026-09-25 接线修复：此前 ``DEFAULT_QUALITY_POLICY["golden_three"]`` 只被
+    Web 质量面板**显示**（``web/quality_admin.py``）、**无人消费** ⇒ 用户在
+    ``.state/quality_policy.json`` 里改了值会看到「页面显示 55、门禁仍按 60 判」
+    的假一致。慢热开篇的书需要各自标定（如灵荒工坊 55/30），而全局真源仍只
+    ``golden_policy.py`` 一处（纪律 #19，红线 ``test_golden_threshold_ssot``）。
+
+    Args:
+        cli_threshold / cli_floor: CLI 显式值（未传传 ``None``）。
+        cli_gate: ``False``=CLI 显式关闭（永远优先）；``None``=未显式，由策略决定。
+
+    Returns:
+        ``{"gate": bool, "threshold": int, "floor": int}``。
+    """
+    section = (policy or {}).get("golden_three") or {}
+    if not isinstance(section, dict):
+        section = {}
+    threshold = _policy_int(
+        cli_threshold if cli_threshold is not None else section.get("threshold"),
+        GOLDEN_THREE_TOTAL,
+    )
+    floor = _policy_int(
+        cli_floor if cli_floor is not None else section.get("floor"),
+        GOLDEN_THREE_FLOOR,
+    )
+    if cli_gate is False:
+        gate = False
+    elif cli_gate is True:
+        gate = True
+    else:
+        gate = bool(section.get("gate", True))
+    return {"gate": gate, "threshold": threshold, "floor": floor}
+
+
 def _merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
     """浅层合并（一层 dict 嵌套按 key 合并）。"""
     out = dict(base)

@@ -931,6 +931,75 @@ def save_fingerprints(
 
 
 # ----------------------------------------------------------------------
+# G14 指纹库自校验（写时门禁的唯一正确入口）
+# ----------------------------------------------------------------------
+def canonical_chapter_key(stem: str) -> str:
+    """章文件名 stem（``ch036`` / ``036``）→ 规范键（``36``）。
+
+    历史数据里同一章存在 ``36`` / ``ch036`` / ``ch36`` 三种写法
+    （见 ``core/story/chapter_invalidation._chapter_keys``），而写时门禁按
+    ``str(chapter_num)`` 剔除本章自身 ⇒ **只有规范键才能被正确剔除**，否则
+    本章旧段落与自身旧指纹比对，相似度恒 1.0 的假阳性会打回重写（振荡）。
+    """
+    m = re.fullmatch(r"(?:ch)?0*(\d+)", stem.strip(), flags=re.IGNORECASE)
+    return m.group(1) if m else stem.strip()
+
+
+def rebuild_fingerprints(
+    project_dir: str | Path,
+    *,
+    chapters_dir: str | Path | None = None,
+    save: bool = True,
+) -> dict[str, list]:
+    """从**章节文件**重建全书指纹库（唯一真源），并回写缓存。
+
+    为什么不能盲信缓存：``.state/chapter_fingerprints.json`` 只在「写章 / 改写 /
+    回滚」等少数路径增量更新，任何**带外改动**（回滚后重生成、批量重写、人工
+    编辑）都会让它与成书脱节，而写时去重门禁对缓存是盲信的 ⇒ 真重复漏检、
+    又与已不存在的旧文本比对。实证（2026-09-24 灵荒工坊）：45 章里 14 章的
+    缓存指纹与章文件**零重叠**（内容已被换掉），ch021 与 ch036 相似度 0.99 的
+    重复段落在 ``rewrite --gate block`` 下照常落盘；离线用「现读章文件」重建
+    指纹库时同一段立即可检出——缺陷在缓存，不在判定规则。
+    """
+    project_dir = Path(project_dir)
+    chapters = Path(chapters_dir) if chapters_dir else project_dir / "chapters"
+    gr = Guardrails(
+        check_junk=False, check_title=False, check_dup=False,
+        check_meta_leak=False, check_narrative_tell=False,
+        check_density=False, check_hard_pollution=False,
+    )
+    db: dict[str, list] = {}
+    if chapters.exists():
+        for f in sorted(chapters.glob("ch*.md")):
+            try:
+                text = f.read_text(encoding="utf-8")
+            except OSError:
+                continue  # noqa: SILENT_DEGRADE reason=expected-skip - 单章不可读则跳过该章
+            gr.register_fingerprints(canonical_chapter_key(f.stem), text)
+            db.update(gr.fingerprint_db)
+    if save:
+        save_fingerprints(db, project_dir / ".state" / "chapter_fingerprints.json")
+    return db
+
+
+def load_book_fingerprints(
+    project_dir: str | Path,
+    *,
+    exclude: int | str | None = None,
+) -> dict[str, list]:
+    """加载**已按章文件校验**的全书指纹库（重建后可用，可选剔除一章）。
+
+    这是写时跨章去重的正确入口，替代直接 ``load_fingerprints(缓存路径)``：
+    后者返回的是可能已过期的缓存（见 ``rebuild_fingerprints`` 的实证说明）。
+    ``exclude`` 用于剔除本章自身（``str(chapter_num)`` 口径）。
+    """
+    db = rebuild_fingerprints(project_dir)
+    if exclude is not None:
+        db.pop(str(exclude), None)
+    return db
+
+
+# ----------------------------------------------------------------------
 # G14 全量段落去重扫描（完本关卡，由 compose 体检经依赖注入触发）
 # ----------------------------------------------------------------------
 def fullbook_dup_scan(project_dir: str | Path) -> None:
@@ -954,7 +1023,7 @@ def fullbook_dup_scan(project_dir: str | Path) -> None:
                 text = f.read_text(encoding="utf-8")
             except Exception:  # noqa: BLE001
                 continue  # noqa: SILENT_DEGRADE
-            ch_num = f.stem
+            ch_num = canonical_chapter_key(f.stem)
             hits = gr._check_dup(text)
             if hits:
                 dup_report.append(f"### {ch_num}\n" + "\n".join(f"- {h}" for h in hits))

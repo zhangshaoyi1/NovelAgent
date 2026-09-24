@@ -36,7 +36,12 @@ from agent.core.quality.consistency.checker import (
     ConsistencyChecker,
 )
 from agent.core.quality.eval_evidence import EvalEvidence
-from agent.core.quality.guardrails import load_fingerprints
+from agent.core.quality.guardrails import (
+    Guardrails,
+    canonical_chapter_key,
+    load_book_fingerprints,
+    load_fingerprints,
+)
 from agent.workflows.evaluation.m10_rollback import M10RollbackWorkflow
 
 from tests.conftest import make_project
@@ -532,3 +537,116 @@ class TestDegradedDimIsNotPass:
         md = self._degraded_score_report().to_markdown()
         assert "✅ 通过" not in md, "展示层不得比判定层乐观（不得宣称通过）"
         assert "证据不可信" in md
+
+
+# ============================================================
+# I. 指纹库自校验（缓存可过期 ⇒ 写时去重门禁不得盲信缓存）
+# ============================================================
+#: 两段 ≥40 字的独立正文（``_check_dup`` 只比对 ≥40 字长段落）
+_PARA_A = (
+    "林凡把锉刀放下，说公差三分毛刺半厘，你的零件误差偏大，"
+    "明天开始每一道工序之前先过一道自检，不合格的回炉重造。"
+)
+_PARA_B = (
+    "夜色沉沉，石莽在巷口守着，听见檐上落下一滴水，"
+    "握刀的手紧了紧，没有回头去看身后那片晃动的火光。"
+)
+_PARA_C = (
+    "账册翻到新的一页，他用木炭写下第三十日的工坊记录，"
+    "标准齿轮十二套，公差为零，合格品与废品分开摆放。"
+)
+
+
+class TestFingerprintCacheStaleness:
+    """``.state/chapter_fingerprints.json`` 是**缓存**，不是真源。
+
+    它只在「写章 / 改写 / 回滚」等少数路径增量更新，任何带外改动（回滚后重生成、
+    批量重写、人工编辑）都会让它与成书脱节；写时去重门禁若盲信它 ⇒ 真重复漏检、
+    又与已不存在的旧文本比对。实证（2026-09-24 灵荒工坊）：45 章里 14 章的缓存
+    指纹与章文件**零重叠**，ch021 与 ch036 相似度 0.99 的重复段落在
+    ``rewrite --gate block`` 下照常落盘。
+    """
+
+    @staticmethod
+    def _write_chapter(d: Path, n: int, body: str) -> None:
+        (d / "chapters" / f"ch{n:03d}.md").write_text(
+            f"---\nchapter: {n}\ntitle: 第{n}章样例\n---\n\n"
+            f"# 第 {n} 章 · 第{n}章样例\n\n{body}\n",
+            encoding="utf-8",
+        )
+
+    @staticmethod
+    def _seed_cache(d: Path, db: dict[str, Any]) -> Path:
+        fp = d / ".state" / "chapter_fingerprints.json"
+        fp.parent.mkdir(parents=True, exist_ok=True)
+        fp.write_text(
+            json.dumps({"fingerprints": db}, ensure_ascii=False), encoding="utf-8"
+        )
+        return fp
+
+    @staticmethod
+    def _dup_checker(db: dict[str, Any]) -> Guardrails:
+        return Guardrails(
+            check_junk=False, check_title=False, check_dup=True,
+            check_meta_leak=False, check_narrative_tell=False,
+            check_density=False, fingerprint_db=db,
+        )
+
+    def test_canonical_chapter_key_normalizes_known_forms(self) -> None:
+        assert canonical_chapter_key("ch036") == "36"
+        assert canonical_chapter_key("036") == "36"
+        assert canonical_chapter_key("ch36") == "36"
+        assert canonical_chapter_key("36") == "36"
+
+    def test_gate_detects_dup_hidden_by_stale_cache(self, tmp_path: Path) -> None:
+        """缓存过期时旧路径漏检真重复；按章文件重建后必须检出。"""
+        d = make_project(tmp_path, n_chapters=3)
+        self._write_chapter(d, 1, _PARA_B)
+        self._write_chapter(d, 2, _PARA_A)
+        self._write_chapter(d, 3, _PARA_A)          # 第 3 章整段复制第 2 章
+        # 缓存里第 2 章还是「已不存在的旧正文」
+        stale = "旧版正文：这一段在成书里早已不存在，只残留在过期的指纹缓存中，长度也够四十字。"
+        self._seed_cache(d, {"2": [[1, stale]]})
+        ch3 = (d / "chapters" / "ch003.md").read_text(encoding="utf-8")
+
+        # 旧行为：直接读缓存 ⇒ 与真成书比对失败 ⇒ 漏检
+        raw = load_fingerprints(d / ".state" / "chapter_fingerprints.json")
+        raw.pop("3", None)
+        assert self._dup_checker(raw).check_cross_chapter_dup(ch3) == [], (
+            "本用例的前提：盲信过期缓存检不出这段复制"
+        )
+
+        # 新行为：按章文件重建（唯一真源）⇒ 必须检出
+        hits = self._dup_checker(load_book_fingerprints(d, exclude=3)).check_cross_chapter_dup(ch3)
+        assert hits, "重建指纹库后第 3 章的整段复制必须被检出"
+        assert "第 2 章" in hits[0]
+
+    def test_rebuild_refreshes_cache_and_normalizes_keys(self, tmp_path: Path) -> None:
+        """重建后缓存按键规范（``ch036`` / ``036`` → ``36``），过期条目被替换。"""
+        d = make_project(tmp_path, n_chapters=3)
+        self._write_chapter(d, 1, _PARA_B)
+        self._write_chapter(d, 2, _PARA_A)
+        self._write_chapter(d, 3, _PARA_C)
+        self._seed_cache(d, {"ch002": [[1, "残留甲"]], "003": [[2, "残留乙"]]})
+
+        load_book_fingerprints(d)
+        on_disk = load_fingerprints(d / ".state" / "chapter_fingerprints.json")
+        assert set(on_disk) == {"1", "2", "3"}
+        norms = [e[1] for e in on_disk["2"]]
+        assert "残留甲" not in norms and "残留乙" not in norms, "过期条目必须被替换"
+        assert any("公差三分" in n for n in norms), "现有正文必须建入指纹库"
+
+    def test_exclude_removes_self_to_avoid_false_positive(self, tmp_path: Path) -> None:
+        """不排除自身 ⇒ 本章与自己的旧指纹相似度 1.00（假阳性）；排除后须干净。"""
+        d = make_project(tmp_path, n_chapters=3)
+        self._write_chapter(d, 1, _PARA_B)
+        self._write_chapter(d, 2, _PARA_A)
+        self._write_chapter(d, 3, _PARA_C)
+        ch2 = (d / "chapters" / "ch002.md").read_text(encoding="utf-8")
+
+        assert self._dup_checker(load_book_fingerprints(d)).check_cross_chapter_dup(ch2), (
+            "未排除自身时应命中「与自己上一条指纹相似度 1.00」"
+        )
+        assert self._dup_checker(
+            load_book_fingerprints(d, exclude=2)
+        ).check_cross_chapter_dup(ch2) == []

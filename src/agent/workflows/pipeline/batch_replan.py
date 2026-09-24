@@ -147,12 +147,36 @@ def maybe_replan(
     if not plan_file.exists() or current <= 0:
         return False  # 首批（无计划/零进度）不触发，首轮规划照旧
 
+    # ---- 批级进展摘要（复规划与逐章契约补齐**共用**，只装一次）----
+    # ★ 与下面的复规划解耦后仍要共用同一份摘要：两处若各装一次，不仅重复
+    #   `reverify`/引入率等开销，还会让"补齐"看到与"复规划"不同的进展口径。
+    try:
+        summary = build_batch_summary(project_dir)
+    except Exception as e:  # noqa: BLE001 - 摘要装配失败降级为占位，两条链各自继续
+        degrade("batch_replan.summary", "批级摘要装配失败，复规划与逐章补齐均缺该段", e)
+        summary = "（暂无可用的进展摘要）"
+
+    # ---- 逐章契约供给补齐（供给端修复，2026-09-24）----
+    # ★ 与复规划**并列**而非串联：复规划只产 arc 级规划，**从不写 subline.md 的
+    #   逐章行**（唯一写入方是 M3 首轮），⇒ 21 章以后写手拿不到本章契约 ⇒ 按阶段
+    #   模板自编 ⇒ 同质/注水 ⇒ 评委不合格 ⇒ 回退输入不变 ⇒ 整窗销毁-重写死循环。
+    #   故复规划失败也必须补齐（二者是两条独立的批前增强链）。
+    try:
+        from agent.workflows.pipeline.subline_contract import ensure_window_contracts
+
+        ensure_window_contracts(project_dir, summary=summary, console=console)
+    except Exception as e:  # noqa: BLE001 - 增强项：失败显性留痕后继续写
+        degrade(
+            "autowire.subline_contract",
+            "批前逐章契约补齐失败，本批沿用既有细纲（写手回退阶段级供给）",
+            e,
+        )
+
     try:
         from agent.agents.planner import PlannerAgent
         from agent.core.story.plan_managers import audit_plan, save_audit_report
 
         planner = PlannerAgent(project_dir, console=console)
-        summary = build_batch_summary(project_dir)
         plan = planner.replan_batch(current, summary, decide=decide)
 
         # ---- 四管理者确定性审计（§7）：规划不被信任，BLOCK 打回重排 1 次 ----

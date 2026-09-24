@@ -8,12 +8,16 @@
     - relation_conflict：关系网一致性（POST_WRITE，比对 relations/graph.md 活跃边）
     - golden_finger_overstep：金手指/系统越界（POST_WRITE，比对角色「禁用词」）
     - realm_overstep：境界越级（POST_WRITE，比对 world.md 境界体系）
+    - realm_span：境界**跨度**越级（POST_WRITE，比对连续性账本的承接境界；
+      与 realm_overstep 的区别：后者只校验"境界名是否在体系内"，本规则校验
+      "本章宣称的境界相对承接值跳了几档"，差 ≥2 档即 BLOCK）
 
 冲突输出：一致性影响报告（冲突条目 + 涉及章节 + 处理建议）
 """
 
 from __future__ import annotations
 
+import json
 import re
 import logging
 from dataclasses import dataclass, field
@@ -232,6 +236,247 @@ def _load_world_realms(project_dir: Path) -> set[str]:
             if tok and len(tok) <= 8:
                 realms.add(tok)
     return realms
+
+
+#: 境界体系小节标题（world.md）。编号列表形态优先于单行内联形态。
+_REALM_SECTION_RE = re.compile(
+    r"^(#{2,4})[ \t]*[^\n]*?(?:修炼境界体系|境界体系|修炼体系)[^\n]*?$", re.M
+)
+#: 小节内的有序编号条目：``1. **引灵**：说明`` / ``12. **归一（…）**``
+_REALM_ITEM_RE = re.compile(r"^[ \t]*\d+[ \t]*[.、][ \t]*\*\*(.+?)\*\*", re.M)
+#: 单行内联形态：``境界：凡人 < 练气 < 筑基``
+_REALM_INLINE_RE = re.compile(r"(?:境界|修炼体系|境界体系)\s*[:：]\s*(.+)")
+_REALM_INLINE_SEP_RE = re.compile(r"[<＜→]")
+
+#: 境界字段名集合（账本事实的 ``field`` 由 LLM 结算产出、命名自由）。
+#: 只认**显式**境界字段，避免把 ``cultivation_insight``（心得）之类的同前缀字段
+#: 误当境界。命中不了 ⇒ 规则放行（宁漏不误）。
+_REALM_FIELD_NAMES = frozenset(
+    {
+        "realm", "realm_level", "cultivation", "cultivation_level",
+        "cultivation_realm", "境界", "修为", "境界修为", "修为境界",
+        "修炼境界",
+        # ★ 2026-09-24 灵荒工坊实证：结算员把同一概念写成了三个字段名
+        # （``cultivation`` / ``修为状态`` / ``修为``）。别名不在集合里 ⇒ 承接锚点
+        # 只看到其中一个 ⇒ 漏读（此处 ``修为状态`` 曾被完全忽略）。补入**显式**
+        # 带「状态」后缀的境界别名；``_match_realm_index`` 仍要求取值命中世界体系，
+        # 故「修为状态=紊乱」这类非境界取值不会被误当境界。
+        "修为状态", "修炼状态", "境界状态", "realm_state", "cultivation_state",
+    }
+)
+
+
+def _clean_realm_name(raw: str) -> str:
+    """清掉境界名里的括注与装饰（``归一（主角独有终极境界）`` → ``归一``）。"""
+    name = re.sub(r"[（(][^）)]*[）)]", "", raw or "")
+    return name.strip().strip("*：: \t").strip()
+
+
+def _load_world_realm_order(project_dir: Path) -> list[str]:
+    """从 world.md 提取**有序**境界序列（供跨度检测比较"序位"）。
+
+    两种登记形态（前者优先）：
+    1. 小节 + 有序编号列表：``## 修炼境界体系`` 下的 ``N. **境界名**：说明``；
+    2. 单行内联：``境界：凡人 < 练气 < 筑基``（``<``/``＜``/``→`` 分隔）。
+
+    无法提取 → 返回 ``[]`` ⇒ 调用方放行（对齐 :func:`_load_world_realms`
+    "仅当显式定义境界体系才判"的纪律）。重名去重、保序。
+    """
+    world_path = project_dir / "world.md"
+    if not world_path.is_file():
+        return []
+    try:
+        text = world_path.read_text(encoding="utf-8")
+    except Exception:  # noqa: BLE001
+        return []
+
+    names: list[str] = []
+    m = _REALM_SECTION_RE.search(text)
+    if m:
+        level = len(m.group(1))
+        rest = text[m.end():]
+        # 截到下一个同级或更高级标题为止（``### 凡修四境`` 这类子标题不截断）
+        nxt = re.search(rf"^#{{2,{level}}}[ \t]", rest, re.M)
+        body = rest[: nxt.start()] if nxt else rest
+        for im in _REALM_ITEM_RE.finditer(body):
+            name = _clean_realm_name(im.group(1))
+            if name and name not in names:
+                names.append(name)
+    if len(names) < 2:
+        for lm in _REALM_INLINE_RE.finditer(text):
+            frag = lm.group(1)
+            if not _REALM_INLINE_SEP_RE.search(frag):
+                continue
+            cand = [
+                _clean_realm_name(p)
+                for p in _REALM_INLINE_SEP_RE.split(frag)
+                if p.strip()
+            ]
+            cand = [c for c in cand if c and len(c) <= 8]
+            if len(cand) >= 2:
+                for c in cand:
+                    if c not in names:
+                        names.append(c)
+                break
+    return names
+
+
+def _match_realm_index(text: str, order: list[str]) -> int | None:
+    """在 ``text`` 里定位境界名并返回其在 ``order`` 中的序位（最长匹配优先）。"""
+    if not text:
+        return None
+    best: int | None = None
+    for i, name in enumerate(order):
+        if name and name in text:
+            if best is None or len(name) > len(order[best]):
+                best = i
+    return best
+
+
+def _load_protagonist_name(project_dir: Path) -> str:
+    """从 ``plan.json.character_skeleton`` 取 ``role`` 含「主角」的角色名。"""
+    plan_file = project_dir / ".state" / "plan.json"
+    if not plan_file.is_file():
+        return ""
+    try:
+        plan = json.loads(plan_file.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 - 规划缺失/损坏 → 无法定承接主体，规则放行
+        return ""
+    if not isinstance(plan, dict):
+        return ""
+    for c in plan.get("character_skeleton") or []:
+        if isinstance(c, dict) and "主角" in str(c.get("role") or ""):
+            return str(c.get("name") or "").strip()
+    return ""
+
+
+def _carried_realm_index(
+    project_dir: Path, order: list[str]
+) -> tuple[str, int] | None:
+    """承接境界：账本中**主角**的境界事实 → 在 ``order`` 中的序位。
+
+    只认 ``domain=character`` 且 ``subject_id=主角`` 且 ``field`` 属
+    :data:`_REALM_FIELD_NAMES` 的事实；字段名或值任一不匹配世界体系 → ``None``
+    （放行，宁漏不误）。多条命中取**最高序位**（账本可能留有历史境界事实，
+    取已确认推进到的最高值，避免用陈旧的早期值误判）。
+    """
+    protagonist = _load_protagonist_name(project_dir)
+    if not protagonist:
+        return None
+    try:
+        from agent.core.continuity import ContinuityLedgerStore
+
+        ledger = ContinuityLedgerStore(project_dir).load()
+    except Exception:  # noqa: BLE001 - 账本不可用 → 承接不可确定，放行
+        return None
+    best: int | None = None
+    for f in ledger.facts:
+        if f.domain != "character" or f.subject_id != protagonist:
+            continue
+        if f.field.strip().lower() not in _REALM_FIELD_NAMES:
+            continue
+        idx = _match_realm_index(f.value, order)
+        if idx is not None and (best is None or idx > best):
+            best = idx
+    if best is None:
+        return None
+    return protagonist, best
+
+
+#: 境界「宣告式」断言：动词与境界名之间**只允许标点/空白**（``突破了。栖气期初期。``）。
+#: 与 :data:`_REALM_BREAK` 的区别：后者禁止跨句（``[^，。\n]``），因此抓不到对白里
+#: **独立成句**的突破宣告——2026-09-24 灵荒工坊 ch043 实证：正文
+#: ``"突破了。栖气期初期。"`` 既没被确定性抽取器落盘、也没被 LLM 结算记入 ⇒
+#: 承接锚点停在「引灵」⇒ ch044/ch045 按旧境界写 ⇒ 与 ch043 自相矛盾 ⇒
+#: 批末体检判「人设稳定 2.0 / 逻辑漏洞 3.0」两项硬指标不达标 ⇒ 回溯 3 次仍不收敛。
+_REALM_DECLARE_RE = re.compile(
+    r"(突破|晋升|晋入|踏入|进阶|跨入|修成|炼成|凝成|登临)(?:到|至|为|了|成)?"
+    r"[，,、。；;！!？?…—\s“”\"'（）()]{0,4}"
+    r"([\u4e00-\u9fa5]{1,4}(?:期|境|阶|层))"
+)
+
+
+def derive_realm_fact(
+    project_dir: Path, chapter_text: str
+) -> dict[str, str] | None:
+    """从本章正文确定性推导**主角**的境界推进事实（返回给账本落盘）。
+
+    为什么需要它（2026-09-24 灵荒工坊 ch043 实证）
+    --------------------------------------------
+    ``m5_persist._extract_chapter_facts`` 的境界抽取（步骤 6）要求**角色名与境界名
+    同句**；正文把突破写成对白里的独立短句（``"突破了。栖气期初期。"``）时两者不在
+    同一句 ⇒ 漏抽；LLM 结算同样没记 ⇒ 承接锚点在账本里**永不前进** ⇒ 后续章节继续
+    按旧境界写 ⇒ 与已发生正文自相矛盾（评委据此判人设崩坏/逻辑漏洞，属硬指标）。
+
+    判定口径（宁漏不误）
+    ------------------
+    - 只追认**主角**（``plan.json`` 里 role 含「主角」）的境界事实；
+    - 只追认「承接 + **恰好 1 档**」的推进：与承接同档（无变化）、低于承接（回退）、
+      高于承接 1 档以上（**越级跳变**）一律不追认——越级留给 :func:`_rule_realm_span`
+      判 BLOCK，代码不得替它追认；
+    - 世界体系取不到（``< 3`` 档）/ 主角不可知 / 承接不可确定 ⇒ 返回 ``None``；
+    - 归属：取声明点之前最近的角色名，不是主角（配角越级/他人突破）⇒ 不追认。
+
+    Returns:
+        命中返回 ``{"subject_id", "field", "value", "evidence"}``（``domain`` 恒为
+        ``character``、``field`` 为规范字段名 ``realm``）；未命中返回 ``None``。
+    """
+    if not chapter_text:
+        return None
+    order = _load_world_realm_order(project_dir)
+    if len(order) < 3:
+        return None
+    protagonist = _load_protagonist_name(project_dir)
+    if not protagonist:
+        return None
+    carried = _carried_realm_index(project_dir, order)
+    if carried is None:
+        return None  # 承接不可确定 ⇒ 无从判断"是否只推进一档"，不追认
+    holder, base_idx = carried
+    if holder != protagonist:
+        return None
+    names = [*_load_character_index(project_dir), holder]
+
+    hit: tuple[str, str] | None = None  # (value, evidence)，取最后一次（章末为准）
+    for m in _REALM_DECLARE_RE.finditer(chapter_text):
+        value = _clean_realm_name(m.group(2))
+        idx = _match_realm_index(value, order)
+        if idx != base_idx + 1:
+            continue  # 无变化 / 回退 / 越级（>=2 档）均不追认
+        near = _nearest_registered_name(
+            chapter_text, m.start(), names, _REALM_SPAN_SUBJECT_WINDOW
+        )
+        if near and near != holder:
+            continue  # 声明归属他人（配角突破）⇒ 不记到主角头上
+        hit = (value, m.group(0))
+    if hit is None:
+        return None
+    return {
+        "subject_id": protagonist,
+        "field": "realm",
+        "value": hit[0],
+        "evidence": hit[1][:100],
+    }
+
+
+def _nearest_registered_name(
+    text: str, pos: int, names: list[str], window: int
+) -> str:
+    """``pos`` 之前 ``window`` 字符内**最近**出现的已登记角色名（无则空串）。"""
+    seg = text[max(0, pos - window):pos]
+    best_name = ""
+    best_at = -1
+    best_len = 0
+    for name in names:
+        if not name:
+            continue
+        for sub in (_cjk_substrings(name) or [name]):
+            at = seg.rfind(sub)
+            if at < 0:
+                continue
+            if at > best_at or (at == best_at and len(sub) > best_len):
+                best_at, best_name, best_len = at, name, len(sub)
+    return best_name
 
 
 def _collect_mentions(chapter_text: str, index: dict[str, dict[str, Any]]) -> list[tuple[str, int, int]]:
@@ -539,6 +784,85 @@ def _rule_realm_overstep(ctx: dict[str, Any], checker: "ConsistencyChecker") -> 
     return conflicts
 
 
+#: 主体锚定窗口：境界突破声明之前多少字符内找"最近已登记角色"。
+#: 突破常在账册/独白段里出现（不重复点名），故窗口远比生死断言的 8 字宽。
+_REALM_SPAN_SUBJECT_WINDOW = 200
+
+
+def _rule_realm_span(ctx: dict[str, Any], checker: "ConsistencyChecker") -> list[Conflict]:
+    """POST_WRITE：**境界跨度**检测——承接境界 → 本章宣称境界跳了几档。
+
+    为什么需要它（2026-09-24 灵荒工坊 ch41 实证）
+    --------------------------------------------
+    :func:`_rule_realm_overstep` **不是**跨度检测：它只校验"正文宣称的境界名是否在
+    world.md 清单内"，且严重度仅为 ``WARN``；对"一章内 引灵→淳真 连跳两境"
+    （两个境界名都在体系内）完全无感。结果是越级跳变**落盘固化**，
+    批末体检才发现，回退也无法收敛。
+
+    判定口径（宁漏不误）
+    ------------------
+    - 承接境界从**连续性账本**取（主角的境界事实）；账本无该事实 / 主角不可知
+      → 放行（无法确定基线就不判）。
+    - 世界体系序位从 ``world.md`` 的**有序**境界列表取；取不到 → 放行。
+    - 正文宣称的境界若**不在**体系内，交给 :func:`_rule_realm_overstep` 报 WARN，
+      本规则放行（避免同因两报）。
+    - 序位差 ``>= 2`` 才 BLOCK（差 1 档是"连续演进一境"，符合
+      ``CARRIED_TO_WRITER`` 的仲裁口径）。
+    - 声明归属**非承接主体**（窗口内最近的角色名不是主角）→ 放行，
+      避免把配角的越级算到主角头上。
+    """
+    chapter_text = ctx.get("chapter_text", "")
+    if not chapter_text:
+        return []
+    order = _load_world_realm_order(checker.project_dir)
+    if len(order) < 3:
+        # 少于 3 档时"跨度 >=2"恒等于"至少跳两档"，误报风险高，放行。
+        return []
+    carried = _carried_realm_index(checker.project_dir, order)
+    if carried is None:
+        return []
+    holder, base_idx = carried
+    # 主体索引：已登记角色 + 承接主体（承接主体可能未被登记）
+    names = [*_load_character_index(checker.project_dir), holder]
+
+    conflicts: list[Conflict] = []
+    reported: set[str] = set()
+    for m in _REALM_BREAK.finditer(chapter_text):
+        claimed = m.group(1).strip()
+        claimed_idx = _match_realm_index(claimed, order)
+        if claimed_idx is None:
+            continue
+        if claimed_idx - base_idx < 2:
+            continue
+        near = _nearest_registered_name(
+            chapter_text, m.start(), names, _REALM_SPAN_SUBJECT_WINDOW
+        )
+        if near and near != holder:
+            continue
+        if claimed in reported:
+            continue
+        reported.add(claimed)
+        conflicts.append(Conflict(
+            rule_id="realm_span",
+            severity=Severity.BLOCK,
+            description=(
+                f"本章宣称突破至「{claimed}」，但承接境界（{holder}）为"
+                f"「{order[base_idx]}」，两者在 world.md 境界体系中相差 "
+                f"{claimed_idx - base_idx} 档，属**无契机的越级跳变**"
+                f"（章际连续性断裂）。若要合法推进，须先在正文章节内写出"
+                f"「{order[base_idx + 1]}」这一境并落盘，再于后续章节推进到"
+                f"「{claimed}」；确有设计依据（机缘/传承）的，须先在设定真源中登记。"
+            ),
+            affected_chapters=[],
+            suggestions=[
+                f"把本章境界改写为承接值「{order[base_idx]}」或至多推进一境"
+                f"「{order[base_idx + 1]}」；跨多章的境界目标不得在单章内完成。",
+                "若确需跳境，请先补写中间的突破章节并在世界书/角色档案中登记该次跃迁。",
+            ],
+        ))
+    return conflicts
+
+
 def _rule_presence_conflict(ctx: dict[str, Any], checker: "ConsistencyChecker") -> list[Conflict]:
     """POST_WRITE：问题债务登记簿（issue_debt）的 presence_ban 强制执行。
 
@@ -620,6 +944,12 @@ class ConsistencyChecker:
                 name="境界越级",
                 severity=Severity.WARN,
                 check=lambda c, a: _rule_realm_overstep(c, self),
+            ),
+            _ConsistencyRule(
+                id="realm_span",
+                name="境界跨度越级",
+                severity=Severity.BLOCK,
+                check=lambda c, a: _rule_realm_span(c, self),
             ),
             _ConsistencyRule(
                 id="presence_conflict",

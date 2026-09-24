@@ -17,9 +17,10 @@ validation:
 2. 增量必须逐笔列出，且每笔注明来源——evidence 须为**本章正文中可定位的原文片段**（逐字摘录或压缩到一句话）；
 3. 期末 = 期初 + 增量 - 消耗，不得跳步：只有本章正文确实改变了的事实才入账，未改变的不重复登记；
 4. loop_ops 的 loop_id **必须**取自【期初账本状态·未闭环剧情线】中已有的 loop_id，不得凭空编造；剧情线在本章有实质推进用 advance、当场闭环用 resolve（resolved_in 写明闭环事件）、本章计划写但没写用 defer、明确放弃用 abandon；本章没有涉及任何开环就留空数组；
-5. knowledge（信息差）只登记本章发生的关键知情变化（某人得知/误解/怀疑某事实），没有就留空；
-6. 宁缺毋滥：拿不准的不产出；facts 一般 0-6 笔、loop_ops 一般 0-3 笔；
-7. 只输出一个 JSON 对象，不要 ```json 围栏，不要解释文字。
+5. 若本章**新立/浮现了一条剧情线**（此前账本没有），**必须先在 `open_loops` 中显式登记完整条目**（loop_id/kind/detail 必填），再对该 loop_id 做 loop_ops 操作（如 advance/resolve）；不得直接对不存在的 loop_id 做操作；
+6. knowledge（信息差）只登记本章发生的关键知情变化（某人得知/误解/怀疑某事实），没有就留空；
+7. 宁缺毋滥：拿不准的不产出；facts 一般 0-6 笔、open_loops 一般 0-3 条、loop_ops 一般 0-3 笔；
+8. 只输出一个 JSON 对象，不要 ```json 围栏，不要解释文字。
 
 输出 JSON Schema（字段名逐字一致，多余字段会被拒绝）：
 {
@@ -31,7 +32,10 @@ validation:
     {"subject_id": "事实主体", "audience": "reader|character|faction", "audience_id": "reader 用 *；character/faction 用具体 id", "level": "unknown|suspects|believes|knows|misled", "source_commit_id": "{{ commit_id }}"}
   ],
   "loop_ops": [
-    {"op": "advance|resolve|defer|abandon", "loop_id": "期初已有的 loop_id", "detail": "本章相关进展或原因", "resolved_in": "resolve 时必填：闭环事件", "source_commit_id": "{{ commit_id }}"}
+    {"op": "advance|resolve|defer|abandon", "loop_id": "期初已有的 或 本 delta open_loops 中新登记的 loop_id", "detail": "本章相关进展或原因", "resolved_in": "resolve 时必填：闭环事件", "source_commit_id": "{{ commit_id }}"}
+  ],
+  "open_loops": [
+    {"loop_id": "新剧情线 id", "kind": "plot|foreshadowing|clue", "status": "open", "detail": "本条剧情线的一句话说清楚（目标/伏笔/线索）", "source_commit_id": "{{ commit_id }}"}
   ],
   "handoff": null
 }

@@ -96,8 +96,19 @@ class _PipelinePlanningMixin:
             self._advance_state_to(State.DISCUSSING)
 
         # ---- M2 脉络讨论（非关键，非交互）----
+        # ★ 状态守卫（2026-09-24）：``_advance_state_to`` 在「已越过 target」时
+        #   不降级，故续写态（WRITING 等）下要么推进、要么原地不动——而 ``/discuss``
+        #   门禁只认 CONFIGURING/DISCUSSING/ARCHITECTING。若在此态下 discussion.md
+        #   缺失仍硬跑 M2，会被 m2_discuss 连拒 3 次（日志实证），纯属白烧重试。
+        #   discussion.md 仅被 M14 generate（缺失返回空串）与 Web UI 消费 ⇒ 跳过安全。
+        self.state_machine.load()
         if (self.project_dir / "discussion.md").exists():
             self._advance_state_to(State.ARCHITECTING)
+        elif not self.state_machine.is_command_allowed("/discuss"):
+            self.console.print(
+                f"[yellow]⚠ 当前状态 {self.state_machine.state.value} 已越过脉络讨论"
+                f"且无 discussion.md，跳过 M2（该产物缺失不影响下游）[/yellow]"
+            )  # noqa: SILENT_DEGRADE reason=expected-skip - 状态不允许 /discuss 时跳过 M2
         else:
             m2_input = M2Input(
                 max_rounds=int(os.getenv("G3_M2_ROUNDS", "1")),

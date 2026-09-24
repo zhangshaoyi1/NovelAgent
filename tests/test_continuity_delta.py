@@ -153,6 +153,45 @@ def test_terminal_state_never_regresses() -> None:
     assert ledger.open_loops[0].status == "resolved"
 
 
+# ---------------------------------------------------------------- 新增剧情线同 delta 先登记再操作
+def test_apply_delta_register_then_resolve_in_same_delta() -> None:
+    """同一 delta 可先登记新开环（open_loops），再对其做操作——闭环"从未登记却要 resolve"缺口。"""
+    ledger = ContinuityLedger(open_loops=[], facts=[])  # 空账本
+    delta = LedgerDelta(
+        chapter=20,
+        open_loops=[_loop(loop_id="傀儡制作")],  # 本 delta 先登记新线
+        loop_ops=[LoopOp(op="resolve", loop_id="傀儡制作", resolved_in="ch020", source_commit_id="20")],
+    )
+    cid = apply(ledger, delta)
+    assert cid == "20"
+    assert [lo.loop_id for lo in ledger.open_loops] == ["傀儡制作"]
+    assert ledger.open_loops[0].status == "resolved"
+    assert ledger.open_loops[0].source_commit_id == "20"  # 证据链锚收口
+
+
+def test_apply_delta_open_loops_anchors_to_commit_and_dedups() -> None:
+    ledger = ContinuityLedger(open_loops=[_loop(loop_id="L-01")])
+    apply(ledger, LedgerDelta(
+        chapter=20,
+        open_loops=[_loop(loop_id="L-01", status="progressing")],  # 同 id 覆盖
+        loop_ops=[],
+    ))
+    assert len(ledger.open_loops) == 1  # 不重复追加
+    assert ledger.open_loops[0].status == "progressing"
+    assert ledger.open_loops[0].source_commit_id == "20"
+
+
+def test_apply_delta_register_does_not_poison_missing_op_target_check() -> None:
+    """open_loops 只登记 N 条，操作 N 条以外的 id 仍必须失败。"""
+    ledger = ContinuityLedger(open_loops=[])
+    with pytest.raises(LedgerDeltaError, match="傀儡制作"):
+        apply(ledger, LedgerDelta(
+            chapter=20,
+            loop_ops=[LoopOp(op="resolve", loop_id="傀儡制作", resolved_in="ch020", source_commit_id="20")],
+        ))
+    assert ledger.open_loops == []  # 未登记、账本未改
+
+
 # ---------------------------------------------------------------- store 端到端
 def test_store_apply_delta_persists_and_reloads(tmp_path: Path) -> None:
     store = ContinuityLedgerStore(tmp_path)

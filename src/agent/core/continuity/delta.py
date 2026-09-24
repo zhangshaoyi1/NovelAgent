@@ -27,6 +27,7 @@ from agent.core.continuity.models import (
     ContinuityFact,
     ContinuityHandoff,
     ContinuityKnowledge,
+    ContinuityOpenLoop,
     LoopStatus,
 )
 
@@ -79,6 +80,7 @@ class LedgerDelta(BaseModel):
     chapter: int
     facts: list[ContinuityFact] = []       # add/update：按 (domain, subject_id, field) 覆盖
     knowledge: list[ContinuityKnowledge] = []  # update：按 (subject_id, audience, audience_id) 覆盖
+    open_loops: list[ContinuityOpenLoop] = []  # 新登记剧情线（同 id 覆盖，新增追加）
     loop_ops: list[LoopOp] = []            # resolve/defer/abandon/advance 操作列表
     handoff: ContinuityHandoff | None = None
 
@@ -117,12 +119,24 @@ def apply_ledger_delta(ledger, delta: LedgerDelta, *, commit_id: str | None = No
 
     # ---- 预检：所有 loop_ops 必须命中已有 loop（不凭空造/不静默跳过）----
     # 预检先行保证"应用阶段不再失败"，从根上杜绝半应用。
+    # 新登记剧情线（open_loops）先并入账本，故"同一 delta 先立线再操作"能自洽通过。
+    if delta.open_loops:
+        loop_index = {lo.loop_id: i for i, lo in enumerate(ledger.open_loops)}
+        for lo in delta.open_loops:
+            lo.source_commit_id = cid  # 证据链锚统一收口为本 commit
+            if lo.loop_id in loop_index:
+                ledger.open_loops[loop_index[lo.loop_id]] = lo
+            else:
+                ledger.open_loops.append(lo)
+                loop_index[lo.loop_id] = len(ledger.open_loops) - 1
+
     loop_index = {lo.loop_id: i for i, lo in enumerate(ledger.open_loops)}
     for op in delta.loop_ops:
         if op.loop_id not in loop_index:
             raise LedgerDeltaError(
                 f"loop_op 目标不存在：loop_id={op.loop_id}（op={op.op}）。"
-                f"如需新增剧情线请在 facts/open_loops 增量中显式给出完整条目。"
+                f"如需新增剧情线请在该 delta 的 open_loops 增量中显式给出完整条目"
+                f"（loop_id/kind/detail 必填）。"
             )
 
     # ---- 预检通过，开始应用（应用阶段不再失败）----

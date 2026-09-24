@@ -4,6 +4,7 @@
 - 内容安全 / 形式合规护栏（Guardrails 及其值类型、GateReport、门禁模式）
 - 配置加载（load_guardrail_config / build_guardrails）
 - 全书指纹库持久化（load_fingerprints / save_fingerprints）
+- 指纹库按章文件自校验重建（rebuild_fingerprints / load_book_fingerprints）
 - 全书跨章段落去重扫描（fullbook_dup_scan）
 - 项目架构确认门禁（is_architecture_confirmed，原 quality/confirmation.py）
 
@@ -27,9 +28,12 @@ from agent.core.quality.guardrails.guardrails import (
     META_LEAK_RULE_ID,
     _DEFAULT_AI_FLAVOR_WORDS,
     build_guardrails,
+    canonical_chapter_key,
     fullbook_dup_scan,
+    load_book_fingerprints,
     load_fingerprints,
     load_guardrail_config,
+    rebuild_fingerprints,
     save_fingerprints,
 )
 
@@ -41,9 +45,12 @@ __all__ = [
     "GuardrailViolationError",
     "GateReport",
     "build_guardrails",
+    "canonical_chapter_key",
     "fullbook_dup_scan",
     "load_guardrail_config",
+    "load_book_fingerprints",
     "load_fingerprints",
+    "rebuild_fingerprints",
     "save_fingerprints",
     "DEFAULT_GUARDRAIL_CONFIG_PATH",
     "DEFAULT_FINGERPRINT_PATH",

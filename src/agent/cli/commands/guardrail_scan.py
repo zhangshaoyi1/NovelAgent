@@ -36,7 +36,7 @@ def guardrail_scan(
     import json
     from pathlib import Path
 
-    from agent.core.quality.guardrails import Guardrails
+    from agent.core.quality.guardrails import Guardrails, canonical_chapter_key
 
     project_path = Path(project_dir)
     enforce_gate(str(project_path), "guardrail_scan")
@@ -73,7 +73,7 @@ def guardrail_scan(
                 report["dup"].append({"chapter": ch, "message": v.message})
         # 跨章去重：本章检查完再注册指纹，避免与自身比对
         if check_dup:
-            gr.register_fingerprints(ch[2:], txt)
+            gr.register_fingerprints(canonical_chapter_key(ch), txt)
 
     total = len(report["junk"]) + len(report["title"]) + len(report["dup"])
 

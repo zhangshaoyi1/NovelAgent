@@ -77,6 +77,14 @@ class _EvaluatorMetricsMixin:
         # HA-Eval L2：由 dimension_registry 登记表派生（SSOT）。
         return safe_default_for(name)
 
+    # ★ 2026-09-25 撤回：曾在此对「LLM 计数维 + 零容忍阈值」的维度做 3 次采样取多数
+    #   （去抖）。实测引入**生产级回归**——`validators._check_count_consistency` 要求
+    #   value 与证据 issues 条数一致，而多数值可能取自**非最后一次**采样，而
+    #   `get_evidence` 只暴露最后一次的 issues ⇒ COUNT_MISMATCH ⇒ 证据不可信
+    #   ⇒ `RETRY_EVAL` 停批上报（20260925021521 批实测 13 次，此前两批均为 0）。
+    #   正确层：去抖必须在**同时持有 value 与 evidence 的评分器内部**完成，
+    #   见 proposed/architecture/2026-09-25-hard-metric-judge-variance.md。
+
     def _evidence_for(self, name: str) -> Any | None:
         """取该维度的评分证据（HA-Eval L3）。
 

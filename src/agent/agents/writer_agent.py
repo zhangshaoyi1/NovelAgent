@@ -97,7 +97,8 @@ _WRITER_TAIL = (
     "若需描写相似场景，请换视角、换措辞或换切入点，确保本章开头具有独立性。\n"
     "16. 【字数区间要求】draft 中本章正文的中文字数应在「目标字数×0.8 到 目标字数×1.2」之间"
     "（以目标字数为中值的合理区间）；写不足下限就会被打回扩写。请围绕目标字数铺足"
-    "场景/动作/对白/情节，写够再收尾，禁止用「伏笔或悬念一句带过」来压缩篇幅；也不宜过度注水超过上限。\n\n"
+    "场景/动作/对白/情节，写够再收尾，禁止用「伏笔或悬念一句带过」来压缩篇幅；"
+    "也不要一次性铺排过长而超上限——超上限会被压缩，但那样既浪费算力又容易删掉情节。\n\n"
     "你拥有若干工具（见下方动作协议中的可用工具）。写之前可调用工具核对设定 / 召回前文 / "
     "自检字数 / 自评质量；准备好后，把 action 设为 'finish' 并在 draft 中提交**完整章节正文**。"
 )
@@ -519,7 +520,11 @@ class WriterAgent:
             draft,
             target_words=target or hard_cap,
             min_words=min_len,
-            max_words=resolve_max_cjk_words(target) or target or hard_cap,
+            # 压缩目标对齐**目标中值**（而非合理上限×1.2）：此前用 ×1.2 会把压缩
+            # 打向"贴着上限"，实测一次 18145→2297（target 2500）压成贴着下限的残章。
+            # 以中值为锚，压缩稿落到目标区间中心附近，避免"白烧一个巨型 draft、
+            # 又产出贴底章节"的双重浪费（2026-09-21）。
+            max_words=target or hard_cap,
         )
         if trimmed == draft:
             self.console.print(
@@ -619,13 +624,19 @@ class WriterAgent:
         system_prompt = _writer_base(pace_relaxed=pace_relaxed)
         if min_words is not None and max_words is not None and max_words >= min_words:
             system_prompt += (
-                f"\n17. 【字数硬性约束】本章正文的中文字数**必须**在 {min_words}-{max_words} 字"
-                f"（中值约 {(min_words + max_words) // 2} 字）。若自检发现字数不足，"
-                f"**禁止用重复描写、空泛抒情或大段心理独白注水凑字**；应先从本章可用的"
-                f"情节点素材（细纲情节点序列、细纲钩子设计、爽点剧本、伏笔任务、"
-                f"未回收钩子债/伏笔债、角色冲突）中补充 3-6 个可推进剧情或情绪的子事件"
-                f"（谁做了什么，一句话一个），再把这些情节点织入正文扩写，务必写足下限"
-                f"再 commit，禁止用『伏笔/悬念一句带过』压缩篇幅。\n"
+                f"\n17. 【字数硬性约束·上下限公共】本章正文中文字数**必须**落在 "
+                f"{min_words}-{max_words} 字（中值约 {(min_words + max_words) // 2} 字）。"
+                f"**提交前必须调用 count_words 工具自检实际字数**，分两种情形处理：\n"
+                f"   · 若**不足下限** {min_words}：禁止用重复描写/空泛抒情/大段心理独白注水凑字；"
+                f"从本章可用情节点素材（细纲情节点、钩子设计、爽点剧本、伏笔任务、"
+                f"未回收钩子债/伏笔债、角色冲突）补充 3-6 个可推进剧情或情绪的子事件"
+                f"（谁做了什么，一句话一个），织入正文扩写至达标再 commit。\n"
+                f"   · 若**超出上限** {max_words}：同样禁止直接提交——超上限会被压缩，"
+                f"既浪费算力又可能删掉情节。应**就地删减**冗余描写/注水/重复渲染，"
+                f"保留全部情节、子事件、线索与章尾钩子，压缩到 {min_words}-{max_words} 字区间"
+                f"再 commit；不得用删情节、砍章尾钩子或提前收尾来凑字数，"
+                f"也不得挪用后续章节本应出现的内容。"
+                f"若一次压缩仍未达标，重复修剪至区间内。\n"
             )
         if critique:
             system_prompt += "\n\n【审稿意见 · 请据此修订】\n" + critique
@@ -712,6 +723,7 @@ class WriterAgent:
             "repetition_abnormal",      # 章内重复句/注水（padding 前置）
             "consistency_timeline_conflict",   # 生死/时间线矛盾
             "consistency_field_conflict",      # 设定字段冲突
+            "consistency_realm_span",          # 境界跨度越级（无契机的越级跳变）
         }
     )
 

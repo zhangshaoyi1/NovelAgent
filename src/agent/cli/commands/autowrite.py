@@ -17,7 +17,9 @@ from agent.cli._app import app, command, console, typer
 from agent.cli._shared import *  # enforce_gate / emit_result / make_quiet_console
 from agent.core.engine.state_machine import State
 # ★ 六维门禁阈值唯一真源（纪律 #19）：本文件 typer 选项默认值与回落值此前手写 60/40
-from agent.core.quality.golden_policy import SIX_DIM_FLOOR, SIX_DIM_PASS_LINE
+from agent.core.quality.golden_policy import SIX_DIM_FLOOR, SIX_DIM_PASS_LINE  # noqa: F401
+# ↑ SIX_DIM_FLOOR 本文件已不直接消费（金三标定经 policy.golden_three_settings 解析），
+#   但 SSOT 红线 test_golden_threshold_ssot::R4 要求每个消费者文件**导入真源**，故保留。
 
 
 def _cli_value(v: Any, default: Any) -> Any:
@@ -227,10 +229,13 @@ def autowrite(
         False, "--no-golden-three-gate", help="关闭黄金三章门禁"
     ),
     golden_three_threshold: int = typer.Option(
-        SIX_DIM_PASS_LINE, "--golden-three-threshold", help="黄金三章综合分合格线（默认 60，复用 G5 档位）"
+        None, "--golden-three-threshold",
+        help="黄金三章综合分合格线（未传取项目策略 .state/quality_policy.json 的 "
+             "golden_three.threshold，再取全局默认 60）"
     ),
     golden_three_floor: int = typer.Option(
-        SIX_DIM_FLOOR, "--golden-three-floor", help="黄金三章单维触底线（默认 40）"
+        None, "--golden-three-floor",
+        help="黄金三章单维触底线（未传取项目策略 golden_three.floor，再取全局默认 40）"
     ),
     ai_gate: bool = typer.Option(
         True, "--ai-gate", help="开启去 AI 味护栏（B5，默认开）"
@@ -395,11 +400,13 @@ def autowrite(
     if bool(_cli_value(ai_gate, True)) and not bool(_cli_value(no_ai_gate, False)):
         from agent.core.quality.guardrails import (
             build_guardrails,
-            load_fingerprints,
+            load_book_fingerprints,
         )
 
         # G14：注入全书已发布标题 + 指纹库（决策③：存 .state/ 下，续写时加载已有库）
-        _fp_db = load_fingerprints(project_path / ".state" / "chapter_fingerprints.json")
+        # 2026-09-24：改用按章文件重建的 loader——缓存可能因带外改动而过期，
+        # 盲信会让跨章去重门禁漏检真重复（灵荒工坊 14/45 章缓存与成书零重叠实证）。
+        _fp_db = load_book_fingerprints(project_path)
         _published_titles = _collect_published_titles(project_path)
         gr = build_guardrails(
             published_titles=_published_titles,
@@ -449,6 +456,20 @@ def autowrite(
         if _cli_value(strict_review, None) is not None
         else bool(_qpolicy.get("strict_review", True))
     )
+
+    # ---- 金三标定解析（2026-09-25）：CLI 显式 > 项目策略 > 全局真源 ----
+    # 此前 policy 的 golden_three 只被 Web 质量面板显示、无人消费 ⇒「页面显示 55、
+    # 门禁按 60 判」的假一致。慢热开篇的书需各自标定（灵荒工坊 threshold=55/floor=30）。
+    # ★ 必须在 `_qpolicy` 加载之后解析（策略文件是标定来源）。
+    from agent.core.quality.policy import golden_three_settings
+
+    _golden_cfg = golden_three_settings(
+        _qpolicy,
+        cli_threshold=_cli_value(golden_three_threshold, None),
+        cli_floor=_cli_value(golden_three_floor, None),
+        cli_gate=(False if bool(_cli_value(no_golden_three_gate, False)) else None),
+    )
+    _golden_gate = bool(_golden_gate) and bool(_golden_cfg["gate"])
 
     # ---- G10（拍板 1）：开写前成本预估引导（非 JSON 一行 + 可复制命令；JSON 模式静默）----
     if not json_output:
@@ -551,8 +572,8 @@ def autowrite(
         #   （实测：0 章写出）。此处与上方 CLI 层调用同一开关，保证只有一个语义。
         plan_gate_allow_stage_level=bool(_cli_value(allow_stage_level, False)),
         golden_three_gate=_golden_gate,
-        golden_three_threshold=int(_cli_value(golden_three_threshold, SIX_DIM_PASS_LINE)),
-        golden_three_floor=int(_cli_value(golden_three_floor, SIX_DIM_FLOOR)),
+        golden_three_threshold=int(_golden_cfg["threshold"]),
+        golden_three_floor=int(_golden_cfg["floor"]),
         padding_gate=_padding_gate,
         padding_threshold=float(_cli_value(padding_threshold, 0.30)),
         # ---- G7 新增：人话总结层展示开关（拍板 6：默认开，--no-human-summary 关闭）----

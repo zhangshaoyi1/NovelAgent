@@ -65,6 +65,8 @@ from agent.core.infra.degrade import degrade
 __all__ = [
     "DESIGN_EXEMPTION",
     "DESIGN_EXEMPTION_PACE",
+    "CARRIED_TO_JUDGE",
+    "CARRIED_TO_PERSIST",
     "DesignBrief",
     "build_design_brief",
     "render_quality_rubric",
@@ -84,6 +86,9 @@ _BUDGET = {
     "character_facts": 2000,
     "expectation": 700,
     "canon": 2400,
+    #: 承接=（章首状态结转）：事实/信息差/未闭环/上一章交接的有界投影。
+    #: 预算控制注入体量；为空（无账本）时块整体为空。
+    "carry": 1200,
 }
 
 #: 「设计内转变 ≠ 崩坏」判定前提（三端共用同一段文字，禁止各写一份）。
@@ -121,6 +126,64 @@ DESIGN_EXEMPTION_PACE = (
     "仍须服务该章登记的章内要求。仅当**偏离**登记档位才计 issue"
     "（登记放松却通篇无信息增量、或登记高强度却写得平淡）。"
     "未给出强度档位的章，按原标尺判，不放松也不收紧。"
+)
+
+#: 承接=（章首状态结转）——评委端对齐判定的**权威起点**（2026-09-21，三端供给收口）。
+#:
+#: ★ 为什么需要这条：评委此前对齐「设定一致/人设稳定」只能靠被污染的正典
+#:   （``setting_canon.render_for_prompt(limit=30)`` 取最早最脏条目）与路线级弧线
+#:   （60–120 章一个节点，太粗）。而**上一章结算结转的状态**（事实/信息差/未闭环/
+#:   章末交接）才是本章开篇的**真实连续锚点**——写手早就拿到它
+#:   （``m5_context`` 的 ``continuity_projection``），评委/落盘两端此前拿不到
+#:   （ch15 实证：正文按承接演进而被判与"旧台账"冲突）。
+#:
+#:   ⇒ 这就是「章际承接」把「设定一致/人设稳定」从"结构无解"变成"可对齐"的钥匙：
+#:   沿承接状态连续演进 = 合格；与承接状态冲突/断裂才计 issue。
+CARRIED_TO_JUDGE = (
+    "【本章开篇承接状态（承接=）】以下为上一章结算结转下来的**权威状态**"
+    "（事实/信息差/未闭环剧情线/上一章章末交接）。判定『设定一致』『人设稳定』"
+    "『逻辑漏洞』时，以此承接状态为对齐**起点**：本章角色境界/心性/关系/资源若与"
+    "承接状态**连续演进**（承接=1 且本章推进），不算前后矛盾/设定冲突；"
+    "只有与承接状态**冲突或断裂**（倒退回旧值、无契机跳变）才计 issue。"
+    "承接状态为空时，再回落设定台账/角色档案核验。"
+)
+
+#: 承接=（章首状态结转）——落盘端结转核对基线（2026-09-21）。
+#:
+#: 落盘端此前只写不读：`m5_persist` 章尾确实 commit 进 ``ContinuityLedger``
+#: （承接的**写**），但没有把「上一章开了什么」拿回来对账（承接的**读**）。
+#: 落盘时应以承接=为基线核对：本章是否把承接中未闭环的剧情线推进/关闭、
+#: 是否延续了交接的 must_carry。核对结果随事实一起结账，下一章才能拾起。
+CARRIED_TO_PERSIST = (
+    "【承接=（本章开篇结转清单，写完后核对）】以下为本章开篇从上一章结转的状态。"
+    "落盘时逐条核对：未闭环剧情线被推进/关闭了吗？信息差被反转了吗？交接的必带项"
+    "延续了吗？**只把正文实际发生的变化结账**，未发生的保持承接原值，不得提前推进。"
+)
+
+#: 承接=（章首状态结转）——写手端起点的**不可突破锚点**（2026-09-21，三端供给补完）。
+#:
+#: ★ 为什么这条被漏掉：承接=初版只补给评委/落盘两端（judge/persist），写手端误以为
+#:   ``m5_context`` 已有 ``continuity_projection`` 就够了。但投影是**说明性的**（"当前
+#:   有哪些状态"），没有给写手**硬约束力**（"这些是**权威起点**，只能从它们连续演进，
+#:   不得直接无契机跳变"）。ch25 实证：写手看不到"承接=引灵中期"，在引灵/栖气期边界
+#:   连续跳了两级冲到淳真期初期，且把"单一属性/30%/三次"规则直接升级为"全属性/50%/
+#:   五次"，完全脱离承接 ⇒ 被评委判设定一致=3/逻辑漏洞=2（真实违约）。
+#:
+#:   ⇒ 写法与 judge 版同源同字段（同 ``self.opening_state``），但措辞面向"产出侧"：
+#:   强调**境界/设定/关系的连续演进**、禁止**无契机的越级跳变**、规则升级须有触发源。
+CARRIED_TO_WRITER = (
+    "【本章开篇承接状态（承接=，写手起点）】以下为上一章结转下来的**权威章首状态**"
+    "（境界/心性/关系/资源/未闭环剧情线/上一章章末交接）。本章写作**必须以此为连续起点**："
+    "境界/功法规则/关系等只能从承接值**连续演进**（有明确触发：突破契机/闭关/机缘/真源佐证）；"
+    "不得**无契机的越级跳变**（如上一章还在引灵期边界、本章直接冲到更高境界），"
+    "不得**无登记地升级规则**（如吞噬属性数/效率/次数的变更须有触发源与新增设定登记），"
+    "不得**自相矛盾地改时间标签**。承接状态为空时，再回落到设定台账/角色档案检索。\n"
+    "【优先级仲裁（与「本章设计意图与阶段方向」冲突时以此为准）】设计供给里可能同时出现"
+    "两类信息：①标注「本章」的（本章须落实）；②标注「跨多章」/「阶段方向」的（阶段级、"
+    "**本章不必完成**）。两类冲突时一律**以本承接状态（承接=）为准**：\n"
+    "- 本章境界**至多从承接值推进一境**；承接未给出境界时，不得凭空跳到更高境界；\n"
+    "- 功法/规则**至多升级一次**，且必须给出本章内的触发事件（突破契机/闭关/机缘/真源佐证）；\n"
+    "- 标注「跨多章」的阶段目标**不得在单章内完成**——本章只写它的一步，其余留给后续章节。\n"
 )
 
 
@@ -225,25 +288,40 @@ class DesignBrief:
     setting_facts: str = ""      # 设定真源（冻结段 + 台账 + 已知冲突）
     character_facts: str = ""    # 角色真源（内核/动机/弧光/关系/语言指纹）
     design_expectation: str = ""  # 落盘期望（本章设计上应推进的状态）
+    opening_state: str = ""      # 承接=（上一章结转的权威章首状态：事实/信息差/未闭环/交接）
 
     @property
     def empty(self) -> bool:
         return not any(
             (self.rubric, self.route_track, self.chapter_intent,
-             self.setting_facts, self.character_facts, self.design_expectation)
+             self.setting_facts, self.character_facts, self.design_expectation,
+             self.opening_state)
         )
 
     # ---------------------------------------------------------- 三端渲染
     def render_for_writer(self) -> str:
-        """写手端：本章设计意图 + 弧线轨迹 + 达标判据。
+        """写手端：承接=（章首权威状态）+ 本章设计意图 + 弧线轨迹 + 达标判据。
 
-        「只设计不通知」的直接对症：写手必须知道**设计上本章要表现什么**、
-        **弧线这一跳是设计好的**、**批末体检拿什么尺子量**。
+        「只设计不通知」的直接对症：写手必须知道**上一章结转的权威章首状态**
+        （只此基础上连续演进）、**设计上本章要表现什么**、**弧线这一跳是设计好的**、
+        **批末体检拿什么尺子量**。承接=（:data:`CARRIED_TO_WRITER`）放最前，
+        是写作的连续起点，防止写手无契机的越级跳变/无登记规则升级。
         """
         blocks: list[str] = []
+        # 承接=（章首权威状态）放**最前**：它是写作的连续起点，必须最先可见、
+        # 最不易被预算挤出（"注入了但被截断"＝没注入）。
+        if self.opening_state:
+            blocks.append(CARRIED_TO_WRITER + "\n" + self.opening_state)
         if self.chapter_intent:
+            # ★ 2026-09-24：标题此前是「本章须落实；不得自行改道」——而块里混排了
+            #   **阶段级**（跨多章）的「支线目标/主线方向」（见 ``_render_chapter_intent``），
+            #   写手只能服从"本章须落实" ⇒ 把跨多章的阶段目标挤进一章内
+            #   （灵荒工坊 ch41 实证：引灵→淳真一章内连跳两境）。
+            #   标题改中性，并显式声明"标注「本章」的须落实、标注「跨多章」的禁止单章完成"，
+            #   与 :data:`CARRIED_TO_WRITER` 的「不得无契机的越级跳变」形成**同一口径**。
             blocks.append(
-                "【本章设计意图（规划端已登记，本章须落实；不得自行改道）】\n"
+                "【本章设计意图与阶段方向（规划端已登记；标注「本章」的须落实，"
+                "标注「跨多章」的禁止在单章内完成）】\n"
                 + self.chapter_intent
             )
         if self.route_track:
@@ -265,7 +343,11 @@ class DesignBrief:
         评委必须与写手**拿到同一份设计轨**，否则判据互斥、回退不收敛。
         """
         blocks: list[str] = []
-        # 档位参照系**放最前**：它是其余判据的尺子，且本块整体有预算，
+        # 承接=（章首权威状态）放**最前**：它是判定一致性的对齐起点，必须最先可见、
+        # 最不易被预算挤出（"注入了但被截断"＝没注入）。
+        if self.opening_state:
+            blocks.append(CARRIED_TO_JUDGE + "\n" + self.opening_state)
+        # 档位参照系：它是其余判据的尺子，且本块整体有预算，
         # 放在后面没有额外收益、只有被挤出 prompt 的风险（"注入了但被截断"＝没注入）。
         if self.window_pace_tiers:
             blocks.append(self.window_pace_tiers)
@@ -295,12 +377,17 @@ class DesignBrief:
         对应作者命题的「最终落盘」——弧线推进/境界提升/关系演变必须在写完后
         **记账**，后续章节以新状态为准，而不是永远拿初始档案说话。
         """
-        if not self.design_expectation:
+        if not self.design_expectation and not self.opening_state:
             return ""
-        return (
-            "【本章设计期望推进的状态（写完后核对：正文若已推进，应落盘为新状态）】\n"
-            + self.design_expectation
-        )
+        blocks: list[str] = []
+        if self.opening_state:
+            blocks.append(CARRIED_TO_PERSIST + "\n" + self.opening_state)
+        if self.design_expectation:
+            blocks.append(
+                "【本章设计期望推进的状态（写完后核对：正文若已推进，应落盘为新状态）】\n"
+                + self.design_expectation
+            )
+        return "\n\n".join(blocks)
 
 
 # ---------------------------------------------------------------- 各块装配
@@ -445,9 +532,17 @@ def _render_chapter_intent(
     parts: list[str] = []
     goal = _md_section(subline_md, "支线目标")
     if goal:
-        parts.append(f"- 支线目标：{goal[:300]}")
+        # ★ 2026-09-24：**阶段级**（跨多章）目标必须自带粒度标注，否则写手会把它
+        #   当成"本章须完成"，一章内做完整条支线（含境界连跳）。同函数下方的钩子/
+        #   情节点早已按章切分并通过 ``_intent_label`` 标注证据等级，这两行是漏网之鱼。
+        #   ⚠ 标注措辞刻意**避开**「非本章」三字：那是
+        #   ``chapter_contract.NON_CURRENT_LABEL_SUFFIX`` 的既有专义（"回退到最近前文、
+        #   证据弱"），复用会造出两个同词异义的参照系（纪律 #20 参照系错位），
+        #   且粒度过粗的「跨多章」本身已把意思说全。
+        parts.append(f"- 【阶段方向·跨多章｜本章不必完成】支线目标：{goal[:300]}")
     if route_title or route_result:
-        parts.append(f"- 主线方向：{route_title}｜结果预期：{route_result}"[:300])
+        line = f"主线方向：{route_title}｜结果预期：{route_result}"
+        parts.append(f"- 【阶段方向·跨多章｜本章不必完成】{line[:300]}")
     # ---- 本章强度档位（D2）：规划端登记，写手与评委共用同一把尺 ----
     tier_name = pace_tier_of(subline_md, chapter_num) if chapter_num else ""
     tier = PACE_TIER_BY_NAME.get(tier_name)
@@ -685,6 +780,38 @@ def _guess_subline_dir(root: Path) -> Path | None:
         return sorted(cands)[-1]
 
 
+def _render_opening_state(project_dir: Path) -> str:
+    """承接=（章首状态结转）：从连续性账本组装有界投影。
+
+    与写手端 ``m5_context`` 注入的 ``continuity_projection`` **同源**
+    （都走 ``core.continuity.project`` + ``project_to_text``），是"上一章结算
+    结转下来的权威章首状态"。评委/落盘两端此前拿不到它 ⇒ 判定满足/设定一致
+    只能靠被污染的正典 ⇒ 正文按承接演进而被判与旧台账冲突（ch15 实证）。
+
+    只读账本、失败降级为空串（不阻断）；账本虽在 ``core.continuity``，本模块
+    延迟导入以避免 import-time 循环（本模块属 ``core.story``，仅依赖 base+client）。
+    """
+    try:
+        from agent.core.continuity import (
+            ContinuityLedgerStore,
+            project,
+            project_to_text,
+        )
+
+        ledger = ContinuityLedgerStore(project_dir)
+        ledger.load()
+        if not ledger.has_any():
+            return ""
+        return project_to_text(project(ledger))
+    except Exception as e:  # noqa: BLE001 - 承接投影失败→该块为空，显性降级
+        degrade(
+            "design_brief.carry",
+            "连续性账本承接投影失败，承接=缺失（判定一致性对齐起点缺失）",
+            e,
+        )
+        return ""
+
+
 def build_design_brief(
     project_dir: str | Path,
     chapter_num: int | None = None,
@@ -812,4 +939,5 @@ def build_design_brief(
         design_expectation=_clip(
             _render_design_expectation(nodes, window, int(chapter_num)), "expectation"
         ),
+        opening_state=_clip(_render_opening_state(root), "carry"),
     )

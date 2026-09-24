@@ -149,6 +149,10 @@ GOLDEN_BORDERLINE_BAND: int = 5     # 贴线复核带宽：首评落在 threshol
 GOLDEN_DIM_FLOOR: int = SIX_DIM_FLOOR      # 单维触底线（--golden-three-floor 覆盖）
 GOLDEN_GATE_PREFIX: str = "golden_" # golden_* DimensionResult 名前缀
 GOLDEN_JOIN_CHAR_LIMIT: int = 10000 # 与 score_chapter 截断（行 315）对齐；超长 fallback 每章独立评分
+#: 超长回退路径下**每章采样次数**——单维判定噪声 σ≈8-10，单次采样取 min 会系统性低估
+#: （2026-09-25 实证：同一内容单次 min 综合 57/爽点 38 vs 逐章均值 min 综合≈68/爽点 42）。
+#: 取 2 是「去偏」与「成本」的折中（回退路径仅在内容指纹变化时跑一次，且结果进缓存）。
+GOLDEN_FALLBACK_SAMPLES: int = 2
 
 # ---- HA-Eval L2（2026-09-08）：以下两块语义已上收至 dimension_registry（SSOT）----
 # 计数类维度集合（以 issues 重算 value）；评分类维度用自报 value。
@@ -1066,22 +1070,55 @@ def gate_first_chapters(
         worst_total = 100
         any_online = False
         for t in texts:
-            r = scorer.score_chapter(
-                t, title=title, genre=genre, synopsis=synopsis, **context_kwargs
-            )
-            if r.llm_used:
+            # ★ 2026-09-25（估计量修正）：逐章先采 GOLDEN_FALLBACK_SAMPLES 次取**逐维均值**，
+            #   再参与"取最差"。旧实现直接对**单次采样**取 min：单维判定噪声 σ≈8-10，
+            #   对带噪单样本取 min 会系统性低估（min-of-3 ≈ 真值 −7~10）⇒ 达标书被误熔断。
+            #   实测（灵荒工坊 ch001-003，同一内容）：
+            #     单次采样 min ⇒ 综合 57 / 爽点 38（< 触底 40，熔断）；
+            #     逐章均值再 min ⇒ 综合 ≈68 / 爽点 42（全维过 40）。
+            #   语义不变——仍是"对最差章判定"，只是改判**章节的真实分数**而非抽样噪声。
+            samples = [
+                scorer.score_chapter(t, title=title, genre=genre, synopsis=synopsis, **context_kwargs)
+                for _ in range(GOLDEN_FALLBACK_SAMPLES)
+            ]
+            online = [s for s in samples if s.llm_used]
+            if online:
                 any_online = True
+            else:
+                # 离线：保留占位（dims 全 0），由调用方按 llm_used 短路，不参与 min
+                continue
+            dims_avg = {
+                k: int(round(sum(s.dimensions.get(k, 0) for s in online) / len(online)))
+                for k in APPEAL_DIMENSIONS
+            }
+            total_avg = int(round(sum(s.total_score for s in online) / len(online)))
             for k in APPEAL_DIMENSIONS:
-                worst[k] = min(worst.get(k, 100), r.dimensions.get(k, 0))
-            worst_total = min(worst_total, r.total_score)
+                worst[k] = min(worst.get(k, 100), dims_avg[k])
+            worst_total = min(worst_total, total_avg)
         return worst, worst_total, any_online, []
 
-    def _borderline(total: int, online: bool) -> bool:
-        """综合分是否落在达标线 ±GOLDEN_BORDERLINE_BAND 的贴线带内（且在线）"""
-        return (
-            online
-            and (threshold - GOLDEN_BORDERLINE_BAND) <= total <= (threshold + GOLDEN_BORDERLINE_BAND)
-        )
+    def _borderline(total: int, online: bool, dims: dict[str, int] | None = None) -> bool:
+        """是否需要复核（贴线带 / 单维触底线附近），在线才复核。
+
+        1) 综合分落在达标线 ±GOLDEN_BORDERLINE_BAND（原有逻辑）；
+        2) ★ 2026-09-25：任一维度落在**触底线** ±GOLDEN_BORDERLINE_BAND。
+           旧实现只看总分 ⇒ 单维触底永不复核，而单维得分方差远大于总分
+           （实测同一内容同一维 35↔58 跨度；灵荒工坊 ch002 爽点稳定 35-38 < 40
+           触底、按细纲补智性爽点后仍可能单次抽到 40，总分也抽到 59 —— 两次
+           都在"1 分之差"处误熔断，与本函数存在的理由同型）。
+        """
+        if not online:
+            return False
+        if (threshold - GOLDEN_BORDERLINE_BAND) <= total <= (threshold + GOLDEN_BORDERLINE_BAND):
+            return True
+        for value in (dims or {}).values():
+            if (
+                GOLDEN_DIM_FLOOR - GOLDEN_BORDERLINE_BAND
+                <= value
+                <= GOLDEN_DIM_FLOOR + GOLDEN_BORDERLINE_BAND
+            ):
+                return True
+        return False
 
     def _avg_report(
         dims1: dict[str, int], total1: int, sugg1: list[str],
@@ -1120,7 +1157,7 @@ def gate_first_chapters(
         # 贴线缓存复核（优化登记 20260913 补丁，灵荒薪传 59/60 缓存复用二次熔断实证）：
         # 缓存命中会短路与贴线复核叠加——一次贴线波动被缓存永久固化，每批重复熔断。
         # 缓存分落在贴线带内时追加一次采样取均值并刷新缓存；远离贴线带维持缓存零成本。
-        if _borderline(cached.total_score, bool(cached.llm_used)):
+        if _borderline(cached.total_score, bool(cached.llm_used), dict(cached.dimensions)):
             _re = _avg_report(
                 dict(cached.dimensions), cached.total_score,
                 list(cached.suggestions), cached.chapters_scored, bool(cached.fallback),
@@ -1147,7 +1184,7 @@ def gate_first_chapters(
     # 首评落在达标线 ±GOLDEN_BORDERLINE_BAND 且在线时，再采一次取逐维均值——
     # 单样本 LLM 评分在 60 线附近方差足以"1 分之差"误熔断整本书
     # （灵荒薪传 59/60 熔断，同文本重评 65/64/74 实证）。复核失败保留首评不阻断。
-    if _borderline(total1, online1):
+    if _borderline(total1, online1, dims1):
         _re = _avg_report(dims1, total1, sugg1, report.chapters_scored, fallback)
         if _re is not None:
             report = _re
@@ -1265,7 +1302,14 @@ def recheck_borderline(
     """
     if base_report is None or not base_report.llm_used:
         return None
-    if not (threshold - band) <= base_report.total_score <= (threshold + band):
+    # ★ 2026-09-25：单维触底线附近同样复核（与批末 gate_first_chapters._borderline 同口径）——
+    # 旧实现只看综合分，单维触底的"1 分之差"永不复核，而单维方差远大于总分。
+    near_total = (threshold - band) <= base_report.total_score <= (threshold + band)
+    near_floor = any(
+        (APPEAL_DIM_FLOOR - band) <= v <= (APPEAL_DIM_FLOOR + band)
+        for v in (base_report.dimensions or {}).values()
+    )
+    if not (near_total or near_floor):
         return None
     kwargs = kwargs or {}
     try:
