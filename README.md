@@ -252,6 +252,7 @@ novel-agent guardrail-scan -d novels/my-novel        # 质量护栏全量扫描
 novel-agent review-book    -d novels/my-novel        # 多视角对抗式评审
 novel-agent deslop         -d novels/my-novel --apply  # 批量去 AI 味（先报告后改写）
 novel-agent rewrite -d novels/my-novel --chapter 12 --feedback "节奏太快，放慢补细节"
+novel-agent rewrite -d novels/my-novel --chapter 15 --mode full --feedback "与第16章雷同，整章重写"
 
 # 导出与安全网
 novel-agent export  -d novels/my-novel -f epub -o ./output

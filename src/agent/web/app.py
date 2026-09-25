@@ -285,6 +285,31 @@ def conflicts_page(request: Request, name: str) -> HTMLResponse:
 
 
 # ============================================================
+# 提示词全文捕获（每本书开关 + 近期记录查看）
+# ============================================================
+
+@app.get("/api/p/{name}/prompt-capture")
+def api_prompt_capture_get(name: str) -> JSONResponse:
+    """读取当前书「提示词全文捕获」开关与落地文件信息。"""
+    return JSONResponse(state.get_prompt_capture(name))
+
+
+@app.get("/api/p/{name}/prompt-capture/records")
+def api_prompt_capture_records(name: str, limit: int = 10) -> JSONResponse:
+    """读取最近已捕获的 prompt/response 记录（倒序，上限 limit 条）。"""
+    limit = max(1, min(int(limit), 50))
+    return JSONResponse({"records": state.read_prompt_captures(name, limit)})
+
+
+@app.post("/api/p/{name}/prompt-capture")
+async def api_prompt_capture_save(name: str, request: Request) -> JSONResponse:
+    """写当前书「提示词全文捕获」开关（body: {enabled: bool}）。"""
+    body = await request.json()
+    ok, msg = state.set_prompt_capture(name, bool(body.get("enabled", False)))
+    return JSONResponse({"ok": ok, "message": msg, **state.get_prompt_capture(name)})
+
+
+# ============================================================
 # 引导向导：7 个阶段各一页，整体样式统一（可点进度条 + 上/下一步）
 # ============================================================
 

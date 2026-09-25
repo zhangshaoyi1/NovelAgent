@@ -42,6 +42,11 @@ from typing import Any, Iterator
 _HOOK: Any = None
 _LOCK = threading.Lock()
 
+# 是否随用量事件附带 prompt/response 全文（默认关闭，零开销）。
+# 由上层按「每本书」开关注入：仅当开启时才在 gateway_adapter 的用量
+# payload 里附上全文，保证默认 events.jsonl 不含 prompt 原文。
+_CAPTURE_PROMPTS = False
+
 # 线程内单调计数：只增不减，用于「本次调用是否已被 provider 级收口记账」的判定。
 _local = threading.local()
 
@@ -58,6 +63,23 @@ def set_llm_usage_hook(hook: Any) -> None:
     global _HOOK
     with _LOCK:
         _HOOK = hook
+
+
+def set_llm_capture_prompts(enabled: bool) -> None:
+    """按 per-book 开关：是否随用量事件附带 prompt/response 全文。
+
+    默认关闭（no-op，不影响 events.jsonl / trace.jsonl 内容，仅多一次布尔读）。
+    仅当进程内当前激活的书籍开启捕获时才置 True；重复调用仅覆盖。
+    传 None/False 显式关闭。
+    """
+    global _CAPTURE_PROMPTS
+    with _LOCK:
+        _CAPTURE_PROMPTS = bool(enabled)
+
+
+def llm_capture_prompts() -> bool:
+    """当前进程是否开启了 prompt 全文捕获（供 gateway_adapter 读）。"""
+    return _CAPTURE_PROMPTS
 
 
 def usage_epoch() -> int:
@@ -135,4 +157,6 @@ __all__ = [
     "usage_epoch",
     "llm_use",
     "current_use",
+    "set_llm_capture_prompts",
+    "llm_capture_prompts",
 ]

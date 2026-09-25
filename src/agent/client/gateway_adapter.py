@@ -22,7 +22,18 @@ from agent.base.structured_output import (
     pydantic_to_json_schema,
 )
 # 用量埋点出口（同层模块，无循环依赖；失败不阻断调用）
-from agent.client.llm_usage import notify_llm_usage
+from agent.client.llm_usage import llm_capture_prompts, notify_llm_usage
+
+
+def _messages_to_text(messages: Any) -> str:
+    """将 Gateway messages 序列化为可读文本（供全文捕获，本就非序列化时兜底到 str）。
+
+    尽量以 JSON 呈现，保留 role/content 结构；序列化异常时降级为 str 不阻断调用。
+    """
+    try:
+        return json.dumps(messages, ensure_ascii=False, default=str)
+    except Exception:  # noqa: BLE001 - 序列化全文失败不阻断 LLM 调用
+        return str(messages)
 
 
 # ===== 网络级瞬时故障统一退避（LLM 调用唯一收口点）=====
@@ -171,7 +182,7 @@ class _GatewayModelProvider:
                 or 0
             )
             # LLMOps 用量埋点：所有 create_gateway() 调用的唯一收口（失败不阻断）
-            notify_llm_usage({
+            _usage: dict[str, Any] = {
                 "type": "llm.usage",
                 "ok": True,
                 "provider": self.name,
@@ -180,7 +191,13 @@ class _GatewayModelProvider:
                 "tokens_out": tokens_out,
                 "tokens_cached": tokens_cached,
                 "latency_ms": round(elapsed, 2),
-            })
+            }
+            # 每本书开关注入的全文捕获：仅开启时附带 prompt/response 原文
+            # （默认关闭 ⇒ 本字段不出现，events.jsonl / trace.jsonl 保持精简）。
+            if llm_capture_prompts():
+                _usage["prompt"] = _messages_to_text(messages)
+                _usage["response"] = resp.text
+            notify_llm_usage(_usage)
             return RawResponse(
                 text=resp.text,
                 provider=self.name,
@@ -191,7 +208,7 @@ class _GatewayModelProvider:
             )
         except Exception as e:
             elapsed = (time.monotonic() - t0) * 1000.0
-            notify_llm_usage({
+            _usage: dict[str, Any] = {
                 "type": "llm.usage",
                 "ok": False,
                 "provider": self.name,
@@ -200,7 +217,12 @@ class _GatewayModelProvider:
                 "tokens_out": 0,
                 "latency_ms": round(elapsed, 2),
                 "error": str(e)[:300],
-            })
+            }
+            # 错误路径无响应文本：仅开启捕获时附带 prompt 原文（response=None）。
+            if llm_capture_prompts():
+                _usage["prompt"] = _messages_to_text(messages)
+                _usage["response"] = None
+            notify_llm_usage(_usage)
             # 配额耗尽/欠费/鉴权失败 → 抛 FatalProviderError，让上层立即熔断
             # 而非按瞬时故障退避重试（403 重试必然再次 403）
             if is_fatal_provider_error(e):
@@ -246,7 +268,7 @@ class _GatewayModelProvider:
                 elapsed = (time.monotonic() - t0) * 1000.0
                 fatal = is_fatal_provider_error(e)
                 transient = (not fatal) and _is_transient_provider_error(e)
-                notify_llm_usage({
+                _usage_att: dict[str, Any] = {
                     "type": "llm.usage",
                     "ok": False,
                     "provider": self.name,
@@ -257,7 +279,12 @@ class _GatewayModelProvider:
                     "error": str(e)[:300],
                     "attempt": attempt,
                     "transient": transient,
-                })
+                }
+                # 错误路径无响应文本：仅开启捕获时附带 prompt 原文（response=None）。
+                if llm_capture_prompts():
+                    _usage_att["prompt"] = _messages_to_text(messages)
+                    _usage_att["response"] = None
+                notify_llm_usage(_usage_att)
                 if fatal:
                     # 配额耗尽/欠费/鉴权失败 → 立即熔断（重试必然再失败）
                     raise FatalProviderError(

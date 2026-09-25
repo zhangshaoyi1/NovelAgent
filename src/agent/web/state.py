@@ -754,3 +754,64 @@ def load_qa(name: str, stage_key: str) -> dict[str, Any]:
         return json.loads(f.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return {}
+
+
+# ============================================================
+# 提示词全文捕获（per-book）：读取开关 + 近期已捕获的调用
+# ============================================================
+
+def get_prompt_capture(name: str) -> dict[str, Any]:
+    """读取当前书「提示词全文捕获」开关与已落地文件信息。
+
+    prompts.jsonl 只在开关开启后的新 LLM 调用才有记录（历史未捕获过全文）。
+    """
+    from agent.core.event_sourcing.prompt_capture import capture_enabled
+
+    pdir = project_path(name)
+    f = pdir / ".state" / "llmops" / "prompts.jsonl"
+    count = 0
+    if f.exists():
+        try:
+            with f.open(encoding="utf-8") as fh:
+                count = sum(1 for _ in fh)
+        except OSError:
+            count = 0  # noqa: SILENT_DEGRADE
+    return {
+        "enabled": capture_enabled(pdir),
+        "rel": ".state/llmops/prompts.jsonl",
+        "count": count,
+    }
+
+
+def set_prompt_capture(name: str, enabled: bool) -> tuple[bool, str]:
+    """写入当前书「提示词全文捕获」开关（默认关闭）。"""
+    from agent.core.event_sourcing.prompt_capture import set_capture_enabled
+
+    return set_capture_enabled(project_path(name), bool(enabled))
+
+
+def read_prompt_captures(name: str, limit: int = 10) -> list[dict[str, Any]]:
+    """读取最近已捕获的 prompt/response 记录（倒序，最多 limit 条）。
+
+    用于开关开启后查看每次发给 LLM 的真实提示词。文件缺失/损坏时返回空列表。
+    """
+    from agent.core.event_sourcing.prompt_capture import _PROMPTS_REL
+
+    f = project_path(name) / _PROMPTS_REL
+    lines: list[dict[str, Any]] = []
+    if not f.exists():
+        return lines
+    try:
+        with f.open(encoding="utf-8") as fh:
+            for ln in fh:
+                ln = ln.strip()
+                if not ln:
+                    continue
+                try:
+                    lines.append(json.loads(ln))
+                except ValueError:  # noqa: SILENT_DEGRADE - 单行损坏跳过
+                    continue
+    except OSError:
+        return []
+    # 倒序取最近 limit 条
+    return lines[-limit:][::-1]

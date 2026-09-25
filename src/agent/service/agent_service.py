@@ -146,6 +146,10 @@ class AgentService:
         from agent.core.event_sourcing.llm_wiring import wire_llm_event_hook
 
         wire_llm_event_hook(self.project_dir)
+        # 接线：提示词全文捕获（每本书开关，默认关闭 no-op）
+        from agent.core.event_sourcing.llm_wiring import wire_prompt_capture
+
+        wire_prompt_capture(self.project_dir)
 
         # Session 管理（Phase 2）
         self.session_manager: Optional[Any] = None
@@ -367,10 +371,12 @@ class AgentService:
         backup: bool = True,
         gate_mode: str = "advisory",
         record_learning: bool = True,
+        mode: str = "patch",
     ) -> dict[str, Any]:
-        """A3 反馈→定向重写（用户好用闭环）。
+        """A3 反馈→重写（用户好用闭环）。
 
-        把用户针对某章的反馈变成局部定向重写，而非整章回退/重跑。
+        把用户针对某章的反馈变成重写，而非整章回退/重跑。
+        ``mode="full"`` 为整章重写（注入本章逐章契约 + 字数区间，不复述原文与邻章）。
         返回 RewriteResult.to_dict()。
         """
         from agent.core.quality.rewrite.feedback_rewriter import FeedbackRewriter
@@ -387,5 +393,6 @@ class AgentService:
             backup=backup,
             gate_mode=gate_mode,
             record_learning=record_learning,
+            mode=mode,
         )
         return result.to_dict()

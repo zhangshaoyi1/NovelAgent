@@ -192,8 +192,12 @@ def test_agent_service_evaluate_offline(tmp_path, monkeypatch):
     # P1-11 补遗：service 装配真实 Gateway，读者吸引力评分器会走真实 LLM
     # （本用例名 offline 但此前依赖"无 .env 报错降级"才侥幸离线）。主工作区有
     # .env 时会真发网络请求导致挂死；显式打掉评分器的 LLM 出口，走降级默认。
+    # ⚠ 2026-09-24 校正：`_score` 的实际出口是 `_chat_with_eval_backoff` →
+    #   `chat_utility_response`（2026-09-12 长退避改造后）；此前补丁打在**未被调用**
+    #   的 `chat_utility` 上 ⇒ 补丁失效、真发网络请求 ⇒ 连接失败后在 20s/40s 退避中
+    #   撞穿 90s 超时，整轮全量测试在此中止（exit 1）。改打真实出口。
     monkeypatch.setattr(
-        "agent.core.quality.scoring.reader_appeal.chat_utility",
+        "agent.core.quality.scoring.reader_appeal.chat_utility_response",
         lambda *a, **kw: (_ for _ in ()).throw(RuntimeError("offline test: LLM disabled")),
     )
 

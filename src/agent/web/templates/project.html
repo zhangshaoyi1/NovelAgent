@@ -134,6 +134,28 @@
     </details>
   </section>
 </div>
+
+{# E. 提示词全文捕获（每本书开关，默认关闭） #}
+<section class="card" id="prompt-capture-card">
+  <h2>🧾 提示词全文捕获</h2>
+  <p class="muted">
+    开启后，每次发给 LLM 的 chat「输入 + 输出全文」会按本章追加写入本地
+    <code>{{ name }}/.state/llmops/prompts.jsonl</code>（JSONL）供复盘。
+    默认关闭，不会记录 prompt 原文；开启后自下一次 LLM 调用起可读真实提示词。
+  </p>
+  <div class="wb-row">
+    <label style="display:flex; align-items:center; gap:8px;">
+      <input type="checkbox" id="pc-enabled" onchange="togglePromptCapture('{{ name }}', this.checked)" />
+      <span>开启本书记录</span>
+    </label>
+    <span class="badge" id="pc-status">…</span>
+  </div>
+  <div class="actions-row" style="margin-top:8px">
+    <button class="btn small" onclick="loadPromptCaptures('{{ name }}')">刷新</button>
+    <button class="btn small" onclick="loadPromptCaptures('{{ name }}')">查看最近已捕获提示词</button>
+  </div>
+  <div id="pc-records" class="muted small" style="margin-top:8px; max-height:360px; overflow:auto;"></div>
+</section>
 {% endblock %}
 {% block scripts %}
 <script>
@@ -160,5 +182,53 @@
     const c = startRunConsole('自动续写 ' + batch + ' 章（' + mode + '）');
     runCommand('{{ name }}', 'autowrite', argv, c, () => location.reload());
   }
+  /* 提示词全文捕获（每本书） */
+  function refreshPromptCapture(project) {
+    fetch('/api/p/' + encodeURIComponent(project) + '/prompt-capture')
+      .then(r => r.json())
+      .then(d => {
+        document.getElementById('pc-enabled').checked = !!d.enabled;
+        const el = document.getElementById('pc-status');
+        el.textContent = (d.enabled ? '已开启' : '已关闭') + ' · 已捕获 ' + d.count + ' 次';
+      })
+      .catch(() => { document.getElementById('pc-status').textContent = '读取失败'; });
+  }
+  function togglePromptCapture(project, enabled) {
+    fetch('/api/p/' + encodeURIComponent(project) + '/prompt-capture', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ enabled: enabled })
+    }).then(r => r.json()).then(d => {
+      document.getElementById('pc-status').textContent = d.message + ' · 已捕获 ' + d.count + ' 次';
+    }).catch(() => { document.getElementById('pc-enabled').checked = !enabled; });
+  }
+  function loadPromptCaptures(project) {
+    const box = document.getElementById('pc-records');
+    box.innerHTML = '加载中…';
+    fetch('/api/p/' + encodeURIComponent(project) + '/prompt-capture/records?limit=10')
+      .then(r => r.json())
+      .then(d => {
+        const recs = d.records || [];
+        if (!recs.length) {
+          box.innerHTML = '暂无已捕获的记录。请先开启开关，等下一次 LLM 调用后再刷新。';
+          return;
+        }
+        box.innerHTML = recs.map((rc, i) => {
+          const m = rc.meta || {};
+          const p = rc.prompt || '';
+          const head = '<div class="wb-row" style="justify-content:space-between;flex-wrap:wrap;">'
+            + '<span class="badge">模型 ' + (m.model || '') + '</span>'
+            + '<span class="muted">' + (m.ok ? '' : '【失败】') + 'tokens ' + (m.tokens_in || 0) + '→' + (m.tokens_out || 0)
+            + ' · 耗时 ' + (m.latency_ms != null ? Math.round(m.latency_ms) : 0) + 'ms</span></div>';
+          const body = '<details style="margin:4px 0;"><summary>第 ' + (i + 1) + ' 条 · ' + (m.use || 'chat') + ' · '
+            + (rc.timestamp || '').slice(0, 19) + '</summary>'
+            + '<pre style="white-space:pre-wrap;background:rgba(0,0,0,.05);padding:8px;border-radius:6px;max-height:240px;overflow:auto;">'
+            + (p.length > 6000 ? p.slice(0, 6000) + '…[截断]' : p) + '</pre></details>';
+          return head + body;
+        }).join('');
+      })
+      .catch(() => { box.innerHTML = '读取失败'; });
+  }
+  refreshPromptCapture('{{ name }}');
 </script>
 {% endblock %}
