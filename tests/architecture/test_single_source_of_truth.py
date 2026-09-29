@@ -108,30 +108,11 @@ ALLOWED_WORKTREE_STATUS = frozenset({"active", "deprecated-stale"})
 # 因此采取与 worktree 相同的**成员资格契约**：必须在册并写明用途与阻塞原因。
 # blocker 非空 = 当前不可迁移；blocker 为空 = 可迁移项（应尽快迁入 agent/scripts/）。
 ROOT_SCRIPT_REGISTRY: dict[str, dict[str, str]] = {
-    "monitor_novel.py": {
-        "purpose": "小说进度巡检（每小时），由计划任务 NovelAgent_HourlyMonitor 绝对路径引用",
-        "blocker": "schtasks 受沙箱程序黑名单限制；迁移需同步 /Change 计划任务",
-    },
-    "monitor_daemon.py": {
-        "purpose": "监控守护进程（后台常驻，按小时检测进度）",
-        "blocker": "schtasks 受沙箱程序黑名单限制；与 monitor_novel.py 成对迁移",
-    },
-    "setup_task.py": {
-        "purpose": "注册 Windows 计划任务（调用 schtasks /Create）",
-        "blocker": "schtasks 受沙箱程序黑名单限制",
-    },
-    "create_task.bat": {
-        "purpose": "注册 Windows 计划任务（bat 版）",
-        "blocker": "schtasks 受沙箱程序黑名单限制",
-    },
-    "setup_monitor.bat": {
-        "purpose": "注册监控计划任务（bat 版）",
-        "blocker": "schtasks 受沙箱程序黑名单限制",
-    },
-    "start_autowrite.bat": {
-        "purpose": "启动自动写作（内含 novels/五灵破归档 绝对路径与 writer.lock 清理）",
-        "blocker": "含硬编码绝对路径，迁移需一并改路径并更新快捷方式",
-    },
+    # 2026-09-29 清偿：monitor_novel.py / monitor_daemon.py / setup_task.py /
+    # create_task.bat / setup_monitor.bat / start_autowrite.bat 已删除——
+    # 服务对象 novels/五灵破归档 已归档、计划任务 NovelAgent_HourlyMonitor 实测
+    # 未注册（schtasks /Query 找不到任务），功能由 daemon 队列（daemon-start /
+    # task-submit）取代。教训保留：仓外脚本改无记录，M1b 成员资格契约不变。
     "restart_novelagent.bat": {
         "purpose": "重启 Web/daemon（杀旧进程 → 清锁 → 起新进程，使新代码生效）",
         "blocker": "被日常排障流程直接调用；迁移需同步文档与个人习惯路径",
