@@ -304,6 +304,8 @@ novel-agent status / doctor / continuity / foreshadow-report / reindex / resume
 | `GET`/`POST` | `/api/review/{name}` | 阶段复核检查单（`/decision` 裁决） |
 | `GET`/`POST` | `/api/qa/{name}` | 阶段问答模板 / 保存回答 |
 | `GET`/`POST` | `/api/models`、`/api/rag/config`、`/api/workspaces` | 模型 / RAG / 空间配置 |
+| `GET`/`POST` | `/api/p/{name}/prompt-capture` | 提示词全文捕获开关与计数（默认关；开启后 prompt/response 落 `.state/llmops/prompts.jsonl`） |
+| `GET` | `/api/p/{name}/prompt-capture/records` | 最近捕获记录倒序（上限 50） |
 
 ---
 
