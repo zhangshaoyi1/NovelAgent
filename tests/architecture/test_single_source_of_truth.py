@@ -41,7 +41,9 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 # 兄弟 worktree（见 SIBLING_WORKTREES）。任何"权威文件"出现在这里都是
 # 第二副本 —— 它与真源没有任何同步机制，只会漂移。
 ROOT_AUTHORITY_DENYLIST = (
-    "AGENTS.md",  # 权威规则：唯一真源 = agent/AGENTS.md
+    # 2026-09-29 豁免：根目录 AGENTS.md 是**工作区导航层**（用户拍板建立），
+    # 不是 agent/AGENTS.md 的同名副本——内容为目录说明与文档路由，指向各真源。
+    # 若未来它开始复制 agent/AGENTS.md 的规则正文，应重新收口到本黑名单。
     "CLAUDE.md",
     ".cursorrules",
     ".cursor",
@@ -90,18 +92,9 @@ DOC_SCAN_EXCLUDED_DIRS = frozenset(
 # 到期闸门：超过 remove_by 日期仍存在 = FAIL。把"临时容忍"变成"到期硬约束"，
 # 防止"暂缓移除"永久化（本项目反复出现的漂移模式）。
 SIBLING_WORKTREES: dict[str, dict[str, str]] = {
-    "agent-repair": {
-        "branch": "release/20260906",
-        "purpose": "修复专用工作树（cp 四件套回主仓，AGENTS.md 第 6 条）",
-        "status": "deprecated-stale",
-        "remove_by": "2026-09-29",
-    },
-    "docs-repair": {
-        "branch": "release/20260906",
-        "purpose": "文档修复专用工作树",
-        "status": "deprecated-stale",
-        "remove_by": "2026-09-29",
-    },
+    # 2026-09-29 清偿：agent-repair / docs-repair 已在 remove_by 到期日核验合入
+    # （release/20260906 全量合入 master；docs-repair HEAD 已是文档仓祖先）后删除。
+    # 同族教训沉淀见《项目文档/用户使用最佳实践.md》§11.2。
 }
 
 # 允许的 status 取值（枚举，防自由文本绕过）
@@ -515,7 +508,8 @@ class TestJudgementIsSemantic:
         assert authority_copies(tmp_path) == []
         (tmp_path / "AGENTS.md").write_text("stale copy", encoding="utf-8")
         (tmp_path / ".agents").mkdir()
-        assert sorted(authority_copies(tmp_path)) == [".agents", "AGENTS.md"]
+        # AGENTS.md 已豁免（工作区导航层，见 ROOT_AUTHORITY_DENYLIST 注释），只判 .agents
+        assert sorted(authority_copies(tmp_path)) == [".agents"]
 
     def test_authority_copy_judge_ignores_legitimate_root_dwellers(self, tmp_path: Path) -> None:
         for name in ("novels", ".state", ".workbuddy", "agent", "项目文档", "monitor_novel.py"):

@@ -47,6 +47,8 @@ LEGITIMATE_ROOT_ENTRIES = {
     ".state": "运行状态",
     ".pytest_cache": "测试缓存",
     ".trae": "IDE 工作区目录",
+    "AGENTS.md": "工作区导航层（目录说明 + 文档路由；2026-09-29 拍板，M1 黑名单显式豁免）",
+    ".gitignore": "工作区级忽略规则",
 }
 
 OK = "[ OK ]"
