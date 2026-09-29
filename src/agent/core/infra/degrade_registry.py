@@ -99,6 +99,7 @@ DEGRADE_NAMESPACES: dict[str, str] = {
     "closure_plan.load": "core/story/closure_plan.py",
     "closure_plan.roster": "core/story/closure_plan.py",
     "compose.closure_plan": "core/infra/compose_runner.py",
+    "consistency.field_conflict": "core/quality/consistency/conflict_service.py",
     "consistency.recheck_rule": "core/quality/consistency/checker.py",
     "daemon.ensure_daemon.log": "daemon/core.py",
     "design_brief.characters": "core/story/design_brief.py",
@@ -228,6 +229,7 @@ DEGRADE_NAMESPACE_PREFIXES: dict[str, str] = {
     "chapter_invalidation": "core/story/chapter_invalidation.py",
     "evaluator.score_fn": "agents/evaluator_metrics.py",
     "quality_checker.check_dimension": "core/quality/scoring/quality_checker.py",
+    "quality_checker.run_rules": "core/quality/scoring/quality_checker.py",
 }
 
 

@@ -153,7 +153,16 @@ class ConflictArbiter:
                 temperature=0.1,
             )
             data = parse_llm_json(resp)
-        except (ValueError, Exception):
+        except Exception as e:  # noqa: BLE001 - 解析失败降级为空报告
+            # 2026-09-29：降级必须显性化——空报告会被 checker 判为「无冲突放行」，
+            # 静默返回等于把「LLM 没答上」当成「设定无冲突」。
+            from agent.core.infra.degrade import degrade
+
+            degrade(
+                "consistency.field_conflict",
+                "设定冲突检测调用/解析失败，本次按『无冲突』放行",
+                e,
+            )
             return ConflictReport(
                 conflicts=[],
                 summary="冲突检测失败（LLM 解析异常）",

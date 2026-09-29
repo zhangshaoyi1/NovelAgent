@@ -149,6 +149,38 @@ def parse_llm_json(text: str) -> dict[str, Any]:
     # 而整体失败（ch237/ch238 实证）。这里对每个可能起点做括号配对 + 独立转义 + 尝试
     # 解析，取第一个成功者返回。候选级独立转义还能规避「散文前置的杂散引号使全局
     # 预转义提前错位、漏掉信封内真实换行」的边界。
+    for _cand in _iter_bracket_candidates(text):
+        try:
+            return json.loads(_cand)
+        except json.JSONDecodeError:
+            continue  # noqa: SILENT_DEGRADE reason=expected-skip - 候选起点解析失败即试下一策略，末尾统一 raise 兜底
+
+    # 策略 6: 修复字符串值内部的未转义英文双引号后重试（2026-09-29，灵荒工坊
+    # 09-26 实证：评分模型在 rationale 里写 "垫片" 这类裸引号，围栏剥除后 JSON
+    # 仍非法，策略 1-5 全军覆没 → 评分静默降级污染体检分数）。
+    repaired = _repair_bare_quotes(text)
+    if repaired != text:
+        try:
+            return json.loads(repaired)
+        except json.JSONDecodeError:
+            pass  # noqa: SILENT_DEGRADE reason=expected-skip - 修复后仍非法则继续尝试围栏剥取，末尾统一 raise 兜底
+        _m = fence_pattern.search(repaired)
+        if _m:
+            try:
+                return json.loads(_m.group(1).strip())
+            except json.JSONDecodeError:
+                pass  # noqa: SILENT_DEGRADE reason=expected-skip - 围栏剥取失败则继续尝试括号候选，末尾统一 raise 兜底
+        for _cand in _iter_bracket_candidates(repaired):
+            try:
+                return json.loads(_cand)
+            except json.JSONDecodeError:
+                continue  # noqa: SILENT_DEGRADE reason=expected-skip - 候选起点解析失败即试下一策略，末尾统一 raise 兜底
+
+    raise ValueError(f"无法解析为 JSON: {text[:200]}...")
+
+
+def _iter_bracket_candidates(text: str):
+    """逐「{」起点做括号配对 + 控制符转义，yield 候选 JSON 对象文本（策略 5/6 共用）。"""
     for _s in (m.start() for m in re.finditer(r"\{", text)):
         _depth = 0
         _in_str = False
@@ -176,13 +208,44 @@ def parse_llm_json(text: str) -> dict[str, Any]:
                     break
         if _e == -1:
             continue
-        _cand = _escape_control_in_strings(text[_s : _e + 1])
-        try:
-            return json.loads(_cand)
-        except json.JSONDecodeError:
-            continue  # noqa: SILENT_DEGRADE
+        yield _escape_control_in_strings(text[_s : _e + 1])
 
-    raise ValueError(f"无法解析为 JSON: {text[:200]}...")
+
+def _repair_bare_quotes(text: str) -> str:
+    """把字符串值内部的未转义英文双引号替换为中文引号，返回修复后的文本。
+
+    判定口径：处于字符串内且后面（跳过空白）不是结构符 `,:}]` 的 `"`，
+    视为值内裸引号。这是启发式兜底——只把明显的值内引号改写，不碰结构引号。
+    """
+    out: list[str] = []
+    i, n = 0, len(text)
+    in_str = False
+    while i < n:
+        ch = text[i]
+        if not in_str:
+            out.append(ch)
+            if ch == '"':
+                in_str = True
+            i += 1
+            continue
+        if ch == "\\":
+            out.append(text[i : i + 2])
+            i += 2
+            continue
+        if ch == '"':
+            j = i + 1
+            while j < n and text[j] in " \t\r\n":
+                j += 1
+            if j >= n or text[j] in ",:}]":
+                in_str = False
+                out.append(ch)
+            else:
+                out.append("”")
+            i += 1
+            continue
+        out.append(ch)
+        i += 1
+    return "".join(out)
 
 
 def safe_remove(path: "Path | str", *, trash_root: "Path | str | None" = None) -> bool:

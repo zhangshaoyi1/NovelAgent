@@ -841,25 +841,36 @@ class AgenticWriteWorkflow:
                 ),
             }
             return False, report
-        # 超合理上限仅告警，不阻断（区间口径：目标×1.2 视为合理上限）
+        # 超合理上限阻断重写（2026-09-29 对齐字数契约）：writer 系统提示第 17 条
+        # 承诺「超出上限禁止直接提交、就地删减至区间再 commit」，但此处此前仅
+        # warning 放行——承诺从不兑现 ⇒ 模型习得性忽略字数指令（灵荒工坊
+        # 09-27/28 八章中七章超限，最高 3637 字）。改与 min_length 同路径：
+        # blocking + 就地删减反馈，交回 Writer 压缩而非整章重生成。
         max_len = resolve_max_cjk_words(target_len)
         if max_len and cur_len > max_len:
             report = {
-                "overall_pass": True,
+                "overall_pass": False,
                 "rules": [],
                 "issues": [
                     {
                         "rule_id": "max_length",
-                        "severity": "warning",
+                        "severity": "blocking",
                         "description": (
                             f"本章正文偏长：约 {cur_len} 字，超过目标字数 {target_len} 字的"
-                            f"合理上限 {max_len} 字（目标×1.2），可考虑精简冗余描写使其更紧凑。"
+                            f"合理上限 {max_len} 字（目标×1.2）。"
+                            "请**就地删减**冗余描写/注水/重复渲染，保留全部情节、子事件、"
+                            "线索与章尾钩子，压缩到区间内；"
+                            "不得用删情节、砍章尾钩子或提前收尾来凑字数。"
                         ),
                     }
                 ],
-                "suggestions": "无需强制改写；如篇幅过大可适当精简冗余场景/对白。",
+                "suggestions": (
+                    "就地删减：① 找出重复渲染同一情绪/信息的段落，合并为一处；"
+                    "② 压缩环境与心理描写的静态段，保留推进剧情的动态段；"
+                    "③ 删减后再次自检字数，落入区间再提交。"
+                ),
             }
-            return True, report
+            return False, report
 
         # ---- 书级·文体卫生确定性门禁（2026-09-12）：残缺比喻/成语误用/短语复读/
         # 密度失控等生成残留走纯规则拦截（LLM 九项审稿无文笔维度，且不带前文，

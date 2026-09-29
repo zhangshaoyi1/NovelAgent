@@ -191,8 +191,10 @@ class M5ContextMixin:
             from agent.core.story.learning_store import LearningStore
             from agent.core.infra.prompt_helpers import format_learnings
 
-            # 限额注入（避免 prompt 膨胀；按存储顺序取前 20 条）
-            capped = LearningStore(self.project_dir).load()[:20]
+            # 限额注入（避免 prompt 膨胀）。2026-09-29：LearningStore.add 为 append
+            # （旧在前），原 [:20] 取的是**最老** 20 条——沉淀一旦超过 20 条，最近
+            # 章节的教训（对当前章最有针对性）永远不会注入。改取最新 20 条。
+            capped = LearningStore(self.project_dir).load()[-20:]
             learnings = [
                 {
                     "id": x.id,
@@ -861,7 +863,11 @@ class M5ContextMixin:
             tasks.extend(reminders)
 
         if not tasks:
-            return "本章无强制伏笔任务。自然写作即可，如有合适时机可埋设新伏笔。"
+            return (
+                "本章无**强制**伏笔任务。自然写作即可，如有合适时机可埋设新伏笔。"
+                "（已登记的开放钩子债/伏笔债见追读力账本一节，仍需按其优先级回收，"
+                "不得因无强制任务而忽略债务。）"
+            )
         return "本章伏笔任务：\n" + "\n".join(tasks)
     def _load_prev_summary(self, chapter_num: int) -> str:
         """读取上一章的摘要（本章必须从这里无缝续写）。

@@ -139,7 +139,11 @@ def _rhythm_from_ctx(ctx: dict[str, Any] | None) -> str | None:
 
 
 def resolve_max_cjk_words(chapter_length: int | float | None = None) -> int:
-    """解析本章字数合理上限：随目标字数动态伸缩（超限仅告警，不阻断）"""
+    """解析本章字数合理上限：随目标字数动态伸缩。
+
+    2026-09-29：写时门禁（agentic_write）已把超上限从 warning 改为 blocking
+    （对齐 writer 系统提示第 17 条「禁止直接提交」承诺），此处口径同步更新。
+    """
     if chapter_length:
         return max(0, int(chapter_length * MAX_WORD_RATIO))
     return 0
@@ -355,10 +359,22 @@ class LLMBackedChecker:
             default=None,
         )
         if result is None:
+            # 2026-09-29：与 _check 统一口径——降级必须显性化，禁止静默吞成
+            # 「该维无问题」（注释自称「放行+记录」但原实现无任何记录，
+            # 外层 agentic_write 的 except 永远捕获不到此处的异常）。
+            degrade(
+                "quality_checker.run_rules",
+                "D 维合并审查调用失败（超时/None），四维按『无问题』放行",
+            )
             return []
         try:
             data = parse_llm_json(result)
-        except Exception:  # noqa: BLE001 - 解析失败降级为空
+        except Exception as e:  # noqa: BLE001 - 解析失败降级为空
+            degrade(
+                "quality_checker.run_rules",
+                "D 维合并审查输出解析失败，四维按『无问题』放行",
+                e,
+            )
             return []
         return self.map_issues(llm_rules, data)
 

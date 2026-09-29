@@ -348,7 +348,9 @@ def hygiene_issues(text: str) -> list[dict[str, str]]:
     # （灵荒工坊实证：ch084/ch169/ch213 三次截断落盘，ch213 直接导致
     #   ch214 因果链断裂被批末体检判 logic_holes）
     last_line = ""
-    for ln in reversed(body.split("\n")):
+    lines = [ln for ln in body.split("\n") if ln.strip()]
+    # 少于 3 个非空段落视为测试/桩文本而非章节，不做截断判定（避免短文本误报）
+    for ln in reversed(lines if len(lines) >= 3 else []):
         if ln.strip():
             last_line = ln.strip()
             break
