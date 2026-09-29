@@ -343,6 +343,25 @@ def hygiene_issues(text: str) -> list[dict[str, str]]:
             )
         )
 
+    # 规则 10：生成截断结尾（blocking，2026-09-28）
+    # 末个非空行不以句末标点/引号/括号收尾 ⇒ 正文在句中被打断
+    # （灵荒工坊实证：ch084/ch169/ch213 三次截断落盘，ch213 直接导致
+    #   ch214 因果链断裂被批末体检判 logic_holes）
+    last_line = ""
+    for ln in reversed(body.split("\n")):
+        if ln.strip():
+            last_line = ln.strip()
+            break
+    if last_line and not re.search(r'[。！？…”』」）]\s*$', last_line):
+        issues.append(
+            _issue(
+                "truncated_ending",
+                "blocking",
+                f"章末文本疑似生成截断：末行「…{last_line[-30:]}」未以句末标点收尾。"
+                "请补全被截断的结尾（补完该句与章末钩子），禁止另起话题。",
+            )
+        )
+
     issues.extend(_check_phrase_echo(body))
     issues.extend(_check_dialogue_jump(body))
     issues.extend(_check_sentence_repetition(body))

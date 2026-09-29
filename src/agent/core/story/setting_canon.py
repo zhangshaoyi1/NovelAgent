@@ -147,6 +147,14 @@ class SettingEntry:
     chapter: int          # 首次确立的章号
     evidence: str = ""    # 原文证据
     updated_chapter: int = 0  # 最近一次被重申/改写的章号
+    # 仲裁钉住（2026-09-26）：人工/对账确立的权威条目。台账"取最近 N 条"的
+    # 选取会让这类条目被自动抽取的海量琐碎条目挤出窗口（灵荒工坊实证：
+    # 「陈长老存活」被挤出后 ch120 又把陈长老写死）。pinned 条目永远渲染。
+    pinned: bool = False
+
+    @property
+    def is_pinned(self) -> bool:
+        return bool(self.pinned)
 
     @property
     def key(self) -> tuple[str, str]:
@@ -396,8 +404,15 @@ class SettingCanon:
 
         ordered = sorted(self.entries.values(), key=_recency)
         items = ordered[-limit:] if limit > 0 else list(ordered)
-        lines = ["【设定台账·已确立，禁止改写或重新发明】"]
-        lines.extend(e.render() for e in items)
+        # pinned 条目永远在列（置顶），不被海量自动抽取条目挤出（2026-09-26：
+        # 「陈长老存活」仲裁条目被挤出窗口后 ch120 又把陈长老写死——评委看得到
+        # 台账、写手看不到，修复永远对不齐）。
+        pinned = [e for e in ordered if e.is_pinned]
+        if pinned:
+            items = [e for e in items if not e.is_pinned]
+            items = pinned + items
+        lines = ["【设定台账·已确立，禁止改写或重新发明】（★ 为仲裁钉住条目，最高优先级）"]
+        lines.extend(("★ " if e.is_pinned else "") + e.render() for e in items)
         return "\n".join(lines)
 
     def render_conflicts(self, limit: int = 10) -> str:

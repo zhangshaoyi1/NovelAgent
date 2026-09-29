@@ -68,9 +68,17 @@ class AuditDimension:
     cache_hit: bool = False
     prompt_hash: str = ""
     response_hash: str = ""
+    #: 体检 issue 明细（2026-09-25）：此前只存分值，issue 文本只活在 prompt 日志里，
+    #: 复盘（如灵荒工坊 ch078/079 矛盾）必须去 36MB 的 prompts.jsonl 里挖。
+    #: 每条截 200 字、每维最多 5 条，控制日志体积。
+    issues: list[str] = field(default_factory=list)
 
     def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+        d = asdict(self)
+        # issues 非空才写，保持旧行紧凑
+        if not d.get("issues"):
+            d.pop("issues", None)
+        return d
 
 
 @dataclass
@@ -144,6 +152,17 @@ def record_from_report(report: Any) -> AuditRecord:
     for d in getattr(report, "dimensions", []) or []:
         evidence = getattr(d, "evidence", None)
         spec = getattr(d, "spec", None)
+        # issue 明细提取（2026-09-25）：desc+quote 合并截断，rationale 兜底
+        issue_texts: list[str] = []
+        if evidence is not None:
+            for i in getattr(evidence, "issues", None) or []:
+                if isinstance(i, dict):
+                    txt = (str(i.get("desc") or "") + "｜" + str(i.get("quote") or "")).strip("｜")
+                    if txt:
+                        issue_texts.append(txt[:200])
+            rat = str(getattr(evidence, "rationale", "") or "")
+            if rat and not issue_texts:
+                issue_texts.append(rat[:200])
         dims.append(
             AuditDimension(
                 name=str(getattr(d, "name", "?")),
@@ -154,6 +173,7 @@ def record_from_report(report: Any) -> AuditRecord:
                 cache_hit=bool(getattr(evidence, "cache_hit", False)),
                 prompt_hash=str(getattr(evidence, "prompt_hash", "")),
                 response_hash=str(getattr(evidence, "response_hash", "")),
+                issues=issue_texts[:5],
             )
         )
     status = derive_evidence_status(dims)
@@ -195,6 +215,7 @@ def load_records(project_dir: str | Path) -> list[AuditRecord]:
                     cache_hit=bool(x.get("cache_hit", False)),
                     prompt_hash=str(x.get("prompt_hash", "")),
                     response_hash=str(x.get("response_hash", "")),
+                    issues=[str(s) for s in (x.get("issues") or [])][:5],
                 )
                 for x in raw.get("dimensions", [])
             ]

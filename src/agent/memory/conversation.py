@@ -130,6 +130,34 @@ class ConversationMemory:
             {"target_chapter": target_chapter, "archived": archived},
         )
 
+    def recent_chapter_summaries(
+        self, n: int = 3, max_chars: int = 300
+    ) -> list[tuple[int, str, str]]:
+        """最近 n 章的实际剧情摘要（章末状态；同章号取最后一次记录）。
+
+        供批前规划（``replan_batch`` / ``ensure_window_contracts``）作为
+        「已发生事实」输入。此前规划端只拿到体检教训/问题债务等**间接**
+        信号，拿不到各章实际写了什么剧情——写手一旦超前推进（把后续章的
+        事件提前写进本章正文），过期细纲就会与已发布正文脱节（灵荒工坊
+        ch70 实证：ch69 正文已演完 ch70 细纲的举报/验证/限期剧情，规划端
+        无从知晓，写手被迫照抄前文或无米下锅）。
+        """
+        latest: dict[int, ConversationEvent] = {}
+        with self._lock:
+            for e in self._events:
+                if e.kind != "chapter":
+                    continue
+                num = e.data.get("chapter_num")
+                if isinstance(num, int):
+                    latest[num] = e  # 同章多次记录（重写/修订）取最后一次
+        out: list[tuple[int, str, str]] = []
+        for num in sorted(latest)[-max(0, n) :]:
+            e = latest[num]
+            title = str(e.data.get("title") or "")
+            summary = str(e.data.get("summary") or "")[:max_chars]
+            out.append((num, title, summary))
+        return out
+
     def query(
         self,
         recent: int | None = None,

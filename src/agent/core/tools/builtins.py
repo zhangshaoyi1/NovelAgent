@@ -117,7 +117,16 @@ def get_setting(kind: str, key: str = "") -> Any:
     },
 )
 def count_words(text: str) -> Any:
+    text = text or ""
     cjk = sum(1 for ch in text if "一" <= ch <= "鿿")
+    if not text.strip():
+        # 2026-09-25：写手曾拿空文本「试工具」白烧一轮调用（灵荒工坊 ch70 实证）。
+        # 显式提示正确用法，而不是默默返回全 0 让模型继续猜。
+        return {
+            "total_chars": 0,
+            "cjk_chars": 0,
+            "hint": "text 为空。请把**要提交的完整章节正文**（draft 全文）作为 text 传入再统计。",
+        }
     return {"total_chars": len(text), "cjk_chars": cjk}
 
 

@@ -7,6 +7,7 @@ import re
 from pathlib import Path
 from typing import Optional
 
+from agent.core.story.text_hygiene import strip_frontmatter
 from agent.core.supervisor.supervisor import SupervisionIssue, SupervisorPlugin
 
 
@@ -52,6 +53,10 @@ class PlotProgressChecker(SupervisorPlugin):
             except (OSError, UnicodeDecodeError):
                 continue  # noqa: SILENT_DEGRADE
 
+            # 只统计正文：frontmatter 元数据含大量书面词（来源/证据链字段名），
+            # 会虚增进度词命中、压制真实的"无推进"告警
+            text = strip_frontmatter(text)
+
             progress_count = sum(text.count(w) for w in self.PROGRESS_KEYWORDS)
             filler_count = sum(text.count(w) for w in self.FILLER_KEYWORDS)
 
@@ -88,8 +93,10 @@ class LanguageGuardChecker(SupervisorPlugin):
         "Python", "Java", "C++", "API", "SDK", "UI", "UX",
     }
 
-    # 非中文标点（网文中应避免的）
-    NON_CHINESE_PUNCTUATION = re.compile(r"[;:!?,;:]")
+    # 非中文标点（网文中应避免的）；含英文直双引号——成书对话应使用中文引号，
+    # 直引号是生成侧最常见的标点残留（2026-09-25 灵荒工坊 ch003 实证 148 处）。
+    # 单直引号不收录：嵌套引用/撇号的合法场景多，误报率高，交给净化层按对转换。
+    NON_CHINESE_PUNCTUATION = re.compile(r'[;:!?,;:"]')
 
     def check(self, project_dir: str) -> list[SupervisionIssue]:
         issues: list[SupervisionIssue] = []
@@ -103,12 +110,16 @@ class LanguageGuardChecker(SupervisorPlugin):
             except (OSError, UnicodeDecodeError):
                 continue  # noqa: SILENT_DEGRADE
 
+            # 只统计正文：YAML frontmatter 的英文键名/标点会把语言检查全部带歪
+            # （2026-09-25 实证：ch001 头部 69 个英文词被误报为正文英文词）
+            body = strip_frontmatter(text)
+
             # 提取章节号
             chapter_num = self._extract_chapter_num(cf.stem)
 
             # 1. 中文占比
-            chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", text))
-            total_chars = len(text.strip())
+            chinese_chars = len(re.findall(r"[\u4e00-\u9fff]", body))
+            total_chars = len(body.strip())
             if total_chars > 0:
                 chinese_ratio = chinese_chars / total_chars
                 if chinese_ratio < 0.7:
@@ -125,10 +136,10 @@ class LanguageGuardChecker(SupervisorPlugin):
                     ))
 
             # 2. 非中文标点
-            non_chinese_punct = self.NON_CHINESE_PUNCTUATION.findall(text)
+            non_chinese_punct = self.NON_CHINESE_PUNCTUATION.findall(body)
             if non_chinese_punct:
                 # 过滤掉常见的英文专有名词中的标点
-                filtered = [p for p in non_chinese_punct if not self._is_in_allowed_english(text, p)]
+                filtered = [p for p in non_chinese_punct if not self._is_in_allowed_english(body, p)]
                 if filtered:
                     issues.append(SupervisionIssue(
                         dimension="language_guard",
@@ -142,7 +153,7 @@ class LanguageGuardChecker(SupervisorPlugin):
                     ))
 
             # 3. 未授权英文专有名词
-            english_words = re.findall(r"[A-Za-z]{2,}", text)
+            english_words = re.findall(r"[A-Za-z]{2,}", body)
             unauthorized = [w for w in english_words if w not in self.ALLOWED_ENGLISH]
             if len(unauthorized) > 5:
                 issues.append(SupervisionIssue(
@@ -306,10 +317,24 @@ class TropePayoffChecker(SupervisorPlugin):
         except (OSError, UnicodeDecodeError):
             return issues
 
-        # 简化检测：查找 "未埋" 或 "已埋" 状态
-        unburied = text.count("未埋")
-        buried = text.count("已埋")
-        recovered = text.count("已回收")
+        # 按表行统计状态（2026-09-25 修正：此前用 text.count('未埋') 等
+        # 子串计数——foreshadows.md 表头的图例行「状态：未埋 / 已埋 / 已回收 /
+        # 已废弃」会让三个计数各虚增 1；统计栏文案也会二次污染）
+        unburied = buried = recovered = 0
+        for ln in text.splitlines():
+            s = ln.strip()
+            if not (s.startswith("| F-") and s.endswith("|")):
+                continue
+            parts = [p.strip() for p in s.split("|")]
+            if len(parts) < 6:
+                continue
+            state = parts[5]
+            if state == "未埋":
+                unburied += 1
+            elif state == "已埋":
+                buried += 1
+            elif state == "已回收":
+                recovered += 1
         total_foreshadows = unburied + buried + recovered
 
         if total_foreshadows == 0:

@@ -486,7 +486,10 @@ def chat_utility_response(
     gateway: Any,
     messages: list[dict[str, str]],
     *,
-    temperature: float = 0.3,
+    # 2026-09-25 收口：utility = 评分/判定/审查类调用，默认温度 0.3→0。
+    # 采样温度会让同一书况在几分钟内评出 97.7/83.3 两个分（灵荒工坊实证），
+    # 直接触发「判定证据不可信」熔断；确定性打分是复评可信的前提。
+    temperature: float = 0.0,
     max_tokens: int | None = None,
     model: str | None = None,
     enable_thinking: bool | None = None,
@@ -513,7 +516,7 @@ def chat_utility(
     gateway: Any,
     messages: list[dict[str, str]],
     *,
-    temperature: float = 0.3,
+    temperature: float = 0.0,
     max_tokens: int | None = None,
     model: str | None = None,
     enable_thinking: bool | None = None,

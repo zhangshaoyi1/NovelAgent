@@ -88,7 +88,12 @@ _BUDGET = {
     "canon": 2400,
     #: 承接=（章首状态结转）：事实/信息差/未闭环/上一章交接的有界投影。
     #: 预算控制注入体量；为空（无账本）时块整体为空。
-    "carry": 1200,
+    #: 2026-09-26 上调 1200→2400：账本交接摘要（正文结尾状态）实测 700+ 字，
+    #: 加必带项/本章约束后 1200 连交接都装不全——写手看不到的必带项就会被跳过
+    #: （ch099 实证：配额削减通知/陈长老出示证据被整段跳过，批末体检才抓到）。
+    "carry": 2400,
+    #: 伏笔计划授权（2026-09-25）：foreshadows.md 表行摘录，评委判定前提。
+    "foreshadow_allowance": 900,
 }
 
 #: 「设计内转变 ≠ 崩坏」判定前提（三端共用同一段文字，禁止各写一份）。
@@ -210,6 +215,11 @@ def _squeeze(text: str) -> str:
     return "\n".join(ln.rstrip() for ln in text.splitlines()).strip()
 
 
+#: 公共别名：m5_context 注入 world.md 小节（境界体系等成片空行大户）同样需要
+#: 压缩（2026-09-25 灵荒工坊实证：境界体系块空行占了 prompt 数百字符预算）。
+squeeze_blank_runs = _squeeze
+
+
 def _md_section(content: str, *titles: str) -> str:
     """取首个命中的 ``## <title>`` 小节正文（到下一个 ``##`` 为止）。
 
@@ -289,6 +299,10 @@ class DesignBrief:
     character_facts: str = ""    # 角色真源（内核/动机/弧光/关系/语言指纹）
     design_expectation: str = ""  # 落盘期望（本章设计上应推进的状态）
     opening_state: str = ""      # 承接=（上一章结转的权威章首状态：事实/信息差/未闭环/交接）
+    #: 伏笔计划授权（评委端判定前提）：规划端登记的伏笔清单。写手按计划埋设/
+    #: 暗示（含角色隐藏身世类披露）属设计内，评委不得按"人设跳跃/设定冲突"处罚
+    #: ——否则出现「写手按 F-08 埋线、评委照档案开罚」的对撞（灵荒工坊 ch075 实证）。
+    foreshadow_allowance: str = ""
 
     @property
     def empty(self) -> bool:
@@ -364,6 +378,8 @@ class DesignBrief:
             blocks.append("\n".join(design))
         if self.rubric:
             blocks.append("【本作达标判据（判定时对标，勿自设更严口径）】\n" + self.rubric)
+        if self.foreshadow_allowance:
+            blocks.append(self.foreshadow_allowance)
         if blocks:
             blocks.append(DESIGN_EXEMPTION)
             # 强度维前提**只在真有档位时**追加（纪律 #4：不给老数据加新前提）
@@ -812,6 +828,40 @@ def _render_opening_state(project_dir: Path) -> str:
         return ""
 
 
+def _render_foreshadow_allowance(root: Path) -> str:
+    """渲染伏笔计划授权块（评委判定前提；表格解析失败 → 空串，不阻断）。
+
+    只取「未埋 / 已埋」两态——已回收/已废弃无需授权；每条截 60 字控制预算。
+    """
+    f = root / "foreshadows.md"
+    if not f.exists():
+        return ""
+    try:
+        text = f.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    rows: list[str] = []
+    for ln in text.splitlines():
+        s = ln.strip()
+        if not (s.startswith("| F-") and s.endswith("|")):
+            continue
+        parts = [p.strip() for p in s.split("|")]
+        if len(parts) < 7 or parts[1] == "F-XX":
+            continue
+        fid, content, _planted, expected, state = parts[1:6]
+        if state not in ("未埋", "已埋"):
+            continue
+        rows.append(f"- {fid}（{state}，预期回收 {expected}）：{content[:60]}")
+    if not rows:
+        return ""
+    return (
+        "【判定前提·伏笔计划授权】以下为规划端登记的伏笔计划。写手在正文埋设或"
+        "暗示其内容（含角色隐藏身世/背景的渐进披露）属于**设计内**，不得判"
+        "人设跳跃/设定冲突/无铺垫突兀；仅当埋设方式与登记内容**矛盾**（如登记"
+        "杂役出身却写成世家）才计 issue。\n" + "\n".join(rows)
+    )
+
+
 def build_design_brief(
     project_dir: str | Path,
     chapter_num: int | None = None,
@@ -916,6 +966,7 @@ def build_design_brief(
     _window_tiers = pace_tiers_of_window(subline_md, window) if subline_md else []
 
     return DesignBrief(
+        foreshadow_allowance=_clip(_render_foreshadow_allowance(root), "foreshadow_allowance"),
         chapter_num=int(chapter_num),
         window=window,
         window_pace_tiers=_clip(

@@ -185,6 +185,16 @@ class _FakePipeline(_PipelineAgentsMixin):
         self._report = report
         self._vary_target = vary_target
         self._eval_calls = 0
+        # 2026-09-26 换轨后：修复走注入的 _chapter_reviser（最小编辑），
+        # 不再经过 WriterAgent——测试用假修订器记录调用并返回可同步文本。
+        self.reviser_calls: list[tuple[int, str]] = []
+
+        def _fake_reviser(ch: int, hint: str) -> tuple[str, str]:
+            self.reviser_calls.append((ch, hint))
+            self.calls.append(f"ch{ch} 定向修订")  # 与旧 _Writer 记录 sink 对齐
+            return (f"# 第 {ch} 章 · 修订正文。", f"第{ch}章")
+
+        self._chapter_reviser = _fake_reviser
 
     def _note_gate_blind(self, where: str, err: Exception) -> None:  # noqa: D102
         self._gate_blind_streak += 1

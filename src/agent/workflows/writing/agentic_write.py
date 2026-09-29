@@ -741,14 +741,7 @@ class AgenticWriteWorkflow:
                             characters_fingerprint=ctx.get("characters_fingerprint", ""),
                             hard_constraints=ctx.get("character_constraints", ""),
                             plot_points=ctx.get("plot_points", ""),
-                            fact_card=(
-                                str(ctx.get("continuity_projection", "") or "")
-                                + (
-                                    "\n【设定台账】\n" + str(ctx.get("setting_canon", ""))
-                                    if ctx.get("setting_canon")
-                                    else ""
-                                )
-                            )[:800],
+                            fact_card=self._build_fact_card(ctx),
                             prev_chapter_excerpt=(
                                 str(ctx.get("prev_chapter_summary") or "")[-1500:]
                             ),
@@ -1242,6 +1235,26 @@ class AgenticWriteWorkflow:
                     )
         return passed, report
 
+    #: 事实卡分项预算（2026-09-25）：此前投影+台账拼接后整体截 800 字，
+    #: 设定台账排在后面几乎必然被截掉——金手指硬规则（吞噬诀单属性/每日三次）
+    #: 因此对写时质检不可见，ch078 违规放行、批末才被抓（回溯修不到）。
+    #: 2026-09-26 二次上调：账本投影实测 2.6 万字符（1153 条事实），600 字连
+    #: 上一章交接摘要都装不下——ch099 跳过承接状态记载的必带事件（配额削减
+    #: 通知/陈长老出示证据）时写时质检完全看不见。现投影 3000 + 台账 1800。
+    _FACT_CARD_PROJECTION_BUDGET = 3000
+    _FACT_CARD_CANON_BUDGET = 1800
+
+    def _build_fact_card(self, ctx: dict) -> str:
+        """构建本章事实对照卡：连续性账本投影 + 设定台账，分项截断。"""
+        proj = str(ctx.get("continuity_projection", "") or "")
+        canon = str(ctx.get("setting_canon", "") or "")
+        parts = [
+            proj[: self._FACT_CARD_PROJECTION_BUDGET],
+            ("\n【设定台账】\n" + canon[: self._FACT_CARD_CANON_BUDGET]) if canon else "",
+        ]
+        card = "\n".join(p for p in parts if p)
+        return card or "（无事实卡：请对照本章细纲情节点与已注入的设定信息）"
+
     def _nine_item_review(
         self, cleaned: str, ctx: Any, wi: dict[str, Any], is_climax: bool
     ) -> dict[str, Any]:
@@ -1261,14 +1274,7 @@ class AgenticWriteWorkflow:
             plot_points=ctx.get("plot_points", ""),
             # P-9（提示词改进）：事实对照卡 = 连续性账本投影 + 设定台账（≤800 字，规则 6 逐条对照）
             # P0-1 补：同时带上已确立设定与已知冲突，让质检能直接抓「重新发明设定」
-            fact_card=(
-                str(ctx.get("continuity_projection", "") or "")
-                + (
-                    "\n【设定台账】\n" + str(ctx.get("setting_canon", ""))
-                    if ctx.get("setting_canon")
-                    else ""
-                )
-            )[:800],
+            fact_card=self._build_fact_card(ctx),
             # T2（2026-09-13）：上一章原文尾部随质检透传——规则 13 跨章复述
             # 对照的依据；纸条归属式矛盾此前对 gate 不可见（writer 看得到
             # 上一章全文，审稿人看不到，复述错了也没人拦）。

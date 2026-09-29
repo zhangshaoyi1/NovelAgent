@@ -66,6 +66,15 @@ _HARD_PLACEHOLDER_RE = re.compile(
     re.I,
 )
 
+# 4.5) AI 应答腔（2026-09-27，灵荒工坊 ch171 实证）：修订重试时模型把
+#   「复述任务」当正文交付——「好的，用户给了我一个具体的审稿意见，要求我
+#   修改一个章节的正文」。此类文本通过标题/字数/禁用词检查直接落盘，
+#   把批末体检拖到 coherence=3 并烧光全部修复轮。命中即拒绝落盘。
+_AI_RESPONSE_TONE_RE = re.compile(
+    r"好的，用户|用户给了我一个|要求我修改一个章节|让我看看这个正文|"
+    r"这是一章关于|我需要改写|审稿意见，要求我"
+)
+
 # ============================================================
 # 5) AI 腔 / 承接词：**唯一定义（SSOT）** + 强度与替换手段配对
 # （2026-09-18：修 ch4「AI 承接词残留：说起来」——判而不可修）
@@ -174,7 +183,7 @@ def audit_phrase_ledger() -> list[str]:
 # ---- 叙述层投影（引号感知：判据侧与修复侧共用同一投影）----
 # ⚠ 两侧必须同投影：判据在叙述层、修复若全局做，会误改人物口语（把台词里的
 #   「你别说」也替换掉）；判据全局、修复只在叙述层做，则永远修不干净 ⇒ 死循环。
-_QUOTE_OPEN = {"“": "”", "「": "」", "『": "』", "‘": "’"}
+_QUOTE_OPEN = {"“": "”", "「": "」", "『": "』", "‘": "’", '"': '"'}
 _QUOTE_CLOSE = {v: k for k, v in _QUOTE_OPEN.items()}
 
 #: 投影占位字符（与原文字符**等长**替换 ⇒ 偏移可直接映射回原文）
@@ -189,6 +198,10 @@ def narrative_projection(text: str) -> str:
     取向（保守）：未闭合的开引号**在行尾复位**（只屏蔽本行剩余部分）。
     中文小说对话以段为单位、不会跨段不闭合；若因笔误漏掉一个 ``”`` 就让后半章
     全部退出检测，检测就形同虚设（假阴性比误替换更糟：AI 腔会原样落盘）。
+
+    英文直双引号 ``"`` 按**同行开合切换**参与配对（成书正文里它是引号残留，
+    落盘前会由 :func:`normalize_straight_quotes` 归一为中文引号；投影侧识别它
+    是为了在归一之前的扫描路径上不把直引号对话误判为叙述层）。
     """
     if not text:
         return text
@@ -197,6 +210,14 @@ def narrative_projection(text: str) -> str:
     for i, ch in enumerate(chars):
         if ch == "\n":
             stack.clear()  # 行尾复位：未闭合引号只影响本行
+            continue
+        if ch == '"':
+            # 直引号无方向，按栈顶自反配对（开→压栈，闭→弹栈）
+            if stack and stack[-1] == '"':
+                stack.pop()
+            else:
+                stack.append('"')
+            chars[i] = _QUOTE_FILL
             continue
         if ch in _QUOTE_OPEN:
             stack.append(_QUOTE_OPEN[ch])
@@ -207,6 +228,77 @@ def narrative_projection(text: str) -> str:
         elif stack:
             chars[i] = _QUOTE_FILL
     return "".join(chars)
+
+
+def normalize_straight_quotes(text: str) -> tuple[str, int]:
+    """把正文中的英文直双引号 ``"`` 成对归一为中文引号（外层 ``“”``、嵌套 ``‘’``）。
+
+    - **按行处理**：行内直引号为偶数才转换；奇数视为未闭合，整行原样保留
+      （宁可放过不可错配——错配会改动后续所有引号的方向）；
+    - 嵌套按深度取 ``“”`` → ``‘’``，修正 ``"他说："你好""`` 这类内层误配；
+    - YAML frontmatter 不动（其值里的 ``"`` 是语法字符，动了会破坏元数据）。
+
+    Returns:
+        (归一后文本, 转换的引号对数；无直引号为 0)
+    纯函数、无副作用；供落盘前 ``clean_hard_pollutions`` 等净化路径统一调用。
+    """
+    if not text or '"' not in text:
+        return text, 0
+
+    # frontmatter 摘出不动
+    fm = ""
+    body = text
+    if text.startswith("---"):
+        end = text.find("\n---", 3)
+        if end != -1:
+            fm = text[: end + 4]
+            body = text[end + 4 :]
+
+    converted = 0
+    out_lines: list[str] = []
+    # 语境启发式（按当前配对深度分流）：
+    #   depth==0：开引号 = 行首，或前字符是「引导性标点」（冒号/逗号等，
+    #     不含。！？等句末标点——它们标志话语已结束）且后随汉字；
+    #   depth>0（引号内）：只有冒号算嵌套引导（他说："……"），其余一律闭合
+    #     ——『"林凡，"那人开口』逗号在引号内，必须闭合而非嵌套。
+    # 深度归零时被判定为闭的，翻转为开（兼容『他说完"停"字』词引用）；
+    # 方向自相矛盾的行整行放弃，宁可放过不错配。
+    _OPEN_INTRO = set("：，、…—·（(【《 \t")
+    _CJK = re.compile(r"[\u4e00-\u9fff]")
+    for line in body.split("\n"):
+        n = line.count('"')
+        if n < 2 or n % 2 != 0:
+            out_lines.append(line)
+            continue
+        depth = 0
+        chars: list[str] = []
+        for idx, ch in enumerate(line):
+            if ch != '"':
+                chars.append(ch)
+                continue
+            prev = line[idx - 1] if idx > 0 else ""
+            nxt = line[idx + 1] if idx + 1 < len(line) else ""
+            if depth == 0:
+                is_open = idx == 0 or (prev in _OPEN_INTRO and _CJK.match(nxt or ""))
+            else:
+                is_open = prev == "：" and _CJK.match(nxt or "")
+            if is_open:
+                chars.append("“" if depth == 0 else "‘")
+                depth += 1
+            elif depth > 0:
+                depth -= 1
+                chars.append("”" if depth == 0 else "’")
+            else:
+                chars.append("“")
+                depth = 1
+            converted += 1
+        if depth != 0:  # 方向判定自相矛盾（如嵌套未闭合）：整行放弃，宁可放过不错配
+            out_lines.append(line)
+            converted -= n
+            continue
+        out_lines.append("".join(chars))
+
+    return fm + "\n".join(out_lines), converted // 2
 
 
 def replace_bridge_words(text: str) -> tuple[str, list[str]]:
@@ -255,6 +347,11 @@ def scan_hard_pollutions(text: str) -> list[str]:
     ph = _HARD_PLACEHOLDER_RE.findall(body)
     if ph:
         hits.append(f"占位符残留：{len(ph)} 处（裸问号/TODO/待补充等）")
+
+    ai_tone = _AI_RESPONSE_TONE_RE.findall(body)
+    if ai_tone:
+        hits.append(f"AI 应答腔泄漏：模型把「复述任务」当正文交付（如「{ai_tone[0]}」），"
+                    "整段为元对话而非小说正文，必须重写")
 
     annotations = find_contract_annotations(body)
     if annotations:
@@ -305,6 +402,13 @@ def clean_hard_pollutions(text: str) -> tuple[str, list[str]]:
 
     out = _HARD_TITLE_RE.sub(_dedup_title, out)
     out = _HARD_PLACEHOLDER_RE.sub("", out)
+
+    # 2026-09-25：英文直双引号 → 中文引号（对话引号是生成侧最常见标点残留，
+    # 灵荒工坊全书实证）。必须在承接词替换**之前**做——归一后叙述层投影才能
+    # 正确识别引号内人物口吻。
+    out, _quote_pairs = normalize_straight_quotes(out)
+    if _quote_pairs:
+        traced.append(f"直引号转中文引号：{_quote_pairs} 对")
 
     # 2026-09-18：承接词由「只报不修（blocking）」改为「确定性替换」——
     # 此前 ch4 因此整章重写仍未过。只在叙述层动，引号内人物口吻保留。

@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -574,20 +575,199 @@ class _PipelineAgentsMixin:
         """P1：构造「回退后定向重写」回调——把上一轮失败维度编译成针对性提示。
 
         检查点与批末体检**共用同一实现**。此前只有批末有这条路径，滚动检查点只回退不重写。
+
+        2026-09-26 结构性换轨：从「WriterAgent 全章重新生成」改为
+        「FeedbackRewriter 最小编辑修订（patch 模式）」。此前全章重掷骰子：
+        一个 90% 合格、3 处矛盾的章被整章重生成，还注入"禁止沿用原稿结构"的
+        多样性硬要求 ⇒ 每轮修复引入 2-5 个新的跨章矛盾（实测 85.7 分被修到
+        71.6——"修一个问题出一个新问题"的机制根源）。patch 模式 quote 定位、
+        最小改动、保留已通过的结构，修复才可能收敛。
         """
 
         def rewriter(chapter_nums: list[int]) -> None:
-            w = self._ensure_writer()
             ev = self._ensure_evaluator()
-            hint = build_rewrite_hint(getattr(ev, "last_failed_report", None), chapter_nums)
-            for ch in chapter_nums:
+            report = getattr(ev, "last_failed_report", None)
+            # 测试接缝：注入 _chapter_reviser(ch, hint) -> (text, title) 时走注入实现
+            injected = getattr(self, "_chapter_reviser", None)
+            fr = None
+            if injected is None:
+                from agent.core.quality.rewrite.feedback_rewriter import FeedbackRewriter
+
+                fr = FeedbackRewriter(
+                    self.project_dir, llm_client=self.llm, console=self.console
+                )
+            failed: list[str] = []
+            rewritten: list[int] = []
+            for ch in sorted(chapter_nums):
+                # 按章过滤 hint（锚定别章的 issue 由别章的重写解决，
+                # 消除多章重写互相踩踏——实测一轮修复把 83.5 分修到 55.0）。
+                hint = build_rewrite_hint(report, chapter_nums, only_chapter=ch)
+                ch_file = Path(self.project_dir) / "chapters" / f"ch{ch:03d}.md"
                 try:
-                    # 章号锚定（F-8）：LOCAL_REPAIR 不回滚、total_written 不变，
-                    # 不传章号 run() 会按 total_written+1 写出「新章」而非重写
-                    # 问题章；回滚路径显式锚定与顺序补写等价。
-                    w.run(rewrite_hint=hint, chapter_num=ch)
-                except Exception as e:  # noqa: BLE001
-                    raise RuntimeError(f"重写第 {ch} 章失败：{e}")
+                    if injected is not None:
+                        text, title = injected(ch, hint)
+                        rewritten.append(ch)
+                        self._sync_rewritten_chapter(ch, text, title)
+                        continue
+                    if not ch_file.exists():
+                        # 回滚路径（ROLLBACK_REWRITE 先归档再重写）：文件已归档，
+                        # patch 模式无从修订 ⇒ 只能全章重生成（WriterAgent 章号
+                        # 锚定写出，与旧路径等价）。文件存在时仍走最小编辑。
+                        w = self._ensure_writer()
+                        result = w.run(rewrite_hint=hint, chapter_num=ch)
+                        rewritten.append(ch)
+                        self._sync_rewritten_chapter(
+                            ch,
+                            str(getattr(result, "chapter_text", "") or ""),
+                            str(getattr(result, "chapter_title", "") or ""),
+                        )
+                        continue
+                    r = fr.rewrite(
+                        ch, hint, backup=True, gate_mode="block", mode="patch"
+                    )
+                except Exception as e:  # noqa: BLE001  # noqa: SILENT_DEGRADE reason=logging-only - 单章失败保留原稿并记入降级台账，不拖垮整轮修复
+                    failed.append(f"ch{ch:03d}: {e}")
+                    continue
+                if not getattr(r, "rewritten", False):
+                    # LLM 不可用回退原章 / gate block 拒绝落盘 / noop ⇒ 保留原稿。
+                    # 2026-09-26：拒因必须可诊断——blocked 时带出护栏违规明细；
+                    # 且先带拒因自愈重试一次（护栏拦截的补丁常是可修的小问题）。
+                    reason = str(getattr(r, "error", "") or "") or "护栏合规校验未通过或无变化"
+                    gr_report = getattr(r, "guardrail_report", None) or {}
+                    gr_violations = "; ".join(
+                        f"{v.get('rule_id')}:{str(v.get('description'))[:60]}"
+                        for v in (gr_report.get("violations") or [])[:3]
+                        if isinstance(v, dict)
+                    )
+                    if getattr(r, "blocked", False) and not rewritten:
+                        # 首次被拦：把拒因喂回去自愈重试一次（仍失败才放弃）
+                        try:
+                            r2 = fr.rewrite(
+                                ch,
+                                hint
+                                + f"\n\n【上次补丁被护栏拦截，务必修正】拦截原因：{reason}"
+                                + (f"；违规：{gr_violations}" if gr_violations else "")
+                                + "\n请修正违规后重新输出最小补丁。",
+                                backup=True,
+                                gate_mode="block",
+                                mode="patch",
+                            )
+                            if getattr(r2, "rewritten", False):
+                                rewritten.append(ch)
+                                self._sync_rewritten_chapter(ch, r2.new_text)
+                                continue
+                        except Exception as e:  # noqa: BLE001  # noqa: SILENT_DEGRADE reason=logging-only - 重试失败原因并入失败清单上报，不再二次记录
+                            reason = f"{reason}（重试亦失败：{e}）"
+                    failed.append(f"ch{ch:03d}: {reason}" + (f"｜{gr_violations}" if gr_violations else ""))
+                    continue
+                rewritten.append(ch)
+                self._sync_rewritten_chapter(ch, r.new_text)
+            if failed:
+                degrade(
+                    "pipeline.rewrite.chapter_skipped",
+                    f"定向修复部分章节修订失败（保留原稿）：{'; '.join(failed)[:400]}",
+                )
+                if not rewritten:
+                    raise RuntimeError(
+                        "定向修复全部章节修订失败（无任何章节可交付）："
+                        + "; ".join(failed)[:400]
+                    )
 
         return rewriter
+
+    def _sync_rewritten_chapter(self, ch_num: int, ch_text: str, ch_title: str = "") -> None:
+        """重写/修订落盘后回写派生状态（与主写作循环 record_chapter 同职责）。
+
+        缺口（2026-09-25）：此前 rewriter 丢弃 run() 的返回结果——重写后的章
+        不更新记忆（conversation 记旧标题/旧摘要，而它是下一批复规划的输入）、
+        不重新注册章节指纹（查重门禁对重写后的正文失明）、不同步实体/资源
+        账本。修复循环跑得越多，派生状态与正文偏离越远。
+        2026-09-26：签名改为 (ch_num, ch_text, ch_title)——FeedbackRewriter
+        的 RewriteResult 字段是 new_text，与 WriterAgent 的 chapter_text 不同。
+        各项失败均降级不阻断（与主循环同口径）。
+        """
+        ch_text = str(ch_text or "")
+        if not ch_title:
+            m = re.search(r"^#\s*第\s*\d+\s*章\s*[·:：]\s*(.+)$", ch_text, re.M)
+            ch_title = m.group(1).strip() if m else f"第{ch_num}章"
+        if not ch_text:
+            return
+
+        # 1) 章节指纹重新注册（G14）：防重写后的正文绕过跨章查重
+        try:
+            if getattr(self, "guardrails", None) is not None:
+                self.guardrails.register_fingerprints(ch_num, ch_text)
+                from agent.core.quality.guardrails import save_fingerprints
+
+                fp_path = self.project_dir / ".state" / "chapter_fingerprints.json"
+                save_fingerprints(self.guardrails.fingerprint_db, fp_path)
+        except Exception as e:  # noqa: BLE001 - 指纹失败不阻断
+            from agent.core.infra.degrade import degrade
+
+            degrade("pipeline.rewrite.fingerprints", "重写后章节指纹注册失败", e)
+
+        # 3) RAG 语义索引同步（2026-09-26）：index_chapter 幂等（先删旧切片）。
+        #    缺口：修订后的正文不入索引 ⇒ 旧切片把修订前的错误正典继续召回
+        #    （灵荒工坊实证：ch116/117 补丁清掉了"陈长老死前"表述，但旧切片
+        #    仍被语义召回，新章继续写"临死前"——污染回路）。
+        try:
+            from agent.core.rag.retriever import Retriever
+
+            Retriever(self.project_dir).index_chapter(
+                Path(self.project_dir) / "chapters" / f"ch{ch_num:03d}.md"
+            )
+        except Exception as e:  # noqa: BLE001 - 索引失败不阻断
+            from agent.core.infra.degrade import degrade
+
+            degrade("pipeline.rewrite.rag_index", "重写后 RAG 重索引失败", e)
+
+        # 2) 记忆回写 + 实体/资源账本同步（与主循环同口径，事实取自连续性账本）
+        try:
+            chapter_facts: list[str] = []
+            chapter_summary = ch_title
+            ch_fact_objs: list = []
+            try:
+                from agent.core.continuity import ContinuityLedgerStore
+                from agent.core.continuity.ledger import commit_id_matches
+
+                _led = ContinuityLedgerStore(self.project_dir)
+                _led.load()
+                ch_fact_objs = [
+                    f
+                    for f in _led.ledger.facts
+                    if commit_id_matches(f.source_commit_id, ch_num)
+                ][:12]
+                chapter_facts = [
+                    f"{f.domain}/{f.subject_id}/{f.field} = {f.value}（{f.evidence}）"
+                    for f in ch_fact_objs
+                ]
+                _h = _led.ledger.latest_handoff()
+                if _h is not None and _h.chapter == ch_num and _h.summary:
+                    chapter_summary = _h.summary
+            except Exception:  # noqa: BLE001  # noqa: SILENT_DEGRADE reason=expected-skip - 账本读取失败时降级为标题摘要，主体记录仍完成
+                pass
+            if getattr(self, "memory", None) is not None:
+                self.memory.record_chapter(
+                    ch_num, ch_title, summary=chapter_summary, facts=chapter_facts
+                )
+            try:
+                from agent.core.story.entity_ledger import sync_entities_from_facts
+
+                sync_entities_from_facts(self.project_dir, ch_fact_objs, ch_num)
+            except Exception as sync_e:  # noqa: BLE001
+                from agent.core.infra.degrade import degrade
+
+                degrade("pipeline.rewrite.entity_sync", "重写后实体名册同步失败", sync_e)
+            try:
+                from agent.core.story.resource_ledger import sync_resources_from_facts
+
+                sync_resources_from_facts(self.project_dir, ch_fact_objs, ch_num)
+            except Exception as res_e:  # noqa: BLE001
+                from agent.core.infra.degrade import degrade
+
+                degrade("pipeline.rewrite.resource_sync", "重写后资源账本同步失败", res_e)
+        except Exception as e:  # noqa: BLE001 - 记忆回写失败不阻断
+            from agent.core.infra.degrade import degrade
+
+            degrade("pipeline.rewrite.memory", "重写后记忆回写失败", e)
 

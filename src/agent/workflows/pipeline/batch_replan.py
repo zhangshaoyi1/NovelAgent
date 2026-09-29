@@ -34,6 +34,24 @@ def build_batch_summary(project_dir: str | Path) -> str:
     project_dir = Path(project_dir)
     parts: list[str] = []
 
+    # 0) 最近章节实际剧情（已发生事实）——规划端此前只拿间接信号（教训/债务/
+    #    名册），拿不到各章实际写了什么：写手一旦超前推进，过期细纲就会与已发布
+    #    正文脱节，写手被迫照抄前文（cross_chapter_dup）或无米下锅（min_length）
+    #    （灵荒工坊 ch70 实证：ch69 正文已演完 ch70 细纲的举报/验证/限期剧情）。
+    try:
+        from agent.memory.conversation import ConversationMemory
+
+        recents = ConversationMemory(project_dir).recent_chapter_summaries(3)
+        if recents:
+            lines = [f"- 第{n}章《{t}》：{s}" for n, t, s in recents]
+            parts.insert(
+                0,
+                "【最近章节实际剧情（已发生事实，规划必须承接它并向前推进；"
+                "禁止把其中任何事件重新安排到后续章节）】\n" + "\n".join(lines),
+            )
+    except Exception as e:  # noqa: BLE001
+        degrade("batch_replan.summary.recent_plots", "最近章节剧情读取失败，摘要缺该段", e)
+
     # 1) 体检教训（最近一次不达标的维度与问题）
     try:
         from agent.core.quality.eval_lessons import load_eval_lessons_text
@@ -169,6 +187,22 @@ def maybe_replan(
         degrade(
             "autowire.subline_contract",
             "批前逐章契约补齐失败，本批沿用既有细纲（写手回退阶段级供给）",
+            e,
+        )
+
+    # ---- 批前细纲可行性对账（2026-09-25，灵荒工坊 ch80-84 窗口实证）----
+    # ★ 与契约补齐**串行**（必须在其后）：先补齐行、再对账。细纲数字/事件与
+    #   冻结设定不可满足时（台账「每日三次/九件上限」vs 细纲「复验一百二十件」），
+    #   写手被迫缝合矛盾数字、评委每轮抓算术冲突、修复怎么改都收敛不了
+    #   ⇒ 升级停批是必然结局。不可满足的计划要在写之前修正，而不是写完之后回溯。
+    try:
+        from agent.workflows.pipeline.plan_feasibility import ensure_window_feasibility
+
+        ensure_window_feasibility(project_dir, summary=summary, console=console)
+    except Exception as e:  # noqa: BLE001 - 增强项：失败显性留痕后继续写
+        degrade(
+            "autowire.plan_feasibility",
+            "批前细纲可行性对账失败，本批沿用既有细纲",
             e,
         )
 

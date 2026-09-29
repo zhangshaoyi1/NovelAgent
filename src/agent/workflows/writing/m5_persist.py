@@ -831,10 +831,16 @@ class M5PersistMixin:
         # F-7：total_written 只增不回流（max）——并发双进程写同一项目时，
         # 先写完的进程可能被后写的进程用较小 chapter_num 覆盖回退；
         # max(当前, chapter_num) 保证进度单调推进（用户手动归零除外，写章从 1 起）。
+        # 2026-09-25 修复：current_chapter 同口径取 max——定向修复（LOCAL_REPAIR）
+        # 会以更小的 chapter_num 原位重写（如 total=84 时重写 ch82），此前直接
+        # 覆盖导致 current_chapter(81) < total_written(84) 的指针倒挂。
+        total = int(progress.get("total_written", 0) or 0)
         progress.update({
             "current_subline": ctx["subline_id"],
-            "current_chapter": ctx["chapter_num"],
-            "total_written": max(int(progress.get("total_written", 0) or 0), int(ctx["chapter_num"])),
+            "current_chapter": max(
+                int(progress.get("current_chapter", 0) or 0), int(ctx["chapter_num"]), total
+            ),
+            "total_written": max(total, int(ctx["chapter_num"])),
             "last_written_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         })
         # G8：mainline_visited 双保险初始化（未记录时以当前支线打底；已存在则保留）

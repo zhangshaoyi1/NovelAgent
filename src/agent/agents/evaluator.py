@@ -336,6 +336,44 @@ class EvaluatorAgent(
         except Exception:  # noqa: BLE001
             return 0
 
+    def _anchored_repair_chapters(self, report: "NovelHealthReport", last: int) -> list[int]:
+        """LOCAL_REPAIR 的重写范围：issue 章节锚点集合 ∪ {末章}，按章号升序。
+
+        从失败维度的评分证据（issues 的 desc/quote、rationale、raw_excerpt）里
+        解析章节引用（``ch078`` / ``第78章``），**逐个**重写被点名的章 +
+        末章（末章兜底承接全局）。取锚点集合而非"最近锚定章到末章的区间"：
+        一条 issue 常同时引用两个章号（如「ch078 写…但 ch079 说…」），
+        按区间会把无问题的中间章一起烧掉；按集合则只修被点名的。
+        不归档、不销毁进度，与 LOCAL_REPAIR 的可逆语义一致。
+        无锚点时退回 [末章]（原行为）。
+        """
+        lo = max(1, last - self.rollback_window + 1)
+        anchors: set[int] = set()
+        for dim in getattr(report, "dimensions", None) or []:
+            ev = getattr(dim, "evidence", None)
+            if ev is None:
+                continue
+            texts: list[str] = [str(getattr(ev, "rationale", "") or ""),
+                                str(getattr(ev, "raw_excerpt", "") or "")]
+            for i in getattr(ev, "issues", None) or []:
+                if isinstance(i, dict):
+                    texts.append(str(i.get("desc") or "") + str(i.get("quote") or ""))
+            for t in texts:
+                for m in re.finditer(r"ch0*(\d+)|第\s*(\d+)\s*章", t):
+                    n = int(m.group(1) or m.group(2))
+                    if lo <= n <= last:
+                        anchors.add(n)
+        if not anchors:
+            return [last]
+        targets = sorted(anchors | {last})
+        if len(targets) > 1:
+            self.console.print(
+                "[yellow]⚠ 定向修复按 issue 锚点扩展："
+                + "、".join(f"ch{n:03d}" for n in targets)
+                + "（不归档）[/yellow]"
+            )
+        return targets
+
     def _resolve_rollback(self) -> "RollbackProvider":
         """返回回退能力：仅使用构造注入的 provider。
 
@@ -538,10 +576,13 @@ class EvaluatorAgent(
 
             # ---- 规则 ④⑤：硬指标回滚 / 软指标定向修复 —— 过守门器 ----
             if plan.action is Action.LOCAL_REPAIR:
-                # 可逆路径：只重写末章，不销毁窗口
+                # 可逆路径：不销毁窗口、不归档；重写范围按 issue 章节锚点定位
+                # （此前固定只重写末章——缺陷锚定在窗口中间章时重写末章永远
+                # 修不到，必然烧满回溯次数后升级。2026-09-25 灵荒工坊实证：
+                # 缺陷在 ch075/ch078，末章 ch079 被重写 3 轮后仍升级停批。）
                 last = self._last_written()
                 try:
-                    rewriter([last] if last > 0 else [])
+                    rewriter(self._anchored_repair_chapters(report, last) if last > 0 else [])
                 except Exception as e:  # noqa: BLE001
                     report.escalated = True
                     report.escalated_reason = f"定向修复失败：{e}"
@@ -592,9 +633,15 @@ class EvaluatorAgent(
                 )
             attempts += 1
             report = self._evaluate_once()
-        # 闭环成功收尾：把累计回溯次数回写到最终通过报告，便于审计/复盘
+        # 闭环成功收尾：把累计回溯次数回写到最终通过报告，便于审计/复盘。
+        # 2026-09-27 语义修正：rolled_back 只反映**破坏性窗口回滚**（m10 归档）；
+        # LOCAL_REPAIR 的 patch 最小编辑不销毁章节，不再计入回退预算
+        # （旧口径 "attempts>0 即 rolled_back" 会把良性 patch 修复当破坏性回退
+        # 计入熔断账本——灵荒工坊实证：批末体检已 100 分通过，仍被「连续回退
+        # 4 次」熔断误停）。patch 次数经 repair_attempts 单独透出。
+        report.patch_repair_attempts = attempts
         return self._finalize_result(
-            report, attempts, attempts > 0 or rolled_back_any, last_repair
+            report, attempts, rolled_back_any, last_repair
         )
 
     @staticmethod
@@ -624,6 +671,15 @@ class EvaluatorAgent(
         ``same_target_streak`` 无从识别「同一窗口反复翻车」）。
         """
         report.rollback_attempts = attempts
+        # patch（非破坏性）修复次数单独透出：熔断账本只计破坏性回退（见上）。
+        # NovelHealthReport 是普通 dataclass，属性赋值不会失败；此块保留以防
+        # 未来改为 __slots__（失败即显性降级留痕，架构红线要求不留无声 except）。
+        try:
+            report.patch_repair_attempts = (
+                getattr(report, "patch_repair_attempts", 0) or 0
+            )
+        except Exception as e:  # noqa: BLE001  # noqa: SILENT_DEGRADE reason=logging-only - 附加观测字段失败仅留痕，不影响收尾
+            logger.warning("patch_repair_attempts 回写失败：%s", e)
         if rolled_back:
             report.rolled_back = True
         if repair is not None and report.repair is None:

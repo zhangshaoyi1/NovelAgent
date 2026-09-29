@@ -457,22 +457,32 @@ class M5ContextMixin:
         except Exception:  # noqa: BLE001 - 读失败降级为空
             return ""
     def _extract_world_info(self, world_data: dict[str, Any]) -> dict[str, Any]:
+        from agent.core.story.design_brief import squeeze_blank_runs
+
         metadata = world_data.get("metadata", {}) or {}
         content = world_data.get("content", "")
         style = metadata.get("style", {}) or {}
 
-        # 故事简介
-        synopsis = self._extract_section(content, "故事简介") or ""
+        # 故事简介 / 境界体系 / 金手指：注入前压掉成片空行——真源 md（尤其
+        # 境界体系）常有连续空行，会白吃固定字符预算（2026-09-25 实证：境界
+        # 体系块空行占数百字符，同等预算下挤掉的是真内容）。
+        synopsis = squeeze_blank_runs(self._extract_section(content, "故事简介") or "")
 
         # 境界体系
         # 讨论结果至上：作者可能在 world-discuss 后把「## 境界体系（冻结）」
         # 整节改写/改名（如「## 修炼境界体系」），不能再靠精确标题取——
         # 取不到就会把空的 realm_system 注入写作提示，讨论确立的境界体系
         # 在下游彻底丢失。这里按「含『境界』的首个 ## 分节」取，取不到再降级空串。
-        realm_system = self._extract_section(content, "境界体系") or self._extract_section_by_keyword(content, "境界") or ""
+        realm_system = squeeze_blank_runs(
+            self._extract_section(content, "境界体系")
+            or self._extract_section_by_keyword(content, "境界")
+            or ""
+        )
 
         # 金手指
-        golden_finger = self._extract_section(content, "金手指登记") or ""
+        golden_finger = squeeze_blank_runs(
+            self._extract_section(content, "金手指登记") or ""
+        )
 
         # B 方案：由体量估算全书总章数（曲线缺失/退化时按真实跨度推导压力阶段）
         scope_key = metadata.get("scope", "medium")

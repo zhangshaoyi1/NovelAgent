@@ -76,13 +76,17 @@ logger = logging.getLogger(__name__)
 
 def _chat_with_eval_backoff(
     llm: Any, messages: list, *, dimension: str, console: Any,
-    temperature: float = 0.2, max_tokens: int = 8192,
+    temperature: float = 0.0, max_tokens: int = 8192,
 ) -> Any:
     """带长退避的评分调用：瞬时故障按 _EVAL_RETRY_DELAYS_S 退避重试后上抛。
 
     2026-09-12 类级修复：path 1（Evaluator 逐维）与 path 2（迷爱看/黄金三章
     整章六维）共用本助手——此前只有 path 1 有长退避，网关故障时 path 2 单发
     失败即降级，是同一类问题只修了一半。
+
+    2026-09-25 温度收口：默认温度 0.2→0。评委是打分器不是创作者，采样温度
+    会让同一书况在几分钟内给出 97.7/83.3 两个分（灵荒工坊 2026-09-25 实证，
+    直接触发「判定证据不可信」熔断），温度 0 才能让「复评恢复可信」有意义。
     """
     delays = tuple(_EVAL_RETRY_DELAYS_S)
     for i in range(len(delays) + 1):
@@ -639,7 +643,7 @@ class ReaderAppealScorer:
                 ],
                 dimension="appeal_six",
                 console=self.console,
-                temperature=0.3,
+                temperature=0.0,
                 # 思考型模型需留足预算才能产出完整 JSON（实测 ≥8192 稳）。
                 max_tokens=8192,
             )
@@ -663,7 +667,7 @@ class ReaderAppealScorer:
                         ],
                         dimension="appeal_six",
                         console=self.console,
-                        temperature=0.3,
+                        temperature=0.0,
                         max_tokens=8192,
                     )
                     return self._parse_appeal(getattr(resp, "text", "") or "")

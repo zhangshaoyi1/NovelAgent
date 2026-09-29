@@ -113,7 +113,20 @@ def _seed_writable_project(tmp_path: Path) -> None:
 
 
 def test_pipeline_passes_targeted_hint_to_writer(tmp_path: Path, monkeypatch) -> None:
+    """2026-09-26 换轨后契约：回溯修复对**已落盘章节**走
+    FeedbackRewriter 最小编辑修订（patch 模式）——本测试钉住新契约：
+    ①每个待修章调用一次 FeedbackRewriter.rewrite；
+    ②feedback 带针对性提示（失败维度标签 + 按章过滤）；
+    ③必须 patch 模式 + block 门禁 + 备份（最小改动、坏补丁不落盘）。
+    """
     _seed_writable_project(tmp_path)
+    # patch 模式要求章节文件存在（不存在则走回滚全章重生成路径）
+    ch_dir = tmp_path / "chapters"
+    ch_dir.mkdir(exist_ok=True)
+    for i in range(8, 13):
+        (ch_dir / f"ch{i:03d}.md").write_text(
+            f"# 第 {i} 章 · 测试\n\n第{i}章正文。", encoding="utf-8"
+        )
     # R2-D：预算规划集成后写章循环注入 BudgetPlanner(llm_client=...)；
     # 本测试聚焦回溯重写链路，预算规划置为无 LLM（plan 返回 False）排除干扰。
     monkeypatch.setattr(
@@ -122,7 +135,33 @@ def test_pipeline_passes_targeted_hint_to_writer(tmp_path: Path, monkeypatch) ->
     )
 
     fake_eval = _FakeEvaluator()
-    fake_writer = _FakeWriter()
+
+    calls: list[dict] = []
+
+    class _FakeFR:
+        def __init__(self, project_dir, llm_client=None, console=None, **kw):
+            pass
+
+        def rewrite(self, chapter_num, feedback, *, backup=False, gate_mode="advisory", mode="patch", **kw):
+            calls.append(
+                {
+                    "chapter": chapter_num,
+                    "feedback": feedback,
+                    "backup": backup,
+                    "gate_mode": gate_mode,
+                    "mode": mode,
+                }
+            )
+            return SimpleNamespace(
+                rewritten=True,
+                new_text=f"# 第 {chapter_num} 章 · 修订正文。",
+                error="",
+                chapter_num=chapter_num,
+            )
+
+    monkeypatch.setattr(
+        "agent.core.quality.rewrite.feedback_rewriter.FeedbackRewriter", _FakeFR
+    )
 
     pipeline = AgenticPipelineWorkflow(
         project_dir=tmp_path,
@@ -130,19 +169,21 @@ def test_pipeline_passes_targeted_hint_to_writer(tmp_path: Path, monkeypatch) ->
         target_chapters=12,
         brief="",  # 跳过 planner
         planner=_FakePlanner(),
-        writer_workflow=fake_writer,
+        writer_workflow=_FakeWriter(),
         editor=_FakeEditor(),
         evaluator=fake_eval,
         memory=_FakeMemory(),
     )
     result = pipeline.run()
 
-    # 回溯触发：Writer 被调用重写 5 章
-    assert len(fake_writer.calls) == 5
-    # 每次重写都带针对性提示，且包含失败维度标签与章节区间
-    for c in fake_writer.calls:
-        hint = c["hint"]
+    # 回溯触发：FeedbackRewriter 被按章调用 5 次
+    assert [c["chapter"] for c in calls] == [8, 9, 10, 11, 12]
+    for c in calls:
+        hint = c["feedback"]
         assert hint is not None
+        # _fail_report 中真正 failed 的维度是连贯性/追读力（其余 0 缺陷判定通过）
+        assert "连贯性" in hint and "追读力" in hint
+        assert c["mode"] == "patch" and c["backup"] is True and c["gate_mode"] == "block"
         assert "连贯性" in hint
         assert "追读力" in hint
         assert "第 8" in hint and "12" in hint

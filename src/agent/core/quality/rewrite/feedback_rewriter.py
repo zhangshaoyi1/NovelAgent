@@ -58,6 +58,13 @@ class RewriteResult:
     llm_used: bool = True            # LLM 不可用降级时为 False
     error: str = ""                  # LLM 失败原因（降级时填充）
 
+    @property
+    def rewritten(self) -> bool:
+        """是否真正发生了改写（2026-09-26 实证 bug：消费方曾用 getattr(r,"rewritten")
+        取值——该值此前只存在于 to_dict()，dataclass 上并无此属性 ⇒ 恒 False，
+        成功的修订全被判为"被拒"而误升级。提升为正式属性，单一真源。"""
+        return not self.blocked and self.llm_used and not self.error
+
     def to_dict(self) -> dict[str, Any]:
         return {
             "chapter": self.chapter_num,

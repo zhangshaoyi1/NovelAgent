@@ -211,12 +211,11 @@ class M13ForeshadowWorkflow:
                 )
         return items
 
-    def compute_stats(
-        self, items: list[Foreshadow] | None = None, current_chapter: int = 0
+    @staticmethod
+    def _stats_from_items(
+        items: list[Foreshadow], current_chapter: int = 0
     ) -> ForeshadowStats:
-        """计算统计"""
-        if items is None:
-            items = self.load_foreshadows()
+        """纯计算：由伏笔条目汇总统计（供实例方法与 sync 对账共用）"""
         stats = ForeshadowStats(total=len(items))
         for f in items:
             if f.state == "未埋":
@@ -233,6 +232,14 @@ class M13ForeshadowWorkflow:
             elif current_chapter > 0 and f.urgency(current_chapter) == URGENCY_DUE:
                 stats.due += 1
         return stats
+
+    def compute_stats(
+        self, items: list[Foreshadow] | None = None, current_chapter: int = 0
+    ) -> ForeshadowStats:
+        """计算统计"""
+        if items is None:
+            items = self.load_foreshadows()
+        return self._stats_from_items(items, current_chapter)
 
     # ============================================================
     # F13.2 每章前检查（复用 M5 逻辑，提供独立接口）
@@ -769,7 +776,17 @@ def sync_foreshadow_states(
             parts[5] = state
             new_lines[i] = "| " + " | ".join(parts[1:7]) + " |"
         try:
-            foreshadow_file.write_text("\n".join(new_lines) + "\n", encoding="utf-8")
+            # 重算统计区块：sync 此前只改表体、从不重算统计（灵荒工坊 2026-09-25
+            # 实证：表内 6 条已埋而统计栏恒「未埋：8/已埋：0、回收率 N/A」），
+            # 体检与人工核对全被这份死数字误导。
+            stats = M13ForeshadowWorkflow._stats_from_items(
+                M13ForeshadowWorkflow._parse_table("\n".join(new_lines))
+            )
+            foreshadow_file.write_text(
+                M13ForeshadowWorkflow._rebuild_with_stats("\n".join(new_lines), stats)
+                + "\n",
+                encoding="utf-8",
+            )
             changed = True
         except Exception:  # noqa: BLE001 - 写失败仅报告
             if console is not None:

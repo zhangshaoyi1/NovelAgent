@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Optional
@@ -102,13 +103,28 @@ _EVENTS = [
 ]
 
 
-def _dim_issue_lines(dim: Any, max_issues: int = 8, max_desc: int = 200) -> list[str]:
+def _issue_anchors(text: str) -> set[int]:
+    """从 issue 文本提取章节锚点（ch078 / 第78章 → {78}）。"""
+    return {
+        int(m.group(1) or m.group(2))
+        for m in re.finditer(r"ch0*(\d+)|第\s*(\d+)\s*章", text or "")
+    }
+
+
+def _dim_issue_lines(
+    dim: Any, max_issues: int = 8, max_desc: int = 200, only_chapter: int | None = None
+) -> list[str]:
     """从失败维度的评分证据中提取逐条问题明细（HA-Eval 修复 2026-09-08）。
 
     ``EvalEvidence.issues`` 是评审 LLM 列举的 ``[{type, severity, desc}]``——
     哪个角色崩了人设、哪处设定矛盾、哪条逻辑断了，都在这里。此前这些明细
     评完即丢，hint 只带维度级数字汇总，Writer 只能盲猜重犯。
     证据不可信（confidence=0，如缓存串值）时不输出，避免误导重写。
+
+    ``only_chapter``（2026-09-25）：定向修复一次重写多章时，按章过滤 issue——
+    此前每章都拿到**全量**失败明细，重写 ch82 的 Writer 也在按 ch80 的问题改稿
+    ⇒ 多章重写互相踩踏（实测修复一轮把 83.5 分修到 55.0）。过滤口径：issue
+    锚定了本章、或未锚定任何章（全局性问题）才保留；锚定到别章的由别章的重写解决。
     """
     ev = getattr(dim, "evidence", None)
     if ev is None:
@@ -117,14 +133,18 @@ def _dim_issue_lines(dim: Any, max_issues: int = 8, max_desc: int = 200) -> list
         return []
     lines: list[str] = []
     rationale = str(getattr(ev, "rationale", "") or "").strip()
-    if rationale:
+    if rationale and only_chapter is None:
         lines.append(f"  · 评审理由：{rationale[:max_desc]}")
-    for it in (getattr(ev, "issues", None) or [])[:max_issues]:
+    for it in (getattr(ev, "issues", None) or [])[: max_issues * 3]:
         if not isinstance(it, dict):
             continue
         desc = str(it.get("desc", "") or "").strip()
         if not desc:
             continue
+        if only_chapter is not None:
+            anchors = _issue_anchors(desc) | _issue_anchors(str(it.get("quote", "") or ""))
+            if anchors and only_chapter not in anchors:
+                continue
         sev = str(it.get("severity", "") or "").strip()
         typ = str(it.get("type", "") or "").strip()
         tag = f"[{sev}] " if sev else ""
@@ -140,13 +160,18 @@ def _dim_issue_lines(dim: Any, max_issues: int = 8, max_desc: int = 200) -> list
     return lines
 
 
-def build_rewrite_hint(report: Any, chapter_nums: list[int]) -> str:
+def build_rewrite_hint(
+    report: Any, chapter_nums: list[int], only_chapter: int | None = None
+) -> str:
     """把上一轮全书体检的失败项编译成写给 Writer 的针对性修正提示。
 
     回溯重写若不带反馈，Writer 只会盲目重生成、极易再次不达标而触发无谓上报。
     这里把未达标维度、回溯原因与重写章节区间浓缩为可读指令，让重写「对症」。
     修复（2026-09-08）：附带评审 LLM 的逐条问题明细（来自 EvalEvidence.issues），
     让 Writer 精确避开上一版的具体错误点，而不是只知道"这个维度不达标"。
+
+    ``only_chapter``（2026-09-25）：定向修复一次重写多章时按章过滤 issue 明细
+    （锚定别章的问题由别章的重写解决），避免每章都背全部问题的锅而互相踩踏。
     """
     if report is None:
         return ""
@@ -164,7 +189,14 @@ def build_rewrite_hint(report: Any, chapter_nums: list[int]) -> str:
             lines.append(
                 f"- {d.label}（{d.name}）：实测 {d.value} {arrow} 合格线 {d.threshold}"
             )
-            lines.extend(_dim_issue_lines(d))
+            issue_lines = _dim_issue_lines(d, only_chapter=only_chapter)
+            if only_chapter is not None and not issue_lines:
+                # 该维度的明细全部锚在其他章：本章只需保持一致，不背别章的锅
+                issue_lines = [
+                    "  · 本维度的具体问题锚定在其他章，由其他章的重写解决；"
+                    "本章只需与前后章保持一致。"
+                ]
+            lines.extend(issue_lines)
             # 2026-09-10（回滚率削减·P0）：只给"哪里错了"会催生保守灌水，补正向指引
             try:
                 from agent.core.quality.eval_lessons import guidance_for
