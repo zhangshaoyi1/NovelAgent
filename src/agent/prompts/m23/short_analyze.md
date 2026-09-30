@@ -1,6 +1,6 @@
 ---
 name: m23.short_analyze
-version: 1
+version: 2
 stage: M23
 purpose: 短篇网文拆文（外部作品分析）
 description: 短篇拆文：深度拆解爆款短篇的故事核、结构、情感线、反转、写作手法、共鸣层次
@@ -68,18 +68,18 @@ validation:
   "opening": {
     "first_3_sentences": "前3句引用", "hook_type": "钩子类型", "conflict_in_50": true,
     "core_conflict_in_100": true, "info_density": "高/中/低", "empathy": "强/中/弱",
-    "voice": "强/中/弱", "intensity": 7
+    "voice": "强/中/弱", "intensity": 3
   },
   "ending": {
     "type": "结尾类型", "emotional_landing": "情绪落点", "afterglow": "余韵设计",
-    "share_power": "传播欲", "closure": "收束完整性", "values": "价值观传达", "intensity": 8
+    "share_power": "传播欲", "closure": "收束完整性", "values": "价值观传达", "intensity": 7
   },
   "five_dim_score": {
-    "opening_attraction": {"score": 4, "note": "说明"},
-    "emotion_pull": {"score": 4, "note": "说明"},
-    "reversal_design": {"score": 4, "note": "说明"},
-    "pacing_control": {"score": 4, "note": "说明"},
-    "ending_afterglow": {"score": 4, "note": "说明"}
+    "opening_attraction": {"score": 2, "note": "前 3 句为环境铺陈无冲突，前 50 字无事件"},
+    "emotion_pull": {"score": 4, "note": "第 4 节闺蜜反目段落有明确情绪拉扯"},
+    "reversal_design": {"score": 5, "note": "『替嫁』身份反转在第 6 节揭示，铺垫线索于第 2 节埋入"},
+    "pacing_control": {"score": 2, "note": "第 3-4 节连续日常对话无推进，事件密度低"},
+    "ending_afterglow": {"score": 1, "note": "结尾一句话收束，无余韵设计，无转发钩子"}
   },
   "explosion_power": "爆点性分析",
   "topicality": "话题性分析",

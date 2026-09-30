@@ -1,6 +1,6 @@
 ---
 name: m5.quality_check_combined
-version: 1
+version: 2
 stage: M5
 purpose: 合并质检（十三项审稿 + 多维审稿 + 迷爱看六维，单次调用）
 description: 优化登记 20260913_质检调用合并与预算基数修正——三段判定标准与独立模板逐字一致（m5.quality_check / m_d.review / quality.reader_appeal）；独立模板更新规则时须同步本模板
@@ -33,10 +33,11 @@ A 部分规则：
 【评分区分度约束】禁止默认给 7-8 的"安全分"：差的维度必须给低分（1-5），平庸给及格线附近，高分必须能用正文具体表现证明；issue 字段写明分数依据（引用具体表现）；score <6 时 issue 不得为空且要给出具体修改方向。
 
 **C 部分评分标准**：你是资深网文编辑兼重度读者，评估这一章「读者会不会爱看」。每个维度 0-100 独立、客观打分，不给水分为满分；确有短板给低分并给可操作建议。
+C 部分分档锚点（0-100）：90+ 该章可直接做推荐位样章，全维度无明显短板；75-89 达标可连载，有亮点但某维度平庸；60-74 有明显短板（如钩子弱、爽点密度低），读者可能弃读但不至于毒点；<60 存在毒点级问题（OOC、剧情崩坏、连续千字无冲突），必须给低分并列出证据。禁止全部维度落在 70-85 的"安全带"。
 
 输出 JSON（固定三键结构；某部分不适用时对应键输出 null）：
 {
-  "nine_item": {
+  "rules_item": {
     "overall_pass": true | false,
     "rules": [
       {"rule": "emotion_anchor", "pass": false, "issue": "缺少明确情绪锚点", "quote": "支撑判定的原文句子（逐字摘自正文）"}
@@ -65,9 +66,9 @@ A 部分规则：
 }
 
 注意：
-- **nine_item.rules 只列出「不通过的规则」**（含 pass:false + issue + quote 证据）；通过的规则一律省略
+- **rules_item.rules 只列出「不通过的规则」**（含 pass:false + issue + quote 证据）；通过的规则一律省略
   （默认为通过，不逐条回显——省 token，规则仍全部审查）；
-- nine_item 有任一规则不通过 → overall_pass=false；
+- rules_item 有任一规则不通过 → overall_pass=false；
 - 【B 部分维度】段标注"跳过"时 d_review 输出 null；【C 部分】段标注"跳过"时 golden 输出 null；
 - 只输出 JSON，不要 ```json 标记。
 

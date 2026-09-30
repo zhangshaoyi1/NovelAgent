@@ -79,11 +79,13 @@ class NineItemReviewSchema(BaseModel):
 class CombinedQualitySchema(BaseModel):
     """三段合并质检输出（m5.quality_check_combined 契约：九项 + D 四维 + 金三六维）。
 
-    缺段语义与旧实现一致：nine_item 缺失/无 overall_pass → 整体回退独立调用
-    （调用方判 "overall_pass" not in nine_item）；strict 时缺 d_review 同样回退。
+    缺段语义与旧实现一致：rules_item 缺失/无 overall_pass → 整体回退独立调用
+    （调用方判 "overall_pass" not in rules_item）；strict 时缺 d_review 同样回退。
     """
 
-    nine_item: dict[str, Any] = Field(default_factory=dict)
+    rules_item: dict[str, Any] = Field(default_factory=dict)
+    # 2026-09-30 改名前旧键，过渡期兼容读取
+    nine_item: dict[str, Any] | None = Field(default=None)
     d_review: dict[str, Any] | None = None
     golden: dict[str, Any] | None = None
 
@@ -791,7 +793,7 @@ class AgenticWriteWorkflow:
                 enable_thinking=False,
             )
             data = verdict.model_dump()
-            nine = data.get("nine_item")
+            nine = data.get("rules_item") or data.get("nine_item") or {}
             if not isinstance(nine, dict) or "overall_pass" not in nine:
                 return None
             d_issues: list[dict[str, str]] | None = None
