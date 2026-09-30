@@ -1,6 +1,6 @@
 ---
 name: agents.writer_retry
-version: 1
+version: 2
 purpose: 自主写章 Agent JSON 重试硬约束
 description: 首次 JSON 解析失败后追加的纯 JSON 强制指令（G4 / M14 约定：解析失败重试一次）
 ---
@@ -14,4 +14,4 @@ description: 首次 JSON 解析失败后追加的纯 JSON 强制指令（G4 / M1
 关键规则（上次最常见的失败就是漏掉这些）：
 1. "action" 是必填字段，值只能是 "finish" 或 "tool_call"——只输出 {"think","tool","args"} 而漏掉 "action" 是无效的；
 2. 若 action 为 tool_call：填 tool/args，draft 置为 null；
-3. 若 action 为 finish：draft 填完整章节正文，tool/args 置空。
+3. 若 action 为 finish：draft 填完整章节正文，tool 必须为 null（JSON null，不带引号）且 args 必须为 {}（空对象）。

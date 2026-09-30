@@ -1,6 +1,6 @@
 ---
 name: budget.branch
-version: 1
+version: 2
 stage: M10
 purpose: 主编动态划分各支线章数预算
 model: creative
@@ -21,5 +21,5 @@ validation:
 - 直接以 JSON 对象作答，不要用代码块围栏（```）包裹。
 - JSON 必须使用以下精确结构（字段名一字不差）：
 {"horizon_chapters": <整数总章数>, "subline_budget": [{"subline_id": "支线ID", "chapters": <正整数>, "reason": "一句话理由"}], "notes": "整体思路"}
-- 注意：每个支线的 chapters 都是该支线在本书的累计上限（正整数）；各支线之和应接近 total_horizon（允许略小，为收束/尾声留余量）。
+- 注意：每个支线的 chapters 都是该支线在本书的累计上限（正整数）；各支线之和 ≤ total_horizon 且 ≥ total_horizon×0.85（余量留给收束/尾声）；horizon_chapters 必须等于输入的全书目标总章数。
 - 支线_id 必须与输入给定的一字不差，且要覆盖全部支线。

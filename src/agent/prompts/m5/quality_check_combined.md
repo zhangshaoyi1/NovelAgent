@@ -1,7 +1,8 @@
 ---
 name: m5.quality_check_combined
-version: 2
+version: 3
 stage: M5
+temperature: 0.2
 purpose: 合并质检（十三项审稿 + 多维审稿 + 迷爱看六维，单次调用）
 description: 优化登记 20260913_质检调用合并与预算基数修正——三段判定标准与独立模板逐字一致（m5.quality_check / m_d.review / quality.reader_appeal）；独立模板更新规则时须同步本模板
 validation:

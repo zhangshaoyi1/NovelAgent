@@ -1,7 +1,8 @@
 ---
 name: m5.quality_check
-version: 3
+version: 4
 stage: M5
+temperature: 0.2
 purpose: 十三项审稿
 description: 十三项审稿（由 prompts.py 迁移，单一真源；2026-09-13 增规则13跨章复述一致性）
 validation:

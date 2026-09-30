@@ -1,6 +1,6 @@
 ---
 name: e.learn_extract
-version: 1
+version: 2
 stage: E
 purpose: 写法提炼
 description: 写法提炼（由 prompts.py 迁移，单一真源）
@@ -26,7 +26,7 @@ validation:
 【待提炼章节（可能多章拼接）】
 {{ chapter_text }}
 
-请从以上章节提炼可复用的写作技法，输出 JSON：
+请从以上章节提炼可复用的写作技法（learnings 最多 8 条，每条 text ≤80 字），输出 JSON；无可提炼内容时输出 {"learnings": []}，禁止硬造：
 {
   "learnings": [
     {"category": "hook", "text": "第 1 章用『数据化绝境』开场（存活率 0.13%）瞬间立住冷酷器灵与主角反差"},

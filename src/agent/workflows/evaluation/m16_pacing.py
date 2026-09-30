@@ -43,14 +43,14 @@ class PacingTracker:
     # ============================================================
     # 抽取
     # ============================================================
-    def extract(self, chapter_text: str) -> PacingExtraction:
+    def extract(self, chapter_text: str, chapter_num: int | None = None) -> PacingExtraction:
         """用 LLM 抽取本章追读力要素
 
         LLM 不可用 / 调用异常时返回空抽取（降级，不阻断）。
         """
         if self.llm is None:
             return PacingExtraction()
-        user = pm.get("m16.pacing").render_user(chapter_text=chapter_text)
+        user = pm.get("m16.pacing").render_user(chapter_text=chapter_text, chapter_num=chapter_num if chapter_num is not None else "")
         try:
             resp = chat_utility(
                 self.llm,

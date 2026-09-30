@@ -1,9 +1,9 @@
 ---
 name: g12.payoff_instruction
-version: 1
+version: 2
 stage: G12
-purpose:  payoff 指令
-description:  payoff 指令（由 prompts.py 迁移，单一真源）
+purpose: payoff 指令
+description: payoff 指令（由 prompts.py 迁移，单一真源）
 validation:
   not_empty: true
   on_fail: retry

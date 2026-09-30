@@ -1,10 +1,13 @@
 ---
 name: m11.import
-version: 1
+version: 3
 stage: M11
 purpose: import-draft 草稿反提取小说设定
 model: creative
 temperature: 0.7
+validation:
+  json_valid: true
+  on_fail: retry
 description: 小说设定提取专家，从草稿反向提取结构化设定 JSON
 ---
 # system
@@ -18,9 +21,9 @@ description: 小说设定提取专家，从草稿反向提取结构化设定 JSO
   "worldview": "世界观描述，200-400字",
   "power_system": "力量体系（如有）",
   "main_characters": [
-    {"name": "姓名", "role": "protagonist|antagonist|supporting", "identity": "身份", "core_motivation": "动机"}
+    {"name": "姓名", "role": "protagonist|antagonist|supporting|mentor", "identity": "身份", "core_motivation": "动机"}
   ],
-  "chapter_count": "检测到的章节数"
+  "chapter_count": 0（整数，检测到的章节数）
 }
 
 只输出 JSON，不要 ```json 标记。

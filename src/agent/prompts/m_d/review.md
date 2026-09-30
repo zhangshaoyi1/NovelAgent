@@ -1,7 +1,8 @@
 ---
 name: m_d.review
-version: 2
+version: 3
 stage: M_D
+temperature: 0.2
 purpose: 多维审稿
 description: 多维审稿（由 prompts.py 迁移，单一真源）
 validation:

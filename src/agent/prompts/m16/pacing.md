@@ -1,6 +1,6 @@
 ---
 name: m16.pacing
-version: 1
+version: 2
 stage: M16
 purpose: 追读力分析
 description: 追读力分析（由 prompts.py 迁移，单一真源）
@@ -21,6 +21,9 @@ validation:
 注意：只输出 JSON，不要 ```json 标记。
 
 # user
+【本章章节号】
+{{ chapter_num }}
+
 【章节正文】
 {{ chapter_text }}
 
@@ -30,6 +33,10 @@ validation:
   "cool_points": ["爽点/燃点/爆点"],
   "micro_payoffs": ["小 payoff/小满足/信息揭示"],
   "debts": [
-    {"id": "D-01", "desc": "埋下的债务描述", "kind": "foreshadow", "planted_ch": 0, "status": "open"}
+    {"id": "D-01", "desc": "埋下的债务描述", "kind": "hook|foreshadow", "planted_ch": 12, "status": "open"}
   ]
 }
+
+规则：
+- kind 只能取 hook（钩子债）或 foreshadow（伏笔债）；planted_ch 填上面【本章章节号】的整数，禁止填 0 或编造。
+- hooks / cool_points / micro_payoffs 每类最多 5 条，按强度降序，每条 ≤30 字，必须基于正文实际内容，禁止概括不存在的情节。

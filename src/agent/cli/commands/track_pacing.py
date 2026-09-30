@@ -136,7 +136,7 @@ def track_pacing(
         text = _read_chapter_text(project_path, n)
         if text is None:
             continue
-        ext = tracker.extract(text)
+        ext = tracker.extract(text, chapter_num=n)
         all_hooks.extend(ext.hooks)
         all_cool.extend(ext.cool_points)
         all_payoffs.extend(ext.micro_payoffs)

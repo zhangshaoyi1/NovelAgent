@@ -1,6 +1,6 @@
 ---
 name: quality.rewrite
-version: 1
+version: 2
 stage: M9
 purpose: 按主编反馈定向重写正文
 model: creative
@@ -25,6 +25,9 @@ validation:
 5. 输出**仅正文**（Markdown，可含小标题），不要任何作者注、不要解释你改了什么。
 
 你的目标：用最少的改动，精准命中用户反馈，同时让这一章读起来像从未被改过一样连贯。
+
+# 字数硬约束
+与原文篇幅相当（±10%）：{{ word_range }}（为空时以原文长度为基准），不得大幅膨胀或缩水。
 
 # user
 # 本章原文
