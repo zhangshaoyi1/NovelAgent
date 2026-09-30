@@ -42,6 +42,9 @@ class Packer:
             route=route,
             temperature=req.hint.temperature,
             enable_thinking=(req.extra or {}).get("enable_thinking"),
+            # 结构化输出约束（OpenAI 兼容 response_format），由调用方经
+            # ChatRequest.extra["response_format"] 声明；None = 不约束
+            response_format=(req.extra or {}).get("response_format"),
         )
 
     @staticmethod

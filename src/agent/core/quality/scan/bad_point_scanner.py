@@ -28,8 +28,9 @@ from typing import Any
 import frontmatter
 from rich.console import Console
 
-from agent.base.utils import parse_llm_json
 from agent.core.infra.prompt_manager import pm
+from agent.client.gateway_adapter import chat_utility_structured
+from pydantic import BaseModel, Field
 from llmagent.gateway import Gateway
 
 
@@ -37,6 +38,23 @@ from llmagent.gateway import Gateway
 # 数据契约
 # ============================================================
 @dataclass
+class _BadPointItemSchema(BaseModel):
+    """单条硬伤（quality.bad_point_scan 结构化输出契约）"""
+
+    type: str = "plot_hole"
+    severity: str = "medium"
+    chapter: int | None = None
+    evidence: str = ""
+    suggested_fix: str = ""
+    confidence: str = "low"
+
+
+class BadPointScanSchema(BaseModel):
+    """LLM 硬伤扫描输出契约"""
+
+    bad_points: list[_BadPointItemSchema] = Field(default_factory=list)
+
+
 class BadPoint:
     """单条坏点。"""
 
@@ -254,29 +272,22 @@ class BadPointScanner:
             golden=golden[:1000] or "（无金手指登记）",
             chapters=chapters_text,
         )
-        resp = chat_utility(self.llm,
+        # 2026-09-29：迁移到结构化输出通道——response_format 强约束 + pydantic 校验，
+        # 内建 json_object 回退重试，替代原「手动追加失败原因重试 + parse_llm_json 抢救」。
+        # 顺带修复：原实现 chat_utility 在本方法作用域内无 import（惰性 import 困在
+        # llm property 局部作用域），LLM 扫描路径一旦执行即 NameError。
+        verdict = chat_utility_structured(
+            self.llm,
             messages=[
                 {"role": "system", "content": system},
                 {"role": "user", "content": user},
             ],
+            schema=BadPointScanSchema,
             temperature=0.1,
             max_tokens=2000,
+            name="quality_bad_point_scan",
         )
-        try:
-            data = parse_llm_json(resp.text)
-        except ValueError as first_err:
-            # 首败后追加「强制纯 JSON + 上次失败原因」重试一次（项目惯例，减少重复解析失败）
-            retry = chat_utility(self.llm,
-                messages=[
-                    {"role": "system", "content": system
-                     + "\n铁律：只输出合法 JSON，禁止任何 ``` 标记或解释文字。"},
-                    {"role": "user", "content": "请重新扫描并严格只输出 JSON："
-                     + f"\n\n【上次解析失败原因，务必修正】\n{first_err}\n\n" + user},
-                ],
-                temperature=0.1,
-                max_tokens=2000,
-            )
-            data = parse_llm_json(retry.text)  # noqa: SILENT_DEGRADE
+        data = verdict.model_dump()
         out: list[BadPoint] = []
         for item in data.get("bad_points", []) or []:
             btype = str(item.get("type", "plot_hole"))

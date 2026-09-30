@@ -1,5 +1,9 @@
 """core 层正文净化纯函数（2026-09-14 框架化：一条定义、全路径消费）
 
+（2026-09-29 边界澄清：与 ``agent.core.quality.text_hygiene`` 同名但职责不同——
+本模块是**文本清洗器**（改写正文本身）；quality 版是**门禁检测器**（只读扫描
+产出 Issue）。判定口径变化只改 quality 版，清洗行为变化只改本模块，禁止互抄。）
+
 背景（灵荒薪传 ch001 双标题 + 「【下一章预告：…】」泄漏复盘）：
 - 写章路径（agentic/m5）经 _finalize_chapter_text 走 L2 硬污染清理；
 - 但 rewrite / paragraph_rewriter 走各自私有落盘，绕过净化；

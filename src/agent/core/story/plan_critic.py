@@ -61,6 +61,10 @@ import json
 import re
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+
+from pydantic import BaseModel, Field
+
+from agent.client.gateway_adapter import chat_utility_structured
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
@@ -86,6 +90,19 @@ CRITIC_LEDGER = Path(".state") / "plan_critic.jsonl"
 LEVEL_NOTE = "note"      # 记录用（样本内判据成立，但采样期不作为结论）
 LEVEL_WARN = "warn"      # 值得作者/运维看一眼
 LEVEL_UNREACHABLE = "unreachable"  # 判据自身不可达（须先修判据，纪律 #13）
+
+
+class _FindingSchema(BaseModel):
+    """单条语义评审发现（plan_critic 结构化输出契约）"""
+
+    judge: str = ""
+    message: str = ""
+
+
+class SemanticReviewSchema(BaseModel):
+    """plan_critic 语义评审输出契约"""
+
+    findings: list[_FindingSchema] = Field(default_factory=list)
 
 
 @dataclass
@@ -376,38 +393,32 @@ def judge_arc_semantics(
           "是否存在同质化推进、母题停滞、弧线间无因果三类问题。"
     )
     try:
-        from agent.client.gateway_adapter import chat_creative
-
-        raw = chat_creative(
+        # 2026-09-29：迁移到结构化输出通道（判定/审查类走 utility 收口）——
+        # response_format 强约束 + pydantic 校验，替代 parse_llm_json 启发式抢救。
+        verdict = chat_utility_structured(
             llm,
             messages=[
                 {"role": "system", "content": _SEMANTIC_SYSTEM},
                 {"role": "user", "content": user},
             ],
+            schema=SemanticReviewSchema,
             temperature=0.2,
             max_tokens=2048,
             enable_thinking=False,
+            name="plan_critic_semantic",
         )
-    except Exception as e:  # noqa: BLE001 - LLM 失败必须显性（不得当"通过"）
+    except Exception as e:  # noqa: BLE001 - LLM/解析失败必须显性（不得当"通过"）
         from agent.core.infra.degrade import degrade
 
-        degrade("plan_critic.semantic", "规划语义评审 LLM 调用失败，本次语义结论缺失", e)
+        degrade("plan_critic.semantic", "规划语义评审 LLM 调用/解析失败，本次语义结论缺失", e)
         return [], f"LLM 调用失败：{e}"
-    try:
-        from agent.utils import parse_llm_json
-
-        data = parse_llm_json(raw)
-    except Exception as e:  # noqa: BLE001 - 解析失败同样是"没审"
-        return [], f"语义评审输出无法解析为 JSON：{e}"
-    raw_findings = data.get("findings")
-    if not isinstance(raw_findings, list):
-        return [], f"语义评审输出缺 `findings` 列表（键：{sorted(data.keys())}）"
+    raw_findings = verdict.findings
     out: list[Finding] = []
     for item in raw_findings:
-        if not isinstance(item, dict):
+        if not isinstance(item, _FindingSchema):
             continue
-        judge = str(item.get("judge") or "S?.unnamed").strip()
-        msg = str(item.get("message") or "").strip()
+        judge = (item.judge or "S?.unnamed").strip()
+        msg = (item.message or "").strip()
         if not msg:
             continue
         out.append(Finding(

@@ -222,6 +222,16 @@ class AgenticPipelineWorkflow(
 
         # ---- G9：事件总线（未订阅 on_event / progress_file=None 时零落盘开销）----
         from agent.core.engine.events import ProgressEventBus
+
+        # 2026-09-30：progress_file 相对路径按 project_dir 锚定（原来是 CWD 相对）。
+        # 病灶：daemon 以 cwd=REPO_ROOT 起子进程 ⇒ 所有书的进度事件混写
+        # agent/.state/progress.json（实测涨到 31MB 且每事件全量重写，O(N²) I/O）；
+        # daemon 停滞检测读的却是 <project_dir>/.state/progress.json（永远不更新）；
+        # pytest 亦把测试事件追加进仓库真实运行态。CLI/守护侧本就传项目内绝对路径，
+        # 故此改动对既有生产调用零行为漂移，仅收口裸默认值与相对自定义路径。
+        _progress_file: str | Path | None = progress_file
+        if _progress_file is not None and not Path(_progress_file).is_absolute():
+            _progress_file = Path(self.project_dir) / _progress_file
         # ---- 统一事件落盘：按项目注册 FileEventStore → <project_dir>/.events/events.jsonl ----
         from agent.core.event_sourcing.event_bus import EventBus
 
@@ -236,7 +246,7 @@ class AgenticPipelineWorkflow(
 
         self._event_bus = ProgressEventBus(
             on_event=on_event,
-            progress_file=progress_file,
+            progress_file=_progress_file,
             cost_provider=self._current_cost_fields,  # G10（拍板 2）：每事件附加成本字段
             event_bus=EventBus.get_instance(),        # 统一总线：全部事件转发落盘 .events/events.jsonl
         )

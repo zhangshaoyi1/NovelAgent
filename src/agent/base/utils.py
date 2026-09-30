@@ -65,6 +65,24 @@ def _escape_control_in_strings(text: str) -> str:
     return "".join(out)
 
 
+_PARSE_LLM_JSON_WARNED = False
+
+
+def _warn_parse_llm_json_once() -> None:
+    """parse_llm_json 已冻结（2026-09-29）：每次进程只提示一次，不刷屏。"""
+    global _PARSE_LLM_JSON_WARNED
+    if _PARSE_LLM_JSON_WARNED:
+        return
+    _PARSE_LLM_JSON_WARNED = True
+    warnings.warn(
+        "parse_llm_json 已冻结：新代码禁止调用，请改用 "
+        "gateway_adapter.chat_utility_structured（详见 docstring 与 "
+        "tests/architecture/test_parse_llm_json_freeze.py）",
+        DeprecationWarning,
+        stacklevel=3,
+    )
+
+
 def parse_llm_json(text: str) -> dict[str, Any]:
     """容错解析 LLM 输出的 JSON
 
@@ -79,7 +97,14 @@ def parse_llm_json(text: str) -> dict[str, Any]:
 
     Raises:
         ValueError: 无法解析为 JSON
+
+    .. deprecated:: 2026-09-29
+        旧通道已冻结：新增调用点禁止（tests/architecture/test_parse_llm_json_freeze.py
+        以调用点清单为红线，只许删不许加）。判定/评分类调用应改用
+        ``agent.client.gateway_adapter.chat_utility_structured``（response_format
+        强约束 + pydantic 校验 + 失败遥测），从源头消灭启发式抢救解析。
     """
+    _warn_parse_llm_json_once()
     text = text.strip()
     # 容错预 pass：转义字符串内部的字面换行/回车/Tab，避免整段 JSON 因 draft 字段
     # 含真实换行而无法解析（见 _escape_control_in_strings）

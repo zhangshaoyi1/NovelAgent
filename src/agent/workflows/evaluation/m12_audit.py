@@ -1,4 +1,4 @@
-﻿"""M12 内容审核与上下文管理
+"""M12 内容审核与上下文管理
 
 基于 PRD F12.1-F12.3：
 
@@ -28,14 +28,14 @@ from pathlib import Path
 from typing import Any
 
 import frontmatter
+from pydantic import BaseModel, Field
 from rich.console import Console
 from rich.panel import Panel
 from rich.table import Table
 
-from agent.client.gateway_adapter import create_gateway, chat_utility
+from agent.client.gateway_adapter import create_gateway, chat_utility_structured
 from llmagent.gateway import Gateway
 from agent.core.story.setting_manager import SettingManager
-from agent.utils import parse_llm_json
 
 
 # ============================================================
@@ -50,6 +50,44 @@ VIOLENCE_POLICIES = {
     "standard": "标准：允许修仙战斗中的合理杀戮，拦截过度血腥",
     "strict": "严格：杀戮描写需淡化处理，禁止详细血腥场面",
 }
+
+
+class _ViolationItemSchema(BaseModel):
+    """单条违规（m12.content_audit 结构化输出契约）"""
+
+    type: str = "other"
+    severity: str = "low"
+    excerpt: str = ""
+    reason: str = ""
+    suggestion: str = ""
+
+
+class ContentAuditSchema(BaseModel):
+    """m12.content_audit 结构化输出契约"""
+
+    passed: bool = True
+    violations: list[_ViolationItemSchema] = Field(default_factory=list)
+    summary: str = ""
+
+
+class _CharacterChangeSchema(BaseModel):
+    """单条角色变化（m12.summary 结构化输出契约）"""
+
+    name: str = ""
+    change: str = ""
+
+
+class ChapterSummarySchema(BaseModel):
+    """m12.summary 结构化输出契约"""
+
+    chapter_num: int = 0
+    title: str = ""
+    summary: str = ""
+    key_events: list[str] = Field(default_factory=list)
+    character_changes: list[_CharacterChangeSchema] = Field(default_factory=list)
+    new_settings: list[str] = Field(default_factory=list)
+    foreshadows: list[str] = Field(default_factory=list)
+    handoff: str = ""
 
 
 @dataclass
@@ -149,15 +187,17 @@ class ContentAuditor:
         )
 
         try:
-            resp = chat_utility(
+            verdict = chat_utility_structured(
                 self.llm,
                 messages=[
                     {"role": "system", "content": pm.get("m12.content_audit").system},
                     {"role": "user", "content": user_msg},
                 ],
+                schema=ContentAuditSchema,
                 temperature=0.1,
+                name="m12_content_audit",
             )
-            data = parse_llm_json(resp)
+            data = verdict.model_dump()
         except (ValueError, Exception):
             # 审核失败时保守起见返回通过（避免阻塞写作）
             return AuditResult(
@@ -334,15 +374,17 @@ class ChapterSummarizer:
         )
 
         try:
-            resp = chat_utility(
+            verdict = chat_utility_structured(
                 self.llm,
                 messages=[
                     {"role": "system", "content": pm.get("m12.summary").system},
                     {"role": "user", "content": user_msg},
                 ],
+                schema=ChapterSummarySchema,
                 temperature=0.2,
+                name="m12_summary",
             )
-            data = parse_llm_json(resp)
+            data = verdict.model_dump()
         except (ValueError, Exception):
             return None
 

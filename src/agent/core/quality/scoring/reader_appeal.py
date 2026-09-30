@@ -35,7 +35,11 @@ from agent.core.story.chapters import (  # G6：公共章节读取 helper（消�
     strip_frontmatter,
     take_chapter_files,
 )
-from agent.utils import parse_llm_json
+# 2026-09-29 旧通道冻结迁移：解析统一走 base.structured_output.extract_json 收口点
+# （内部最后一级才回退 parse_llm_json，属豁免基础设施）。response_format 强约束
+# 因 _chat_with_eval_backoff 需保留完整响应对象作证据（cache_hit/usage），暂不切换
+# 调用通道；领域校验（缺维=形状异常、钳位）保持原语义。
+from agent.base.structured_output import extract_json
 from agent.client.gateway_adapter import (
     _is_transient_provider_error,
     chat_utility,
@@ -414,7 +418,7 @@ class ReaderAppealScorer:
                 self.llm, _messages, dimension=dimension, console=self.console
             )
             raw = getattr(resp, "text", "") or ""
-            data = parse_llm_json(raw)
+            data = extract_json(raw)
             issues = data.get("issues") or []
             if dimension in COUNT_DIMS and issues:
                 # 以 issues 为准重算：仅计入 severity ∈ SEVERITY_GATE 的条数，忽略 LLM 自报 value。
@@ -692,7 +696,7 @@ class ReaderAppealScorer:
             )
 
     def _parse_appeal(self, raw: str) -> ReaderAppealReport:
-        data = parse_llm_json(raw)
+        data = extract_json(raw)
         dims_raw = data.get("dimensions", {}) or {}
         dims: dict[str, int] = {}
         for k in APPEAL_DIMENSIONS:

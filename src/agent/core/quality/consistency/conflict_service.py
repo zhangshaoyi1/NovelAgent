@@ -23,8 +23,8 @@ from rich.panel import Panel
 from rich.table import Table
 
 from agent.core.story.setting_manager import SettingManager
-from agent.utils import parse_llm_json
-from agent.client.gateway_adapter import chat_utility
+from agent.client.gateway_adapter import chat_utility_structured
+from pydantic import BaseModel, Field
 
 
 @dataclass
@@ -37,6 +37,32 @@ class Conflict:
     severity: str  # high | medium | low
     affected_chapters: list[int] = field(default_factory=list)
     suggestion: str = ""
+
+
+def _coerce_chapter_no(c: Any) -> int:
+    """章节号容错转换："12"→12、"ch12"→12、非法值→-1（占位，不阻断报告）"""
+    try:
+        return int(str(c).strip().lstrip("ch"))
+    except ValueError:
+        return -1
+
+
+class _ConflictItemSchema(BaseModel):
+    """单条设定冲突（LLM 结构化输出契约；affected_chapters 容忍字符串章节号）"""
+
+    field: str = ""
+    existing: str = ""
+    new: str = ""
+    severity: str = "low"
+    affected_chapters: list[int | str] = Field(default_factory=list)
+    suggestion: str = ""
+
+
+class ConflictDetectionSchema(BaseModel):
+    """m12.conflict 结构化输出契约"""
+
+    conflicts: list[_ConflictItemSchema] = Field(default_factory=list)
+    summary: str = ""
 
 
 @dataclass
@@ -145,14 +171,19 @@ class ConflictArbiter:
         )
 
         try:
-            resp = chat_utility(self.llm,
+            # 2026-09-29：迁移到结构化输出通道（response_format 强约束 + pydantic 校验），
+            # 替代 parse_llm_json 启发式抢救；失败走统一遥测后由 except 降级。
+            verdict = chat_utility_structured(
+                self.llm,
                 messages=[
                     {"role": "system", "content": pm.get("m12.conflict").system},
                     {"role": "user", "content": user_msg},
                 ],
+                schema=ConflictDetectionSchema,
                 temperature=0.1,
+                name="m12_conflict",
             )
-            data = parse_llm_json(resp)
+            data = verdict.model_dump()
         except Exception as e:  # noqa: BLE001 - 解析失败降级为空报告
             # 2026-09-29：降级必须显性化——空报告会被 checker 判为「无冲突放行」，
             # 静默返回等于把「LLM 没答上」当成「设定无冲突」。
@@ -193,7 +224,9 @@ class ConflictArbiter:
                     new=str(item.get("new", "")),
                     severity=str(item.get("severity", "low")),
                     affected_chapters=[
-                        int(c) for c in (item.get("affected_chapters") or []) if c
+                        _coerce_chapter_no(c)
+                        for c in (item.get("affected_chapters") or [])
+                        if c
                     ],
                     suggestion=str(item.get("suggestion", "")),
                 )

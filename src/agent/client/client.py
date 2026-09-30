@@ -367,6 +367,18 @@ class LLMClient:
                 )
                 return extract_json(resp2.text)
             except Exception as e2:
+                # 2026-09-29：最终失败必须遥测（llm.structured_fallback），豁免棘轮
+                # 由此改为记录运行时事件而非代码注释条数
+                try:
+                    from agent.client.llm_usage import notify_llm_usage
+                    notify_llm_usage({
+                        "type": "llm.structured_fallback",
+                        "ok": False,
+                        "schema": name,
+                        "error": f"{e} | {e2}",
+                    })
+                except Exception:  # noqa: BLE001, SILENT_DEGRADE - 遥测失败不阻断原异常上抛
+                    pass
                 raise StructuredOutputError(
                     f"结构化输出失败（含回退）: {e} | {e2}"
                 ) from e2  # noqa: SILENT_DEGRADE

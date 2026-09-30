@@ -157,6 +157,7 @@ class _GatewayModelProvider:
                 temperature=temperature,
                 enable_thinking=enable_thinking,
                 timeout=timeout,
+                response_format=getattr(packed, "response_format", None),
             )
             elapsed = (time.monotonic() - t0) * 1000.0
             # usage 可能缺省（部分 provider 不返回）→ None.get() 会崩并连带
@@ -241,6 +242,7 @@ class _GatewayModelProvider:
         temperature: float,
         enable_thinking: Any,
         timeout: int,
+        response_format: dict | None = None,
     ) -> Any:
         """带指数退避的底层调用：瞬时故障重试，致命错误立即熔断。
 
@@ -260,6 +262,9 @@ class _GatewayModelProvider:
                         max_tokens=None,
                         enable_thinking=enable_thinking,
                         timeout=timeout,
+                        # None 时也不省略键：Provider 侧 **kwargs 透传，
+                        # 不支持的端点（Ollama 等）自行忽略
+                        response_format=response_format,
                     ),
                     deadline_s,
                 )
@@ -586,6 +591,87 @@ def chat_structured(
     # 解析 JSON 到 Pydantic
     parsed = extract_json(resp.text)
     return schema.model_validate(parsed)
+
+
+def chat_utility_structured(
+    gateway: Any,
+    messages: list[dict[str, str]],
+    schema: type[BaseModel],
+    *,
+    temperature: float = 0.0,
+    max_tokens: int | None = None,
+    model: str | None = None,
+    enable_thinking: bool | None = None,
+    name: str = "structured_output",
+    strict: bool = False,
+) -> BaseModel:
+    """判定/评分类结构化输出：response_format 强约束 + pydantic 校验 + 失败遥测
+
+    这是「LLM 输出即事实 → parse_llm_json 启发式抢救」旧通道的替代收口点（2026-09-29）。
+
+    三级约束与观测：
+    1. ``response_format=json_schema``（OpenAI 兼容端点强约束；网关不支持的端点由
+       Provider 侧忽略，故同时把 schema 嵌入 system prompt 兜底）；
+    2. 首次失败降级 ``json_object`` 再试一次（部分网关忽略 json_schema）；
+    3. 最终失败发 ``llm.structured_fallback`` 遥测事件 + 抛 :class:`StructuredOutputError`
+       ——调用方决定降级语义，但失败本身必须可观测，禁止静默吞掉。
+
+    默认 temperature=0.0（与 chat_utility 同口径：确定性打分是复评可信的前提）。
+    """
+    schema_json = pydantic_to_json_schema(schema)
+    schema_text = json.dumps(schema_json, ensure_ascii=False, indent=2)
+    # system prompt 内嵌 schema：对忽略 response_format 的端点仍是强提示。
+    # 并入首条 system 消息而非新增一条——保持消息数组形状与 chat_utility 一致
+    # （调用方/测试按 messages[0]=system、messages[1]=user 定位）。
+    schema_directive = (
+        "\n\n【输出格式铁律】严格按照以下 JSON Schema 输出结构化数据，"
+        f"不要输出任何其他文本：\n{schema_text}"
+    )
+    if messages and messages[0].get("role") == "system":
+        enhanced = [
+            dict(messages[0], content=messages[0]["content"] + schema_directive)
+        ] + list(messages[1:])
+    else:
+        enhanced = [
+            {
+                "role": "system",
+                "content": "请严格按照以下 JSON Schema 输出结构化数据，不要输出任何其他文本：\n"
+                + schema_text,
+            }
+        ] + list(messages)
+
+    def _attempt(rf: dict[str, Any]) -> BaseModel:
+        req = _build_utility_request(
+            enhanced,
+            temperature=temperature,
+            max_tokens=_apply_max_tokens_floor(gateway, max_tokens),
+            model=model,
+            enable_thinking=enable_thinking,
+            cache_class=None,
+        )
+        req.extra["response_format"] = rf
+        resp = gateway.chat(req)
+        return schema.model_validate(extract_json(resp.text))
+
+    rf_schema = {
+        "type": "json_schema",
+        "json_schema": {"name": name, "schema": schema_json, "strict": strict},
+    }
+    try:
+        return _attempt(rf_schema)
+    except (StructuredOutputError, ValueError) as e1:  # noqa: SILENT_DEGRADE - 首败进回退属预期，最终失败遥测+上抛
+        try:
+            return _attempt({"type": "json_object"})
+        except Exception as e2:  # noqa: BLE001 - 最终失败必须遥测后上抛
+            notify_llm_usage({
+                "type": "llm.structured_fallback",
+                "ok": False,
+                "schema": name,
+                "error": f"{e1} | {e2}",
+            })
+            raise StructuredOutputError(
+                f"结构化输出失败（含 json_object 回退）: {e1} | {e2}"
+            ) from e2
 
 
 def _load_config_from_env(env_file: str | None = None) -> LLMConfig:

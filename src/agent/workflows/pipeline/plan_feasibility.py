@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 from rich.console import Console
+from pydantic import BaseModel, Field
 
 from agent.core.infra.degrade import degrade
 
@@ -177,10 +178,25 @@ _AUDIT_SYSTEM = (
 )
 
 
+class _FixItemSchema(BaseModel):
+    """单条细纲修正（plan_feasibility 结构化输出契约；字段容忍空缺）"""
+
+    chapter: str = ""
+    hook_line: str = ""
+    plot_line: str = ""
+
+
+class FeasibilityFixesSchema(BaseModel):
+    """批前细纲可行性对账输出契约"""
+
+    fixes: list[_FixItemSchema] = Field(default_factory=list)
+
+
 def _audit_lines(llm: Any, lines: list[str], hard_rules: str, summary: str) -> list[dict[str, Any]]:
     """调 LLM 对账，返回 fixes 列表（解析失败抛异常由上层降级）。"""
-    from agent.client.gateway_adapter import chat_utility_response
-    from agent.utils import parse_llm_json
+    # 2026-09-29：迁移到结构化输出通道——response_format 强约束 + pydantic 校验，
+    # 替代 parse_llm_json 启发式抢救；失败统一遥测后由上层降级。
+    from agent.client.gateway_adapter import chat_utility_structured
 
     user = (
         (f"【批级进展摘要（已发生事实）】\n{summary[:1500]}\n\n" if summary else "")
@@ -188,18 +204,18 @@ def _audit_lines(llm: Any, lines: list[str], hard_rules: str, summary: str) -> l
         + "\n\n【待审计的窗口细纲行】\n"
         + "\n".join(lines)
     )
-    resp = chat_utility_response(
+    verdict = chat_utility_structured(
         llm,
         [
             {"role": "system", "content": _AUDIT_SYSTEM},
             {"role": "user", "content": user},
         ],
+        FeasibilityFixesSchema,
         max_tokens=4096,
         enable_thinking=False,
+        name="plan_feasibility_audit",
     )
-    data = parse_llm_json(getattr(resp, "text", "") or "")
-    fixes = data.get("fixes") if isinstance(data, dict) else None
-    return [x for x in (fixes or []) if isinstance(x, dict)]
+    return [x.model_dump() for x in verdict.fixes]
 
 
 # ---------------------------------------------------------------- 行合并

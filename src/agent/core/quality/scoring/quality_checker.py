@@ -25,7 +25,7 @@ from enum import Enum
 from pathlib import Path
 from typing import Any
 
-from agent.utils import parse_llm_json
+from pydantic import BaseModel, Field, create_model
 
 
 class RuleLayer(str, Enum):
@@ -281,20 +281,24 @@ class LLMQualityRule(QualityRule):
             dimensions=f"- {self.dimension}（{self.name}）：{self.prompt_template}",
         )
         try:
-            from agent.client.gateway_adapter import chat_utility as _chat_utility
-            resp_text = _chat_utility(
+            from agent.client.gateway_adapter import chat_utility_structured
+            # 2026-09-29：迁移到结构化输出通道——response_format 强约束 + pydantic
+            # 校验，替代 parse_llm_json 启发式抢救。4096 预算沿用（H4 残留注释见下）。
+            verdict = chat_utility_structured(
                 llm,
                 [
                     {"role": "system", "content": pm.get("m_d.review").system},
                     {"role": "user", "content": user},
                 ],
+                build_review_schema([self.dimension]),
                 # H4 残留（2026-09-15 复核）：单维 review 输出 issue 列表，2048 实测
                 # 被顶格截断（灵荒薪传/五灵破归档 trace 中各命中）→ 截断后 parse 失败
                 # 被静默吞成「该维无问题」，等于漏检。与另外两处调用点统一放宽到 4096。
                 max_tokens=4096,
                 enable_thinking=False,
+                name=f"m_d_review_{self.dimension}",
             )
-            data = parse_llm_json(resp_text)
+            data = verdict.model_dump(by_alias=True)
         except Exception as e:  # noqa: BLE001 - 单维度失败降级为「该维无问题」
             # 2026-09-15：失败必须显性化——原实现静默 return []，把「LLM 没答上」
             # 当成「该维零问题」，是"辅助信号失败被当成结论成立"的又一实例。
@@ -322,6 +326,32 @@ class LLMQualityRule(QualityRule):
         ]
 
 
+def build_review_schema(dimensions: list[str]) -> type[BaseModel]:
+    """按维度名动态生成 m_d.review 的结构化输出 schema（2026-09-29）
+
+    每个维度输出 ``{pass, blocking, issue}``；缺失维度默认 pass=True（与旧
+    ``dim.get("pass", True)`` 口径一致，不因字段缺失误判为阻塞）。
+    """
+    fields = {
+        dim: (
+            DimVerdict,
+            Field(default_factory=DimVerdict, description=f"维度 {dim} 的评审结论"),
+        )
+        for dim in dimensions
+    }
+    return create_model("MergedReview", **fields)  # type: ignore[call-overload]
+
+
+class DimVerdict(BaseModel):
+    """单维度评审结论（m_d.review 结构化输出契约）"""
+
+    pass_: bool = Field(default=True, alias="pass", description="是否通过")
+    blocking: bool = Field(default=False, description="是否阻塞级问题")
+    issue: str = Field(default="", description="问题描述（无则空串）")
+
+    model_config = {"populate_by_name": True}
+
+
 class LLMBackedChecker:
     """LLM 维度评审驱动器（D）
 
@@ -343,21 +373,31 @@ class LLMBackedChecker:
             chapter_text=text, dimensions=dimensions_block
         )
 
-        from agent.client.gateway_adapter import chat_utility
+        from agent.client.gateway_adapter import chat_utility_structured
 
-        result = self._with_timeout(
-            lambda: chat_utility(
-                self.llm,
-                [
-                    {"role": "system", "content": pm.get("m_d.review").system},
-                    {"role": "user", "content": user},
-                ],
-                # H4 修复：多维度合并审查输出全量 issue JSON，1500 截断会触发 fail-open 放行
-                max_tokens=4096,
-                enable_thinking=False,
-            ),
-            default=None,
-        )
+        try:
+            result = self._with_timeout(
+                lambda: chat_utility_structured(
+                    self.llm,
+                    [
+                        {"role": "system", "content": pm.get("m_d.review").system},
+                        {"role": "user", "content": user},
+                    ],
+                    build_review_schema([r.dimension for r in llm_rules]),
+                    # H4 修复：多维度合并审查输出全量 issue JSON，1500 截断会触发 fail-open 放行
+                    max_tokens=4096,
+                    enable_thinking=False,
+                    name="m_d_review_merged",
+                ),
+                default=None,
+            )
+        except Exception as e:  # noqa: BLE001 - 结构化输出失败降级为空
+            degrade(
+                "quality_checker.run_rules",
+                "D 维合并审查调用/解析失败，四维按『无问题』放行",
+                e,
+            )
+            return []
         if result is None:
             # 2026-09-29：与 _check 统一口径——降级必须显性化，禁止静默吞成
             # 「该维无问题」（注释自称「放行+记录」但原实现无任何记录，
@@ -367,16 +407,7 @@ class LLMBackedChecker:
                 "D 维合并审查调用失败（超时/None），四维按『无问题』放行",
             )
             return []
-        try:
-            data = parse_llm_json(result)
-        except Exception as e:  # noqa: BLE001 - 解析失败降级为空
-            degrade(
-                "quality_checker.run_rules",
-                "D 维合并审查输出解析失败，四维按『无问题』放行",
-                e,
-            )
-            return []
-        return self.map_issues(llm_rules, data)
+        return self.map_issues(llm_rules, result.model_dump(by_alias=True))
 
     @staticmethod
     def map_issues(

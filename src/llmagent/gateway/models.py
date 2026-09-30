@@ -79,6 +79,9 @@ class PackedRequest:
     temperature: float | None = None
     # 来自 req.extra["enable_thinking"] 的按次思考开关（None=回退 Provider 配置）
     enable_thinking: bool | None = None
+    # 来自 req.extra["response_format"] 的结构化输出约束（None=不约束，透传给
+    # OpenAI 兼容端点；不支持的 Provider/端点应忽略而非报错）
+    response_format: dict | None = None
 
 
 @dataclass
