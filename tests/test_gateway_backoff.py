@@ -55,6 +55,9 @@ def _make_provider(script: list[Any]) -> tuple[gw._GatewayModelProvider, _FakePr
 def _no_real_sleep(monkeypatch: pytest.MonkeyPatch) -> list[float]:
     sleeps: list[float] = []
     monkeypatch.setattr(gw.time, "sleep", lambda s: sleeps.append(s))
+    # 显式钉住退避常量：conftest 为测试提速设了 LLM_RETRY_BACKOFF_S=0，
+    # 而本文件专测退避节奏，必须与生产默认值 2.0 对齐（不依赖环境）。
+    monkeypatch.setattr(gw, "_TRANSIENT_BACKOFF_BASE_S", 2.0)
     return sleeps
 
 

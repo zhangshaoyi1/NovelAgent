@@ -69,19 +69,26 @@ class TestModeEnum:
         auto_count = len(MODE_INTERVENTION_MATRIX[Mode.AUTO])
         assert heavy_count > light_count > auto_count
 
-    def test_auto_only_major_decision(self) -> None:
-        assert MODE_INTERVENTION_MATRIX[Mode.AUTO] == {InterventionPoint.MAJOR_DECISION}
-
-    def test_heavy_includes_chapter_before_and_after(self) -> None:
-        points = MODE_INTERVENTION_MATRIX[Mode.HEAVY]
-        assert InterventionPoint.CHAPTER_BEFORE in points
-        assert InterventionPoint.CHAPTER_AFTER in points
-
-    def test_light_excludes_chapter_before_and_after(self) -> None:
-        points = MODE_INTERVENTION_MATRIX[Mode.LIGHT]
-        assert InterventionPoint.CHAPTER_BEFORE not in points
-        assert InterventionPoint.CHAPTER_AFTER not in points
-        assert InterventionPoint.PLOT_NODE in points
+    @pytest.mark.parametrize(
+        ("mode", "must_include", "must_exclude", "exact"),
+        [
+            (Mode.HEAVY, {"chapter_before", "chapter_after"}, set(), None),
+            (Mode.LIGHT, {"plot_node"}, {"chapter_before", "chapter_after"}, None),
+            (Mode.AUTO, set(), set(), {"major_decision"}),
+        ],
+        ids=["heavy", "light", "auto"],
+    )
+    def test_intervention_matrix_per_mode(
+        self, mode: Mode, must_include: set, must_exclude: set, exact: set | None
+    ) -> None:
+        """各模式介入点集合（2026-09-30 由 3 条同构用例参数化合并，断言等价）"""
+        points = {p.value for p in MODE_INTERVENTION_MATRIX[mode]}
+        for ip in must_include:
+            assert ip in points, f"{mode.value} 应包含 {ip}"
+        for ip in must_exclude:
+            assert ip not in points, f"{mode.value} 不应包含 {ip}"
+        if exact is not None:
+            assert points == exact
 
 
 # ============================================================

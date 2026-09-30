@@ -90,7 +90,12 @@ def test_autoplan_success_produces_all_artifacts(tmp_path: Path) -> None:
 # ============================================================
 # 幂等重入：不重复调用 workflow、不覆盖
 # ============================================================
-def test_autoplan_idempotent_on_rerun(tmp_path: Path) -> None:
+def test_autoplan_idempotent_on_rerun(tmp_path: Path, monkeypatch) -> None:
+    # 离线测试禁批末反思真实 LLM 调用（缺省会 create_gateway 并重试超时 ~15s）
+    monkeypatch.setattr(
+        "agent.core.quality.batch_reflection.record_batch_reflection",
+        lambda *a, **k: False,
+    )
     fake = _FakeLLM()
     p1 = _make_pipeline(tmp_path, fake)
     p1.run()
@@ -135,6 +140,12 @@ def test_m1_failure_blocks_pipeline(tmp_path: Path, monkeypatch) -> None:
 # ============================================================
 def test_m4_failure_degrades_and_continues(tmp_path: Path, monkeypatch) -> None:
     from agent.workflows.planning import m4_character
+
+    # 离线测试禁批末反思真实 LLM 调用（缺省会 create_gateway 并重试超时 ~15s）
+    monkeypatch.setattr(
+        "agent.core.quality.batch_reflection.record_batch_reflection",
+        lambda *a, **k: False,
+    )
 
     def _boom(self):
         raise RuntimeError("M4 故意失败（测试）")

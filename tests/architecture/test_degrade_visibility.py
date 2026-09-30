@@ -398,12 +398,18 @@ def test_ambiguous_reasons_must_cite_registration() -> None:
 
 
 def test_cited_registration_exists() -> None:
-    """``ref=`` 指向的登记单必须真实存在（悬空引用 = FAIL）。"""
+    """``ref=`` 指向的登记单必须真实存在（悬空引用 = FAIL）。
+
+    登记单允许落在 优化/ 外层（机制/批次/制度类）或 优化/单点优化/（单点类，
+    见 AGENTS.md §三归档规则），按文件名在两层内查找。
+    """
+    known = {p.name for p in _OPTIMIZATION_DIR.glob("*.md")}
+    known |= {p.name for p in (_OPTIMIZATION_DIR / "单点优化").glob("*.md")}
     dangling = [
         f"  {rel}:{ln}  ref={ref}"
         for rel, ln, c in exemption_comments()
         for _, ref in [parse_exemption(c)]
-        if ref and not (_OPTIMIZATION_DIR / ref).exists()
+        if ref and ref not in known
     ]
     assert not dangling, (
         f"豁免引用了不存在的登记单（对照目录 {_OPTIMIZATION_DIR}）——\n"

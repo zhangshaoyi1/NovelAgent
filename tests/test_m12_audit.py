@@ -325,10 +325,11 @@ class TestContentAuditor:
         )
         auditor = ContentAuditor(project, llm=llm, violence_policy="strict")
         result = auditor.audit_chapter("正文", violence_policy="lenient")
-        # 验证传给 LLM 的内容包含 lenient 描述
+        # 验证传给 LLM 的内容包含 lenient 描述（结构化通道会在最前插入 schema system 消息，
+        # 故遍历全部消息而非按下标取）
         call_args = llm.chat.call_args
-        user_msg = call_args[0][0].messages[1]["content"]
-        assert "宽松" in user_msg
+        all_msg = " ".join(m["content"] for m in call_args[0][0].messages)
+        assert "宽松" in all_msg
 
     def test_long_text_truncated(self, project: Path) -> None:
         llm = _make_llm(

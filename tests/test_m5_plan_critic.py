@@ -292,24 +292,27 @@ class TestFailureIsVisible:
         assert rep.semantic_ran is False and "无未来弧线" in rep.semantic_error
 
     def test_semantic_json_broken_is_recorded(self, tmp_path: Path) -> None:
-        """LLM 返回非 JSON ⇒ 记为未跑（不得把解析失败当"无问题"）。"""
+        """LLM 返回非 JSON ⇒ 记为未跑（不得把解析失败当"无问题"）。
+
+        2026-09-30 迁移结构化输出通道后，非 JSON 输出由
+        chat_utility_structured 的 pydantic 校验拒绝并抛 StructuredOutputError；
+        此处用只返回纯文本的桩网关模拟该失败路径。
+        """
         from agent.core.story import plan_critic as pc
 
+        from agent.client.gateway_adapter import StructuredOutputError  # noqa: F401 - 行为契约说明
+
         class _Bad:
-            pass
+            def chat(self, req):
+                class _Resp:
+                    text = "这不是 JSON"
 
-        # 直接打桩 chat_creative 让解析失败
-        import agent.client.gateway_adapter as ga
+                return _Resp()
 
-        orig = ga.chat_creative
-        ga.chat_creative = lambda *a, **k: "这不是 JSON"
-        try:
-            fs, err = pc.judge_arc_semantics(
-                tmp_path, [_arc("弧一", 1, 20)], current_chapter=0, llm=_Bad()
-            )
-        finally:
-            ga.chat_creative = orig
-        assert fs == [] and err and "JSON" in err
+        fs, err = pc.judge_arc_semantics(
+            tmp_path, [_arc("弧一", 1, 20)], current_chapter=0, llm=_Bad()
+        )
+        assert fs == [] and err and "失败" in err
 
 
 # ============================================================

@@ -33,20 +33,28 @@ from agent.core.engine.state_machine import State, StateMachine
 # F16.1 参数解析
 # ============================================================
 class TestParseArgs:
-    def test_empty(self) -> None:
-        assert parse_args("") == {}
-
-    def test_key_value(self) -> None:
-        assert parse_args("--dir projects/x") == {"dir": "projects/x"}
-
-    def test_key_equal_value(self) -> None:
-        assert parse_args("--dir=projects/x") == {"dir": "projects/x"}
-
-    def test_flag_only(self) -> None:
-        assert parse_args("--yes") == {"yes": True}
-
-    def test_short_key_value(self) -> None:
-        assert parse_args("-d projects/x") == {"d": "projects/x"}
+    @pytest.mark.parametrize(
+        ("cmdline", "expected"),
+        [
+            ("", {}),
+            ("--dir projects/x", {"dir": "projects/x"}),
+            ("--dir=projects/x", {"dir": "projects/x"}),
+            ("--yes", {"yes": True}),
+            ("-d projects/x", {"d": "projects/x"}),
+            ("ch020", {"raw": "ch020"}),
+            ("--yes --force", {"yes": True, "force": True}),
+            ("--intent 让主角在N02选择卧底", {"intent": "让主角在N02选择卧底"}),
+            # 以 - 开头但非参数（如负数/带连字符值）应作为值
+            ("--label before-m2-revision", {"label": "before-m2-revision"}),
+        ],
+        ids=[
+            "empty", "key-value", "key=value", "flag-only", "short-key",
+            "bare-text", "multi-flags", "chinese-value", "hyphen-value",
+        ],
+    )
+    def test_parse_args_shapes(self, cmdline: str, expected: dict) -> None:
+        """参数解析各形态（2026-09-30 由 9 条同构用例参数化合并，断言等价）"""
+        assert parse_args(cmdline) == expected
 
     def test_multiple_keys(self) -> None:
         result = parse_args("--dir projects/x --intent 让主角加入执法堂")
@@ -58,25 +66,6 @@ class TestParseArgs:
         assert result["dir"] == "projects/x"
         assert "rollback" in result["raw"]
         assert "ch020" in result["raw"]
-
-    def test_bare_text_only(self) -> None:
-        result = parse_args("ch020")
-        assert result["raw"] == "ch020"
-
-    def test_multiple_flags(self) -> None:
-        result = parse_args("--yes --force")
-        assert result["yes"] is True
-        assert result["force"] is True
-
-    def test_chinese_value(self) -> None:
-        result = parse_args("--intent 让主角在N02选择卧底")
-        assert result["intent"] == "让主角在N02选择卧底"
-
-    def test_value_with_hyphen_not_key(self) -> None:
-        """以 - 开头但非参数（如负数）应作为值"""
-        # --dir -d 这种情况较复杂，这里测简单场景
-        result = parse_args("--label before-m2-revision")
-        assert result["label"] == "before-m2-revision"
 
 
 # ============================================================

@@ -342,100 +342,55 @@ class TestGenrePackRegistry:
 
 
 # ============================================================
-# 内置修仙题材包完整性
+# 内置题材包完整性（xiuxian / wuxia；2026-09-30 由两个镜像类 14 条用例参数化合并，
+# 断言等价：原 test_wuxia_and_xiuxian_both_available 与两条 test_*_listed 断言重复，并入 listed）
 # ============================================================
-class TestBuiltinXiuxianPack:
-    """验证 agent/skills/xiuxian/ 内置题材包的完整性"""
+class TestBuiltinGenrePacks:
+    """验证 agent/skills/{xiuxian,wuxia}/ 内置题材包的完整性"""
 
     @pytest.fixture
     def registry(self) -> GenrePackRegistry:
         return GenrePackRegistry()
 
-    def test_xiuxian_listed(self, registry: GenrePackRegistry) -> None:
-        genres = registry.list_genres()
-        assert "xiuxian" in genres
+    @pytest.mark.parametrize("genre", ["xiuxian", "wuxia"])
+    def test_listed(self, registry: GenrePackRegistry, genre: str) -> None:
+        assert genre in registry.list_genres()
 
-    def test_xiuxian_manifest(self, registry: GenrePackRegistry) -> None:
-        pack = registry.load("xiuxian")
-        assert pack.manifest.name == "xiuxian"
+    @pytest.mark.parametrize("genre", ["xiuxian", "wuxia"])
+    def test_manifest(self, registry: GenrePackRegistry, genre: str) -> None:
+        pack = registry.load(genre)
+        assert pack.manifest.name == genre
         assert pack.manifest.version
         assert pack.manifest.description
 
-    def test_xiuxian_has_world_template(self, registry: GenrePackRegistry) -> None:
-        pack = registry.load("xiuxian")
+    @pytest.mark.parametrize(("genre", "world_marker"), [("xiuxian", "炼气"), ("wuxia", "三流")])
+    def test_world_template(self, registry: GenrePackRegistry, genre: str, world_marker: str) -> None:
+        pack = registry.load(genre)
         assert pack.world_template
         # 应包含境界体系
-        assert "境界" in pack.world_template or "炼气" in pack.world_template
+        assert "境界" in pack.world_template or world_marker in pack.world_template
 
-    def test_xiuxian_has_tropes(self, registry: GenrePackRegistry) -> None:
-        pack = registry.load("xiuxian")
-        assert pack.tropes
+    @pytest.mark.parametrize("genre", ["xiuxian", "wuxia"])
+    def test_required_sections_present(self, registry: GenrePackRegistry, genre: str) -> None:
+        pack = registry.load(genre)
+        for field in ("tropes", "terms", "quality_rules"):
+            assert getattr(pack, field), f"{genre}.{field} 不应为空"
 
-    def test_xiuxian_has_terms(self, registry: GenrePackRegistry) -> None:
-        pack = registry.load("xiuxian")
-        assert pack.terms
-
-    def test_xiuxian_has_quality_rules(self, registry: GenrePackRegistry) -> None:
-        pack = registry.load("xiuxian")
-        assert pack.quality_rules
-
-
-# ============================================================
-# 内置武侠题材包完整性
-# ============================================================
-class TestBuiltinWuxiaPack:
-    """验证 agent/skills/wuxia/ 内置题材包的完整性"""
-
-    @pytest.fixture
-    def registry(self) -> GenrePackRegistry:
-        return GenrePackRegistry()
-
-    def test_wuxia_listed(self, registry: GenrePackRegistry) -> None:
-        genres = registry.list_genres()
-        assert "wuxia" in genres
-
-    def test_wuxia_manifest(self, registry: GenrePackRegistry) -> None:
-        pack = registry.load("wuxia")
-        assert pack.manifest.name == "wuxia"
-        assert pack.manifest.version
-        assert pack.manifest.description
-
-    def test_wuxia_has_world_template(self, registry: GenrePackRegistry) -> None:
-        pack = registry.load("wuxia")
-        assert pack.world_template
-        # 应包含武功境界体系
-        assert "境界" in pack.world_template or "三流" in pack.world_template
-
-    def test_wuxia_has_tropes(self, registry: GenrePackRegistry) -> None:
-        pack = registry.load("wuxia")
-        assert pack.tropes
-        # 应包含比武打脸套路
-        assert "打脸" in pack.tropes or "比武" in pack.tropes
-
-    def test_wuxia_has_terms(self, registry: GenrePackRegistry) -> None:
-        pack = registry.load("wuxia")
-        assert pack.terms
-        # 应包含江湖术语
-        assert "内力" in pack.terms or "江湖" in pack.terms
-
-    def test_wuxia_has_combat_template(self, registry: GenrePackRegistry) -> None:
-        pack = registry.load("wuxia")
-        assert pack.combat_template
-        # 应包含四段结构
-        assert "起手" in pack.combat_template or "交锋" in pack.combat_template
-
-    def test_wuxia_has_quality_rules(self, registry: GenrePackRegistry) -> None:
-        pack = registry.load("wuxia")
-        assert pack.quality_rules
-        # 应包含境界战力校验规则
-        assert "境界" in pack.quality_rules or "战力" in pack.quality_rules
-
-    def test_wuxia_and_xiuxian_both_available(self, registry: GenrePackRegistry) -> None:
-        """两个题材包应同时可用"""
-        genres = registry.list_genres()
-        assert "xiuxian" in genres
-        assert "wuxia" in genres
-
+    # 武侠包内容标记（各节应含题材关键词）
+    @pytest.mark.parametrize(
+        ("field", "markers"),
+        [
+            ("tropes", ("打脸", "比武")),
+            ("terms", ("内力", "江湖")),
+            ("combat_template", ("起手", "交锋")),
+            ("quality_rules", ("境界", "战力")),
+        ],
+    )
+    def test_wuxia_content_markers(
+        self, registry: GenrePackRegistry, field: str, markers: tuple
+    ) -> None:
+        content = getattr(registry.load("wuxia"), field) or ""
+        assert any(m in content for m in markers), f"wuxia.{field} 缺少标记 {markers}"
 
 # ============================================================
 # CLI 命令注册

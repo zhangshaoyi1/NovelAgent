@@ -7,6 +7,13 @@
 
 from __future__ import annotations
 
+import os
+
+# 必须在首次导入 agent.client（gateway_adapter 模块级读 env 定常量）之前生效：
+# 测试进程内关闭 LLM 瞬态重试退避（2s→4s→…指数等待），
+# 否则模拟失败的用例每条白等 6~12 秒。生产进程不加载 conftest，不受影响。
+os.environ.setdefault("LLM_RETRY_BACKOFF_S", "0")
+
 import json
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -451,3 +458,38 @@ class FakeEmbedder:
 def fake_embedder() -> FakeEmbedder:
     """返回可注入的假嵌入器（RAG 测试用，避免真实网络调用）"""
     return FakeEmbedder()
+
+
+# 测试分层自动打标
+# ============================================================
+# 分层策略（详见 pyproject.toml markers）：
+#   architecture —— 目录规则：tests/architecture、llmagent_tests/architecture
+#   milestone    —— 历史里程碑/阶段验收：phase0~5、test_m1~m3（日常不跑）
+#   fast / slow  —— 目录不决定快慢；默认 fast，以下两类降级为 slow：
+#                   ① daemon 目录（进程管理类）；② 实测秒级的管道级用例
+#                   （跑真实 p.run() 全流程，--durations 实测 >4s/条，
+#                   清单来源：20260930_测试套件分层与减负.md 第七节）。
+_SLOW_TEST_FILES = {
+    "test_g4_breaker",              # 12 条 77s（真实 pipeline.run）
+    "test_pipeline_rollback_targeted",
+    "test_g3_auto_plan",
+    "test_p4_ending_provenance",
+    "test_plan_review_reachability",  # architecture 静态扫描 9s/条
+    "test_hostile_delete_env",
+    "test_parse_llm_json_freeze",
+    "test_degrade_visibility",
+}
+
+
+def pytest_collection_modifyitems(config, items):
+    for item in items:
+        path = str(item.fspath).replace("\\", "/")
+        stem = item.fspath.purebasename
+        if "/architecture/" in path:
+            item.add_marker(pytest.mark.architecture)
+        elif "/phase" in path or "test_m1" in path or "test_m2" in path or "test_m3" in path:
+            item.add_marker(pytest.mark.milestone)
+        if "/daemon/" in path or stem in _SLOW_TEST_FILES:
+            item.add_marker(pytest.mark.slow)
+        elif not any(m.name in ("slow", "milestone") for m in item.iter_markers()):
+            item.add_marker(pytest.mark.fast)
