@@ -761,7 +761,6 @@ class AgenticWriteWorkflow:
             # 缺段/失败回退独立调用的语义不变（见 CombinedQualitySchema docstring）。
             verdict = chat_utility_structured(
                 self.llm,
-                CombinedQualitySchema,
                 messages=[
                     {"role": "system", "content": prompt.system},
                     {
@@ -786,6 +785,7 @@ class AgenticWriteWorkflow:
                         ),
                     },
                 ],
+                schema=CombinedQualitySchema,
                 # 三段合并输出（九项 JSON + D 四维 + 金三六维），4096 会截断走回退
                 max_tokens=8192,
                 enable_thinking=False,
@@ -910,11 +910,13 @@ class AgenticWriteWorkflow:
         try:
             from agent.core.quality.text_hygiene import hygiene_issues, split_issues
 
-            _hygiene = hygiene_issues(cleaned)
+            _hygiene_block, _hygiene_warn = split_issues(hygiene_issues(cleaned))
         except Exception as e:  # noqa: BLE001 - 卫生扫描失败不阻断质检
-            _hygiene = []
+            # import 与扫描同 try：import 失败时 split_issues 未绑定，拆到 try 外会
+            # UnboundLocalError（2026-09-30 灵荒工坊第 220 章实证）——fail-open 必须
+            # 连拆分一起兜住
+            _hygiene_block, _hygiene_warn = [], []
             degrade("agentic_write.text_hygiene", "文体卫生扫描失败，跳过", e)
-        _hygiene_block, _hygiene_warn = split_issues(_hygiene)
         # 登场连续性（初次登场用『再次』口吻）：窄口径 warning，不做 blocking
         # （语义证据不足以支撑不可逆处置，走 ESCALATE 哲学）。
         try:
@@ -1330,11 +1332,11 @@ class AgenticWriteWorkflow:
         try:
             verdict = chat_utility_structured(
                 self.llm,
-                NineItemReviewSchema,
                 messages=[
                     {"role": "system", "content": pm.get("m5.quality_check").system},
                     {"role": "user", "content": check_prompt},
                 ],
+                schema=NineItemReviewSchema,
                 # H4 修复：九项审稿输出含 rules/issues 全量 JSON，1500 会被截断走回退；
                 # 放宽到 4096（与修订评审一致）。
                 max_tokens=4096,
