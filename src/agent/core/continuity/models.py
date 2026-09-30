@@ -24,7 +24,7 @@ from pydantic import BaseModel, field_validator, model_validator
 FactDomain = Literal["character", "relationship", "world", "plot", "foreshadowing"]
 KnowledgeAudience = Literal["reader", "character", "faction"]
 KnowledgeLevel = Literal["unknown", "suspects", "believes", "knows", "misled"]
-LoopKind = Literal["plot", "foreshadowing", "clue"]
+LoopKind = Literal["plot", "foreshadowing", "clue", "promise"]
 LoopStatus = Literal["open", "progressing", "resolved", "abandoned"]
 
 

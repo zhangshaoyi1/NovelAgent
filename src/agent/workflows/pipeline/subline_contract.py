@@ -40,6 +40,7 @@ from rich.console import Console
 
 from agent.core.infra.degrade import degrade
 from agent.core.story.chapter_contract import (
+    DEADLINES_SECTION,
     HOOKS_SECTION,
     PACE_TIERS,
     POINTS_SECTION,
@@ -57,6 +58,7 @@ from agent.workflows.pipeline.plan_consistency import (
 _SECTIONS: tuple[tuple[str, str], ...] = (
     (HOOKS_SECTION, "chapter_hooks"),
     (TIERS_SECTION, "chapter_tiers"),
+    (DEADLINES_SECTION, "chapter_deadlines"),
     (POINTS_SECTION, "plot_points"),
 )
 
@@ -75,6 +77,14 @@ class ChapterContractDraft(BaseModel):
     chapter_tiers: str = Field(
         default="",
         description="每章强度档位表：每章一行，格式 `第N章：<高潮|推进|垫片|日常>`",
+    )
+    chapter_deadlines: str = Field(
+        default="",
+        description=(
+            "逐章期限/时间线（规划端唯一授权）：每章一行，格式 "
+            "`第N章：<本章期限与时间线事实>`；无期限章写 `第N章：无`。"
+            "期限只能前进，禁止同一期限在各章口径不一"
+        ),
     )
     plot_points: str = Field(
         default="",
@@ -193,13 +203,15 @@ def _build_messages(
 
     system = (
         "你是网文细纲规划师，为一条**已在推进的支线**补齐指定章节区间的逐章细纲。\n"
-        "严格只输出 JSON，字段：chapter_hooks / chapter_tiers / plot_points。\n\n"
+        "严格只输出 JSON，字段：chapter_hooks / chapter_tiers / chapter_deadlines / plot_points。\n\n"
         "格式（必须能被下游逐行解析，冒号用中文全角）：\n"
         "· chapter_hooks 每章一行：\n"
         "  `第N章：档位=<四档之一>｜章首钩子=…｜章尾钩子=…｜爽点=…｜目标情绪=…"
         "｜在场=…｜禁=…｜验收=…`\n"
         "  （`档位` 必须紧跟 `第N章：` 写在**行首**——写在行尾实测会被整段丢掉）\n"
         "· chapter_tiers 每章一行：`第N章：<四档之一>`（与上一字段行内档位一致）\n"
+        "· chapter_deadlines 每章一行：`第N章：<本章期限与时间线事实>`（无期限写 `第N章：无`；"
+        "期限只能前进，禁止同一期限在各章口径不一）\n"
         "· plot_points 每章一行：`第N章：动作化子事件1；动作化子事件2`\n\n"
         f"档位四档语义：{tiers}。"
         "高潮须有明确爆点；推进须有实质进展或代价；垫片/日常为**规划上就该放松**的章。"

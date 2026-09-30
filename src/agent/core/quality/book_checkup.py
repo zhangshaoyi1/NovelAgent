@@ -858,6 +858,58 @@ def write_time_entity_check(
     return {"blocking": blocking, "warnings": warnings}
 
 
+#: T4 承诺事件（长线一致性二期 20260930）：默认宽限章数
+DEFAULT_PROMISE_GRACE = 10
+
+
+def check_promise_events(
+    project_dir: Path, chapters: list[dict[str, Any]], grace: int = DEFAULT_PROMISE_GRACE
+) -> dict[str, Any]:
+    """指标 11（advisory）：承诺事件逾期未兑现。
+
+    数据源：连续性账本 open_loops 中 ``kind="promise"`` 的条目（角色公开宣布的
+    会面/审判/行动/交付）。承诺须在 K 章内被正文正面演出或显式取消（取消也要
+    有正文交代）；逾期即「预告债务」——对症《灵荒工坊》ch45 核查大戏幕后蒸发、
+    ch97 矿洞之约断线。advisory：不计入 passed（登记单 §六.5）。
+    """
+    overdue: list[dict[str, str]] = []
+    parse_errors: list[str] = []
+    current_chapter = chapters[-1]["chapter"] if chapters else 0
+    try:
+        from agent.core.continuity.ledger import ContinuityLedgerStore, commit_id_matches
+
+        ledger = ContinuityLedgerStore(project_dir).load()
+        for lo in ledger.open_loops:
+            if lo.kind != "promise" or lo.status != "open":
+                continue
+            src_ch = next(
+                (c for c in range(current_chapter, 0, -1) if commit_id_matches(lo.source_commit_id, c)),
+                None,
+            )
+            if src_ch is None:
+                continue
+            age = current_chapter - src_ch
+            if age > grace:
+                overdue.append(
+                    {
+                        "id": lo.loop_id,
+                        "detail": f"第{src_ch}章承诺「{lo.detail[:40]}」已 {age} 章未兑现（宽限 {grace} 章）",
+                    }
+                )
+    except Exception as e:  # noqa: BLE001 - 账本缺失/损坏 → 指标降级，不阻断体检
+        from agent.core.infra.degrade import degrade
+
+        degrade("book_checkup.promise_events", "承诺事件指标读取账本失败，本轮跳过", e)
+        parse_errors.append(f"promise_events: {e}")
+    return {
+        "metric": "promise_events",
+        "label": "承诺事件逾期（预告债务，advisory）",
+        "grace": grace,
+        "violations": overdue,
+        "parse_errors": parse_errors,
+    }
+
+
 def run_book_checkup(
     project_dir: Path,
     *,
@@ -866,6 +918,7 @@ def run_book_checkup(
     hook_similarity: float = DEFAULT_HOOK_SIMILARITY,
     foreshadow_grace: int = DEFAULT_FORESHADOW_GRACE,
     min_chapter_chars: int = DEFAULT_MIN_CHAPTER_CHARS,
+    promise_grace: int = DEFAULT_PROMISE_GRACE,
 ) -> dict[str, Any]:
     """执行全书体检，返回六个指标的报告与汇总判定。
 
@@ -891,6 +944,7 @@ def run_book_checkup(
         check_rename_drift(project_dir, chapters),
         check_speaker_registry(project_dir, chapters),
         check_word_count(chapters, min_chapter_chars),
+        check_promise_events(project_dir, chapters, promise_grace),
     ]
 
     degraded: list[str] = []
@@ -955,6 +1009,13 @@ def run_book_checkup(
         elif m["metric"] == "word_count":
             issues += [{"metric": m["metric"], "detail": f"ch{v['chapter']:03d} 正文 {v['chars']} 字，{v['detail']}"} for v in m["undersized"]]
 
+    # T4 承诺事件为 advisory：单列 advisories，不计入 issues / passed（登记单 §六.5）
+    advisories: list[dict[str, str]] = []
+    pe = next((m for m in metrics if m["metric"] == "promise_events"), None)
+    if pe:
+        degraded.extend(pe["parse_errors"])
+        advisories += [{"metric": pe["metric"], "detail": v["detail"]} for v in pe["violations"]]
+
     return {
         "success": True,
         "project": str(project_dir),
@@ -963,6 +1024,7 @@ def run_book_checkup(
         "last_chapter": chapters[-1]["chapter"],
         "metrics": metrics,
         "issues": issues,
+        "advisories": advisories,
         "degraded": degraded,
         "passed": not issues and not degraded,
     }

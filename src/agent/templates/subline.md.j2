@@ -48,6 +48,12 @@ created_at: "{{ created_at }}"
 {{ chapter_tiers }}
 
 {% endif %}
+{% if chapter_deadlines %}
+## 章节期限与时间线
+
+{{ chapter_deadlines }}
+
+{% endif %}
 {% if plot_points %}
 ## 情节点序列
 

@@ -303,6 +303,13 @@ class DesignBrief:
     #: 暗示（含角色隐藏身世类披露）属设计内，评委不得按"人设跳跃/设定冲突"处罚
     #: ——否则出现「写手按 F-08 埋线、评委照档案开罚」的对撞（灵荒工坊 ch075 实证）。
     foreshadow_allowance: str = ""
+    #: 真相断言（长线一致性二期 T2，20260930）：worldview 级既定事实，唯一写入口
+    #: 是管理者裁决（core/story/truth_ledger.propose_truth）。三端同源注入：
+    #: 写手端为「不得矛盾」约束，评委端为判定基准；空账本 ⇒ 空串 ⇒ 不渲染。
+    truth_assertions: str = ""
+    #: 章级期限/时间线（长线一致性二期 T3，20260930）：规划端唯一授权，
+    #: 写手不得改期/缩水（改期走 batch-directive）；评委端为期限一致性参照系。
+    deadline_constraints: str = ""
 
     @property
     def empty(self) -> bool:
@@ -348,6 +355,15 @@ class DesignBrief:
                 "【达标判据（批末体检口径；写作时按此自检，避免写完被打回）】\n"
                 + self.rubric
             )
+        if self.truth_assertions:
+            blocks.append(self.truth_assertions)
+        if self.deadline_constraints:
+            blocks.append(
+                "【本章期限与时间线（规划端唯一授权）】\n" + self.deadline_constraints
+                + "\n正文中的期限表述必须与此一致：禁止把「三天后」写成「后天」、"
+                "禁止静默跳过或提前到期；确需调整期限走 batch-directive 显式改期，"
+                "不得在正文里自行变更。"
+            )
         return "\n\n".join(blocks)
 
     def render_for_judge(self) -> str:
@@ -369,6 +385,14 @@ class DesignBrief:
             blocks.append(self.setting_facts)
         if self.character_facts:
             blocks.append(self.character_facts)
+        if self.truth_assertions:
+            # 真相断言 = 评委判定「设定/真相冲突」的基准（与写手同源，判据不互斥）
+            blocks.append(self.truth_assertions)
+        if self.deadline_constraints:
+            blocks.append(
+                "【期限与时间线参照系（规划端授权；正文的期限表述与此不一致即期限冲突）】\n"
+                + self.deadline_constraints
+            )
         design: list[str] = []
         if self.route_track:
             design.append("【角色弧线轨迹（设计轨，非漂移）】\n" + self.route_track)
@@ -965,8 +989,42 @@ def build_design_brief(
     # ``test_window_tiers_match_pace_tier_of`` 做机器交叉核对。
     _window_tiers = pace_tiers_of_window(subline_md, window) if subline_md else []
 
+    # ---- T2 真相断言（长线一致性二期，20260930）：空账本 → 空串 → 三端不渲染 ----
+    try:
+        from agent.core.story.truth_ledger import TruthLedgerStore
+
+        _tstore = TruthLedgerStore(root)
+        _tstore.load()
+        _truth = _clip(_tstore.render_for_brief(), "truth_assertions")
+    except Exception as e:  # noqa: BLE001 - 真相账本不可用 → 注入段为空，显性降级
+        degrade("design_brief.truth", "真相断言账本读取失败，注入段为空", e)
+        _truth = ""
+
+    # ---- T3 章级期限（长线一致性二期，20260930）：缺节 → 空串 → 不渲染 ----
+    _deadline = ""
+    try:
+        from agent.core.story.chapter_contract import (
+            chapter_deadline,
+            deadlines_of_window,
+        )
+
+        _d_parts: list[str] = []
+        _d_cur = chapter_deadline(subline_md, int(chapter_num))
+        if _d_cur:
+            _d_parts.append(f"本章（第{int(chapter_num)}章）：{_d_cur}")
+        _d_win = deadlines_of_window(subline_md, window)
+        if _d_win:
+            _d_parts.append(
+                "窗口内逐章期限：" + "；".join(f"第{n}章：{t}" for n, t in _d_win)
+            )
+        _deadline = _clip("\n".join(_d_parts), "deadline_constraints")
+    except Exception as e:  # noqa: BLE001 - 期限节不可用 → 注入段为空，显性降级
+        degrade("design_brief.deadline", "期限节解析失败，注入段为空", e)
+
     return DesignBrief(
         foreshadow_allowance=_clip(_render_foreshadow_allowance(root), "foreshadow_allowance"),
+        truth_assertions=_truth,
+        deadline_constraints=_deadline,
         chapter_num=int(chapter_num),
         window=window,
         window_pace_tiers=_clip(

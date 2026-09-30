@@ -1038,6 +1038,32 @@ class AgenticWriteWorkflow:
             if _cwarn:
                 _hygiene_warn.extend(_cwarn)  # 与文体卫生 warning 同路透出
 
+        # ---- 事实卡对账前置（长线一致性二期 T1，20260930 登记）----
+        # 日期账/倒计时/死亡不可逆/持有物账确定性扫描。当前为 **advisory**：
+        # 222 章离线标定召回未达登记单 §六.1 门槛（≥70%），按验收条款暂不 BLOCK；
+        # 待 T3 规划层时间线 SSOT 落地补齐期限/额度家族后重测升级（升级 = 恢复
+        # 下方注释掉的 blocking 返回）。状态只反映已发布章节。
+        try:
+            from agent.core.continuity.fact_card import gate_fact_card
+
+            _fc_errors, _fc_warns = gate_fact_card(
+                self.project_dir,
+                int(ctx.get("chapter_num") or 0),
+                cleaned,
+            )
+        except Exception as e:  # noqa: BLE001 - 事实卡对账异常不阻断（批末标定仍会覆盖）
+            _fc_errors, _fc_warns = [], []
+            degrade("agentic_write.fact_card", "事实卡对账失败，本轮跳过", e)
+        if _fc_errors or _fc_warns:
+            _hygiene_warn.extend(
+                {
+                    "rule_id": f"fact_card_{i.rule_id}",
+                    "severity": "warning",
+                    "description": i.message + "（证据：" + (i.evidence[:60] or "见原文") + "）",
+                }
+                for i in (_fc_errors + _fc_warns)
+            )
+
         # ---- 实体/人名一致性写时前置（T1 写时化，2026-09-13）----
         # 正典外组织名在本章首现 / 注册角色被同姓新名接棒 → blocking（在漂移
         # 诞生那一刻拦住，灵荒炉火「灵渊宗」「沈长风→沈清舟」类硬伤）；
@@ -1623,6 +1649,16 @@ class AgenticWriteWorkflow:
         # 上一章动态状态断供（五灵破 ch181/182 章间矛盾机制性根因）。
         # 本章交接归档进连续性账本 + 伏笔 beats 标记落地；失败降级不阻断。
         m5._archive_chapter(ctx, title, text)
+        # ---- 事实卡状态推进（长线一致性二期 T1，20260930）：章节已发布，
+        # 其日期账/死亡/持有物事实入账，供下一章写时门禁比对；失败降级不阻断。
+        try:
+            from agent.core.continuity.fact_card import commit_fact_card
+
+            commit_fact_card(
+                self.project_dir, int(ctx.get("chapter_num") or 0), text
+            )
+        except Exception as e:  # noqa: BLE001
+            degrade("agentic_write.fact_card_commit", "事实卡状态推进失败", e)
         # ---- 书级台账 hook（2026-09-12）：登场登记 + 质量基线记录（与 M5 同位，
         # 能力对账要求两侧 run 链路同名调用）；失败降级不阻断。
         m5._record_book_ledger(ctx, title, text, quality_passed, revision_attempts)

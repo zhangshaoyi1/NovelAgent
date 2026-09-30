@@ -38,6 +38,10 @@ POINTS_SECTION = "情节点序列"
 #:   实测会被 LLM 整段丢掉（2026-09-18：真实项目 15 条章级行、档位 0 个）。
 #:   独立小节使"丢档位"与"丢钩子"成为互不掩盖的两个失败。
 TIERS_SECTION = "章节强度档位"
+#: 细纲中承载**章级期限/时间线**的独立小节（长线一致性二期 T3，20260930 登记）。
+#: ★ 规划端唯一授权：正文中的「三天后/初九」等期限只能由本节发放，
+#:   写手无权改期（改期走 batch-directive 显式改期，禁止正文静默缩水）。
+DEADLINES_SECTION = "章节期限与时间线"
 
 
 def extract_section(content: str, *titles: str) -> str:
@@ -535,6 +539,46 @@ def _parse_bare_tier(chapter_line: str) -> str:
     return ""
 
 
+def chapter_deadline(subline_md: str, chapter_num: int) -> str:
+    """取本章期限行（T3 时间线 SSOT 消费端）。
+
+    Returns:
+        本章期限描述（「第N章：」前缀已剥）；非本章行/缺节 → 空串。
+    """
+    try:
+        num = int(chapter_num or 0)
+    except (TypeError, ValueError):  # noqa: SILENT_DEGRADE reason=expected-skip
+        return ""
+    if num <= 0:
+        return ""
+    line = select_chapter_lines(subline_md, DEADLINES_SECTION, chapter_num=num)
+    if not line or _is_marked_as_non_current(line):
+        return ""
+    if not chapter_line_pattern(num).search(line):
+        return ""
+    return re.sub(r"^\s*(?:第\s*\d+\s*章|\d+\s*章)\s*[:：]?\s*", "", line).strip()
+
+
+def deadlines_of_window(
+    subline_md: str, window: tuple[int, int]
+) -> list[tuple[int, str]]:
+    """窗口内逐章期限行（评委端判定参照系；缺节 → 空表）。"""
+    body = extract_section(subline_md, DEADLINES_SECTION)
+    out: list[tuple[int, str]] = []
+    if not body:
+        return out
+    lo, hi = int(window[0]), int(window[1])
+    for ln in body.splitlines():
+        ln = ln.strip().lstrip("-*·").strip()
+        m = re.match(r"^第\s*(\d+)\s*章\s*[:：]\s*(.+)$", ln)
+        if not m:
+            continue
+        n = int(m.group(1))
+        if lo <= n <= hi:
+            out.append((n, m.group(2).strip()))
+    return out
+
+
 def pace_tiers_of_window(
     subline_md: str, window: tuple[int, int]
 ) -> list[tuple[int, PaceTier]]:
@@ -728,6 +772,9 @@ __all__ = [
     "PRESSURE_STAGE_RANK",
     "PRIOR_CONTRACT_PREFIX",
     "TIERS_SECTION",
+    "DEADLINES_SECTION",
+    "chapter_deadline",
+    "deadlines_of_window",
     "PaceTier",
     "chapter_contract",
     "chapter_line_pattern",

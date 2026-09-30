@@ -481,6 +481,7 @@ class M3OutlineWorkflow:
                 chapter_hooks=str(s.get("chapter_hooks", "") or "").strip(),
                 chapter_tiers=str(s.get("chapter_tiers", "") or "").strip(),
                 plot_points=str(s.get("plot_points", "") or "").strip(),
+                chapter_deadlines=str(s.get("chapter_deadlines", "") or "").strip(),
             )
             # 写入 sublines/S<NN>_<name>/subline.md
             path = subline_dir / subline_id / "subline.md"

@@ -351,7 +351,7 @@ class TestStateOwnershipContract:
         """**契约闸门**：触碰受监管状态的模块，必须是业主或被具名容忍。"""
         counts, _ = scan_sources()
         violations = [
-            f"  {f}: {n} 处（既非 {STATE_PATH} 的业主，也不在容忍清单内）"
+            f"  {f}: {counts[f]} 处（既非 {STATE_PATH} 的业主，也不在容忍清单内）"
             for f in sorted(counts)
             if not is_owner(STATE_PATH, f) and f not in STATE_OWNERSHIP_TOLERATED
         ]
