@@ -499,6 +499,21 @@ DIMENSIONS.update(make_prefixed_specs(
     stat_scope=StatScope.HEAD, group_label="金三",
 ))
 
+# 门禁失明率（登记单 20261001_信任链与叙事上限六项能力·子项 1）：失明率一等指标。
+# 计算型维度（SourceKind.COMPUTED）：批末由 pipeline 统计本批 gate_skipped 章占比，
+# 无 LLM、无处置动作（required=False，只进报告与审计，标记"低置信交付"）。
+DIMENSIONS["gate_blind_rate"] = _spec(
+    name="gate_blind_rate", label="门禁失明率",
+    unit=Unit.RATIO_0_1, direction=Direction.LOWER_BETTER,
+    default_threshold=0.2, required=False,
+    source=SourceKind.COMPUTED,
+    eval_timing=EvalTiming.EVERY_WINDOW, repairability=Repairability.WINDOW,
+    stat_scope=StatScope.WINDOW,
+    safe_default=0.0,
+    summary_reason="批次内写时门禁失明章占比超标——本批为低置信交付，"
+                   "建议批末补检/人工抽读复核后再继续写作",
+)
+
 
 # ============================================================
 # 查询

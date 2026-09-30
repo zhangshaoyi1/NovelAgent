@@ -8,6 +8,7 @@
 from __future__ import annotations
 
 import json
+import time
 
 import frontmatter
 
@@ -77,7 +78,7 @@ class _PipelineEventsMixin:
         except (TypeError, ValueError):
             return 0
 
-    def _note_gate_blind(self, where: str, err: Exception) -> None:
+    def _note_gate_blind(self, where: str, err: Exception, immediate: bool = False) -> None:
         """门禁失明计数：质检环节调用异常被降级为放行时调用（连续熔断判定）。
 
         仅负责计数与熔断置位；degrade 显性记录由各调用点在 except 块内完成
@@ -91,6 +92,11 @@ class _PipelineEventsMixin:
           分桶是必需的 —— 章末「其它门禁正常」会调 ``_note_gate_ok`` 清 ``blind_streak``，
           若共用同一桶，写时质检失明每次都被清零 ⇒ 连击恒为 1、永不熔断
           （本文件写入后由行为级测试当场抓出）。
+
+        immediate（登记单 20261001 信任链与叙事上限六项能力·子项 1，A1 三态降级）：
+        **完全失明**（十三项审稿主体一次未产出）不得静默通过、也不等连击——
+        结构化通道内建的一次回退重试仍失败后，当章即置熔断停批上报人工
+        （"降级到暂停点"：不杀进程、不丢进度，批末评测短路，escalated 收尾）。
         """
         if not hasattr(self, "_gate_escalation_reason"):
             self._gate_escalation_reason = ""
@@ -126,6 +132,13 @@ class _PipelineEventsMixin:
                 "质检基建持续故障，继续写作将失去质量把关，已停批。请检查 LLM 网关后重跑。"
             )
             self.console.print(f"[red]✗ {self._gate_escalation_reason}[/red]")
+        elif immediate and not self._gate_escalation_reason:
+            self._gate_escalation_reason = (
+                f"质量门禁完全失明（来源：{where}；最后：{err}）——"
+                "十三项审稿主体一次未产出（含通道内回退重试），本章零把关，"
+                "不得以『降级通过』继续写作，已停批上报人工。请检查 LLM 网关后重跑。"
+            )
+            self.console.print(f"[red]✗ {self._gate_escalation_reason}[/red]")
 
     def _note_gate_ok(self) -> None:
         """门禁正常工作（任一质检环节成功执行）→ 失明连击归零（含落盘）。"""
@@ -147,6 +160,10 @@ class _PipelineEventsMixin:
         读该 flag（承诺的"批末补检"不存在）。
 
         本方法在**章末**读该文件：本章带 gate_skipped 标记 ⇒ 计入失明一次。
+        2026-10-01（登记单 20261001·子项 1）**分级处置**：flag 携带
+        ``blind_level``（``full``=十三项审稿主体一次未产出 / ``partial``=附加维挂掉）。
+        ``full`` → ``immediate=True`` 当章熔断停批（完全失明不得静默通过）；
+        ``partial`` → 维持连击计数（连续 3 次才熔断）。
         返回是否命中（便于测试断言）。读失败按"未跳过"处理并显性降级。
         """
         flags: list = []
@@ -163,12 +180,14 @@ class _PipelineEventsMixin:
             )
             return False
         hit = ""
+        hit_level = "partial"
         for f in flags:
             if not isinstance(f, dict) or str(f.get("chapter", "")) != str(chapter):
                 continue
             for v in (f.get("violations") or []):
                 if isinstance(v, str) and v.startswith("gate_skipped"):
                     hit = v
+                    hit_level = str(f.get("blind_level") or "partial")
                     break
             if hit:
                 break
@@ -181,7 +200,8 @@ class _PipelineEventsMixin:
             return False
         self._note_gate_blind(
             "write_quality_gate",
-            RuntimeError(f"第 {chapter} 章写时质检失明：{hit}"),
+            RuntimeError(f"第 {chapter} 章写时质检失明（{hit_level}）：{hit}"),
+            immediate=(hit_level == "full"),
         )
         return True
 
@@ -482,4 +502,108 @@ class _PipelineEventsMixin:
                 )
         except Exception as bc_e:  # noqa: BLE001 - 体检失败不阻断批末收尾
             degrade("pipeline.book_checkup", "批末全书体检调用异常", bc_e)
+
+    # ------------------------------------------------- 批末失明率与低置信交付（登记单 20261001·子项 1）
+    #: 批次失明率阈值：超过即标记"低置信交付"（本批写时把关覆盖不足）。
+    LOW_CONFIDENCE_BLIND_RATE = 0.2
+
+    def _run_blind_rate_batch_end(self, result) -> None:
+        """批末失明率（2026-10-01，登记单 20261001·子项 1）：把失明率变成一等指标。
+
+        统计本批各章 ``chapter_quality_flags.json`` 中 ``gate_skipped`` 命中占比
+        （full + partial），落盘 ``gate_blind.json``（``batch_blind_rate`` /
+        ``low_confidence_delivery``）+ 追加一条 ``quality_audit.jsonl`` 计算型
+        维度快照（``gate_blind_rate``，已登记 dimension_registry）。
+        占比 > 20% ⇒ 批次标记**低置信交付**：console 告警 + failure 事件
+        （severity=warn）+ memory 留痕。全部确定性计算，零 LLM，异常显性降级
+        不阻断批末收尾。
+        """
+        try:
+            wrote = int(getattr(result, "chapters_written", 0) or 0)
+            if wrote <= 0:
+                return
+            end_ch = int(getattr(result, "final_chapter", 0) or 0)
+            start_ch = end_ch - wrote + 1
+            flags: list = []
+            try:
+                p = self.project_dir / ".state" / "chapter_quality_flags.json"
+                if p.exists():
+                    raw = json.loads(p.read_text(encoding="utf-8")).get("flags", [])
+                    flags = raw if isinstance(raw, list) else []
+            except Exception as e:  # noqa: BLE001 - 读失败按 0 计，显性降级
+                degrade(
+                    "pipeline.blind_rate",
+                    "chapter_quality_flags 不可读，本批失明率按 0 计（可能低估）",
+                    e,
+                )
+                return
+            blind_chs = sorted({
+                int(f.get("chapter"))
+                for f in flags
+                if isinstance(f, dict)
+                and str(f.get("chapter", "")).isdigit()
+                and start_ch <= int(f.get("chapter")) <= end_ch
+                and any(
+                    isinstance(v, str) and v.startswith("gate_skipped")
+                    for v in (f.get("violations") or [])
+                )
+            })
+            rate = len(blind_chs) / wrote
+            low_conf = rate > self.LOW_CONFIDENCE_BLIND_RATE
+            self._gate_blind_save(
+                batch_blind_rate=round(rate, 4),
+                batch_range=[start_ch, end_ch],
+                blind_chapters=blind_chs,
+                low_confidence_delivery=low_conf,
+                last_where="blind_rate_batch_end",
+            )
+            # 计算型维度快照进 L5 审计（只追加，失败不阻断）
+            try:
+                from agent.core.quality.audit import (
+                    AuditDimension,
+                    AuditRecord,
+                    QualityAuditStore,
+                )
+
+                QualityAuditStore(self.project_dir).append(
+                    AuditRecord(
+                        at=time.time(),
+                        overall_pass=None,
+                        pass_scope="batch",
+                        dimensions=[
+                            AuditDimension(
+                                name="gate_blind_rate",
+                                value=round(rate, 4),
+                                source="computed",
+                                unit="ratio",
+                                confidence=1.0,
+                                issues=[
+                                    f"第 {ch} 章写时门禁失明" for ch in blind_chs[:5]
+                                ],
+                            )
+                        ],
+                    )
+                )
+            except Exception as e:  # noqa: BLE001 - 审计失败不阻断
+                degrade("pipeline.blind_rate", "失明率审计快照落盘失败", e)
+            if low_conf:
+                msg = (
+                    f"本批失明率 {rate:.0%}（{len(blind_chs)}/{wrote} 章："
+                    f"{blind_chs[:10]}），超过 {self.LOW_CONFIDENCE_BLIND_RATE:.0%} 阈值"
+                    "——本批标记为低置信交付，建议批末补检/人工抽读后再继续。"
+                )
+                self.console.print(f"[yellow]⚠ {msg}[/yellow]")
+                self._emit_failure("low_confidence_delivery", msg, severity="warn")
+                try:
+                    self.memory.log(
+                        "blind_rate", "低置信交付批次", {
+                            "batch_range": [start_ch, end_ch],
+                            "blind_rate": round(rate, 4),
+                            "blind_chapters": blind_chs,
+                        }
+                    )
+                except Exception as e:  # noqa: BLE001 - 留痕失败不影响告警本身
+                    degrade("pipeline.blind_rate", "低置信交付留痕失败", e)
+        except Exception as e:  # noqa: BLE001 - 失明率计算失败不阻断批末收尾
+            degrade("pipeline.blind_rate", "批末失明率计算异常", e)
 

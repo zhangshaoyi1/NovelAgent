@@ -79,7 +79,6 @@ _ORPHAN_EXEMPT: dict[str, str] = {
     # ---- 公共 API 面：契约完整性保留（同族兄弟均在使用，这几个是当前未用的入口）----
     "all_names": "维度注册表公共 API：返回全部维度名（兄弟 get_spec/specs_by_* 在用），供 CLI/脚本消费",
     "iter_specs": "维度注册表公共 API：按名批量取声明；当前无内部调用点，属查询面完整性保留",
-    "spec_for": "维度注册表公共 API：**强约束**取声明（未登记即抛），供 L4 处置层新增维度时消费",
     "specs_by_repairability": "维度注册表公共 API：按可修复性过滤（兄弟 specs_by_timing 在用），供处置层消费",
     "get_roster": "agents/registry.py 公共 API：返回完整阵容；供 Web/CLI 或外部脚本消费",
     "owner_of": "degrade_registry 公共 API：命名空间→归属模块；供体检/文档生成或人工排查消费",

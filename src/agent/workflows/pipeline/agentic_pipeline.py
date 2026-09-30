@@ -987,6 +987,11 @@ class AgenticPipelineWorkflow(
             # 照搬软件 blocking 会一拦全冻；事后观测面不得越权阻断）。
             self._run_book_checkup_batch_end(result)
 
+            # ---- 批末失明率（2026-10-01，登记单 20261001·子项 1）----
+            # 失明率变一等指标：确定性统计本批 gate_skipped 占比，落盘 + 审计
+            # 快照 + 超 20% 标记低置信交付（warn，不阻断）。异常显性降级。
+            self._run_blind_rate_batch_end(result)
+
         # ---- G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）----
         self._finalize_cost(result)
         # ---- G8（拍板 6）：主线推进/结局模式摘要（纯读 state，异常降级占位不阻断）----

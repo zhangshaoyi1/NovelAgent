@@ -647,11 +647,19 @@ class AgenticWriteWorkflow:
         except Exception:  # noqa: BLE001 - 教训读取失败不影响质检
             return ""  # noqa: SILENT_DEGRADE
 
-    def _record_gate_skipped(self, ctx: Any, reason: str) -> None:
+    def _record_gate_skipped(
+        self, ctx: Any, reason: str, blind_level: str = "partial"
+    ) -> None:
         """gate_skipped 登记（2026-09-12 风险 3 收口）：写时门禁因基础设施故障
         放行时，把该章写入 .state/chapter_quality_flags.json（violations 带
         "gate_skipped" 前缀），供批末/人工扫描补检——不允许"未经门禁"静默滑过。
-        落盘失败仅留日志（同 pipeline _flag_chapter_quality 的降级语义）。"""
+        落盘失败仅留日志（同 pipeline _flag_chapter_quality 的降级语义）。
+
+        blind_level 失明分级（登记单 20261001 信任链与叙事上限六项能力·子项 1）：
+        - ``"full"``：完全失明——十三项审稿主体一次都未产出（本章零把关）；
+        - ``"partial"``：部分失明——审稿主体已跑，仅 D 维/金三等附加维挂掉。
+        级别随 flag 落盘，pipeline 章末 ``_scan_gate_skipped`` 据此分级处置
+        （full → 立即熔断停批；partial → 维持连击计数）。"""
         try:
             import json as _json
 
@@ -674,6 +682,7 @@ class AgenticWriteWorkflow:
             existing.append({
                 "chapter": ch,
                 "violations": [f"gate_skipped: {reason}"],
+                "blind_level": blind_level,
                 "flagged_at": __import__("datetime").datetime.now().isoformat(timespec="seconds"),
             })
             tmp = qf_path.with_suffix(".json.tmp")
@@ -1230,6 +1239,8 @@ class AgenticWriteWorkflow:
                     report["overall_pass"] = False
             except Exception as e:  # noqa: BLE001 - D 审查失败降级为空，不影响九项质检
                 degrade("agentic_write.d_review", "D 多维审查失败，降级为空", e)
+                # 部分失明登记（子项 1）：审稿主体已跑，附加维挂掉也留 flag 供批末补检
+                self._record_gate_skipped(ctx, f"D 多维审查失败：{e}", blind_level="partial")
 
         # ---- 金三写时门禁（2026-09-12）：前三章吸引力六维不达标 → blocking，禁止落盘 ----
         # 此前金三只在批末评估，写时九项审稿无吸引力维度，低质量开局照样兜底落盘，
@@ -1379,7 +1390,7 @@ class AgenticWriteWorkflow:
                 "（已登记 gate_skipped，本章未经质量门禁，批末体检查漏）",
                 e,
             )
-            self._record_gate_skipped(ctx, f"九项质检失败：{e}")
+            self._record_gate_skipped(ctx, f"九项质检失败：{e}", blind_level="full")
             report = {"overall_pass": True, "rules": [], "suggestions": "门禁失败，重试后降级通过"}
         return report
 
