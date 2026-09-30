@@ -99,3 +99,9 @@ _recovered/
 # 仓库内误建的运行目录（不入库）
 novels/
 .tmp-*/
+
+# 2026-09-30：31MB 混写 progress.json 的归档（运行产物，不入库）
+/.state_archive_*/
+
+# 一次性补丁脚本（用后即删，不入库）
+_patch_*.py

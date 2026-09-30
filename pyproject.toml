@@ -49,6 +49,19 @@ include = ["agent*", "llmagent*"]
 [tool.pytest.ini_options]
 testpaths = ["tests", "llmagent_tests"]
 pythonpath = ["src"]
+markers = [
+    # 分层执行（用 -m 过滤，例：pytest -m fast；分层由 tests/conftest.py 自动打标）
+    "fast: 纯内存、毫秒级用例（日常开发默认层）",
+    "slow: 单条耗时较长（>0.5s）或重建目录/起子进程的用例",
+    "architecture: 架构红线/静态扫描检查（tests/architecture 与 llmagent_tests/architecture）",
+    "milestone: 历史里程碑/阶段验收用例（phase0~5、test_m1~m3，全量回归用）",
+]
+addopts = "-ra"
+
+# 覆盖率基线（pytest --cov；删减用例后覆盖率不得低于此基线）
+[tool.coverage.run]
+source = ["src/agent", "src/llmagent"]
+omit = ["*/__main__.py"]
 
 [tool.ruff]
 line-length = 100
