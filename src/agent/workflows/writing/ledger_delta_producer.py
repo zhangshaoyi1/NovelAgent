@@ -20,7 +20,10 @@ from typing import Any
 
 from agent.core.infra.degrade import degrade
 from agent.core.infra.prompt_manager import pm
-from agent.utils import parse_llm_json
+# 2026-09-30 旧通道冻结迁移：解析统一走 extract_json 收口点；保留
+# 「结算失败附错误详情重试 1 次（G4 约定）+ LedgerDelta extra=forbid 幻觉字段显式报错」
+# 的领域语义不变——错误反馈重试无法用固定 response_format 回退替代。
+from agent.base.structured_output import extract_json
 
 logger = logging.getLogger(__name__)
 
@@ -128,7 +131,7 @@ def produce_and_apply_delta(
                     max_tokens=4096,
                     enable_thinking=False,
                 )
-                parsed = parse_llm_json(resp)
+                parsed = extract_json(resp)
                 if not isinstance(parsed, dict):
                     raise ValueError("结算输出不是 JSON 对象")
                 if parsed.get("chapter") != chapter_num:

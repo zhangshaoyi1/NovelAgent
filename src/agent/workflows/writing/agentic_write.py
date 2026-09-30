@@ -32,13 +32,14 @@ from typing import Any, Callable
 
 from rich.console import Console
 
-from agent.client.gateway_adapter import create_gateway, chat_utility
+from pydantic import BaseModel, Field
+
+from agent.client.gateway_adapter import create_gateway, chat_utility, chat_utility_structured
 from llmagent.gateway import Gateway
 from agent.core.engine.state_machine import Event, State, StateMachine
 from agent.core.tools.builtins import set_project_context
 from agent.agents.writer_agent import WriterAgent
 from agent.core.engine.workflow_registry import workflow
-from agent.utils import parse_llm_json
 from agent.workflows.writing.m5_write_chapter import (
     M5WriteChapterWorkflow,
     PreValidationBlocked,
@@ -58,6 +59,33 @@ from agent.workflows.writing.m5_quality_gate import (
 from agent.workflows.writing.m5_text_hygiene import scan_hard_pollutions
 from agent.core.story.evidence_chain import EvidenceChain
 from agent.core.infra.prompt_helpers import format_open_debts, format_rag_context
+
+
+# ============================================================
+# 结构化输出契约（2026-09-30 第二批迁移：门禁/评分链脱离 parse_llm_json 旧通道）
+# ============================================================
+class NineItemReviewSchema(BaseModel):
+    """九项质检报告（m5.quality_check 结构化输出契约）。
+
+    fail-open 语义由调用方保持：结构化校验失败 → degrade + gate_skipped 登记。
+    """
+
+    overall_pass: bool = True
+    rules: list[dict[str, Any]] = Field(default_factory=list)
+    issues: list[dict[str, Any]] = Field(default_factory=list)
+    suggestions: str = ""
+
+
+class CombinedQualitySchema(BaseModel):
+    """三段合并质检输出（m5.quality_check_combined 契约：九项 + D 四维 + 金三六维）。
+
+    缺段语义与旧实现一致：nine_item 缺失/无 overall_pass → 整体回退独立调用
+    （调用方判 "overall_pass" not in nine_item）；strict 时缺 d_review 同样回退。
+    """
+
+    nine_item: dict[str, Any] = Field(default_factory=dict)
+    d_review: dict[str, Any] | None = None
+    golden: dict[str, Any] | None = None
 
 
 @dataclass
@@ -729,8 +757,11 @@ class AgenticWriteWorkflow:
                     )
                     golden_context = "（无额外参照信息，按正文独立判断）"
             prompt = pm.get("m5.quality_check_combined")
-            resp = chat_utility(
+            # 2026-09-30：迁移结构化输出通道（response_format 强约束 + pydantic 校验）；
+            # 缺段/失败回退独立调用的语义不变（见 CombinedQualitySchema docstring）。
+            verdict = chat_utility_structured(
                 self.llm,
+                CombinedQualitySchema,
                 messages=[
                     {"role": "system", "content": prompt.system},
                     {
@@ -759,7 +790,7 @@ class AgenticWriteWorkflow:
                 max_tokens=8192,
                 enable_thinking=False,
             )
-            data = parse_llm_json(resp)
+            data = verdict.model_dump()
             nine = data.get("nine_item")
             if not isinstance(nine, dict) or "overall_pass" not in nine:
                 return None
@@ -1292,65 +1323,34 @@ class AgenticWriteWorkflow:
             prev_chapter_excerpt=(str(ctx.get("prev_chapter_summary") or "")[-1500:]),
             chapter_text=cleaned,
         )
+        # 2026-09-30：迁移结构化输出通道——response_format 强约束 + pydantic 校验，
+        # 通道内建 json_object 回退重试一次（对齐 G4「失败可修复先重试」约定），
+        # 替代原先「裸调用 + parse_llm_json 抢救 + 带错重试」三层嵌套。
+        # fail-open 语义保持不变：仍失败 → degrade + gate_skipped 显性登记后放行。
         try:
-            resp = chat_utility(
+            verdict = chat_utility_structured(
                 self.llm,
+                NineItemReviewSchema,
                 messages=[
                     {"role": "system", "content": pm.get("m5.quality_check").system},
                     {"role": "user", "content": check_prompt},
                 ],
-                # H4 修复：九项审稿输出含 rules/issues/d_issues 全量 JSON，1500 会被截断
-                # 导致 parse_llm_json 失败走 fail-open 放行；放宽到 4096（与修订评审一致）。
+                # H4 修复：九项审稿输出含 rules/issues 全量 JSON，1500 会被截断走回退；
+                # 放宽到 4096（与修订评审一致）。
                 max_tokens=4096,
                 enable_thinking=False,
+                name="m5_quality_check",
             )
-            try:
-                report = parse_llm_json(resp)
-            except ValueError as e:
-                # fail-open 收口（2026-09-12 风险 3）：解析失败多为截断，可修复——
-                # 附错误详情重试一次（对齐 G4 约定）；仍失败才降级放行并写显性 flag。
-                try:
-                    resp = chat_utility(
-                        self.llm,
-                        messages=[
-                            {"role": "system", "content": pm.get("m5.quality_check").system},
-                            {"role": "user", "content": check_prompt
-                             + f"\n\n【上次质检输出解析失败原因，务必修正】"
-                               f"请只输出一个合法的 JSON 对象，不要包含 ```json 标记：\n{e}"},
-                        ],
-                        max_tokens=4096,
-                        enable_thinking=False,
-                    )
-                    report = parse_llm_json(resp)
-                except ValueError as e2:
-                    degrade(
-                        "agentic_write.quality_gate",
-                        "LLM 质检解析失败且带错重试仍失败，降级为通过（已登记 gate_skipped，"
-                        "本章未经质量门禁，批末体检查漏）",
-                        e2,
-                    )
-                    self._record_gate_skipped(ctx, f"九项质检解析失败：{e2}")
-                    report = {"overall_pass": True, "rules": [], "suggestions": "门禁解析失败，重试后降级通过"}
-        except Exception as e:  # noqa: BLE001 - 质检调用异常：重试一次后降级放行并显性登记
-            try:
-                resp = chat_utility(
-                    self.llm,
-                    messages=[
-                        {"role": "system", "content": pm.get("m5.quality_check").system},
-                        {"role": "user", "content": check_prompt},
-                    ],
-                    max_tokens=4096,
-                    enable_thinking=False,
-                )
-                report = parse_llm_json(resp)
-            except Exception as e2:  # noqa: BLE001
-                degrade(
-                    "agentic_write.quality_gate",
-                    "LLM 质检调用异常且重试仍失败，降级为通过（已登记 gate_skipped）",
-                    e2,
-                )
-                self._record_gate_skipped(ctx, f"九项质检调用异常：{e2}")
-                report = {"overall_pass": True, "rules": [], "suggestions": "门禁异常，重试后降级通过"}
+            report = verdict.model_dump()
+        except Exception as e:  # noqa: BLE001 - 调用/结构化校验仍失败：降级放行并显性登记
+            degrade(
+                "agentic_write.quality_gate",
+                "LLM 质检调用/解析失败（结构化通道含一次回退重试仍失败），降级为通过"
+                "（已登记 gate_skipped，本章未经质量门禁，批末体检查漏）",
+                e,
+            )
+            self._record_gate_skipped(ctx, f"九项质检失败：{e}")
+            report = {"overall_pass": True, "rules": [], "suggestions": "门禁失败，重试后降级通过"}
         return report
 
     # ------------------------------------------------------------------

@@ -49,7 +49,9 @@ from llmagent.gateway import Gateway
 from agent.core.story.setting_manager import SettingManager
 from agent.core.engine.state_machine import State, StateMachine
 from agent.core.quality.guardrails import is_architecture_confirmed
-from agent.utils import parse_llm_json
+# 2026-09-30 旧通道冻结迁移：解析统一走 extract_json 收口点；保留
+# utility/creative 双路径与「解析失败自动重试一次」的领域语义不变。
+from agent.base.structured_output import extract_json
 
 TEMPLATES_DIR = Path(__file__).resolve().parent.parent.parent / "templates"
 
@@ -104,7 +106,7 @@ def _chat_parse_with_retry(
             )
         last_text = raw
         try:
-            data = parse_llm_json(last_text)
+            data = extract_json(last_text)
             if not isinstance(data, dict):
                 raise ValueError("LLM 返回不是 JSON 对象")
             return data

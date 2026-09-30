@@ -28,6 +28,8 @@ SRC = Path(__file__).resolve().parents[2] / "src" / "agent"
 _ALLOWED_FILES: set[str] = {
     # 第一批（门禁/评分链 7 个文件）已于 2026-09-29 全部迁出，条目已删除
     # ── 第二批（非门禁路径，迁移可放缓）──
+    # 2026-09-30：写作门禁链 3 文件（agentic_write / ledger_delta_producer / m6_adjust）
+    # 已迁出，条目删除；剩余 12 文件为低优先档（评估/规划/市场，不在门禁链上）。
     "workflows/evaluation/m11_export.py",
     "workflows/evaluation/m14_architecture.py",
     "workflows/evaluation/m15_bookworm.py",
@@ -40,9 +42,6 @@ _ALLOWED_FILES: set[str] = {
     "workflows/planning/m1_config.py",
     "workflows/planning/m3_outline.py",
     "workflows/planning/m4_character.py",
-    "workflows/writing/agentic_write.py",
-    "workflows/writing/ledger_delta_producer.py",
-    "workflows/writing/m6_adjust.py",
 }
 
 _INFRA_EXEMPT = {
