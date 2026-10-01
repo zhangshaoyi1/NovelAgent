@@ -91,6 +91,33 @@ class _PipelineAgentsMixin:
                     appeal_scorer = None  # noqa: SILENT_DEGRADE
             # G6：B4 golden_scorer 复用同一六维评分器实例（评前三章与评末章可共用，拍板 §12-3）
             golden_scorer = appeal_scorer if self.golden_three_gate else None
+            # 登记单 20261001·子项 2：处置方案语义终审（L4 第五道守门）。
+            # 法官经 Gateway 调 LLM；Supervisor advisory 告警作为证据源注入
+            # （懒加载 collect_supervisor_alerts，core/quality 不新增 supervisor 依赖）。
+            # 终审 LLM 不可用时其内部降级为现状行为（四道守门语义），不新增裸奔面。
+            semantic_reviewer = None
+            try:
+                from agent.core.quality.disposition_review import (
+                    DispositionSemanticReviewer,
+                    collect_supervisor_alerts,
+                )
+
+                semantic_reviewer = DispositionSemanticReviewer(
+                    self.llm,
+                    project_dir=self.project_dir,
+                    console=self.console,
+                    supervisor_alerts_fn=lambda: collect_supervisor_alerts(
+                        self.project_dir, current_chapter=self._current_total()
+                    ),
+                )
+            except Exception as e:  # noqa: BLE001 - 终审接线失败显性降级，gate 回退四道
+                from agent.core.infra.degrade import degrade
+
+                degrade(
+                    "pipeline.disposition_review",
+                    "处置语义终审接线失败，守门器回退四道语义",
+                    e,
+                )
             # D-J：由 workflow 侧注入回退能力（agents 不再直接 import workflows）
             from agent.workflows.evaluation.m10_rollback import M10RollbackWorkflow
 
@@ -123,6 +150,8 @@ class _PipelineAgentsMixin:
                 ending_gate=self.ending_gate,
                 mainline_window=self.mainline_window,
                 ending_ratio=self.ending_ratio,
+                # 登记单 20261001·子项 2：处置语义终审法官
+                semantic_reviewer=semantic_reviewer,
             )
         # 把回溯事件写进 Memory
         try:

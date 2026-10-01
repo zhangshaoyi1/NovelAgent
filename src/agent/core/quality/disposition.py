@@ -378,11 +378,15 @@ class DispositionPolicy:
 
 
 class DispositionGate:
-    """不可逆动作守门器：四道检查全过才放行。
+    """不可逆动作守门器：五道检查全过才放行。
 
     Args:
         cost_per_chapter_tokens: 重写单章的预估 token 代价（用于代价预估）。
         require_double_evidence: 是否强制双证据（换温度复评一致）。
+        semantic_review_fn: **第五道——处置方案语义终审**（登记单 20261001·子项 2）。
+            ``(plan, est_chapters) -> Authorization``，由调用方注入
+            （见 :class:`~agent.core.quality.disposition_review.DispositionSemanticReviewer.gate_fn`）。
+            仅对 ``ROLLBACK_REWRITE`` 生效；None = 未接线（直构造的 gate 保持旧语义）。
     """
 
     def __init__(
@@ -390,9 +394,11 @@ class DispositionGate:
         *,
         cost_per_chapter_tokens: int = 120_000,
         require_double_evidence: bool = False,
+        semantic_review_fn: Callable[[Any, int], Any] | None = None,
     ) -> None:
         self.cost_per_chapter_tokens = cost_per_chapter_tokens
         self.require_double_evidence = require_double_evidence
+        self.semantic_review_fn = semantic_review_fn
 
     def estimate(
         self, plan: DispositionPlan, *, chapters: int, budget_remaining: int | None = None
@@ -454,6 +460,29 @@ class DispositionGate:
                 "硬指标处置需要双证据：请换温度/顺序复评一次，结果一致后方可执行",
                 est_tokens, est_chapters,
             )
+
+        # ⑤ 处置方案语义终审（登记单 20261001·子项 2）：确定性四道看不见的
+        #    「方案本身会破坏合法设计」由注入的 LLM 法官裁决；veto → 拒绝并升级人工。
+        #    fn 未注入（None）= 旧四道语义（直构造 gate 兼容）；生产入口必须接线
+        #    （红线测试断言 pipeline 侧 Evaluator 携带终审）。
+        if (
+            plan.action is Action.ROLLBACK_REWRITE
+            and self.semantic_review_fn is not None
+        ):
+            try:
+                sr = self.semantic_review_fn(plan, est_chapters)
+            except Exception as e:  # noqa: BLE001 - 终审异常不得炸守门器，按拒绝处理
+                return Authorization(
+                    False,
+                    f"处置方案语义终审执行异常（按拒绝处理，升级人工）：{e}",
+                    est_tokens, est_chapters,
+                )
+            if sr is not None and not sr.ok:
+                return Authorization(
+                    False,
+                    f"处置方案被语义终审否决：{sr.reason}",
+                    est_tokens, est_chapters,
+                )
 
         # ④ dry-run
         if dry_run:

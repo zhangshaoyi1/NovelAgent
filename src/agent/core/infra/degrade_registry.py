@@ -176,6 +176,8 @@ DEGRADE_NAMESPACES: dict[str, str] = {
     "pipeline.rollback_ledger_baseline": "workflows/pipeline/agentic_pipeline_agents.py",
     "pipeline.book_checkup": "workflows/pipeline/agentic_pipeline_events.py",
     "pipeline.blind_rate": "workflows/pipeline/agentic_pipeline_events.py",
+    "pipeline.disposition_review": "workflows/pipeline/agentic_pipeline_agents.py",
+    "quality.disposition_review": "core/quality/disposition_review.py",
     "pipeline.rollback_ledger_mismatch": "workflows/pipeline/agentic_pipeline_agents.py",
     "pipeline.rollback_unified_ledger": "workflows/pipeline/agentic_pipeline_agents.py",
     "pipeline.rolling_lessons": "workflows/pipeline/agentic_pipeline_agents.py",

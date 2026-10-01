@@ -91,6 +91,7 @@ from agent.core.quality.disposition import (
     DispositionPlan,
     DispositionPolicy,
 )
+from agent.core.quality.disposition_review import DispositionSemanticReviewer
 class EvaluatorAgent(
     _EvaluatorMetricsMixin,
     _EvaluatorDimensionsMixin,
@@ -142,6 +143,9 @@ class EvaluatorAgent(
         # ---- HA-Eval L4 新增：处置策略与守门器 ----
         disposition_policy: "DispositionPolicy | None" = None,
         disposition_gate: "DispositionGate | None" = None,
+        # ---- 登记单 20261001·子项 2：处置方案语义终审（L4 第五道守门）----
+        #: None = 不接终审（gate 保持旧四道语义）；生产入口（pipeline）必须注入。
+        semantic_reviewer: "DispositionSemanticReviewer | None" = None,
         disposition_dry_run: bool = False,
         budget_remaining_tokens: "int | None" = None,
         # ---- 2026-09-17 新增：回退前置闸（把跨批熔断从「事后读数」变成前置条件）----
@@ -211,7 +215,18 @@ class EvaluatorAgent(
         self.ending_ratio = max(0.0, min(0.5, float(ending_ratio)))
         # ---- HA-Eval L4：处置策略（声明式规则表）+ 守门器 ----
         self._disposition = disposition_policy or DispositionPolicy()
-        self._gate = disposition_gate or DispositionGate()
+        # 子项 2：语义终审法官注入 gate（第五道）；显式传入的 gate 也统一接线。
+        self.semantic_reviewer = semantic_reviewer
+        if disposition_gate is not None:
+            self._gate = disposition_gate
+        else:
+            self._gate = DispositionGate(
+                semantic_review_fn=(
+                    semantic_reviewer.gate_fn() if semantic_reviewer is not None else None
+                )
+            )
+        if semantic_reviewer is not None and getattr(self._gate, "semantic_review_fn", None) is None:
+            self._gate.semantic_review_fn = semantic_reviewer.gate_fn()
         self.disposition_dry_run = bool(disposition_dry_run)
         self.budget_remaining_tokens = budget_remaining_tokens
 
