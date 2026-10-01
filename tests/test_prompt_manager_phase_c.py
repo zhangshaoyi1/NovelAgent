@@ -56,9 +56,15 @@ def test_world_base_genre_inject_and_fallback() -> None:
 def test_system_prompts_genre_parameterized(name: str, tail: str) -> None:
     """6 个 system 提示词：修仙标签注入 + 空 genre 降级，两态都不含裸「修仙硬编码」。"""
     s = pm.get(name).render_system(genre="修仙")
-    assert "修仙" in s.split("，")[0] and tail in s
     e = pm.get(name).render_system(genre="")
-    assert "网文" in e.split("，")[0]
+    if name == "m5.generate":
+        # 2026-10-01 收口二：generate.md 以输出协议开头（含「，」），题材标签
+        # 在写手 persona 段——改为全文断言，语义不变（修仙注入 + 空 genre 降级网文）。
+        assert "顶级修仙小说写手" in s and tail in s
+        assert "顶级网文小说写手" in e
+    else:
+        assert "修仙" in s.split("，")[0] and tail in s
+        assert "网文" in e.split("，")[0]
 
 
 def test_first_genre_label_mapping() -> None:

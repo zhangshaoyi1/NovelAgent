@@ -32,7 +32,14 @@ PROMPTS_DIR = Path(__file__).resolve().parent.parent.parent / "prompts"  # core/
 
 # 各 section 的 Jinja2 环境：默认 Undefined 渲染为空串（不抛异常），保证调用点
 # 漏传变量时降级为空而非崩溃——与"零回归"一致。
-_ENV = jinja2.Environment(trim_blocks=False, lstrip_blocks=False, autoescape=False)
+# FileSystemLoader 指向 prompts/ 根，使模板可用 ``{% include "shared/_xxx.md" %}``
+# 引用共享片段（片段以下划线前缀命名，不入版本面板）。
+_ENV = jinja2.Environment(
+    loader=jinja2.FileSystemLoader(str(PROMPTS_DIR)),
+    trim_blocks=False,
+    lstrip_blocks=False,
+    autoescape=False,
+)
 
 
 def _split_sections(body: str) -> tuple[str, str]:
@@ -294,6 +301,9 @@ class PromptManager:
                 rel = p.relative_to(self.root)
             except ValueError:
                 continue  # noqa: SILENT_DEGRADE
+            # 下划线前缀 = 共享片段（被 {% include %} 引用），不入版本面板
+            if any(part.startswith("_") for part in rel.parts):
+                continue
             name = ".".join(rel.with_suffix("").parts)
             try:
                 pd = self._load_file(p, name)

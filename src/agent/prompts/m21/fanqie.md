@@ -1,6 +1,6 @@
 ---
 name: m21.fanqie
-version: 1
+version: 2
 stage: M21
 purpose: 番茄小说平台评分标准参考（rubric）
 description: 番茄小说 Quality Rubric（移植自 oh-story-claudecod story-review references/rubrics/fanqie.md，精简）
@@ -22,5 +22,5 @@ description: 番茄小说 Quality Rubric（移植自 oh-story-claudecod story-re
 ## 使用方式
 
 - 评审时以此标准校准判断。
-- advisory only，不 blocking。
+- rubric 违例默认报 warn，不直接 block；同一指标连续多章 FAIL 可升级为 block。
 - 番茄算法偏好快节奏、强情绪。

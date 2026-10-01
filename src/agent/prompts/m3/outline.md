@@ -1,6 +1,6 @@
 ---
 name: m3.outline
-version: 8
+version: 9
 stage: M3
 purpose: 大纲拆解
 description: 大纲拆解（由 prompts.py 迁移，单一真源）
@@ -28,7 +28,7 @@ goal 与 mainline_relation 禁用抽象词（如"变强""复仇""成长"），�
    `chapter_hooks` 的每支线覆盖**不得被牺牲**；`chapter_tiers` 与 `plot_points`
    允许只对已给出 `chapter_hooks` 的支线给出（见第 8/9 条），未覆盖的支线**写空串**
    ——空串是显性的（下游有逐支线供给台账），整条丢弃才是静默失败。
-1. 严格输出 JSON，不要额外说明
+1. {% include "shared/_json_output.md" %}
 2. synopsis 为故事简介（150-300字，有钩子，能吸引读者）
 3. sublines 为剧集树根节点，3-6 条顶层支线任务
 4. 每条支线包含：subline_name / goal / characters / conflicts / constraints / mainline_relation / pressure_curve
@@ -130,4 +130,4 @@ goal 与 mainline_relation 禁用抽象词（如"变强""复仇""成长"），�
   ]
 }
 
-注意：只输出 JSON，不要 ```json 标记。
+注意：{% include "shared/_json_output.md" %}

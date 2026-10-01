@@ -37,7 +37,7 @@ def review_book(
     ),
     platform: str = typer.Option(
         "general", "--platform", "-p",
-        help="目标平台 rubric：fanqie / qidian / zhihu / general",
+        help="目标平台 rubric：fanqie / qidian / zhihu / jinjiang / general",
     ),
     json_output: bool = typer.Option(
         False, "--json", help="以 JSON 形式输出结果到 stdout"

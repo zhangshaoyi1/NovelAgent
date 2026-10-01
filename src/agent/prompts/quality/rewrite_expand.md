@@ -1,11 +1,11 @@
 ---
 name: quality.rewrite_expand
-version: 1
+version: 2
 stage: M9
 purpose: 整章扩写（整章重写篇幅不足时的补足变体，非追加拼段）
 model: creative
 temperature: 0.6
-description: 网文扩写器：保持情节与段落顺序，把场景/动作/对白铺开至目标字数
+description: 网文扩写器：保持情节与段落顺序，把场景/动作/对白铺开至目标字数（temperature 0.6 有意低于 rewrite/rewrite_full 的 0.7：扩写更易跑偏，压低防漂）
 validation:
   not_empty: true
   min_length: 200

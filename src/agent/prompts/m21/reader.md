@@ -1,6 +1,6 @@
 ---
 name: m21.reader
-version: 1
+version: 3
 stage: M21
 purpose: 成书质量评审 - 读者市场吸引力视角
 description: 多视角对抗式评审之读者市场吸引力视角（移植 oh-story-claudecod story-review 的 reader 视角 + 平台 rubric）
@@ -19,9 +19,9 @@ validation:
 3. 情绪节点密度是否足够，有无连续拖沓？
 4. 题材标签是否符合目标平台读者预期？
 5. 阅读体验是否顺畅（节奏 / 信息密度 / 代入感）？
-6. 按平台 rubric 逐项对照，预估完读 / 追读表现。
+6. 按平台 rubric 逐项对照，预估完读 / 追读表现；rubric 违例默认报 warn，不直接 block（同一指标连续多章 FAIL 可升级 block）。
 
-输出 JSON（只输出 JSON，不要 ```json 标记）：
+输出 JSON（{% include "shared/_json_output.md" %}）：
 {
   "verdict": "APPROVE|CONCERNS|REJECT",
   "issues": [

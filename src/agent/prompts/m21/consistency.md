@@ -1,6 +1,6 @@
 ---
 name: m21.consistency
-version: 2
+version: 3
 stage: M21
 purpose: 成书质量评审 - 设定一致性视角
 description: 多视角对抗式评审之设定一致性视角（移植 oh-story-claudecod story-review 的 consistency-checker）
@@ -20,7 +20,7 @@ validation:
 4. 细节事实是否自洽（地名 / 物品 / 数字 / 称谓）？
 5. 设定引用是否与项目设定文件一致？
 
-输出 JSON（只输出 JSON，不要 ```json 标记）：
+输出 JSON（{% include "shared/_json_output.md" %}）：
 {
   "verdict": "APPROVE|CONCERNS|REJECT",
   "issues": [

@@ -1,6 +1,6 @@
 ---
 name: m21.verdict
-version: 3
+version: 4
 stage: M21
 purpose: 成书质量评审 - 综合裁决
 description: 多视角对抗式评审之综合裁决（合并去重、呈现分歧、给出总评与总分）
@@ -20,7 +20,7 @@ validation:
 2. 呈现视角间分歧（如有），不要自动妥协、掩盖矛盾。
 3. 给出综合评定（APPROVE / CONCERNS / REJECT）、总分（0-100 整数）与总评。
 
-输出 JSON（只输出 JSON，不要 ```json 标记）：
+输出 JSON（{% include "shared/_json_output.md" %}）：
 {
   "overall_verdict": "APPROVE|CONCERNS|REJECT",
   "total_score": 85,

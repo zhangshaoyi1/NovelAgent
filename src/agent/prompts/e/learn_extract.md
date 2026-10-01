@@ -1,6 +1,6 @@
 ---
 name: e.learn_extract
-version: 2
+version: 3
 stage: E
 purpose: 写法提炼
 description: 写法提炼（由 prompts.py 迁移，单一真源）
@@ -20,7 +20,7 @@ validation:
 - style：文风细节、描写手法、情绪渲染
 - general：其他普适写法
 
-注意：只输出 JSON，不要 ```json 标记。
+注意：{% include "shared/_json_output.md" %}
 
 # user
 【待提炼章节（可能多章拼接）】

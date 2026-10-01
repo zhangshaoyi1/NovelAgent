@@ -1,6 +1,6 @@
 ---
 name: m16.pacing
-version: 2
+version: 3
 stage: M16
 purpose: 追读力分析
 description: 追读力分析（由 prompts.py 迁移，单一真源）
@@ -18,7 +18,7 @@ validation:
 - micro_payoffs：微 payoff / 小满足 / 信息揭示
 - debts：埋下的「债务」（钩子债/伏笔债，需后续收回；含 id/desc/kind/planted_ch/status）
 
-注意：只输出 JSON，不要 ```json 标记。
+注意：{% include "shared/_json_output.md" %}
 
 # user
 【本章章节号】

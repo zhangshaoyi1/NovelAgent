@@ -1,6 +1,6 @@
 ---
 name: m6.adjust_route
-version: 1
+version: 2
 stage: M6
 purpose: 路线修订
 description: 路线修订（由 prompts.py 迁移，单一真源）
@@ -58,4 +58,4 @@ validation:
   ]
 }
 
-注意：只输出 JSON，不要 ```json 标记。
+注意：{% include "shared/_json_output.md" %}

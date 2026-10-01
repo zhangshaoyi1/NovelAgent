@@ -1,6 +1,6 @@
 ---
 name: m15.bookworm
-version: 1
+version: 3
 stage: M15
 purpose: 书虫评估
 description: 书虫评估（由 prompts.py 迁移，单一真源）
@@ -41,11 +41,11 @@ validation:
 }
 
 规则：
-1. total_score 按 rubrics 权重加权计算（开篇钩子25%/标题15%/节奏15%/人物15%/题材10%/同质化10%/章末10%）
+1. total_score 按 rubrics 权重加权计算（默认权重：开篇钩子25%/标题15%/节奏15%/人物15%/题材10%/originality（同质化/原创度）10%/章末10%；若注入的 rubrics 内声明了权重，以其为准）
 2. 【评分区分度约束 - 严格执行】禁止默认给 70-80 的"安全分"：差的内容必须给低分（1-50），平庸给及格线附近，80+ 必须能用正文中的具体表现证明其确实出色；每个分数须附引用原文的依据，total_score 低于 60 必须给出 4-5 条具体改进建议
 3. issues 按严重度排序，block 优先
 4. suggestions 必须可执行，不说空话
-5. 只输出 JSON，不要 ```json 标记，不要任何额外说明
+5. {% include "shared/_json_output.md" %}
 
 # user
 请以资深书虫视角评估以下小说开篇：

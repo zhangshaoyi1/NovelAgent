@@ -1,6 +1,6 @@
 ---
 name: m12.content_audit
-version: 1
+version: 2
 stage: M12
 purpose: 内容合规审核
 description: 内容合规审核（由 prompts.py 迁移，单一真源）
@@ -38,7 +38,7 @@ validation:
 2. severity：high=必须删除/重写，medium=建议修改，low=轻微提示
 3. 无违规时 passed=true, violations=[]
 
-只输出 JSON，不要 ```json 标记。
+{% include "shared/_json_output.md" %}
 
 # user
 【题材】{{ genre }}

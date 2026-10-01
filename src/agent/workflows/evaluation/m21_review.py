@@ -6,7 +6,7 @@
   （结构架构 architect / 设定一致性 consistency / 读者市场吸引力 reader / 埋线与伏笔 foreshadow），
   再综合裁决一次 LLM（verdict）。
 - mode 参数：full（4 视角）/ lean（2 视角：结构+一致性）/ solo（1 视角综合）。
-- platform 参数：fanqie / qidian / zhihu 加载对应平台 rubric 注入评审提示词，
+- platform 参数：fanqie / qidian / zhihu / jinjiang 加载对应平台 rubric 注入评审提示词，
   默认 general 使用内置通用 rubric（quality-rubric.md 精简）。
 - 只读分析、不修改任何产物文件；报告写入 ``{project_dir}/.state/review/review-*.md``。
 
@@ -59,6 +59,7 @@ PLATFORM_RUBRICS: dict[str, str] = {
     "fanqie": "m21.fanqie",
     "qidian": "m21.qidian",
     "zhihu": "m21.zhihu",
+    "jinjiang": "m21.jinjiang",
 }
 
 # 默认通用 rubric（quality-rubric.md 的 authoring 类标准精简）

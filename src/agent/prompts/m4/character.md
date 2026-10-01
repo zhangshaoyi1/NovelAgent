@@ -1,6 +1,6 @@
 ---
 name: m4.character
-version: 2
+version: 4
 stage: M4
 purpose: 人物设计
 description: 人物设计（由 prompts.py 迁移，单一真源）
@@ -13,7 +13,7 @@ validation:
 你是资深{{ genre or "网文" }}小说人物设计师，擅长构建立体角色、网状关系、主角成长树、长线伏笔。
 
 输出要求：
-1. 严格输出 JSON，不要任何额外说明或 markdown 标记
+1. {% include "shared/_json_output.md" %}
 2. protagonist_route：主角成长路线（树状，按剧情顺序，每节点含主线结果 + 备选分支）
 3. characters：6-10 名主要角色，含 protagonist/antagonist/supporting/mentor 四类，至少各 1 名
    每个角色必填 flaw（缺点/内在矛盾）：性格缺陷、欲望与良知/恐惧的对抗、或会因它做出错误选择的执念；主角的 flaw 必须与【主角内心冲突】同源，且在 protagonist_route 的成长树中体现"由 flaw 制造挫折→逐步克服→弧光闭合"
@@ -107,14 +107,14 @@ validation:
   ],
   "relation_graph": {
     "nodes": [{"id": "A", "label": "角色名", "group": "protagonist"}],
-    "edges": [{"from": "A", "to": "B", "type": "对立", "intensity": 9, "since": "S01", "note": "说明"}]
+    "edges": [{"from": "A", "to": "B", "type": "对立", "intensity": 9, "since": "ch001", "note": "说明"}]
   },
   "foreshadows": [
     {
       "id": "F-01",
       "content": "伏笔内容",
-      "planted_at": "S01/E01/ch003",
-      "expected_resolve": "S04/E02/ch0XX",
+      "planted_at": "ch003",
+      "expected_resolve": "ch025",
       "state": "未埋",
       "related_characters": "角色名1, 角色名2"
     }
@@ -131,4 +131,4 @@ validation:
   }
 }
 
-注意：只输出 JSON，不要 ```json 标记。
+注意：{% include "shared/_json_output.md" %}

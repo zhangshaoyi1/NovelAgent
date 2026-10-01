@@ -34,7 +34,9 @@ def _render(**overrides):
 def test_prompt_contains_rule13_and_excerpt_block() -> None:
     pm = PromptManager()
     tpl = pm.get("m5.quality_check")
-    assert "prev_consistency" in tpl.system, "system 段必须含规则 13"
+    # 2026-10-01 收口二后规则正文在 shared/_quality_rules13.md 片段，断言渲染后的 system
+    rendered = tpl.render_system()
+    assert "prev_consistency" in rendered, "system 段（渲染后）必须含规则 13"
     assert "13 项规则" in tpl.system
     user = _render()
     assert "【上一章原文摘录】" in user

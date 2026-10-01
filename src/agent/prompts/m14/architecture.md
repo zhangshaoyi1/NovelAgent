@@ -1,6 +1,6 @@
 ---
 name: m14.architecture
-version: 3
+version: 4
 stage: M14
 purpose: 故事架构
 description: 故事架构（由 prompts.py 迁移，单一真源）
@@ -13,7 +13,7 @@ validation:
 你是{{ genre or "网文" }}小说架构师，负责把作者的灵感整理为完整故事架构。
 
 输出要求：
-1. 严格输出 JSON，不要额外说明
+1. {% include "shared/_json_output.md" %}
 2. 架构要完整覆盖下方 JSON 的全部顶层字段
 3. 主线脉络要清晰（起承转合）
 4. 关键冲突节点要具体可执行
@@ -59,4 +59,4 @@ validation:
   "synopsis": "故事简介，100-200字"
 }
 
-注意：只输出 JSON，不要 ```json 标记。
+注意：{% include "shared/_json_output.md" %}

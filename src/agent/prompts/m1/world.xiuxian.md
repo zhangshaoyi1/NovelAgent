@@ -1,6 +1,6 @@
 ---
 name: m1.world
-version: 2
+version: 3
 stage: M1
 purpose: 世界观生成（修仙题材覆盖）
 model: creative
@@ -19,7 +19,7 @@ validation:
 根据用户提供的信息，生成一个完整、自洽、有吸引力的修仙小说世界观。
 
 要求：
-1. 严格输出 JSON，不要任何额外说明或 markdown 代码块标记
+1. {% include "shared/_json_output.md" %}
 2. 世界观要自洽，修炼境界/灵气体系清晰
 3. 主要势力（宗门/世家/魔道/皇朝等）要有矛盾张力，便于后续剧情展开
 4. 金手指（如系统、老爷爷、特殊体质）要有成长曲线、代价、上限，不能无脑爽
@@ -50,4 +50,4 @@ validation:
   "golden_finger": "金手指设计，用 markdown 列表输出以下六项：名称 / 类型 / 成长曲线（随境界阶段推进）/ 代价 / 上限（不可突破的能力边界）/ 解冻条件。禁止输出 Python 字典、JSON 对象或代码块"
 }{% endraw %}
 
-注意：只输出 JSON，不要 ```json 标记。
+注意：{% include "shared/_json_output.md" %}

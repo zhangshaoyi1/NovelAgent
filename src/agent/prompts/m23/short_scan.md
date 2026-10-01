@@ -1,6 +1,6 @@
 ---
 name: m23.short_scan
-version: 1
+version: 2
 stage: M23
 purpose: 短篇网文扫榜（外部市场分析）
 description: 短篇扫榜：基于榜单样本/内置知识，输出情绪方向、题材候选、风险阈值与验证动作
@@ -77,7 +77,7 @@ validation:
 2. emotion_rank 按情绪热度排序；topic_hotspots 的 barrier 代表创作门槛（反转/打脸类低，悬疑/虐恋类高）。
 3. directions 每条必须含情绪拉扯方式与可行性，不说空话。
 4. 情绪拉扯力 > 题材创新力；开头 3 句话是留存高风险区。
-5. 只输出 JSON，不要 ```json 标记，不要任何额外说明。
+5. {% include "shared/_json_output.md" %}
 
 # user
 【目标平台】{{ platform }}

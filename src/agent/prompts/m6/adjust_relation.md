@@ -1,6 +1,6 @@
 ---
 name: m6.adjust_relation
-version: 1
+version: 3
 stage: M6
 purpose: 关系演化
 description: 关系演化（由 prompts.py 迁移，单一真源）
@@ -34,10 +34,10 @@ ch{{ current_chapter }}
 请输出 JSON：
 {
   "nodes": [{"id": "A", "label": "角色名", "group": "protagonist"}],
-  "edges": [
+  "edges": [  // 所有边必须含 archived 布尔键（在册 false / 归档 true）
     {"from": "A", "to": "B", "type": "新关系", "intensity": 8, "since": "ch{{ current_chapter }}", "note": "说明", "archived": false},
-    {"from": "A", "to": "B", "type": "旧关系归档", "intensity": 0, "since": "原起于章节", "note": "archived: 原关系描述（保留不删除）", "archived": true}
+    {"from": "A", "to": "B", "type": "旧关系归档", "intensity": 0, "since": "chNNN（原起于章节号）", "note": "archived: 原关系描述（保留不删除）", "archived": true}
   ]
 }
 
-注意：只输出 JSON，不要 ```json 标记。
+注意：{% include "shared/_json_output.md" %}

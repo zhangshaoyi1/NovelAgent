@@ -1,6 +1,6 @@
 ---
 name: m20.setting
-version: 1
+version: 2
 stage: M20
 purpose: 长篇拆文 Stage 4 设定与角色关系提取
 description: 从章节摘要与剧情聚合结果提取世界观/金手指/角色完整档案/角色关系
@@ -19,7 +19,7 @@ validation:
 4. **关系提取**：从情节点描述提取（不从原文）；关系演变追踪保留最新状态，历史写入 evolution；推断关系标 inferred=true 且 confidence 0.6-0.7。
 5. **关系网络密度**：主角+核心配角关系数 <3 检查遗漏，>10 检查误合并。
 6. **长篇特点**：力量体系注意多层级、地理注意广阔结构、金手指需详尽描述演化过程和多重能力。
-7. 严格只输出 JSON，不要 ```json 标记，不要任何额外说明。
+7. {% include "shared/_json_output.md" %}
 
 ## 输出 JSON 结构
 {

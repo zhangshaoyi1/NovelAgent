@@ -1,6 +1,6 @@
 ---
 name: m14.iterate
-version: 1
+version: 2
 stage: M14
 purpose: 架构迭代
 description: 架构迭代（由 prompts.py 迁移，单一真源）
@@ -38,4 +38,4 @@ validation:
 输出前自查：作者修改意见的每一条，是否都已体现在下方 JSON 的对应字段中；
 若有遗漏或与原意不符，请修正后再输出。
 
-注意：只输出 JSON，不要 ```json 标记。
+注意：{% include "shared/_json_output.md" %}

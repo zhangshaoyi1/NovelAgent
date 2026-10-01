@@ -1,6 +1,6 @@
 ---
 name: m21.foreshadow
-version: 1
+version: 2
 stage: M21
 purpose: 成书质量评审 - 埋线与伏笔视角
 description: 多视角对抗式评审之埋线与伏笔视角（移植 oh-story-claudecod story-review 的 consistency-checker 伏笔检查项）
@@ -20,7 +20,7 @@ validation:
 4. 伏笔与回收是否前后呼应（逻辑自洽，没有改设定式回收）？
 5. 是否有关键伏笔被遗忘（埋了不回收）？
 
-输出 JSON（只输出 JSON，不要 ```json 标记）：
+输出 JSON（{% include "shared/_json_output.md" %}）：
 {
   "verdict": "APPROVE|CONCERNS|REJECT",
   "issues": [

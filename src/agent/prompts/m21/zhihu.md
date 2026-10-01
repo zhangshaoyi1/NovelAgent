@@ -1,6 +1,6 @@
 ---
 name: m21.zhihu
-version: 1
+version: 2
 stage: M21
 purpose: 知乎盐言故事平台评分标准参考（rubric）
 description: 知乎盐言故事 Quality Rubric（移植自 oh-story-claudecod story-review references/rubrics/zhihu.md，精简）
@@ -24,5 +24,5 @@ description: 知乎盐言故事 Quality Rubric（移植自 oh-story-claudecod st
 ## 使用方式
 
 - 评审时以此标准校准判断。
-- advisory only，不 blocking。
+- rubric 违例默认报 warn，不直接 block；同一指标连续多章 FAIL 可升级为 block。
 - 盐言故事注重第一人称代入感和情绪拉扯。

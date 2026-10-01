@@ -1,6 +1,6 @@
 ---
 name: m12.summary
-version: 1
+version: 2
 stage: M12
 purpose: 章节摘要
 description: 章节摘要（由 prompts.py 迁移，单一真源）
@@ -31,7 +31,7 @@ validation:
 - foreshadows 每条前缀标注 [埋]（本章新埋）或 [钩]（本章回收），并附逐字 keyword（从正文复制 8-25 字文本片段用于精确定位）。
 - handoff 是给下一章写作者看的，只写"不知道就会写错下一章"的事实，不写评价和细节。
 
-只输出 JSON，不要 ```json 标记。
+{% include "shared/_json_output.md" %}
 
 # user
 【章节号】{{ chapter_num }}

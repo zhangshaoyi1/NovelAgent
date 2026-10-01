@@ -1,6 +1,6 @@
 ---
 name: m23.short_analyze
-version: 2
+version: 4
 stage: M23
 purpose: 短篇网文拆文（外部作品分析）
 description: 短篇拆文：深度拆解爆款短篇的故事核、结构、情感线、反转、写作手法、共鸣层次
@@ -98,9 +98,9 @@ validation:
 1. emotion_curve 节点数 ≥5，每节点含字数位置与钩子类型（悬念/冲突/反差/代入/信息差/无）。
 2. explosion 六维度齐全；无传统反转时 reversal.foreshadowing 注明「无」。
 3. techniques ≥5 项；resonance ≥3 层；reusable_structures ≥3 条，每条含适用场景。
-4. 情绪强度用 -9（虐）~+9（爽）表示；开头/结尾情绪强度用 1-10 绝对强度。
+4. 三种刻度各司其职：emotion_curve.intensity 用方向强度 -9（虐）~+9（爽）；opening/ending.intensity 用绝对强度 1-10；five_dim_score 用质量分 1-5。不得混用。
 5. 五维评分（1-5）区分度约束：禁止默认给 3-4 的"安全分"；平庸给 2-3，满分 5 必须在 note 中用原文具体表现证明；低分（≤2）的 note 必须指出具体缺陷与改进方向。
-6. 只输出 JSON，不要 ```json 标记，不要任何额外说明。
+6. {% include "shared/_json_output.md" %}
 
 # user
 【作品标题】{{ title }}

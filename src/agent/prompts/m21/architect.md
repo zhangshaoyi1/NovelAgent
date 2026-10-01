@@ -1,6 +1,6 @@
 ---
 name: m21.architect
-version: 1
+version: 3
 stage: M21
 purpose: 成书质量评审 - 结构架构视角
 description: 多视角对抗式评审之结构架构视角（移植 oh-story-claudecod story-review 的 story-architect）
@@ -22,9 +22,9 @@ validation:
 5. 范围控制：有无角色 / 设定 / 支线膨胀？
 6. 剧情循环是否存在且可重复？
 7. 高潮场景是否用了「蓄能 → 假胜 → 崩解」结构？
-8. 按平台 rubric 逐项对照，标记通过 / 不通过。
+8. 按平台 rubric 逐项对照，标记通过 / 不通过；rubric 违例默认报 warn，不直接 block（同一指标连续多章 FAIL 可升级 block）。
 
-输出 JSON（只输出 JSON，不要 ```json 标记）：
+输出 JSON（{% include "shared/_json_output.md" %}）：
 {
   "verdict": "APPROVE|CONCERNS|REJECT",
   "issues": [

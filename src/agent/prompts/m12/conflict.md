@@ -1,6 +1,6 @@
 ---
 name: m12.conflict
-version: 1
+version: 2
 stage: M12
 purpose: 设定冲突检测
 description: 设定冲突检测（由 prompts.py 迁移，单一真源）
@@ -32,7 +32,7 @@ validation:
 2. severity：high=直接矛盾破坏已写章节，medium=影响未来走向，low=可忽略的差异
 3. 没有冲突时返回 {"conflicts": [], "summary": "无冲突"}
 
-只输出 JSON，不要 ```json 标记。
+{% include "shared/_json_output.md" %}
 
 # user
 【现有 world.md】

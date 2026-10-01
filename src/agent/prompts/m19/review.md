@@ -1,6 +1,6 @@
 ---
 name: m19.review
-version: 1
+version: 2
 stage: M19
 purpose: 创作复核
 description: 创作复核（由 prompts.py 迁移，单一真源）
@@ -39,7 +39,7 @@ validation:
 4. severity：high=不改会明显破坏故事一致性；medium=影响后续走向；low=细节差异可顺手调整。
 5. 完全没有问题时返回 {"findings": [], "summary": "..."}
 
-只输出 JSON，不要 ```json 标记。
+{% include "shared/_json_output.md" %}
 
 # user
 【下游待复核阶段】

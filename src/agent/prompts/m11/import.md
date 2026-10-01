@@ -1,6 +1,6 @@
 ---
 name: m11.import
-version: 3
+version: 4
 stage: M11
 purpose: import-draft 草稿反提取小说设定
 model: creative
@@ -26,4 +26,4 @@ description: 小说设定提取专家，从草稿反向提取结构化设定 JSO
   "chapter_count": 0（整数，检测到的章节数）
 }
 
-只输出 JSON，不要 ```json 标记。
+{% include "shared/_json_output.md" %}
