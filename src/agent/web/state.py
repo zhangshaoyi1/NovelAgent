@@ -52,7 +52,10 @@ STATE_META: dict[str, dict[str, str]] = {
     "CHARACTER_DESIGN": {"label": "角色设计", "desc": "设计主要角色与关系"},
     "WRITING": {"label": "写作中", "desc": "逐章推进正文"},
     "COMPLETED": {"label": "已完本", "desc": "正文已完成，可复核或续写"},
+    # 批次边界作者检查点（登记单 20261001·子项 3）：批次已完成等作者裁决
+    "AWAITING_CHECKPOINT": {"label": "批次检查点", "desc": "本批已完成并挂起，查看摘要卡后放行/改稿/回滚"},
 }
+
 
 # 每个状态唯一的「推荐下一步」动作（命令名含前导斜杠）
 RECOMMENDED_ACTION: dict[str, str | None] = {
@@ -64,8 +67,10 @@ RECOMMENDED_ACTION: dict[str, str | None] = {
     "OUTLINING": "/outline",
     "CHARACTER_DESIGN": "/design-characters",
     "WRITING": "/write",
+    "AWAITING_CHECKPOINT": "/checkpoint",
     "COMPLETED": None,
 }
+
 
 # 推荐命令的可读动作标签
 ACTION_LABEL: dict[str, str] = {
@@ -76,6 +81,7 @@ ACTION_LABEL: dict[str, str] = {
     "/outline": "生成章节大纲",
     "/design-characters": "设计主要角色",
     "/write": "写下一章",
+    "/checkpoint": "查看批次检查点卡",
     "/autowrite": "一键续写",
 }
 
@@ -264,6 +270,23 @@ def list_project_files(name: str) -> list[dict[str, Any]]:
         rel = str(p.relative_to(pdir))
         files.append({"rel": rel, "size": p.stat().st_size})
     return files
+
+
+def get_checkpoint(name: str) -> dict[str, Any] | None:
+    """读取项目批次检查点摘要卡（只读；缺失/损坏返回 None）。
+
+    登记单 20261001·子项 3：批次边界挂起时，project 页据此渲染摘要卡片。
+    """
+    import json as _json
+
+    try:
+        raw = read_project_file(name, ".state/checkpoint.json")
+        if raw is None:
+            return None
+        data = _json.loads(raw)
+        return data if isinstance(data, dict) else None
+    except Exception:
+        return None
 
 
 def read_project_file(name: str, rel: str) -> str | None:

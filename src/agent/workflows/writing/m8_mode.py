@@ -57,6 +57,7 @@ class InterventionPoint(str, Enum):
     PLOT_NODE = "plot_node"  # 剧情节点（支线切换、高潮）
     MAJOR_DECISION = "major_decision"  # 重大决策（架构/路线/金手指）
     FORESHADOW_RECALL = "foreshadow_recall"  # 伏笔回收点
+    BATCH_CHECKPOINT = "batch_checkpoint"  # 批次边界作者检查点（登记单 20261001·子项 3）
 
 
 # 每个模式下各介入点是否需要询问用户
@@ -107,7 +108,42 @@ AUTONOMY_THRESHOLDS: dict[InterventionPoint, int] = {
     InterventionPoint.PLOT_NODE: 60,           # HEAVY(<60) + LIGHT(<60) 打断
     InterventionPoint.FORESHADOW_RECALL: 60,   # HEAVY(<60) + LIGHT(<60) 打断
     InterventionPoint.MAJOR_DECISION: 0,       # 重大决策始终打断（安全底线）
+    # 批次检查点三挡（子项 3）：HEAVY 每批必停 / LIGHT 仅风险停 / AUTO 不停。
+    # 阈值语义与其它介入点相反（其它=「低于即打断」，本点由
+    # ``checkpoint_pause_decision`` 三段式判定），30 = LIGHT 下界。
+    InterventionPoint.BATCH_CHECKPOINT: 30,
 }
+
+
+# ============================================================
+# 批次边界检查点（登记单 20261001·子项 3，PRD A2）
+# ============================================================
+#: 账本级风险异常的自主度上限：LIGHT 及以下遇风险挂起；AUTO(≥90) 从不停
+CHECKPOINT_RISK_AUTONOMY_MAX = 90
+
+
+def checkpoint_pause_decision(autonomy: int, has_risk: bool) -> tuple[bool, str]:
+    """批次边界是否挂起等作者裁决（三挡正式语义）。
+
+    Returns:
+        (是否挂起, 挂起原因；不挂起时原因为空串)
+
+    - ``autonomy < 30``（HEAVY·每批必停）：无条件挂起——作者重度协作模式，
+      每批结束都应看一眼风险摘要卡与下批计划要点。
+    - ``30 <= autonomy < 90``（LIGHT·仅异常停）：仅当批次存在风险信号
+      （监督告警/低置信交付/体检 warn/账本级异常）时挂起——异常自己举手，
+      平安批次不打扰。
+    - ``autonomy >= 90``（AUTO·从不停）：永不挂起（escalated 熔断仍会停批，
+      那是另一条更硬的通道）。
+    """
+    a = max(AUTONOMY_MIN, min(AUTONOMY_MAX, int(autonomy)))
+    if a < 30:
+        return True, "HEAVY 模式：每批必停（作者重度协作）"
+    if a < CHECKPOINT_RISK_AUTONOMY_MAX:
+        if has_risk:
+            return True, "LIGHT 模式：本批存在风险信号，挂起请作者裁决"
+        return False, ""
+    return False, ""
 
 
 def autonomy_label(level: int) -> str:

@@ -22,7 +22,7 @@ from agent.cli._shared import emit_result, make_quiet_console, print_cost_summar
 from agent.core.engine.state_machine import State
 
 
-@command(allowed_states=(State.WRITING, State.PAUSED, State.COMPLETED))
+@command(allowed_states=(State.WRITING, State.PAUSED, State.AWAITING_CHECKPOINT, State.COMPLETED))
 def appeal(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"

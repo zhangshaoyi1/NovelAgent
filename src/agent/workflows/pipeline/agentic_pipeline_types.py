@@ -45,6 +45,10 @@ class PipelineResult:
     progress_file: Optional[str] = None        # progress.json 绝对路径；--no-progress 置 null
     failures: list[dict[str, Any]] = field(default_factory=list)
     stream: Optional[dict[str, Any]] = None    # 渲染元信息；--no-stream 置 null
+    # ---- 登记单 20261001·子项 3：批次边界作者检查点 ----
+    #: 非空 = 本批结束进入检查点挂起（摘要卡片 + 挂起原因）；None = 未挂起
+    #: （未挂起也可能写了卡片：AUTO 挡只写卡不停）。详见 ``.state/checkpoint.json``。
+    checkpoint: Optional[dict[str, Any]] = None
     summary: Optional[dict[str, Any]] = None   # build_run_summary 结果（运行摘要）
 
     def to_dict(self) -> dict[str, Any]:

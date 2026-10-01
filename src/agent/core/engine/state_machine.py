@@ -6,6 +6,10 @@
     INIT → CONFIGURING → DISCUSSING → ARCHITECTING → ARCH_CONFIRMED
          → OUTLINING → CHARACTER_DESIGN → WRITING ⇄ PAUSED
          → (ARCH_REVISION → ARCH_CONFIRMED) → COMPLETED
+    WRITING → AWAITING_CHECKPOINT →（RESUME）→ WRITING
+    （批次边界作者检查点，PRD A2 / 登记单 20261001_信任链与叙事上限六项能力·子项 3：
+     批次结束挂起等作者裁决——继续/定向重写/调整计划/回滚；
+     该状态下 autowrite 被命令门禁拦截，防止挂起时被外层再起一批盲写）
 """
 
 from __future__ import annotations
@@ -29,6 +33,10 @@ class State(str, Enum):
     CHARACTER_DESIGN = "CHARACTER_DESIGN"
     WRITING = "WRITING"
     PAUSED = "PAUSED"
+    #: 批次边界作者检查点（子项 3）：批次已完成、等作者看卡裁决。
+    #: 语义区别于 PAUSED（人工主动暂停写作过程）——本状态是**自动写入的暂停点**，
+    #: 摘要卡片见 ``.state/checkpoint.json``，动作经 ``checkpoint`` 命令组执行。
+    AWAITING_CHECKPOINT = "AWAITING_CHECKPOINT"
     COMPLETED = "COMPLETED"
 
 
@@ -44,6 +52,8 @@ class Event(str, Enum):
     WRITE = "WRITE"
     PAUSE = "PAUSE"
     RESUME = "RESUME"
+    #: 批次结束进入作者检查点（子项 3；由 pipeline 批末收尾自动触发）
+    ENTER_CHECKPOINT = "ENTER_CHECKPOINT"
     COMPLETE = "COMPLETE"
 
 
@@ -62,6 +72,9 @@ TRANSITIONS: dict[tuple[State, Event], State] = {
     (State.CHARACTER_DESIGN, Event.WRITE): State.WRITING,
     (State.WRITING, Event.PAUSE): State.PAUSED,
     (State.PAUSED, Event.RESUME): State.WRITING,
+    # 子项 3：批次边界检查点（写入方向自动进入；RESUME 回写作）
+    (State.WRITING, Event.ENTER_CHECKPOINT): State.AWAITING_CHECKPOINT,
+    (State.AWAITING_CHECKPOINT, Event.RESUME): State.WRITING,
     (State.WRITING, Event.COMPLETE): State.COMPLETED,
 }
 

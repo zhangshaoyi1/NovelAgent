@@ -10,6 +10,38 @@
   </p>
 </div>
 
+{# A0. 批次检查点摘要卡（登记单 20261001·子项 3）：挂起时置顶提示，平时有卡也展示最近一批 #}
+{% if checkpoint %}
+<section class="card {% if checkpoint.paused %}highlight{% endif %}">
+  <h2>{% if checkpoint.paused %}⏸ 批次检查点 — 等你裁决{% else %}最近一批检查点摘要{% endif %}</h2>
+  {% set br = checkpoint.batch_range or [] %}
+  <p class="muted">
+    第 {{ br[0] if br else '?' }}–{{ br[-1] if br else '?' }} 章（共 {{ checkpoint.chapters_written }} 章）
+    {% if checkpoint.low_confidence_delivery %}<span class="badge">⚠ 低置信交付</span>{% endif %}
+  </p>
+  {% if checkpoint.risks %}
+    <p><strong>风险信号</strong></p>
+    <ul class="muted small">
+      {% for r in checkpoint.risks[:6] %}<li>{{ r }}</li>{% endfor %}
+    </ul>
+  {% else %}
+    <p class="muted">本批无风险信号。</p>
+  {% endif %}
+  {% if checkpoint.next_plan and checkpoint.next_plan.notes %}
+    <p><strong>下批计划要点（批末反思）</strong></p>
+    <p class="muted small">{{ checkpoint.next_plan.notes }}</p>
+    {% for a in (checkpoint.next_plan.actions or [])[:5] %}<p class="muted small">→ {{ a }}</p>{% endfor %}
+  {% endif %}
+  {% if checkpoint.paused %}
+  <div class="actions-row">
+    <button class="btn primary" onclick="runGeneric('{{ name }}', 'checkpoint-continue', this)">✓ 放行，继续写下一批</button>
+    <a class="btn" href="/p/{{ name }}/files">查看章节原文</a>
+  </div>
+  <p class="muted small">也可用 rewrite（定向重写）/ adjust-route（调整计划）/ rollback（回滚）后再放行。</p>
+  {% endif %}
+</section>
+{% endif %}
+
 {# A. 概览：一眼看进度与关键指标 #}
 <section class="card">
   <div class="stat-grid">

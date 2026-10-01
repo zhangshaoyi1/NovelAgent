@@ -270,8 +270,17 @@ def project(request: Request, name: str) -> HTMLResponse:
             "next": next_action,
             "flow": state.STATE_FLOW,
             "conflict_pending": state.get_conflicts(name)["pending"],
+            # 登记单 20261001·子项 3：批次检查点摘要卡（挂起时页面顶部渲染）
+            "checkpoint": state.get_checkpoint(name),
         },
     )
+
+
+@app.get("/api/p/{name}/checkpoint")
+def api_checkpoint(name: str) -> JSONResponse:
+    """读取批次检查点摘要卡（只读；登记单 20261001·子项 3）。"""
+    card = state.get_checkpoint(name)
+    return JSONResponse({"success": True, "checkpoint": card})
 
 
 @app.get("/p/{name}/conflicts", response_class=HTMLResponse)

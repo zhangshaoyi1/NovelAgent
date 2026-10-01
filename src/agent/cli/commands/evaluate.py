@@ -16,7 +16,7 @@ from agent.cli._shared import *  # enforce_gate / emit_result / make_quiet_conso
 from agent.core.engine.state_machine import State
 
 
-@command(allowed_states=(State.WRITING, State.PAUSED, State.COMPLETED))
+@command(allowed_states=(State.WRITING, State.PAUSED, State.AWAITING_CHECKPOINT, State.COMPLETED))
 def evaluate(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"

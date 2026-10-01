@@ -5,7 +5,7 @@ from agent.cli._shared import *
 
 from agent.core.engine.state_machine import State
 
-@command(allowed_states=(State.WRITING,), writes=True)
+@command(allowed_states=(State.WRITING, State.AWAITING_CHECKPOINT), writes=True)
 def rollback(
     project_dir: str = typer.Option(
         "projects/my-novel", "--dir", "-d", help="小说项目目录"

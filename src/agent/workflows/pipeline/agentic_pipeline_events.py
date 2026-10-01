@@ -13,6 +13,8 @@ import time
 import frontmatter
 
 from agent.core.infra.degrade import degrade
+from agent.core.engine.state_machine import Event
+from agent.workflows.writing.m8_mode import checkpoint_pause_decision
 from agent.workflows.pipeline.agentic_pipeline_types import PipelineResult, _now_iso
 
 # 门禁熔断阈值：连续 N 章"门禁失明"或 N 章连续"告警留章" → 停批上报人工。
@@ -375,6 +377,9 @@ class _PipelineEventsMixin:
         纯读 bus，降级占位不阻断（G3 哲学）；done 事件先入 events，
         build_run_summary 再聚合（含 done 的总耗时/结局标志）。
         """
+        # 子项 3：批次边界检查点（卡片 + 三挡挂起判定）——在 done 事件前执行，
+        # 使检查点事件先于收尾落进事件流；内部全降级不阻断。
+        self._finalize_checkpoint(result)
         try:
             import time
 
@@ -403,6 +408,158 @@ class _PipelineEventsMixin:
             pass  # noqa: SILENT_DEGRADE
 
     # ---------------------------------------------------------------- 主流程
+    # ------------------------------------------------- 批次边界作者检查点（登记单 20261001·子项 3，PRD A2）
+    CHECKPOINT_FILE = ".state/checkpoint.json"
+
+    def _checkpoint_path(self):
+        return self.project_dir / self.CHECKPOINT_FILE
+
+    def _load_low_confidence(self) -> bool:
+        """读子项 1 落盘的低置信交付标记（读失败按 False，显性降级）。"""
+        try:
+            p = self.project_dir / GATE_BLIND_FILE
+            if p.exists():
+                return bool(json.loads(p.read_text(encoding="utf-8")).get("low_confidence_delivery"))
+        except Exception as e:  # noqa: BLE001
+            degrade("pipeline.checkpoint", "低置信标记读取失败，按 False", e)
+        return False
+
+    def _collect_eval_warns(self, result) -> list[str]:
+        """从本批 failure 事件中摘 warn/block 级风险（限 5 条）。"""
+        warns: list[str] = []
+        for f in getattr(result, "failures", []) or []:
+            if f.get("severity") in ("warn", "block"):
+                warns.append(f"[{f.get('step', '?')}] {str(f.get('reason', ''))[:120]}")
+            if len(warns) >= 5:
+                break
+        return warns
+
+    def _build_checkpoint_card(self, result) -> dict[str, Any]:
+        """构建风险摘要卡片（确定性收集，零 LLM；各源失败均显性降级不阻断）。"""
+        from agent.core.quality.disposition_review import collect_supervisor_alerts
+
+        end_ch = int(getattr(result, "final_chapter", 0) or 0)
+        wrote = int(getattr(result, "chapters_written", 0) or 0)
+        start_ch = end_ch - wrote + 1
+        # Supervisor advisory 告警（账本级异常的主力来源：情节停滞/语言合规/风格漂移/伏笔回收）
+        supervisor_alerts: list[str] = []
+        try:
+            supervisor_alerts = collect_supervisor_alerts(
+                self.project_dir, current_chapter=end_ch, limit=6
+            )
+        except Exception as e:  # noqa: BLE001
+            degrade("pipeline.checkpoint", "监督告警收集失败", e)
+        # 批末反思（作战笔记）作为下批计划要点
+        next_plan: dict[str, Any] = {}
+        try:
+            from agent.core.quality.batch_reflection import load_latest
+
+            entry = load_latest(self.project_dir)
+            if isinstance(entry, dict):
+                items = entry.get("items") or []
+                next_plan = {
+                    "notes": str(entry.get("summary") or "")[:400],
+                    "actions": [
+                        str(i.get("action") or i.get("cause") or "")
+                        for i in items[:5]
+                        if isinstance(i, dict)
+                    ],
+                }
+                next_plan["actions"] = [a for a in next_plan["actions"] if a]
+        except Exception as e:  # noqa: BLE001
+            degrade("pipeline.checkpoint", "批末反思读取失败，卡片无下批要点", e)
+        low_conf = self._load_low_confidence()
+        eval_warns = self._collect_eval_warns(result)
+        risks = (["低置信交付（写时门禁失明率超标）"] if low_conf else []) + supervisor_alerts + eval_warns
+        return {
+            "at": _now_iso(),
+            "batch_range": [start_ch, end_ch] if wrote > 0 else [],
+            "chapters_written": wrote,
+            "low_confidence_delivery": low_conf,
+            "risks": risks,
+            "next_plan": next_plan,
+            # 四个标准动作（全部复用既有机制，checkpoint 命令组只负责 resume）
+            "actions": [
+                "checkpoint-continue -d <项目>   # 放行，继续写下一批",
+                "rewrite -d <项目> --chapter N  # 定向重写某章",
+                "adjust-route / adjust-relation # 调整下批计划/路线",
+                "rollback -d <项目> --to N      # 回滚到第 N 章",
+            ],
+        }
+
+    def _finalize_checkpoint(self, result: PipelineResult) -> None:
+        """批次边界检查点：写摘要卡片 + 按自主度三挡决定是否挂起。
+
+        - 卡片**每批都写**（AUTO 挡也写：可见性零成本，人想看随时有）；
+        - 挂起按 ``m8_mode.checkpoint_pause_decision``：HEAVY 每批停 /
+          LIGHT 仅风险停 / AUTO 从不停；
+        - 挂起 = 状态机 WRITING → AWAITING_CHECKPOINT（autowrite 被命令门禁
+          拦截，防外层再起一批盲写）+ ``checkpoint`` 事件 + result.checkpoint；
+        - escalated/tripped/blocked 的批次不进检查点（它们已走各自的上报通道，
+          语义不能被检查点稀释）；
+        - 可穿越重启：状态与卡片都落盘，重启后 ``checkpoint continue`` 照常工作。
+        """
+        try:
+            wrote = int(getattr(result, "chapters_written", 0) or 0)
+            if wrote <= 0:
+                return
+            if (
+                getattr(result, "escalated", False)
+                or getattr(result, "tripped", False)
+                or getattr(result, "blocked", False)
+            ):
+                return
+            card = self._build_checkpoint_card(result)
+            has_risk = bool(card.get("risks"))
+            # 挂起判定（自主度三挡）——先判定再落盘，保证卡片带 paused 语义
+            autonomy = 70
+            try:
+                sm = getattr(self, "state_machine", None)
+                if sm is not None:
+                    if int(getattr(sm, "autonomy_level", 0) or 0) <= 0:
+                        sm.load()
+                    autonomy = int(sm.get_autonomy_level())
+            except Exception as e:  # noqa: BLE001
+                degrade("pipeline.checkpoint", "自主度读取失败，按默认 70 处理", e)
+                autonomy = 70
+            pause, reason = checkpoint_pause_decision(autonomy, has_risk)
+            card["paused"] = pause
+            card["pause_reason"] = reason
+            # 落盘卡片（原子替换；落盘失败仅降级，不阻断）
+            try:
+                p = self._checkpoint_path()
+                p.parent.mkdir(parents=True, exist_ok=True)
+                tmp = p.with_suffix(".json.tmp")
+                tmp.write_text(
+                    json.dumps(card, ensure_ascii=False, indent=1), encoding="utf-8"
+                )
+                tmp.replace(p)
+            except Exception as e:  # noqa: BLE001
+                degrade("pipeline.checkpoint", "检查点卡片落盘失败", e)
+            if pause:
+                try:
+                    sm = getattr(self, "state_machine", None)
+                    if sm is not None:
+                        sm.load()
+                        if sm.state.value == "WRITING":
+                            sm.transition(Event.ENTER_CHECKPOINT)
+                except Exception as e:  # noqa: BLE001
+                    degrade("pipeline.checkpoint", "检查点状态迁移失败（不影响卡片）", e)
+                self.console.print(
+                    f"[cyan]⏸ 批次检查点：{reason or '等作者裁决'}"
+                    f"（checkpoint 查看卡片 / checkpoint-continue 放行）[/cyan]"
+                )
+                self._emit_event(
+                    "checkpoint",
+                    paused=True,
+                    reason=reason,
+                    batch_range=card.get("batch_range"),
+                    risks=card.get("risks", []),
+                )
+            result.checkpoint = card
+        except Exception as e:  # noqa: BLE001 - 检查点失败不阻断批末收尾
+            degrade("pipeline.checkpoint", "批次检查点收尾异常", e)
+
     def _finalize_cost(self, result: PipelineResult) -> None:
         """G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）。"""
         try:
