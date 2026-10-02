@@ -252,6 +252,16 @@ def maybe_replan(
     except Exception as e:  # noqa: BLE001 - 增强项：审计失败不阻断批前准备
         degrade("autowire.pacing_form", "节奏形态审计失败，本批无形态发现", e)
 
+    # ---- 高潮账本自举（登记单 20261001·子项 6，PRD B7）----
+    # 账本为空且有计划时从 MasterPlan 弧线确定性推导建账（幂等，零 LLM）；
+    # 首轮 M3 后首跑 autowrite 即建账。失败显性降级不阻断批前准备。
+    try:
+        from agent.core.story.climax_ledger import ensure_ledger
+
+        ensure_ledger(project_dir)
+    except Exception as e:  # noqa: BLE001
+        degrade("autowire.climax_ledger", "高潮账本自举失败，本批无高潮事件登记", e)
+
     try:
         from agent.agents.planner import PlannerAgent
         from agent.core.story.plan_managers import audit_plan, save_audit_report

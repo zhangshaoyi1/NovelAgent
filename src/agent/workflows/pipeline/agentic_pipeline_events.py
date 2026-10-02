@@ -478,9 +478,17 @@ class _PipelineEventsMixin:
             form_warns = self._load_form_findings(start_ch, end_ch)
         except Exception as e:  # noqa: BLE001
             degrade("pipeline.checkpoint", "节奏形态发现读取失败", e)
+        # 高潮账本告警（子项 6）：逾期未引爆 / 跳过点名 / 爆点间隔超阈
+        climax_warns: list[str] = []
+        try:
+            from agent.core.story.climax_ledger import ledger_warnings
+
+            climax_warns = ledger_warnings(self.project_dir, end_ch)
+        except Exception as e:  # noqa: BLE001
+            degrade("pipeline.checkpoint", "高潮账本告警读取失败", e)
         risks = (
             (["低置信交付（写时门禁失明率超标）"] if low_conf else [])
-            + supervisor_alerts + eval_warns + form_warns
+            + supervisor_alerts + eval_warns + form_warns + climax_warns
         )
         return {
             "at": _now_iso(),

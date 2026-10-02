@@ -678,6 +678,15 @@ class AgenticPipelineWorkflow(
             #      放在计数复位之后：本章门禁正常则清零，写时质检失明确凿则再计一次。
             self._scan_gate_skipped(ch_num)
 
+            # ---- 高潮账本章末状态推进（登记单 20261001·子项 6）----
+            # 引爆判定 = 蓄势伏笔于本章在 G15 账本 resolve；逾期 → skipped 留因。
+            try:
+                from agent.core.story.climax_ledger import update_status_after_chapter
+
+                update_status_after_chapter(self.project_dir, ch_num)
+            except Exception as _cl_e:  # noqa: BLE001
+                degrade("pipeline.climax_update", "高潮账本章末推进失败", _cl_e)
+
             # ---- G14：章节落盘后增量更新全书指纹库（决策③：存 .state/ 下）----
             try:
                 if self.guardrails is not None:

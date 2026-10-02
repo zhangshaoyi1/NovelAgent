@@ -114,6 +114,18 @@ class M5ContextMixin:
 
         # Step 6: 伏笔任务
         foreshadow_task = self._load_foreshadow_task(progress)
+        # 高潮账本写前注入（登记单 20261001·子项 6）：蓄势/引爆指令随伏笔任务
+        # 通道下发（同一消费路径，不新增提示词入口）；查询失败降级为空串。
+        try:
+            from agent.core.story.climax_ledger import climax_context_text
+
+            _climax = climax_context_text(self.project_dir, next_chapter(progress))
+            if _climax:
+                foreshadow_task = (
+                    (foreshadow_task + chr(10)) if foreshadow_task else ""
+                ) + _climax
+        except Exception as _climax_e:  # noqa: BLE001
+            degrade("m5.context.climax", "高潮账本注入失败，本章无高潮指令", _climax_e)
 
         # Step 7: 题材层质量规则（MVP 内置修仙）
         # — 已在 prompt 中编码
