@@ -21,6 +21,10 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+# EPUB 导出（m11_export 延迟导入，未装时命令内降级提示；声明 extra 便于 pip install -e ".[epub]"）
+epub = [
+    "ebooklib>=0.18",
+]
 dev = [
     "pytest>=8.0.0",
     "pytest-cov>=5.0.0",
