@@ -213,6 +213,44 @@ def maybe_replan(
         planner = PlannerAgent(project_dir, console=console)
         plan = planner.replan_batch(current, summary, decide=decide)
 
+        # ---- 规划层语义评审（登记单 20261001·子项 4：计划审稿人，真阻断权）----
+        # ★ 唯一消费点锁死在 replan 产出后、确定性审计前，不另起独立命令
+        #   （M5 评委"恒不阻断"的教训：没有消费点的把关等于没有）。
+        # ★ 三态：pass / revise（打回 replan 上限 1 次）/ infeasible（升级检查点
+        #   挂起交作者）。打回后仍不过 → 带分歧进检查点，不形成死循环。
+        # ★ LLM 不可用 → 评审缺席按 pass 继续（degrade 留痕，不阻断复规划）。
+        try:
+            from agent.agents.plan_reviewer import (
+                PlanReviewEscalation,
+                apply_plan_review,
+                review_batch_plan,
+            )
+
+            _rev1 = review_batch_plan(
+                project_dir, plan, current, summary,
+                llm=getattr(planner, "llm", None), console=console,
+            )
+            _action, _feedback = apply_plan_review(_rev1, None)
+            if _action == "replan":
+                console.print("[cyan]计划审稿人打回，重排一次（上限 1 次）[/cyan]")
+                plan = planner.replan_batch(
+                    current,
+                    summary + "\n\n【计划审稿人反馈（须逐条修复，否则升级作者裁决）】\n" + _feedback,
+                    decide=decide,
+                )
+                _rev2 = review_batch_plan(
+                    project_dir, plan, current, summary,
+                    llm=getattr(planner, "llm", None), console=console,
+                )
+                _action, _feedback = apply_plan_review(_rev1, _rev2)
+            if _action == "escalate":
+                from agent.agents.plan_reviewer import escalate_to_checkpoint
+
+                escalate_to_checkpoint(project_dir, _feedback, console=console)
+                raise PlanReviewEscalation(_feedback)
+        except PlanReviewEscalation:
+            raise  # 升级语义必须穿透下面的通用 except（degrade 吞掉即失去阻断权）
+
         # ---- 四管理者确定性审计（§7）：规划不被信任，BLOCK 打回重排 1 次 ----
         report = audit_plan(project_dir, plan.episode_tree, current)
         if not report.passed:

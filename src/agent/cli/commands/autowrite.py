@@ -522,7 +522,35 @@ def autowrite(
     # 首批（无 plan.json / 零进度）不触发；失败 degrade 显性留痕后沿用既有计划。
     from agent.workflows.pipeline.batch_replan import maybe_replan
 
-    maybe_replan(project_path, console=console, enabled=not bool(no_replan))
+    # ---- 登记单 20261001·子项 4：计划审稿人两次裁决不过 → 升级检查点挂起，
+    #      本批不得开写（已迁移 AWAITING_CHECKPOINT，后续 autowrite 被门禁拦截）。
+    from agent.agents.plan_reviewer import PlanReviewEscalation as _PlanReviewEscalation
+
+    try:
+        maybe_replan(project_path, console=console, enabled=not bool(no_replan))
+    except _PlanReviewEscalation as esc:
+        if json_output:
+            emit_result(
+                {
+                    "success": False,
+                    "error": {
+                        "code": "plan_review_escalated",
+                        "message": (
+                            "计划审稿人裁决未通过，已挂起等作者裁决："
+                            f"{esc.feedback[:300]}"
+                        ),
+                    },
+                },
+                json_mode=True,
+            )
+        else:
+            console.print(
+                "[red]✗ 本批未开写：计划审稿人两次裁决未通过，已挂起。[/red]"
+                f"[dim]查看分歧：checkpoint -d {project_path}；"
+                f"认可计划放行：checkpoint-continue -d {project_path}；"
+                f"调整路线：adjust-route -d {project_path} --intent <修改方向>[/dim]"
+            )
+        raise typer.Exit(code=2)
 
     # 构造走 service 层唯一入口（build_pipeline），避免 CLI 直连 pipeline 形成双入口。
     # use_session/use_catalog/use_memory_bridge 关闭：这些是 service 级编排特性，
