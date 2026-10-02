@@ -174,17 +174,30 @@ class TestLedgerIntegration:
 
 class TestPromptV7Contract:
     def test_priority_declaration_present(self) -> None:
-        """v7 总声明在场：三字段优先序（防提示词回退到「三字段全同覆盖」）。"""
+        """供给优先序声明在场（防提示词回退到「全字段全同覆盖」）。
+
+        2026-10-01 结构化收口（登记单 20261001_m3_chapter_hooks结构化）有意变更契约：
+        chapter_tiers 不再由 LLM 输出（tier 并入 chapter_hooks 数组，代码合成档位表），
+        优先序从三字段收敛为两字段——本断言随之更新。
+        """
         text = (
             Path(__file__).resolve().parents[1]
             / "src/agent/prompts/m3/outline.md"
         ).read_text(encoding="utf-8")
-        assert "chapter_hooks` > `chapter_tiers` > `plot_points" in text, (
-            "v7 供给优先序声明丢失——三字段全同覆盖 = 实测 LLM 整条丢弃的根因"
+        assert "chapter_hooks` > `plot_points" in text, (
+            "供给优先序声明丢失——全字段同覆盖 = 实测 LLM 整条丢弃的根因"
         )
         assert "写空串" in text, "显性空串约定丢失"
-        # v6 行形态约定不得被 v7 变更破坏
-        assert "档位" in text and "批次" in text
+        assert "档位" in text and "tier" in text, "档位契约丢失"
+
+    def test_chapter_hooks_structured_contract(self) -> None:
+        """chapter_hooks 结构化契约（2026-10-01）：JSON 数组字段齐全 + 档位单写。"""
+        text = (
+            Path(__file__).resolve().parents[1]
+            / "src/agent/prompts/m3/outline.md"
+        ).read_text(encoding="utf-8")
+        assert '"ch"' in text and '"tier"' in text and '"acceptance"' in text
+        assert "不再由 LLM 输出" in text, "chapter_tiers 双写消除声明丢失"
 
     def test_v7_does_not_weaken_hooks_coverage(self) -> None:
         """chapter_hooks 的每支线覆盖要求必须仍在（主链路不放松）。"""

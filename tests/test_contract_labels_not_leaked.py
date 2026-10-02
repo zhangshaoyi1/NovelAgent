@@ -109,15 +109,33 @@ def test_prompt_field_names_match_ssot() -> None:
     """机器交叉核对：提示词里的契约字段名必须都在 ``CONTRACT_FIELDS`` 内。
 
     这是"文档/提示词不会悄悄漂移"的可验证判据 —— 比人眼通读可靠。
+
+    2026-10-01 结构化收口（登记单 20261001_m3_chapter_hooks结构化）后改为三方对齐：
+    提示词声明 JSON 键（chapter_hooks 元素）→ ``m3_outline._HOOK_FIELDS`` 把键映射为
+    写手侧中文标签 → 中文标签必须 ⊆ ``chapter_contract.CONTRACT_FIELDS``。
     """
     src = (_PROMPTS / "m3" / "outline.md").read_text(encoding="utf-8")
-    found = {m.strip() for m in re.findall(r"[｜|]([^=｜|\n]{1,8})=", src)}
-    assert found, "未从 outline.md 提取到任何字段名（提示词格式可能已变，请同步本测试）"
-    unknown = found - set(CONTRACT_FIELDS)
-    assert not unknown, (
-        f"提示词出现未登记的契约字段名 {sorted(unknown)} —— "
-        "必须在 chapter_contract.CONTRACT_FIELDS 登记，否则检测侧无从派生"
+    prompt_keys = {m.strip() for m in re.findall(r'"([a-z_]{2,16})"\s*:', src)}
+    assert {"ch", "tier", "open_hook", "end_hook", "cool_point", "emotion",
+            "present", "forbidden", "acceptance"} <= prompt_keys, (
+        "提示词未声明 chapter_hooks 数组的标准字段集（JSON 键漂移）"
     )
+
+    from agent.workflows.planning.m3_outline import M3OutlineWorkflow
+    from agent.core.story.chapter_contract import CONTRACT_FIELDS, PACE_TIER_FIELD
+
+    hook_keys = {k for k, _ in M3OutlineWorkflow._HOOK_FIELDS}
+    assert hook_keys == {"open_hook", "end_hook", "cool_point", "emotion",
+                         "present", "forbidden", "acceptance"}, (
+        "m3_outline._HOOK_FIELDS 与提示词声明的 JSON 键不一致"
+    )
+    labels = {label for _, label in M3OutlineWorkflow._HOOK_FIELDS}
+    unknown = labels - set(CONTRACT_FIELDS)
+    assert not unknown, (
+        f"提示词契约标签 {sorted(unknown)} 未在 chapter_contract.CONTRACT_FIELDS 登记 —— "
+        "否则检测侧无从派生"
+    )
+    assert PACE_TIER_FIELD in CONTRACT_FIELDS, "档位字段脱离 SSOT"
 
 
 def test_class_level_fingerprint_catches_variants() -> None:

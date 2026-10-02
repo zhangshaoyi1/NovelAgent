@@ -90,7 +90,7 @@ class _EvaluatorDimensionsMixin:
         from agent.core.quality.eval_evidence import build_evidence
 
         issues = [
-            {"type": typ, "severity": "mid", "desc": d} for d in descs if d
+            {"type": typ, "severity": "medium", "desc": d} for d in descs if d
         ]
         return build_evidence(issues=issues, rationale=rationale)
 

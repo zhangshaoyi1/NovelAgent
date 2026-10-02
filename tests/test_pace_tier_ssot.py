@@ -83,9 +83,15 @@ class TestPaceTierSSOT:
 # ============================================================
 class TestPromptAnchorBinding:
     def test_prompt_declares_tier_field(self) -> None:
-        """提示词必须声明 `档位=` 字段 —— 否则规划侧不会产出。"""
+        """提示词必须声明章级强度档位字段。
+
+        2026-10-01 结构化收口（登记单 20261001_m3_chapter_hooks结构化）后，
+        档位以 ``chapter_hooks[].tier`` JSON 字段声明（行格式由代码合成，不再要求）。
+        """
         text = _prompt_text("m3.outline")
-        assert "档位=" in text, "提示词未要求章级强度档位"
+        assert '"tier"' in text and "高潮|推进|垫片|日常" in text, (
+            "提示词未要求章级强度档位（tier 字段）"
+        )
 
     def test_prompt_tier_words_are_members_of_ssot(self) -> None:
         """★ 成员关系（非"数值相等"）：提示词里的档位取值必须都能在 SSOT 里找到。

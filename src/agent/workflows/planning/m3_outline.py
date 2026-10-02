@@ -344,6 +344,62 @@ class M3OutlineWorkflow:
             f"请重试。原始输出片段：{last_text[:200]}"
         )
 
+    #: chapter_hooks 结构化字段（登记单 20261001_m3_chapter_hooks结构化）：
+    #: LLM 产出 JSON 数组，此处确定性序列化为既有行格式——下游（subline.md 小节、
+    #: m5_context 逐章抽取、评委逐章匹配）零改动；档位只在数组给一次，
+    #: chapter_tiers 由代码合成，消除双写与"不一致时以 tiers 为准"的隐患。
+    _HOOK_FIELDS: tuple[tuple[str, str], ...] = (
+        ("open_hook", "章首钩子"),
+        ("end_hook", "章尾钩子"),
+        ("cool_point", "爽点"),
+        ("emotion", "目标情绪"),
+        ("present", "在场"),
+        ("forbidden", "禁"),
+        ("acceptance", "验收"),
+    )
+
+    @classmethod
+    def _normalize_chapter_hooks(cls, value: Any) -> str:
+        """chapter_hooks 收敛：数组（新口径）→ 规范行格式字符串；字符串（旧口径）原样保留。"""
+        if value is None:
+            return ""
+        if isinstance(value, str):
+            return value.strip()
+        if not isinstance(value, list):
+            return ""
+        lines: list[str] = []
+        for it in value:
+            if not isinstance(it, dict):
+                continue
+            ch = it.get("ch")
+            if not isinstance(ch, int):
+                continue
+            parts: list[str] = []
+            tier = str(it.get("tier") or "").strip()
+            if tier:
+                parts.append(f"档位={tier}")
+            for key, label in cls._HOOK_FIELDS:
+                v = str(it.get(key) or "").strip()
+                if v:
+                    parts.append(f"{label}={v}")
+            lines.append(f"第{ch}章：" + "｜".join(parts))
+        return "\n".join(lines)
+
+    @classmethod
+    def _normalize_chapter_tiers(cls, value: Any, hooks: Any) -> str:
+        """chapter_tiers 收敛：hooks 为数组（新口径）时由 tier 字段合成，忽略 LLM 双写；
+        hooks 为字符串（旧口径）时原样透传。"""
+        if isinstance(hooks, list):
+            tiers = [
+                f"第{it.get('ch')}章：{str(it.get('tier') or '').strip()}"
+                for it in hooks
+                if isinstance(it, dict) and isinstance(it.get("ch"), int) and it.get("tier")
+            ]
+            return "\n".join(tiers)
+        if value is None:
+            return ""
+        return value.strip() if isinstance(value, str) else ""
+
     @staticmethod
     def _count_chapter_lines(text: str) -> int:
         """统计逐章行数（`第N章：` 形态；批次标注行不计）。"""
@@ -468,6 +524,10 @@ class M3OutlineWorkflow:
                 "climax": str(pc.get("climax", "") if isinstance(pc, dict) else ""),
                 "relief": str(pc.get("relief", "") if isinstance(pc, dict) else ""),
             }
+            hooks_norm = self._normalize_chapter_hooks(s.get("chapter_hooks"))
+            tiers_norm = self._normalize_chapter_tiers(
+                s.get("chapter_tiers"), s.get("chapter_hooks")
+            )
             content = template.render(
                 subline_id=subline_id,
                 subline_name=name,
@@ -478,8 +538,8 @@ class M3OutlineWorkflow:
                 constraints=s.get("constraints", ""),
                 mainline_relation=s.get("mainline_relation", ""),
                 pressure_curve=pressure_curve,
-                chapter_hooks=str(s.get("chapter_hooks", "") or "").strip(),
-                chapter_tiers=str(s.get("chapter_tiers", "") or "").strip(),
+                chapter_hooks=hooks_norm,
+                chapter_tiers=tiers_norm,
                 plot_points=str(s.get("plot_points", "") or "").strip(),
                 chapter_deadlines=str(s.get("chapter_deadlines", "") or "").strip(),
             )
@@ -492,12 +552,12 @@ class M3OutlineWorkflow:
             supply_rows.append(
                 {
                     "subline": subline_id,
-                    "hooks_lines": self._count_chapter_lines(s.get("chapter_hooks")),
-                    "tiers_lines": self._count_chapter_lines(s.get("chapter_tiers")),
+                    "hooks_lines": self._count_chapter_lines(hooks_norm),
+                    "tiers_lines": self._count_chapter_lines(tiers_norm),
                     "plot_lines": self._count_chapter_lines(s.get("plot_points")),
                     "verdict": self._supply_verdict(
-                        self._count_chapter_lines(s.get("chapter_hooks")),
-                        self._count_chapter_lines(s.get("chapter_tiers")),
+                        self._count_chapter_lines(hooks_norm),
+                        self._count_chapter_lines(tiers_norm),
                         self._count_chapter_lines(s.get("plot_points")),
                     ),
                 }

@@ -165,8 +165,9 @@ GOLDEN_FALLBACK_SAMPLES: int = 2
 # ---- HA-Eval L2（2026-09-08）：以下两块语义已上收至 dimension_registry（SSOT）----
 # 计数类维度集合（以 issues 重算 value）；评分类维度用自报 value。
 from agent.core.quality.dimension_registry import COUNT_DIMS  # noqa: F401
-# 计入硬门禁的 severity 集合（high 必计、mid 计入以收紧；low 仅上报，不计入门禁）。
-SEVERITY_GATE = {"high", "mid"}
+# 计入硬门禁的 severity 集合（high/medium 计入；low 仅上报，不计入门禁）。
+# "mid" 为历史口径（severity 统一登记单 20261001）兼容读取。
+SEVERITY_GATE = {"high", "medium", "mid"}
 
 # 需要对照「设定真源」判定的维度（2026-09-12）。这些维度评的是"正文是否违反
 # 既定设定/角色状态"，评委必须先拿到真源，否则只能凭简介猜 → 恒挑出伪不一致。

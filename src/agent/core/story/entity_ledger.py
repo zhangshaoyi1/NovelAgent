@@ -98,7 +98,7 @@ class ThreadEntry:
     name: str  # 线名（如"青云传承线"）
     bound_entity: str = ""  # 绑定实体名（如某大能）
     status: str = "open"  # open | closed
-    urgency: str = "mid"  # high | mid | low
+    urgency: str = "medium"  # high | medium | low（历史数据 mid 兼容，读取时归一化）
     milestones: list[dict[str, Any]] = field(default_factory=list)  # {ch, note}
     note: str = ""
 
@@ -135,7 +135,13 @@ class EntityLedgerStore:
             if isinstance(it, dict)
         ]
         self.threads = [
-            ThreadEntry(**{k: v for k, v in t.items() if k in ThreadEntry.__dataclass_fields__})
+            ThreadEntry(
+                **{
+                    **{k: v for k, v in t.items() if k in ThreadEntry.__dataclass_fields__},
+                    # severity 统一（登记单 20261001）：存量 "mid" 归一化为 "medium"
+                    **({"urgency": "medium"} if t.get("urgency") == "mid" else {}),
+                }
+            )
             for t in raw.get("threads", [])
             if isinstance(t, dict)
         ]
@@ -243,10 +249,10 @@ class EntityLedgerStore:
         return out
 
     # ------ 叙事线 ------
-    def add_thread(self, name: str, bound_entity: str = "", urgency: str = "mid", note: str = "") -> ThreadEntry:
+    def add_thread(self, name: str, bound_entity: str = "", urgency: str = "medium", note: str = "") -> ThreadEntry:
         if not name.strip():
             raise EntityLedgerError("叙事线名称不能为空")
-        if urgency not in ("high", "mid", "low"):
+        if urgency not in ("high", "medium", "low", "mid"):  # "mid" 为历史口径兼容
             raise EntityLedgerError(f"未知 urgency：{urgency!r}")
         t = ThreadEntry(id=self._next_thread_id(), name=name.strip(), bound_entity=bound_entity.strip(),
                         urgency=urgency, note=note.strip())

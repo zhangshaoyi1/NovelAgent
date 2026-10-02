@@ -36,7 +36,9 @@ SCORE_SUSPECT_FLOOR: float = 10.0
 MIN_BATCH_FOR_COLLISION: int = 3
 
 #: 计入门禁的 issue 严重度（与 reader_appeal.SEVERITY_GATE 同源）。
-SEVERITY_GATE = {"high", "mid"}
+#: 2026-10-01 severity 统一（登记单 20261001_severity枚举全仓统一）：产出侧收敛为
+#: high|medium|low；"mid" 为历史提示词/存量数据兼容，仅读取不再新增。
+SEVERITY_GATE = {"high", "medium", "mid"}
 
 
 class DimensionValidator:

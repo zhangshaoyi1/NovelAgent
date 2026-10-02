@@ -313,9 +313,12 @@ class TestPromptAnchorBinding:
         assert "每阶段 3-6 个" not in text
 
     def test_prompt_documents_cast_ban_and_acceptance(self) -> None:
-        """章级契约必须含「在场 / 禁 / 验收」——只给钩子不给边界，写手照样越界。"""
+        """章级契约必须含「在场 / 禁 / 验收」——只给钩子不给边界，写手照样越界。
+
+        2026-10-01 结构化收口后锚点为 JSON 字段名（present/forbidden/acceptance）。
+        """
         text = _prompt_text("m3.outline")
-        for field in ("在场=", "禁=", "验收="):
+        for field in ('"present"', '"forbidden"', '"acceptance"'):
             assert field in text, f"提示词未要求章级契约字段 {field}"
 
     def test_documented_format_is_parseable(self) -> None:

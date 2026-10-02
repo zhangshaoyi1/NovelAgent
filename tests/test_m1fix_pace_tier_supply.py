@@ -418,13 +418,15 @@ class TestThreeEndsAligned:
         assert "chapter_tiers" in text, "提示词未声明独立档位字段"
 
     def test_prompt_requires_tier_at_line_head(self) -> None:
-        """★ v6 约定：`档位=` 必须写在行首（紧跟 `第N章：`）。"""
+        """★ 档位供给防丢断言（2026-10-01 结构化收口后改判据）。
+
+        v6 的「档位写行首」是对抗文本行丢字段的排版补丁；结构化后档位是
+        ``chapter_hooks`` 数组元素的 ``tier`` 字段（与 ``ch`` 同级、逐章一条），
+        "被长验收挤掉"的失败模式在字段级不可再现——判据改为 tier 字段声明在场。
+        """
         text = _prompt_text()
-        # 取第 7 条的格式模板行（形如 `第N章：档位=<四档之一>｜章首钩子=…`）
-        m = re.search(r"第N章：档位=", text)
-        assert m, (
-            "提示词格式模板里 `档位=` 未写在 `第N章：` 之后的行首 —— "
-            "v5 把它放在行尾，实测被长 `验收=` 文本挤掉（真实项目档位 0 个）"
+        assert re.search(r'"tier"', text), (
+            "提示词未声明 chapter_hooks[].tier 字段 —— 档位供给链会空转"
         )
 
     def test_prompt_format_template_has_no_trailing_tier(self) -> None:
