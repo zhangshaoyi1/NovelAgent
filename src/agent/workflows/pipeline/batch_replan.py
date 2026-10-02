@@ -21,6 +21,27 @@ from rich.console import Console
 from agent.core.infra.degrade import degrade
 
 
+def _save_form_findings(project_dir, findings) -> None:
+    """形态审计发现留痕（追加写 .state/pacing_form.jsonl；失败不阻断）。"""
+    import json
+    import time
+
+    p = Path(project_dir) / ".state" / "pacing_form.jsonl"
+    try:
+        p.parent.mkdir(parents=True, exist_ok=True)
+        with p.open("a", encoding="utf-8") as fh:
+            for f in findings:
+                fh.write(json.dumps({
+                    "at": time.time(),
+                    "rule": f.rule,
+                    "chapter": f.chapter,
+                    "severity": f.severity,
+                    "message": f.message[:300],
+                }, ensure_ascii=False) + chr(10))
+    except OSError as e:
+        degrade("batch_replan.pacing_form_log", "节奏形态发现留痕失败", e)
+
+
 def count_chapters(project_dir: str | Path) -> int:
     """当前已写章数（实时数 chapters/ch*.md，与 autowrite --batch 换算同口径）。"""
     ch_dir = Path(project_dir) / "chapters"
@@ -205,6 +226,31 @@ def maybe_replan(
             "批前细纲可行性对账失败，本批沿用既有细纲",
             e,
         )
+
+    # ---- 节奏形态审计（登记单 20261001·子项 5，批前确定性判据）----
+    # 对窗口逐章档位序列查形态硬伤（平推/无回落/跳变）。第一期动作强度=告警
+    # （纪律 #13：逐章档位无重排器，BLOCK 会一拦全冻；标定后升级计划期 BLOCK），
+    # 发现随检查点卡透出（_build_checkpoint_card 消费 pacing_form_findings）。
+    try:
+        from agent.core.story.pacing_form import (
+            audit_tier_form,
+            format_findings,
+            load_window_tiers,
+        )
+        from agent.workflows.pipeline.subline_contract import write_window
+
+        _win = write_window(project_dir)
+        if _win is not None:
+            _findings = audit_tier_form(load_window_tiers(project_dir, _win))
+            if _findings:
+                console.print(
+                    f"[yellow]⚠ 节奏形态审计：{_win[0]}-{_win[1]} 章发现 "
+                    f"{len(_findings)} 处形态问题（建议人工 adjust/重排）：\n"
+                    f"{format_findings(_findings)}[/yellow]"
+                )
+                _save_form_findings(project_dir, _findings)
+    except Exception as e:  # noqa: BLE001 - 增强项：审计失败不阻断批前准备
+        degrade("autowire.pacing_form", "节奏形态审计失败，本批无形态发现", e)
 
     try:
         from agent.agents.planner import PlannerAgent

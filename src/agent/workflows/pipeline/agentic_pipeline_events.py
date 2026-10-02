@@ -470,7 +470,18 @@ class _PipelineEventsMixin:
             degrade("pipeline.checkpoint", "批末反思读取失败，卡片无下批要点", e)
         low_conf = self._load_low_confidence()
         eval_warns = self._collect_eval_warns(result)
-        risks = (["低置信交付（写时门禁失明率超标）"] if low_conf else []) + supervisor_alerts + eval_warns
+        # 节奏形态发现（子项 5：批前审计落盘 pacing_form.jsonl，本窗口内的本批段）
+        form_warns: list[str] = []
+        try:
+            from agent.core.story.pacing_form import PacingFormFinding
+
+            form_warns = self._load_form_findings(start_ch, end_ch)
+        except Exception as e:  # noqa: BLE001
+            degrade("pipeline.checkpoint", "节奏形态发现读取失败", e)
+        risks = (
+            (["低置信交付（写时门禁失明率超标）"] if low_conf else [])
+            + supervisor_alerts + eval_warns + form_warns
+        )
         return {
             "at": _now_iso(),
             "batch_range": [start_ch, end_ch] if wrote > 0 else [],
@@ -486,6 +497,76 @@ class _PipelineEventsMixin:
                 "rollback -d <项目> --to N      # 回滚到第 N 章",
             ],
         }
+
+    def _load_form_findings(self, lo: int, hi: int) -> list[str]:
+        """读本批窗口内的节奏形态审计发现（pacing_form.jsonl；读失败返回空）。"""
+        p = self.project_dir / ".state" / "pacing_form.jsonl"
+        if not p.exists():
+            return []
+        out: list[str] = []
+        try:
+            for line in p.read_text(encoding="utf-8").splitlines():
+                try:
+                    rec = json.loads(line)
+                except ValueError as e:
+                    degrade("pipeline.pacing_crosscheck", "pacing_form.jsonl 存在坏行，跳过", e)
+                    continue
+                ch = int(rec.get("chapter", 0) or 0)
+                if lo <= ch <= hi:
+                    out.append(f"[{rec.get('rule', '?')}/第{ch}章] {str(rec.get('message', ''))[:120]}")
+        except OSError as e:
+            degrade("pipeline.pacing_crosscheck", "节奏形态发现读取失败", e)
+        return out
+
+    def _run_pacing_crosscheck_batch_end(self, result: PipelineResult) -> None:
+        """批末档位-张力交叉验证（登记单 20261001·子项 5）：该平没平/该爆没爆。
+
+        逐章比对「规划档位张力带」vs「实测张力」（tension_curve 落盘读数）：
+        放松档（垫片/日常）实测 ≥8 = 该平没平（写手全程高强度惯性）；
+        高潮档实测 ≤5 = 该爆没爆（爆点写得温）。第一期 advisory（告警+memory
+        留痕）：判据未做真实分位标定，升级阻断前必须先标定（纪律 #13）。
+        """
+        try:
+            wrote = int(getattr(result, "chapters_written", 0) or 0)
+            end_ch = int(getattr(result, "final_chapter", 0) or 0)
+            if wrote <= 0:
+                return
+            from agent.core.story.chapter_contract import PACE_TIER_BY_NAME
+            from agent.core.story.pacing_form import load_window_tiers
+            from agent.core.story.tension_curve import read_tension
+
+            lo = end_ch - wrote + 1
+            tiers = load_window_tiers(self.project_dir, (lo, end_ch))
+            readings = {
+                int(r.get("ch", 0) or 0): float(r.get("tension", 0) or 0)
+                for r in (read_tension(self.project_dir) or [])
+                if isinstance(r, dict)
+            }
+            flags: list[str] = []
+            for ch in range(lo, end_ch + 1):
+                tier = PACE_TIER_BY_NAME.get(tiers.get(ch, ""))
+                tension = readings.get(ch)
+                if tier is None or tension is None:
+                    continue
+                if tier.relaxed and tension >= 8.0:
+                    flags.append(f"第 {ch} 章「{tier.name}」档实测张力 {tension:g}（≥8）——该平没平")
+                elif tier.name == "高潮" and tension <= 5.0:
+                    flags.append(f"第 {ch} 章「高潮」档实测张力 {tension:g}（≤5）——该爆没爆")
+            if flags:
+                self.console.print(
+                    "[yellow]⚠ 节奏交叉验证（档位 vs 实测张力）：[/yellow]"
+                )
+                for fl in flags[:5]:
+                    self.console.print(f"[yellow]  · {fl}[/yellow]")
+                try:
+                    self.memory.log("pacing_crosscheck", "档位-张力交叉验证", {
+                        "batch_range": [lo, end_ch],
+                        "flags": flags,
+                    })
+                except Exception as e:  # noqa: BLE001
+                    degrade("pipeline.pacing_crosscheck", "交叉验证留痕失败", e)
+        except Exception as e:  # noqa: BLE001 - 交叉验证失败不阻断批末收尾
+            degrade("pipeline.pacing_crosscheck", "节奏交叉验证异常", e)
 
     def _finalize_checkpoint(self, result: PipelineResult) -> None:
         """批次边界检查点：写摘要卡片 + 按自主度三挡决定是否挂起。

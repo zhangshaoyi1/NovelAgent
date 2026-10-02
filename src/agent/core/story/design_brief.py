@@ -600,6 +600,10 @@ def _render_chapter_intent(
                 "**不得**按高潮章的爆点/钩子标准判它注水或不达标；"
                 "但仍须服务本章目标情绪。"
             )
+        if tier.duty:
+            # 低谷章职责（登记单 20261001·子项 5）：放松章「是来干什么的」必须随
+            # 档位下发——写手知道职责才不会把缓冲章写成空转，评委按职责判履行。
+            line += "\n  ★ 本章职责：" + tier.duty
         parts.append(line)
     hooks = select_chapter_lines(subline_md, HOOKS_SECTION, chapter_num=chapter_num)
     if hooks:
@@ -643,6 +647,8 @@ def _render_window_pace_tiers(tiers: list[tuple[int, Any]]) -> str:
         #   的派生关系检测（纪律 #19 要求判据是"成员/派生关系"）。
         if tier.relaxed:
             row += "  ← 放松章（规划登记，非注水）"
+        if tier.duty:
+            row += f"；职责：{tier.duty}"
         rows.append(row)
     return (
         "【本窗口各章强度档位（**判定的参照系**：逐章按登记的档位判，"

@@ -992,6 +992,10 @@ class AgenticPipelineWorkflow(
             # 快照 + 超 20% 标记低置信交付（warn，不阻断）。异常显性降级。
             self._run_blind_rate_batch_end(result)
 
+            # ---- 节奏交叉验证（2026-10-02，登记单 20261001·子项 5）----
+            # 档位 vs 实测张力：该平没平 / 该爆没爆（advisory 告警+留痕）。
+            self._run_pacing_crosscheck_batch_end(result)
+
         # ---- G7（拍板 4）：成本汇总（纯复用，异常降级占位不阻断）----
         self._finalize_cost(result)
         # ---- G8（拍板 6）：主线推进/结局模式摘要（纯读 state，异常降级占位不阻断）----
