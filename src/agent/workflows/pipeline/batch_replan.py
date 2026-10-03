@@ -275,9 +275,9 @@ def maybe_replan(
         # ★ 三态：pass / revise（打回 replan 上限 1 次）/ infeasible（升级检查点
         #   挂起交作者）。打回后仍不过 → 带分歧进检查点，不形成死循环。
         # ★ LLM 不可用 → 评审缺席按 pass 继续（degrade 留痕，不阻断复规划）。
+        from agent.agents.plan_reviewer import PlanReviewEscalation
         try:
             from agent.agents.plan_reviewer import (
-                PlanReviewEscalation,
                 apply_plan_review,
                 review_batch_plan,
             )
@@ -304,9 +304,6 @@ def maybe_replan(
 
                 escalate_to_checkpoint(project_dir, _feedback, console=console)
                 raise PlanReviewEscalation(_feedback)
-        except PlanReviewEscalation:
-            raise  # 升级语义必须穿透下面的通用 except（degrade 吞掉即失去阻断权）
-
         # ---- 四管理者确定性审计（§7）：规划不被信任，BLOCK 打回重排 1 次 ----
         report = audit_plan(project_dir, plan.episode_tree, current)
         if not report.passed:
@@ -379,6 +376,10 @@ def maybe_replan(
             console.print(f"[red]✗ 批间复规划审计仍未通过（BLOCK {len(report.blocks)} 条），"
                           f"计划已保留但需人工复核 .state/plan_audit.json[/red]")
         return True
+    except PlanReviewEscalation:
+        # 实弹《凡尘炼废》2026-10-03 修复：内层 re-raise 后仍被本外层通用 except
+        # 吞成 degrade「沿用旧计划」——升级语义必须穿透到 autowrite（exit 2 不开写）。
+        raise
     except Exception as e:  # noqa: BLE001 - 显性降级：规划者缺席时状态机兜底继续写
         degrade("autowrite.batch_replan", "批间复规划失败，本批沿用既有计划继续写", e)
         console.print(f"[yellow]⚠ 批间复规划失败（{e}），本批沿用既有计划继续[/yellow]")

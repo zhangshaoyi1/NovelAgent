@@ -184,16 +184,17 @@ def test_escalate_writes_card_and_transitions(tmp_path) -> None:
 # ---------------------------------------------------------------- V4.3 唯一消费点红线
 def test_batch_replan_consumes_review_before_audit() -> None:
     """batch_replan 必须在 plan_managers.audit_plan 之前消费语义评审，且
-    PlanReviewEscalation 穿透通用 except（不被 degrade 吞掉）。"""
+    PlanReviewEscalation 穿透外层通用 except（不被 degrade 吞掉——实弹教训
+    2026-10-03：内层 re-raise 后仍被外层吞，升级失去阻断权）。"""
     src = (
         Path(__file__).resolve().parents[1]
         / "src" / "agent" / "workflows" / "pipeline" / "batch_replan.py"
     ).read_text(encoding="utf-8")
     assert "review_batch_plan(" in src
-    assert "except PlanReviewEscalation:\n            raise" in src
     i_review = src.index("review_batch_plan(")
     i_audit = src.index("audit_plan(project_dir")
     assert i_review < i_audit, "语义评审必须在确定性审计之前"
-    i_reraise = src.index("except PlanReviewEscalation:\n            raise")
+    # 外层：PlanReviewEscalation 的再抛出必须在通用降级 except 之前
+    i_reraise = src.index("except PlanReviewEscalation:\n        raise")
     i_generic = src.index('except Exception as e:  # noqa: BLE001 - 显性降级')
     assert i_reraise < i_generic, "升级异常的再抛出必须在通用降级 except 之前"
