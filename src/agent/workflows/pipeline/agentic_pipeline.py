@@ -975,7 +975,14 @@ class AgenticPipelineWorkflow(
             try:
                 from agent.core.quality.batch_reflection import record_batch_reflection
 
-                if record_batch_reflection(self.project_dir, batch_end_ch=result.final_chapter):
+                # 2026-09-30：下传 llm_client 并随其有无决定是否允许自动建网关——
+                # 离线/测试（llm_client=None）时显性降级跳过，不得隐式真连网络。
+                if record_batch_reflection(
+                    self.project_dir,
+                    batch_end_ch=result.final_chapter,
+                    llm=self.llm,
+                    llm_autocreate=bool(self.llm),
+                ):
                     self.console.print(
                         "[cyan]批末反思完成（作战笔记落盘 .state/batch_reflection.json）[/cyan]"
                     )

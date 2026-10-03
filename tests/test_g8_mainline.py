@@ -319,6 +319,12 @@ def test_mainline_zero_llm(tmp_path: Path, monkeypatch) -> None:
         "agent.workflows.pipeline.budget_planner.BudgetPlanner.plan",
         lambda self: False,
     )
+    # 批末反思与主线裁决无关：2026-09-30 起它复用 pipeline 的 llm（此前隐式
+    # create_gateway 真连网络且不计数），打桩以保持「writer.llm 只计主线」的断言语义。
+    monkeypatch.setattr(
+        "agent.core.quality.batch_reflection.record_batch_reflection",
+        lambda *a, **k: False,
+    )
     d = _make_g8_project(tmp_path, n_sublines=5, target=30)
     writer = _FakeWriter(d)
     p = _make_pipeline(d, writer, mainline_gate=True, ending_gate=False, target=30)

@@ -307,7 +307,13 @@ def test_progress_write_failure_does_not_block(tmp_path: Path, monkeypatch) -> N
 # ============================================================
 # 6. 零 LLM 断言（G9 事件路径纯确定性）
 # ============================================================
-def test_zero_llm(tmp_path: Path) -> None:
+def test_zero_llm(tmp_path: Path, monkeypatch) -> None:
+    # 批末反思与事件路径无关：2026-09-30 起它复用 pipeline 的 llm（此前隐式
+    # create_gateway 真连网络且不计数），打桩以保持「writer.llm 只计事件链」的断言语义。
+    monkeypatch.setattr(
+        "agent.core.quality.batch_reflection.record_batch_reflection",
+        lambda *a, **k: False,
+    )
     d = _make_project(tmp_path)
     writer = _StubWriter(d)
     p = _make_pipeline(d, writer, target=2, progress_file=d / ".state" / "progress.json")

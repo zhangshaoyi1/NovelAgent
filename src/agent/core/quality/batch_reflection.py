@@ -160,21 +160,35 @@ def record_batch_reflection(
     batch_end_ch: int = 0,
     *,
     chat_fn: Callable[[list[dict[str, str]]], dict[str, Any]] | None = None,
+    llm: Any = None,
+    llm_autocreate: bool = True,
 ) -> bool:
     """批末反思：装配输入 → LLM 提炼 → 落盘（最新 + 历史）。失败 degrade 返回 False。
 
     chat_fn 可注入（离线测试）；缺省惰性创建 Gateway，chat_structured 强制
     ReflectionOutput 结构。
+
+    2026-09-30：新增 ``llm``（复用调用方已持有的 Gateway）与 ``llm_autocreate``
+    （False 时 chat_fn 缺省且无 llm ⇒ 显式降级跳过，**不得偷建网关**）。
+    病灶：pipeline 持有 ``llm_client=None``（离线/测试）时，本函数仍隐式
+    ``create_gateway()`` 真连网络并重试超时（每批白等 10~45s）。
     """
     from agent.core.infra.degrade import degrade
 
     project_dir = Path(project_dir)
     try:
         if chat_fn is None:
+            if llm is None and not llm_autocreate:
+                degrade(
+                    "batch_reflection.no_llm",
+                    "调用方无 LLM 且禁止自动建网关，本批反思跳过（显性降级）",
+                )
+                return False
             from agent.client.gateway_adapter import chat_structured, create_gateway
             from agent.core.base.structured_output import StructuredOutputError
 
-            llm = create_gateway()
+            if llm is None:
+                llm = create_gateway()
 
             def chat_fn(messages):  # noqa: F811
                 # 2026-09-13 实弹：长现象文本在 2048 处截断致 JSON 解析失败——
