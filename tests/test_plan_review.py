@@ -189,7 +189,7 @@ def test_batch_replan_consumes_review_before_audit() -> None:
     src = (
         Path(__file__).resolve().parents[1]
         / "src" / "agent" / "workflows" / "pipeline" / "batch_replan.py"
-    ).read_text(encoding="utf-8")
+    ).read_text(encoding="utf-8").replace("\r\n", "\n")
     assert "review_batch_plan(" in src
     i_review = src.index("review_batch_plan(")
     i_audit = src.index("audit_plan(project_dir")

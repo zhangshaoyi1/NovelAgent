@@ -304,6 +304,8 @@ def maybe_replan(
 
                 escalate_to_checkpoint(project_dir, _feedback, console=console)
                 raise PlanReviewEscalation(_feedback)
+        except PlanReviewEscalation:
+            raise  # 内层先穿透（外层另有再抛，双保险：实弹教训 2026-10-03）
         # ---- 四管理者确定性审计（§7）：规划不被信任，BLOCK 打回重排 1 次 ----
         report = audit_plan(project_dir, plan.episode_tree, current)
         if not report.passed:
