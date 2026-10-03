@@ -98,7 +98,12 @@ class _PlanStepResult:
 _CANON = [
     State.INIT, State.CONFIGURING, State.DISCUSSING, State.ARCHITECTING,
     State.ARCH_CONFIRMED, State.OUTLINING, State.CHARACTER_DESIGN,
-    State.WRITING, State.PAUSED, State.COMPLETED, State.ARCH_REVISION,
+    State.WRITING,
+    # 批次检查点挂起态（登记单 20261001·子项 3）：位于 WRITING 之后、终态之前，
+    # 缺席会导致 _advance_state_to 的 _CANON.index(cur) 对挂起态直接 ValueError
+    # （2026-10-03 实弹《凡尘炼废》plan_block 事故根因）。
+    State.AWAITING_CHECKPOINT,
+    State.PAUSED, State.COMPLETED, State.ARCH_REVISION,
 ]
 _EVENTS = [
     Event.START, Event.DISCUSS, Event.GENERATE_ARCHITECTURE,

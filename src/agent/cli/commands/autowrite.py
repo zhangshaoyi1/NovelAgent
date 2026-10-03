@@ -616,7 +616,10 @@ def autowrite(
         progress_file=(
             None
             if bool(_cli_value(no_progress, False))
-            else str(project_path / ".state" / "progress.json")
+            # 2026-10-03 实弹《凡尘炼废》修复：必须传绝对路径——pipeline 侧会把
+            # 相对路径再按 project_dir 锚定一次，两层相对叠加出
+            # novels/novels/novels/... 三重前缀（每跑一轮多一层）。
+            else str((project_path / ".state" / "progress.json").resolve())
         ),
         # ---- G11 新增：风格模仿 + 写作方法模板（默认开；--no-style/--no-method 关闭）----
         style_enabled=not bool(_cli_value(no_style, False)),
