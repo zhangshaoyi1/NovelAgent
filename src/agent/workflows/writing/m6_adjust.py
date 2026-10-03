@@ -219,6 +219,10 @@ class M6AdjustRouteWorkflow:
             State.CHARACTER_DESIGN,
             State.WRITING,
             State.PAUSED,
+            # 批次检查点挂起态（登记单 20261001·子项 3）：检查点动作含
+            # 「调整下批计划」，挂起态下必须可用（命令门禁已放行，
+            # 2026-10-03 实弹《凡尘炼废》：内部再拦导致挂起中无法改路线）。
+            State.AWAITING_CHECKPOINT,
         ):
             raise RuntimeError(
                 f"当前状态 {self.state_machine.state.value} 不允许调整路线，"
@@ -607,6 +611,10 @@ class M6AdjustRelationWorkflow:
             State.CHARACTER_DESIGN,
             State.WRITING,
             State.PAUSED,
+            # 批次检查点挂起态（登记单 20261001·子项 3）：检查点动作含
+            # 「调整下批计划」，挂起态下必须可用（命令门禁已放行，
+            # 2026-10-03 实弹《凡尘炼废》：内部再拦导致挂起中无法改路线）。
+            State.AWAITING_CHECKPOINT,
         ):
             raise RuntimeError(
                 f"当前状态 {self.state_machine.state.value} 不允许调整关系网，"
