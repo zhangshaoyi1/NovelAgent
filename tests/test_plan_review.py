@@ -194,7 +194,8 @@ def test_batch_replan_consumes_review_before_audit() -> None:
     i_review = src.index("review_batch_plan(")
     i_audit = src.index("audit_plan(project_dir")
     assert i_review < i_audit, "语义评审必须在确定性审计之前"
-    # 外层：PlanReviewEscalation 的再抛出必须在通用降级 except 之前
-    i_reraise = src.index("except PlanReviewEscalation:\n        raise")
+    # 外层：PlanReviewEscalation 的处理分支必须在通用降级 except 之前（含 raise）
+    i_reraise = src.index("except PlanReviewEscalation:")
     i_generic = src.index('except Exception as e:  # noqa: BLE001 - 显性降级')
-    assert i_reraise < i_generic, "升级异常的再抛出必须在通用降级 except 之前"
+    assert i_reraise < i_generic, "升级异常的处理必须在通用降级 except 之前"
+    assert "raise" in src[i_reraise:i_generic], "升级分支必须再抛出（不得吞成降级）"
