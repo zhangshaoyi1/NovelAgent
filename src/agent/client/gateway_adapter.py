@@ -398,10 +398,40 @@ def _build_gateway_inner(env_file: str | None = None, console: Any = None) -> tu
     return gateway, config
 
 
+def create_gateway_from_llm_config(config: Any) -> Any:
+    """按显式 LLMConfig 组装独立 Gateway（评审模型分档用，登记单 20261004·件 8）。
+
+    与 :func:`create_gateway` 的区别：不走 env/档案解析，直接用调用方给的
+    LLMConfig（通常是评审便宜档）建单 provider 最小网关。组装失败由调用方
+    （``plan_gate.resolve_review_llm``）降级沿用原 llm。
+    """
+    from llmagent.gateway import Gateway
+    from llmagent.gateway.request_gate import RequestGate
+    from llmagent.gateway.router import ComplexityRouter
+    from llmagent.gateway.packer import Packer
+    from llmagent.gateway.response_gate import ResponseGate, MetricsSink
+    from llmagent.gateway.rate_limiter import RateLimiter, SemanticCache
+
+    primary = LLMProvider.create(config)
+    registry = ProviderRegistry()
+    registry.register(config.provider, _GatewayModelProvider(config.provider, primary))
+    gateway = Gateway(
+        request_gate=RequestGate(),
+        router=ComplexityRouter(),
+        packer=Packer(),
+        registry=registry,
+        response_gate=ResponseGate(),
+        metrics_sink=MetricsSink(),
+        rate_limiter=RateLimiter(),
+        semantic_cache=SemanticCache(),
+    )
+    gateway._novelagent_config = config
+    return gateway
+
+
 def create_gateway(
     env_file: str | None = None,
-    console: Any = None,
-) -> Any:
+    console: Any = None,) -> Any:
     """直接从环境变量创建原生 llmagent Gateway 实例
 
     返回 Gateway 实例，可直接调用 gateway.chat(ChatRequest(...))。

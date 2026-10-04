@@ -14,8 +14,8 @@
 - **三态裁决、有真阻断权**：``pass`` / ``revise``（带具体修改指令，打回 replan
   **上限 1 次**，与 plan_managers 语义对齐）/ ``infeasible``（升级检查点挂起，
   把争议摆给作者）。第二次仍不过 → 带分歧进检查点，不形成死循环。
-- LLM 不可用 → 降级为现状行为（评审缺席不阻断复规划，degrade 略痕）——
-  与 Supervisor 终审同一降级纪律。
+- LLM 不可用 → **挂起语义**（登记单 20261004 语义反转：unavailable 不再按
+  pass 继续，改 escalate 挂起交人工/重试；内部先重试一次抗抖动）。
 - 与 M5 评委职责区分：评委只记录采样观测（恒不阻断），本 Agent 的裁决**进入控制流**。
 
 只审三个问题（老手编辑看大纲真正看的）：
@@ -111,7 +111,13 @@ def review_batch_plan(
     console: Any = None,
     enabled: bool | None = None,
 ) -> PlanReviewResult:
-    """对批间复规划产出做一次语义评审。永不抛异常（异常=unavailable→按 pass 继续）。"""
+    """对批间复规划产出做一次语义评审。永不抛异常（异常=unavailable）。
+
+    登记单 20261004 语义反转：unavailable 不再等同 pass——由
+    :func:`apply_plan_review` 统一改为 escalate（挂起交人工/重试）。
+    本函数内部对 LLM 调用做 2 次尝试（首次失败重试一次），均失败才
+    返回 unavailable，避免单次抖动即挂起。
+    """
     if enabled is None:
         enabled = os.getenv("NOVELAGENT_PLAN_REVIEW", "1") != "0"
     result = PlanReviewResult("unavailable", "", source="degraded")
@@ -123,31 +129,27 @@ def review_batch_plan(
         from agent.client.gateway_adapter import chat_utility_structured
         from agent.core.infra.prompt_manager import pm
 
-        user = pm.get("agents.plan_review").render_user(
-            current_chapter=current_chapter,
-            summary=str(summary or "")[:3000],
-            arcs_text=_arcs_text(getattr(plan, "episode_tree", []) or [], current_chapter),
-            total_chapters=getattr(plan, "total_chapters", "?"),
-        )
-        verdict = chat_utility_structured(
-            llm,
-            messages=[
-                {"role": "system", "content": pm.get("agents.plan_review").system},
-                {"role": "user", "content": user},
-            ],
-            schema=PlanReviewOutput,
-            max_tokens=1024,
-            enable_thinking=False,
-            name="plan_review",
-        )
+        verdict = None
+        # 登记单 20261004：内部重试一次（共 2 次尝试）——单次 LLM 抖动不应
+        # 直接 unavailable（配合 apply_plan_review 的 unavailable→escalate
+        # 语义反转，避免一次网络故障就把批间复规划挂起）。
+        last_err: Exception | None = None
+        for _attempt in range(2):
+            try:
+                verdict = _review_once(project_dir, plan, current_chapter, summary, llm=llm)
+                break
+            except Exception as e:  # noqa: BLE001, SILENT_DEGRADE reason=retry-loop - 异常被捕获后统一重抛（非静默）
+                last_err = e
+        if verdict is None:
+            raise last_err  # type: ignore[misc]
         raw = str(verdict.verdict).strip().lower()
         if raw not in VALID_VERDICTS:
             raise ValueError(f"评审输出非法 verdict={raw!r}")
         result = PlanReviewResult(raw, str(verdict.feedback or "").strip(), source="llm")
-    except Exception as e:  # noqa: BLE001 - 评审缺席不阻断复规划（degrade 留痕）
+    except Exception as e:  # noqa: BLE001 - 评审缺席不再放行（上游 apply_plan_review 改挂起）
         degrade(
             "plan_review.review",
-            "计划语义评审调用/解析失败，按 pass 继续（评审缺席不阻断复规划）",
+            "计划语义评审两次尝试均失败（unavailable；调用方按挂起语义处理）",
             e,
         )
         result = PlanReviewResult("unavailable", f"评审不可用：{e}", source="degraded")
@@ -160,6 +162,37 @@ def review_batch_plan(
         except Exception:  # noqa: SILENT_DEGRADE reason=logging-only - 打印失败不影响裁决
             pass
     return result
+
+
+def _review_once(
+    project_dir: str | Path,
+    plan: Any,
+    current_chapter: int,
+    summary: str,
+    *,
+    llm: Any,
+):
+    """单次评审调用（``review_batch_plan`` 的重试单元；异常向上抛）。"""
+    from agent.client.gateway_adapter import chat_utility_structured
+    from agent.core.infra.prompt_manager import pm
+
+    user = pm.get("agents.plan_review").render_user(
+        current_chapter=current_chapter,
+        summary=str(summary or "")[:3000],
+        arcs_text=_arcs_text(getattr(plan, "episode_tree", []) or [], current_chapter),
+        total_chapters=getattr(plan, "total_chapters", "?"),
+    )
+    return chat_utility_structured(
+        llm,
+        messages=[
+            {"role": "system", "content": pm.get("agents.plan_review").system},
+            {"role": "user", "content": user},
+        ],
+        schema=PlanReviewOutput,
+        max_tokens=1024,
+        enable_thinking=False,
+        name="plan_review",
+    )
 
 
 def _review_label(verdict: str) -> str:
@@ -180,19 +213,29 @@ def apply_plan_review(
 ) -> tuple[str, str]:
     """纯决策函数：两次评审结果 → (proceed | replan | escalate, 反馈文本)。
 
-    - first=pass / unavailable / disabled → proceed（评审缺席不阻断）；
+    登记单 20261004 语义反转：规划级评审**不可用不再自动放行**——
+    unavailable = 评审缺席但有牙，改 escalate（挂起交人工/重试）。
+    规划是"越晚发现越贵"的上游，fail-open 代价（全书返工）≫ 一次挂起；
+    运行时质检类 fail-open 纪律（G3）不变，只对规划级评审让步。
+
+    - first=pass / disabled → proceed；
+    - first=unavailable → escalate（评审不可用，挂起待人工/重试）；
     - first=revise → 打回 replan 一次（上限 1 次）；
-    - 打回后仍 revise，或任一次 infeasible → escalate（升级检查点挂起）。
+    - 打回后仍 revise / unavailable，或任一次 infeasible → escalate。
     """
     if first.verdict == "infeasible":
         return "escalate", first.feedback
-    if first.verdict in ("pass", "unavailable"):
+    if first.verdict == "unavailable":
+        return "escalate", first.feedback or "计划评审不可用（LLM 不可用），已挂起待人工/重试"
+    if first.verdict == "pass":
         return "proceed", first.feedback
     # first == revise：打回一次
     if second is None:
         return "replan", first.feedback
-    if second.verdict in ("pass", "unavailable"):
+    if second.verdict == "pass":
         return "proceed", second.feedback
+    if second.verdict == "unavailable":
+        return "escalate", second.feedback or "修订后计划评审不可用，已挂起待人工/重试"
     return "escalate", f"{first.feedback}；修订后仍不过：{second.feedback}"
 
 
@@ -201,39 +244,25 @@ def escalate_to_checkpoint(
     feedback: str,
     console: Any = None,
 ) -> None:
-    """评审分歧升级：写检查点卡 + 状态迁移 WRITING→AWAITING_CHECKPOINT（可穿越重启）。"""
-    from agent.core.engine.state_machine import Event, State, StateMachine
+    """评审分歧升级：写检查点卡 + 状态迁移 WRITING→AWAITING_CHECKPOINT（可穿越重启）。
 
-    project_path = Path(project_dir)
-    card = {
-        "at": time.strftime("%Y-%m-%dT%H:%M:%S"),
-        "batch_range": [],
-        "chapters_written": 0,
-        "low_confidence_delivery": False,
-        "paused": True,
-        "pause_reason": "计划审稿人裁决不可行/两次修订仍不过",
-        "risks": [f"计划评审分歧：{feedback[:300]}"],
-        "next_plan": {},
-        "actions": [
+    登记单 20261004·件 1：具体动作下沉到
+    ``core.engine.checkpoint.raise_checkpoint``（core 不能反向 import agents，
+    规划闸门等 core 侧调用方需复用同一升级动作），本函数改薄封装，
+    保留计划审稿人语境的文案。
+    """
+    from agent.core.engine.checkpoint import raise_checkpoint
+
+    raise_checkpoint(
+        project_dir,
+        pause_reason="计划审稿人裁决不可行/两次修订仍不过",
+        risks=[f"计划评审分歧：{feedback[:300]}"],
+        actions=[
             "checkpoint-continue -d <项目>   # 认可现有计划，放行继续",
             "adjust-route -d <项目> --intent <修改方向>  # 按审稿意见调整路线后放行",
         ],
-    }
-    try:
-        p = project_path / ".state" / "checkpoint.json"
-        p.parent.mkdir(parents=True, exist_ok=True)
-        tmp = p.with_suffix(".json.tmp")
-        tmp.write_text(json.dumps(card, ensure_ascii=False, indent=1), encoding="utf-8")
-        tmp.replace(p)
-    except Exception as e:  # noqa: BLE001
-        degrade("plan_review.escalate", "升级检查点卡片落盘失败", e)
-    try:
-        sm = StateMachine(project_path)
-        sm.load()
-        if sm.state is State.WRITING:
-            sm.transition(Event.ENTER_CHECKPOINT)
-    except Exception as e:  # noqa: BLE001
-        degrade("plan_review.escalate", "升级检查点状态迁移失败", e)
+        console=console,
+    )
     if console is not None:
         try:
             console.print(

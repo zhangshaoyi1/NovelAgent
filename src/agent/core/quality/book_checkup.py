@@ -1028,3 +1028,137 @@ def run_book_checkup(
         "degraded": degraded,
         "passed": not issues and not degraded,
     }
+
+
+# ============================================================
+# 连批偏离 → 规划对账评审（登记单 20261004·件 7）
+# ============================================================
+#: 连批命中计数文件（{rule_id: {count, last_batch}}）
+CHECKUP_STREAK_FILE = ".state/book_checkup_streak.json"
+#: 同一 rule_id 连续命中该批次数 → 触发一次规划对账评审
+CHECKUP_STREAK_REVIEW_LIMIT = 2
+
+
+def update_streak_and_review(
+    project_dir: str | Path,
+    issues: list[dict[str, Any]],
+    *,
+    llm: Any,
+    console: Any = None,
+    batch_mark: str = "",
+) -> None:
+    """批末体检结果按 rule_id 记连批命中计数；连续 2 批命中同一 rule_id →
+    触发一次"规划 vs 前序事实"对账评审（:func:`plan_gate.review_plan_diff`）。
+
+    advisory 语义（与写盘闸门不同）：评审缺席（unavailable）只 degrade 留痕
+    **不挂起**——这是观测升级路径，不得把运行时锁死；仅当评审明确
+    ``revise`` 时才升级检查点（pause_reason 带规则 id，交作者裁决）。
+
+    失败显性化：整条链路任何异常 degrade 留痕，不阻断批末收尾。
+    """
+    try:
+        import json
+        import time
+
+        from agent.core.infra.degrade import degrade
+        from agent.core.plan_gate import review_plan_diff
+
+        root = Path(project_dir)
+        streak_path = root / CHECKUP_STREAK_FILE
+        streaks: dict[str, dict[str, Any]] = {}
+        try:
+            loaded = json.loads(streak_path.read_text(encoding="utf-8"))
+            if isinstance(loaded, dict):
+                streaks = loaded
+        except Exception:  # noqa: BLE001 - 计数文件缺失/损坏视为空
+            pass  # noqa: SILENT_DEGRADE reason=best-effort ref=20261004_规划质量分层守卫_收口评审与挂起语义.md
+
+        hit_rules: list[str] = []
+        for it in issues:
+            rule_id = str(it.get("metric", "?"))
+            entry = streaks.get(rule_id) or {}
+            prev_batch = str(entry.get("last_batch", ""))
+            count = int(entry.get("count", 0) or 0)
+            if prev_batch == batch_mark:
+                # 同一批内重复命中不重复计数
+                streaks[rule_id] = {"count": count, "last_batch": prev_batch}
+            else:
+                count += 1
+                streaks[rule_id] = {"count": count, "last_batch": batch_mark}
+                if count >= CHECKUP_STREAK_REVIEW_LIMIT:
+                    hit_rules.append(rule_id)
+        try:
+            streak_path.parent.mkdir(parents=True, exist_ok=True)
+            streak_path.write_text(
+                json.dumps(streaks, ensure_ascii=False, indent=1), encoding="utf-8"
+            )
+        except Exception as e:  # noqa: BLE001 - 计数落盘失败不影响评审本身
+            degrade("book_checkup.streak", "连批计数落盘失败", e)
+
+        if not hit_rules:
+            return
+
+        # 取当前规划做对账评审（old 留空 = 全量规划入评审视野）
+        from agent.core.plan_store import PlanStore
+
+        plan = PlanStore(root).load() or {}
+        if not plan:
+            degrade(
+                "book_checkup.streak",
+                f"连批命中 {hit_rules} 但 plan.json 缺失，跳过规划对账评审",
+            )
+            return
+        if not llm:
+            degrade(
+                "book_checkup.streak",
+                f"连批命中 {hit_rules} 但无评审 LLM，跳过规划对账评审（advisory 不挂起）",
+            )
+            return
+        result = review_plan_diff(
+            root,
+            {},
+            plan,
+            llm=llm,
+            reason=f"book_checkup 连批偏离对账：{','.join(hit_rules)}",
+        )
+        if result.verdict == "revise":
+            from agent.core.engine.checkpoint import raise_checkpoint
+
+            if console is not None:
+                try:
+                    console.print(
+                        "[red]✗ 跨章检查同类偏离连续两批且规划对账评审未过，"
+                        f"已挂起：{','.join(hit_rules)}[/red]"
+                    )
+                except Exception:  # noqa: SILENT_DEGRADE reason=logging-only
+                    pass
+            raise_checkpoint(
+                root,
+                pause_reason="跨章检查同类偏离连续两批，规划对账评审未过",
+                risks=[
+                    f"连批命中规则：{','.join(hit_rules)}；评审反馈：{result.feedback[:300]}"
+                ],
+                actions=[
+                    "checkpoint-continue -d <项目>   # 人工拍板放行",
+                    "adjust-route -d <项目> --intent <修改方向>  # 调整路线后放行",
+                ],
+                console=console,
+            )
+        elif result.verdict == "unavailable":
+            degrade(
+                "book_checkup.streak",
+                "规划对账评审不可用（advisory 观测路径，只留痕不挂起）",
+            )
+        else:
+            if console is not None:
+                try:
+                    console.print(
+                        "[cyan]跨章检查连批命中"
+                        f"（{','.join(hit_rules)}）：规划对账评审通过[/cyan]"
+                    )
+                except Exception:  # noqa: SILENT_DEGRADE reason=logging-only
+                    pass
+    except Exception as e:  # noqa: BLE001 - 观测升级路径不阻断批末收尾
+        from agent.core.infra.degrade import degrade
+
+        degrade("book_checkup.streak", "连批升级对账评审链路异常", e)

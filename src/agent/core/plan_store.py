@@ -24,7 +24,12 @@ mainline / route / ending_mode 全线漂移（规划告警 ×7、结局模式在
 
 不变量清单（后续新增规划字段时在此扩展）：
 1. ``total_chapters`` 为正整数（可从 str 宽容转换）；
-2. ``total_chapters == scope.estimated_chapters``（scope 存在时强制推导）。
+2. ``total_chapters == scope.estimated_chapters``（scope 存在时强制推导）；
+3. **规划闸门**（登记单 20261004，``gate=True`` 默认开）：落盘前经
+   ``core.plan_gate.enforce_plan_gate``（确定性硬冲突 + 独立 LLM 评审，
+   不注入 design_brief 打破自我印证）。闸门拒写（``PlanGateRejected``）时
+   **不写盘、不留史**（plan.json 与 plan_history 均不变），异常向上抛由
+   调用方处置（打回重规划 / 挂起交人工）。
 """
 
 from __future__ import annotations
@@ -80,6 +85,8 @@ class PlanStore:
         reason: str = "",
         override: bool = False,
         console: Any = None,
+        gate: bool = True,
+        review_llm: Any = None,
     ) -> dict[str, Any]:
         """唯一写入口。
 
@@ -88,14 +95,22 @@ class PlanStore:
                 返回 ``None`` 表示无变更（不写盘、不留史）。
             reason: 变更原因（写入变更日志）。
             override: 置 True 时允许 ``total_chapters`` 偏离
-                ``scope.estimated_chapters``（必须给 reason，日志留痕）。
+                ``scope.estimated_chapters``（必须给 reason，日志留痕）；
+                同时是规划闸门的人工豁免路径（写豁免台账，不评审）。
             console: 可选 rich console，用于回显钳制/覆盖警告。
+            gate: 规划闸门开关（默认开）。人工在场编辑（web 等）可显式
+                传 ``gate=False`` 跳过闸门。
+            review_llm: 闸门 LLM 评审用网关（规划 agent 链路**必须注入**；
+                ``None`` = 人工编辑路径，闸门留痕放行，见 plan_gate 模块 docstring）。
 
         Returns:
             最终落盘的 plan。
 
         Raises:
             PlanInvariantError: override=True 但 reason 为空。
+            agent.core.plan_gate.PlanGateRejected: 闸门拒写（不写盘、不留史，
+                plan.json / plan_history 均保持不变；硬冲突 / 评审 revise
+                超限 / 评审不可用挂起）。
         """
         if override and not reason:
             raise PlanInvariantError("override=True 必须携带 reason（审计留痕）")
@@ -115,6 +130,24 @@ class PlanStore:
 
         old_total = self._valid_total(old)
         new_total = self._valid_total(new)
+
+        # ---- 规划闸门（登记单 20261004）：落盘前的最后一道收口 ----
+        # 拒写时 PlanGateRejected 向上抛：不写盘、不留史（plan.json /
+        # plan_history 均不变），由调用方处置（打回重规划 / 挂起交人工）。
+        if gate:
+            # 延迟导入：core 内部跨模块（R6 分层纪律，与 _recalc_derived 同型）
+            from agent.core.plan_gate import enforce_plan_gate
+
+            enforce_plan_gate(
+                self,
+                old,
+                new,
+                review_llm=review_llm,
+                console=console,
+                reason=reason,
+                override=override,
+            )
+
         self._atomic_write(new)
         self._append_history(old, new, reason=reason, override=override)
 

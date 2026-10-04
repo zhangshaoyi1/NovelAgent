@@ -98,7 +98,7 @@ def test_build_batch_summary_sources(tmp_path):
     assert "老怪" in summary and "传承线" in summary
 
 
-def test_maybe_replan_triggers_on_continuation(tmp_path):
+def test_maybe_replan_triggers_on_continuation(tmp_path, monkeypatch):
     _write_plan(tmp_path, [Arc(id="a1", name="弧", chapter_start=1, chapter_end=100, goal="g")])
     (tmp_path / "chapters").mkdir()
     for i in range(1, 4):
@@ -112,6 +112,9 @@ def test_maybe_replan_triggers_on_continuation(tmp_path):
 
     from rich.console import Console
 
+    # 登记单 20261004 语义反转：评审不可用 → 挂起。本测试只验 replan 触发，
+    # 不带评审 LLM，故显式关掉计划审稿人开关（走 disabled→pass 路径）。
+    monkeypatch.setenv("NOVELAGENT_PLAN_REVIEW", "0")
     assert maybe_replan(tmp_path, console=Console(), decide=decide) is True
     assert called.get("ok") is True
 

@@ -56,6 +56,7 @@ from __future__ import annotations
 
 import json
 import re
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -132,6 +133,56 @@ DESIGN_EXEMPTION_PACE = (
     "（登记放松却通篇无信息增量、或登记高强度却写得平淡）。"
     "未给出强度档位的章，按原标尺判，不放松也不收紧。"
 )
+
+#: 豁免台账文件（登记单 20261004·件 6）：「设计内免罪」每次生效记一行。
+#: 谁判定谁记录：评委（LLM）在自由文本里做豁免裁决，代码侧唯一可挂账的
+#: 时机是消费评委产出、确认某 issue 按设计轨免罪的处置点调用
+#: :func:`record_design_exemption_use`。
+_DESIGN_EXEMPTION_USE_FILE = Path(".state/design_exemption_use.jsonl")
+
+#: 本窗口/本批次设计内免罪额度上限（登记单 20261004·件 6）。
+DESIGN_EXEMPTION_USE_LIMIT = 3
+
+#: 豁免量级上限文案（额度用尽后追加在 ``DESIGN_EXEMPTION`` 之后）。
+#:
+#: ★ 为什么需要：``DESIGN_EXEMPTION`` 把"符合规划"判为合格，而规划本身可能
+#:   有错（自我印证）——豁免无上界放行时，规划错误被无限免罪。加上限后
+#:   超额部分降级为"照常判 issue + 请求人工复核"，把偏差重新变回**可见**。
+#:
+#: ★ 历史路径零改动（纪律 #4）：台账无记录时本条**不出现**，评委端文本
+#:   逐字等同改造前（``test_design_brief.py`` 快照断言守护）。
+DESIGN_EXEMPTION_CAP = (
+    "【豁免额度耗尽】本窗口设计内免罪额度（3 次）已用尽，此前已按设计轨免罪的"
+    "同类 issue 不再重复免罪；后续疑似偏离登记轨迹的变化一律照常按通用尺判 "
+    "issue，存疑处标注【豁免额度耗尽·请人工复核】。"
+)
+
+
+def record_design_exemption_use(project_dir: str | Path, note: str = "") -> None:
+    """记一次「设计内免罪」生效（豁免判定处置点调用；失败只 degrade 不阻断）。"""
+    try:
+        p = Path(project_dir) / _DESIGN_EXEMPTION_USE_FILE
+        p.parent.mkdir(parents=True, exist_ok=True)
+        rec = {"at": time.strftime("%Y-%m-%dT%H:%M:%S"), "note": str(note or "")[:200]}
+        with p.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(rec, ensure_ascii=False) + "\n")
+    except Exception as e:  # noqa: BLE001 - 台账落盘失败不影响评委管线
+        degrade("design_brief.exemption_use", "豁免台账落盘失败", e)
+
+
+def _design_exemption_use_count(project_dir: Path | None) -> int:
+    """本窗口/本批次已用豁免次数（台账行数；文件缺失/损坏 = 0，零改动路径）。"""
+    if project_dir is None:
+        return 0
+    try:
+        p = Path(project_dir) / _DESIGN_EXEMPTION_USE_FILE
+        if not p.exists():
+            return 0
+        with p.open("r", encoding="utf-8") as fh:
+            return sum(1 for line in fh if line.strip())
+    except Exception as e:  # noqa: BLE001 - 台账读不到 = 视为 0（保持旧渲染）
+        degrade("design_brief.exemption_use", "豁免台账读取失败，按 0 次处理", e)
+        return 0
 
 #: 承接=（章首状态结转）——评委端对齐判定的**权威起点**（2026-09-21，三端供给收口）。
 #:
@@ -310,6 +361,9 @@ class DesignBrief:
     #: 章级期限/时间线（长线一致性二期 T3，20260930）：规划端唯一授权，
     #: 写手不得改期/缩水（改期走 batch-directive）；评委端为期限一致性参照系。
     deadline_constraints: str = ""
+    #: 项目根（登记单 20261004·件 6）：豁免额度台账查询用；缺省 None = 不查
+    #: （直构造 DesignBrief 的旧调用方行为与旧版逐字一致）。
+    project_dir: Path | None = None
 
     @property
     def empty(self) -> bool:
@@ -406,6 +460,10 @@ class DesignBrief:
             blocks.append(self.foreshadow_allowance)
         if blocks:
             blocks.append(DESIGN_EXEMPTION)
+            # 豁免量级上限（登记单 20261004·件 6）：额度（3 次）用尽后追加
+            # 上限文案；无记录时零改动（历史路径逐字一致，纪律 #4）。
+            if _design_exemption_use_count(self.project_dir) >= DESIGN_EXEMPTION_USE_LIMIT:
+                blocks.append(DESIGN_EXEMPTION_CAP)
             # 强度维前提**只在真有档位时**追加（纪律 #4：不给老数据加新前提）
             if self.window_pace_tiers:
                 blocks.append(DESIGN_EXEMPTION_PACE)
@@ -1055,4 +1113,5 @@ def build_design_brief(
             _render_design_expectation(nodes, window, int(chapter_num)), "expectation"
         ),
         opening_state=_clip(_render_opening_state(root), "carry"),
+        project_dir=root,
     )

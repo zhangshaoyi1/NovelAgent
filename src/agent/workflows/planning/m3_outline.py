@@ -486,7 +486,28 @@ class M3OutlineWorkflow:
             synopsis=synopsis,
             sublines=sublines,
         )
+        # 规划闸门·确定性旁检（登记单 20261004·件 4）：outline/subline 是
+        # plan.json 的渲染下游直写，不改造走 PlanStore（收口点在 plan 落盘），
+        # 但写入前跑一次死亡+复活词确定性检查——只 degrade 留痕 + 告警，
+        # 不阻断（plan 闸门已拦主要内容；留痕供观测）。
+        self._outline_gate_check(content)
         self.outline_file.write_text(content, encoding="utf-8")
+
+    def _outline_gate_check(self, text: str) -> None:
+        """outline 直写前的确定性检查（advisory：不阻断，见登记单 20261004）。"""
+        try:
+            from agent.core.plan_gate import check_outline_text
+
+            hits = check_outline_text(self.project_dir, text)
+            for h in hits:
+                try:
+                    self.console.print(f"[yellow]⚠ 规划闸门（outline 旁检）：{h}[/yellow]")
+                except Exception:  # noqa: SILENT_DEGRADE reason=logging-only
+                    pass
+        except Exception as e:  # noqa: BLE001 - 旁检失败不阻断 outline 落盘
+            from agent.core.infra.degrade import degrade
+
+            degrade("plan_gate.outline", "outline 确定性旁检失败（不阻断直写）", e)
 
     def _render_and_save_sublines(
         self, sublines: list[dict[str, Any]]
@@ -544,6 +565,8 @@ class M3OutlineWorkflow:
                 chapter_deadlines=str(s.get("chapter_deadlines", "") or "").strip(),
             )
             # 写入 sublines/S<NN>_<name>/subline.md
+            # 规划闸门·确定性旁检（同 outline，advisory 不阻断）
+            self._outline_gate_check(content)
             path = subline_dir / subline_id / "subline.md"
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text(content, encoding="utf-8")

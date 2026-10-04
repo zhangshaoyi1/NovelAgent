@@ -73,9 +73,13 @@ def test_apply_pass_proceeds() -> None:
     assert action == "proceed"
 
 
-def test_apply_unavailable_proceeds() -> None:
-    action, _ = apply_plan_review(PlanReviewResult("unavailable", "", source="degraded"), None)
-    assert action == "proceed", "评审缺席不得阻断复规划"
+def test_apply_unavailable_escalates() -> None:
+    # 登记单 20261004 语义反转：规划级评审不可用不再自动放行，改挂起交人工。
+    action, feedback = apply_plan_review(
+        PlanReviewResult("unavailable", "", source="degraded"), None
+    )
+    assert action == "escalate", "评审不可用必须挂起，不得按 pass 继续"
+    assert isinstance(feedback, str)
 
 
 def test_apply_revise_then_pass_proceeds() -> None:

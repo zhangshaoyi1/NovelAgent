@@ -371,6 +371,12 @@ class TestGates:
 # 测试：正确流程
 # ============================================================
 class TestHappyPath:
+    @pytest.fixture(autouse=True)
+    def _disable_plan_gate(self, monkeypatch):
+        # 规划闸门（登记单 20261004）默认开：本类 mock llm 返回的是 M4 业务输出
+        # （不满足评审 {verdict, feedback} schema）→ 评审 unavailable → 挂起拒写。
+        # M4 落盘行为非本类测试目标，显式关闸；闸门语义由 test_plan_gate.py 专测。
+        monkeypatch.setenv("NOVEL_PLAN_GATE_REVIEW", "0")
     def test_runs_and_generates_all_files(self, tmp_path: Path) -> None:
         d = _build_minimal_project(tmp_path)
         wf = M4CharacterWorkflow(project_dir=d, llm_client=_build_mock_llm(M4_LLM_OUTPUT))

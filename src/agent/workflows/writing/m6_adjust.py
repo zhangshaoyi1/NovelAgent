@@ -403,8 +403,11 @@ class M6AdjustRouteWorkflow:
             plan["route"] = new_route
             return plan
 
+        # 规划闸门（登记单 20261004）：注入本链路已有 llm 获得完整闸门。
         return PlanStore(self.project_dir).mutate(
-            _apply, reason="M6 路线调整同步（m6_adjust）"
+            _apply,
+            reason="M6 路线调整同步（m6_adjust）",
+            review_llm=getattr(self, "llm", None),
         )
 
     # ------ 内部：提取未来节点摘要 ------

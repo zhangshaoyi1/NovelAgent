@@ -188,6 +188,11 @@ KNOWN_CHAINS: dict[str, str] = {
         "达上限后的动作（L144）是**保守拒绝**（raise ProjectLockBusy，绝不双写），"
         "不是不可逆动作；陈旧锁删除被 safe-delete 护栏拦时走 degrade"
         "（L155，namespace project_lock.acquire 已登记）⇒ #31② 满足。",
+    "core/quality/book_checkup.py::update_streak_and_review":
+        "已复核（2026-10-04，登记单 20261004_规划质量分层守卫）：count += 1 只在"
+        "跨批次（last_batch 变化）时自增，同批重复命中不计数；达 "
+        "CHECKUP_STREAK_REVIEW_LIMIT 的动作是规划对账评审（advisory），仅 verdict==revise "
+        "才升级检查点挂起，unavailable/异常只 degrade 留痕不阻断批末收尾 ⇒ #31② 满足。",
     "core/quality/scoring/quality_checker.py::QualityChecker.revise_loop":
         "已守：attempts += 1（L574）位于 revise_fn（L572）+ 复检（L573）**之后** ⇒ "
         "只在动作完成后自增；循环上界由 L571 条件（attempts < MAX_REVISION_ATTEMPTS）"

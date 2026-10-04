@@ -444,10 +444,16 @@ class PlannerAgent:
         from agent.core.plan_store import PlanStore
 
         master = plan.model_dump()
+        # 规划闸门（登记单 20261004）：planner 是规划 agent 链路，必须注入
+        # 评审 llm 得到完整闸门；NOVEL_REVIEW_MODEL_PROFILE 设档时用便宜档
+        # 独立评审网关，否则沿用原 llm（resolve_review_llm 内降级）。
+        from agent.core.plan_gate import resolve_review_llm
+
         PlanStore(self.project_dir).mutate(
             lambda old: {**old, **master},
             reason="M3 MasterPlan 生成（planner）",
             console=self.console,
+            review_llm=resolve_review_llm(self.llm, console=self.console),
         )
 
     def load_plan(self) -> MasterPlan | None:

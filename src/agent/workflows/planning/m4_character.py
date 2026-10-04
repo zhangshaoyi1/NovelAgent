@@ -422,10 +422,13 @@ class M4CharacterWorkflow:
             },
         }
         # P1（2026-09-07）：走 PlanStore 唯一写入口（原子写 + 变更日志 + 派生重算）
+        # 规划闸门（登记单 20261004）：注入本链路已有 llm 获得完整闸门。
         from agent.core.plan_store import PlanStore
 
         PlanStore(self.project_dir).mutate(
-            lambda _old: plan, reason="M4 路线+体量落盘（m4_character）"
+            lambda _old: plan,
+            reason="M4 路线+体量落盘（m4_character）",
+            review_llm=getattr(self, "llm", None),
         )
 
     def _render_characters(self, characters: list[dict[str, Any]], title: str) -> list[Path]:

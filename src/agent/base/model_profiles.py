@@ -254,6 +254,21 @@ def profile_to_llm_kwargs(p: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def review_llm_kwargs() -> dict[str, Any] | None:
+    """评审模型分档（登记单 20261004·件 8）：env ``NOVEL_REVIEW_MODEL_PROFILE``
+    指定档案名则返回该档案的 LLM kwargs（调用方用它建独立评审网关，通常配
+    便宜档模型跑规划/计划评审）；未设置或档案缺失/未启用 → 返回 None，
+    调用方沿用原 llm（行为与旧版一致）。
+    """
+    name = os.environ.get("NOVEL_REVIEW_MODEL_PROFILE", "").strip()
+    if not name:
+        return None
+    p = get_profile(name)
+    if p is None or not p.get("enabled", True):
+        return None
+    return profile_to_llm_kwargs(p)
+
+
 def mask_key(key: str) -> str:
     """API Key 脱敏展示（保留前 4 后 4）。"""
     key = str(key or "")

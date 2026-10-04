@@ -82,7 +82,6 @@ _ORPHAN_EXEMPT: dict[str, str] = {
     "specs_by_repairability": "维度注册表公共 API：按可修复性过滤（兄弟 specs_by_timing 在用），供处置层消费",
     "get_roster": "agents/registry.py 公共 API：返回完整阵容；供 Web/CLI 或外部脚本消费",
     "owner_of": "degrade_registry 公共 API：命名空间→归属模块；供体检/文档生成或人工排查消费",
-    "profile_to_llm_kwargs": "model_profiles 公共 API：档案→LLMConfig 关键字；供构造 LLM 的调用方消费",
     "has_explicit_max_time": "daemon/process_manager 公共 API：判 argv 是否显式给 --max-time，供墙钟缩放判定消费",
     "retry_business": "core/base/retry 公共 API：retry_* 装饰器家族之一（兄弟 retry_io/retry_parse 在用）",
     # ---- 供 scripts/ 消费（Python 调用图外：脚本不在 src/，扫描器看不见）----

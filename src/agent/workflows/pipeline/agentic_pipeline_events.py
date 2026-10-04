@@ -746,6 +746,18 @@ class _PipelineEventsMixin:
                         "by_metric": by_metric,
                     },
                 )
+                # 连批偏离 → 规划对账评审（登记单 20261004·件 7，advisory：
+                # 评审缺席只留痕；同 rule_id 连续 2 批命中且评审 revise 才挂起）
+                if issues:
+                    from agent.core.quality.book_checkup import update_streak_and_review
+
+                    update_streak_and_review(
+                        self.project_dir,
+                        issues,
+                        llm=self.llm,
+                        console=self.console,
+                        batch_mark=str(getattr(result, "final_chapter", "") or ""),
+                    )
         except Exception as bc_e:  # noqa: BLE001 - 体检失败不阻断批末收尾
             degrade("pipeline.book_checkup", "批末全书体检调用异常", bc_e)
 
