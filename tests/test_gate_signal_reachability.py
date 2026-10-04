@@ -80,10 +80,12 @@ def test_batch_eval_short_circuits_on_every_trip_signal() -> None:
     src = _run_source()
     assert "if _trip_reason:" in src, "批末评测段缺少统一的熔断守卫（_trip_reason）"
     guard = src.index("if _trip_reason:")
+    # 20261003 复盘第二批：三信号收敛进 BatchOutcome.primary()（数据表驱动），
+    # 各置位点经 outcome.register 参与 guard 判定。
     for signal in (
         "result.tripped",
-        "self._rolling_escalation_reason",
-        "self._gate_escalation_reason",
+        "self.outcome.register(StopKind.BUDGET_TRIP",
+        "self.outcome.primary()",
     ):
         assert signal in src[:guard], f"{signal} 未参与熔断守卫判定（漏检 ⇒ 白跑批末评测）"
     eval_at = src.index("evaluate_with_repair", guard)

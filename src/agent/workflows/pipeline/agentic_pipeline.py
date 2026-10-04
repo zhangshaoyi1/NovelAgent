@@ -52,6 +52,7 @@ from agent.workflows.pipeline.agentic_pipeline_agents import _PipelineAgentsMixi
 from agent.workflows.pipeline.agentic_pipeline_cost import _PipelineCostMixin
 from agent.workflows.pipeline.agentic_pipeline_ending import _PipelineEndingMixin
 from agent.workflows.pipeline.agentic_pipeline_events import _PipelineEventsMixin
+from agent.core.engine.batch_outcome import BatchOutcome, StopKind, BatchOutcomeMixin as _BatchOutcomeAliases
 from agent.workflows.pipeline.agentic_pipeline_planning import _PipelinePlanningMixin
 @workflow("agentic_pipeline")
 class AgenticPipelineWorkflow(
@@ -60,6 +61,7 @@ class AgenticPipelineWorkflow(
     _PipelineCostMixin,
     _PipelineEventsMixin,
     _PipelineEndingMixin,
+    _BatchOutcomeAliases,
 ):
     """全流程自主写作流水线。
 
@@ -147,6 +149,8 @@ class AgenticPipelineWorkflow(
         self.project_dir = Path(project_dir)
         self.llm = llm_client
         self.tier = tier
+        # 批末停批统一出口（20261003 复盘第二批）：四通道存储迁入 outcome，
+        # _gate/_rolling_escalation_reason 转为 property 别名，收敛走 primary()。
         self.brief = brief
         self.target_chapters = target_chapters
         self.eval_enabled = eval_enabled
@@ -154,7 +158,6 @@ class AgenticPipelineWorkflow(
         self.max_rollback_attempts = max_rollback_attempts
         # P1（2026-09-12）：滚动体检熔断原因。非空 ⇒ 本批已因「修复未收敛」停批，
         # 最终结果必须 escalated 上报人工（否则外层会再起一批盲写，回退死循环）。
-        self._rolling_escalation_reason: str = ""
         self.guardrails = guardrails
         self.gate_mode = gate_mode
         self._plan_gate_allow_stage_level = bool(plan_gate_allow_stage_level)
@@ -218,7 +221,6 @@ class AgenticPipelineWorkflow(
         # _gate_escalation_reason：非空 = 门禁侧要求停批上报人工（escalated 语义）。
         self._gate_blind_streak = 0
         self._consecutive_flagged = 0
-        self._gate_escalation_reason = ""
 
         # ---- G9：事件总线（未订阅 on_event / progress_file=None 时零落盘开销）----
         from agent.core.engine.events import ProgressEventBus
@@ -825,16 +827,12 @@ class AgenticPipelineWorkflow(
         # 实测（灵荒薪传 2026-09-16 对 `rollback_budget.json` 回查）熔断 14:32:53 以
         # consecutive=4 置位，之后仍涨到 7（又跑 1h06m / 3 次回退 / 重写 5 章 / +0.5M token）。
         # 现三合一：任一熔断置位 ⇒ 立即短路批末评测，并以 escalated 收尾上报人工。
-        _trip_reason = ""
-        _trip_kind = "budget_trip"
+        # 收敛唯一规则：BatchOutcome.primary()（BUDGET > ROLLING > GATE，数据表驱动）。
+        # result.tripped 的三处置位点在此折算登记（block_reason 为其 reason）。
         if result.tripped:
-            _trip_reason = result.block_reason
-        elif self._rolling_escalation_reason:
-            _trip_reason = self._rolling_escalation_reason
-            _trip_kind = "eval"
-        elif self._gate_escalation_reason:
-            _trip_reason = self._gate_escalation_reason
-            _trip_kind = "gate_escalation"
+            self.outcome.register(StopKind.BUDGET_TRIP, result.block_reason)
+        _stop_kind, _trip_reason = self.outcome.primary()
+        _trip_kind = _stop_kind.event_step
         if _trip_reason:
             self.console.print(
                 f"[red]✗ 熔断已触发，跳过评测直接返回：{_trip_reason}[/red]"
