@@ -37,7 +37,11 @@
     <button class="btn primary" onclick="runGeneric('{{ name }}', 'checkpoint-continue', this)">✓ 放行，继续写下一批</button>
     <a class="btn" href="/p/{{ name }}/files">查看章节原文</a>
   </div>
-  <p class="muted small">也可用 rewrite（定向重写）/ adjust-route（调整计划）/ rollback（回滚）后再放行。</p>
+  <div class="actions-row">
+    <input class="cmd-args" placeholder="接受开篇备注（为什么接受，可空）" style="flex:1">
+    <button class="btn" onclick="runGeneric('{{ name }}', 'accept-opening', this)">接受开篇（豁免金三升级）</button>
+  </div>
+  <p class="muted small">「接受开篇」= 作者显式豁免金三 FIRST_CHAPTERS 升级（豁免≠达标，留痕进策略与体检 notes；可用 accept-opening --revoke 撤销）。也可用 rewrite（定向重写）/ adjust-route（调整计划）/ rollback（回滚）后再放行。</p>
   {% endif %}
 </section>
 {% endif %}

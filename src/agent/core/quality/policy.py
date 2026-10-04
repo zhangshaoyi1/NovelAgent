@@ -47,6 +47,11 @@ DEFAULT_QUALITY_POLICY: dict[str, Any] = {
         "gate": True,
         "threshold": GOLDEN_THREE_TOTAL,
         "floor": GOLDEN_THREE_FLOOR,
+        # 作者接受开篇（2026-10-04 实弹《凡尘炼废》：金三线附近评分方差振荡，
+        # 重写追分是打地鼠）：作者显式豁免 FIRST_CHAPTERS 金三升级，
+        # 记录在案（note=谁/何时/为什么）而非静默调阈值。经 accept-opening 命令写入。
+        "opening_accepted": False,
+        "opening_accepted_note": "",
     },
     "deslop": {"enabled": True},
     "cost": {
@@ -105,6 +110,21 @@ def _policy_int(value: Any, fallback: int) -> int:
     except (TypeError, ValueError):
         return fallback
     return n if 1 <= n <= 100 else fallback
+
+
+def golden_opening_accepted(project_dir: str | Path) -> dict[str, Any]:
+    """读「作者接受开篇」豁免状态（accept-opening 命令写入）。
+
+    Returns:
+        ``{"accepted": bool, "note": str}``；策略读取失败按未接受（守势缺省）。
+    """
+    section = (load_quality_policy(project_dir).get("golden_three") or {})
+    if not isinstance(section, dict):
+        section = {}
+    return {
+        "accepted": bool(section.get("opening_accepted", False)),
+        "note": str(section.get("opening_accepted_note", "") or ""),
+    }
 
 
 def golden_three_settings(

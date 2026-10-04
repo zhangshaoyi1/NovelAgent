@@ -478,7 +478,9 @@ class EvaluatorAgent(
         if report.overall_pass or not self.auto_rollback:
             return report
         # ---- HA-Eval L4：不可逆动作必须先过声明式处置层（与 evaluate_with_repair 同源）----
-        failed = [d for d in report.dimensions if not d.passed]
+        failed = self._apply_opening_acceptance(
+            report, [d for d in report.dimensions if not d.passed]
+        )
         decision = self._disposition.plan(failed)
         if decision.action is not Action.ROLLBACK_REWRITE:
             # 非回滚裁决：可逆路径（LOCAL_REPAIR/CONTINUE）、证据不可信（RETRY_EVAL）、
@@ -542,7 +544,15 @@ class EvaluatorAgent(
         while not report.overall_pass:
             # 暴露当前失败报告，供 rewriter 编译针对性修正提示
             self.last_failed_report = report
-            failed = [d for d in report.dimensions if not d.passed]
+            failed = self._apply_opening_acceptance(
+                report, [d for d in report.dimensions if not d.passed]
+            )
+            if not failed:
+                # 豁免后无其余失败维度：本批按「作者接受」收束（非评分达标，notes 留痕）
+                report.overall_pass = True
+                return self._finalize_result(
+                    report, attempts, rolled_back_any, last_repair
+                )
             plan = self._disposition.plan(failed)
 
             # ---- 规则 ①：证据不可信 → 只复评，禁止处置（最多复评一次）----
@@ -658,6 +668,54 @@ class EvaluatorAgent(
         return self._finalize_result(
             report, attempts, rolled_back_any, last_repair
         )
+
+    def _apply_opening_acceptance(self, report: Any, failed: list[Any]) -> list[Any]:
+        """「作者接受开篇」豁免（登记单 20261004 后实弹《凡尘炼废》p8：金三线附近
+        评分方差振荡 48→56→54，重写追分是打地鼠）。
+
+        策略 ``golden_three.opening_accepted=True``（accept-opening 命令写入，
+        note 记录谁/何时/为什么）时，FIRST_CHAPTERS 时机（金三）的未达标维度
+        从处置输入中剔除——豁免≠达标：notes 留痕「豁免而非通过」，其余维度
+        照常裁决。运行时 fail-open 纪律不变；本豁免只作用于升级语义。
+        """
+        try:
+            from agent.core.quality.policy import golden_opening_accepted
+
+            acc = golden_opening_accepted(self.project_dir)
+        except Exception as e:  # noqa: BLE001 - 豁免读取失败按未接受
+            from agent.core.infra.degrade import degrade
+
+            degrade("evaluator.opening_acceptance", "开篇豁免状态读取失败，按未接受", e)
+            return failed
+        if not acc.get("accepted"):
+            return failed
+        kept: list[Any] = []
+        waived: list[str] = []
+        for d in failed:
+            name = str(getattr(d, "name", ""))
+            spec = getattr(d, "spec", None)
+            is_first = (spec is not None and getattr(spec, "eval_timing", None) is not None
+                        and spec.eval_timing.value == "first_chapters") or name.startswith("golden_")
+            if is_first:
+                waived.append(str(getattr(d, "label", name)))
+            else:
+                kept.append(d)
+        if waived:
+            note = (
+                f"作者已接受开篇（{acc.get('note') or '未留备注'}）："
+                f"金三未达标项豁免升级（{'、'.join(waived)}）——豁免而非评分达标。"
+            )
+            if note not in (report.notes or []):
+                report.notes.append(note)
+            try:
+                if self.memory_log:
+                    self.memory_log(
+                        "opening_accepted", "金三升级豁免生效",
+                        {"waived": waived, "note": acc.get("note")},
+                    )
+            except Exception:  # noqa: SILENT_DEGRADE reason=logging-only
+                pass
+        return kept
 
     @staticmethod
     def _finalize_result(
