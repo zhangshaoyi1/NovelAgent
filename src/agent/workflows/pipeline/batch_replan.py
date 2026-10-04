@@ -19,6 +19,7 @@ from typing import Any
 from rich.console import Console
 
 from agent.core.infra.degrade import degrade
+from agent.agents.plan_reviewer import PlanReviewEscalation
 
 
 def _save_form_findings(project_dir, findings) -> None:
@@ -275,7 +276,6 @@ def maybe_replan(
         # ★ 三态：pass / revise（打回 replan 上限 1 次）/ infeasible（升级检查点
         #   挂起交作者）。打回后仍不过 → 带分歧进检查点，不形成死循环。
         # ★ LLM 不可用 → 评审缺席按 pass 继续（degrade 留痕，不阻断复规划）。
-        from agent.agents.plan_reviewer import PlanReviewEscalation
         try:
             from agent.agents.plan_reviewer import (
                 apply_plan_review,
