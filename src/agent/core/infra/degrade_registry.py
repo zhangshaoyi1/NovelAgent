@@ -180,8 +180,6 @@ DEGRADE_NAMESPACES: dict[str, str] = {
     "pipeline.disposition_review": "workflows/pipeline/agentic_pipeline_agents.py",
     "pipeline.checkpoint": "workflows/pipeline/agentic_pipeline_events.py",
     "quality.disposition_review": "core/quality/disposition_review.py",
-    "plan_review.log": "agents/plan_reviewer.py",
-    "plan_review.review": "agents/plan_reviewer.py",
     "engine.checkpoint": "core/engine/checkpoint.py",
     "plan_gate.log": "core/plan_gate.py",
     "plan_gate.review": "core/plan_gate.py",

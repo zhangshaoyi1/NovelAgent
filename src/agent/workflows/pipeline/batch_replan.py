@@ -19,7 +19,7 @@ from typing import Any
 from rich.console import Console
 
 from agent.core.infra.degrade import degrade
-from agent.agents.plan_reviewer import PlanReviewEscalation
+from agent.core.plan_gate import PlanGateRejected
 
 
 def _save_form_findings(project_dir, findings) -> None:
@@ -270,42 +270,37 @@ def maybe_replan(
         planner = PlannerAgent(project_dir, console=console)
         plan = planner.replan_batch(current, summary, decide=decide)
 
-        # ---- 规划层语义评审（登记单 20261001·子项 4：计划审稿人，真阻断权）----
-        # ★ 唯一消费点锁死在 replan 产出后、确定性审计前，不另起独立命令
-        #   （M5 评委"恒不阻断"的教训：没有消费点的把关等于没有）。
-        # ★ 三态：pass / revise（打回 replan 上限 1 次）/ infeasible（升级检查点
-        #   挂起交作者）。打回后仍不过 → 带分歧进检查点，不形成死循环。
-        # ★ LLM 不可用 → 评审缺席按 pass 继续（degrade 留痕，不阻断复规划）。
-        try:
-            from agent.agents.plan_reviewer import (
-                apply_plan_review,
-                review_batch_plan,
-            )
-
-            _rev1 = review_batch_plan(
-                project_dir, plan, current, summary,
-                llm=getattr(planner, "llm", None), console=console,
-            )
-            _action, _feedback = apply_plan_review(_rev1, None)
-            if _action == "replan":
-                console.print("[cyan]计划审稿人打回，重排一次（上限 1 次）[/cyan]")
+        # ---- 规划落盘闸门消费（登记单 20261004：PlanStore.mutate 收口评审）----
+        # ★ 双评审合并（2026-10-04 改造）：原批前 review_batch_plan 退役——
+        #   replan 产物经 PlanStore.mutate 落盘时已过 plan_gate（确定性硬冲突
+        #   + 独立参照系 LLM 评审），此处再评一次是重复把关且两套口径可能
+        #   打架（多把关者标准不一 = Supervisor 教训的反面）。
+        # ★ 本层只消费闸门的打回：PlanGateRejected 带反馈 → 重排重交；
+        #   打回计数由 plan_gate 的 signature 计数统一管理（≤2 次，第 3 次
+        #   revise/unavailable 由闸门自行升级检查点挂起后仍拒写 → 此处
+        #   re-raise → autowrite exit 2 不开写）。
+        # ★ 类 2 纪律（实弹复盘）：PlanGateRejected 是控制流异常，模块顶部
+        #   import，且在通用 degrade except 之前显式再抛。
+        _gate_feedback = ""
+        for _gate_attempt in range(3):
+            try:
                 plan = planner.replan_batch(
                     current,
-                    summary + "\n\n【计划审稿人反馈（须逐条修复，否则升级作者裁决）】\n" + _feedback,
+                    summary + (
+                        "\n\n【规划闸门评审反馈（须逐条修复后重新提交）】\n" + _gate_feedback
+                        if _gate_feedback
+                        else ""
+                    ),
                     decide=decide,
                 )
-                _rev2 = review_batch_plan(
-                    project_dir, plan, current, summary,
-                    llm=getattr(planner, "llm", None), console=console,
+                break
+            except PlanGateRejected as pgr:  # noqa: SILENT_DEGRADE reason=retry-loop - 控制流重试：反馈进下轮 replan，最终失败穿透外层
+                _gate_feedback = str(pgr)
+                if _gate_attempt == 2:
+                    raise  # 闸门已对第 3 次打回自行升级检查点挂起
+                console.print(
+                    f"[cyan]规划闸门打回（第 {_gate_attempt + 1}/3 次），按评审反馈重排[/cyan]"
                 )
-                _action, _feedback = apply_plan_review(_rev1, _rev2)
-            if _action == "escalate":
-                from agent.agents.plan_reviewer import escalate_to_checkpoint
-
-                escalate_to_checkpoint(project_dir, _feedback, console=console)
-                raise PlanReviewEscalation(_feedback)
-        except PlanReviewEscalation:
-            raise  # 内层先穿透（外层另有再抛，双保险：实弹教训 2026-10-03）
         # ---- 四管理者确定性审计（§7）：规划不被信任，BLOCK 打回重排 1 次 ----
         report = audit_plan(project_dir, plan.episode_tree, current)
         if not report.passed:
@@ -378,9 +373,9 @@ def maybe_replan(
             console.print(f"[red]✗ 批间复规划审计仍未通过（BLOCK {len(report.blocks)} 条），"
                           f"计划已保留但需人工复核 .state/plan_audit.json[/red]")
         return True
-    except PlanReviewEscalation:
-        # 实弹《凡尘炼废》2026-10-03 修复：内层 re-raise 后仍被本外层通用 except
-        # 吞成 degrade「沿用旧计划」——升级语义必须穿透到 autowrite（exit 2 不开写）。
+    except PlanGateRejected:
+        # 控制流异常（闸门拒写；第 3 次打回时闸门已升级检查点挂起）——
+        # 必须穿透本 degrade 网到 autowrite（实弹复盘类 2：不得被吞成「沿用旧计划」）。
         raise
     except Exception as e:  # noqa: BLE001 - 显性降级：规划者缺席时状态机兜底继续写
         degrade("autowrite.batch_replan", "批间复规划失败，本批沿用既有计划继续写", e)
