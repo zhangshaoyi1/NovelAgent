@@ -982,7 +982,7 @@ class AgenticPipelineWorkflow(
                     llm_autocreate=bool(self.llm),
                 ):
                     self.console.print(
-                        "[cyan]批末反思完成（作战笔记落盘 .state/batch_reflection.json）[/cyan]"
+                        "[cyan]批末反思完成（作战笔记落盘 .state/insights/batch_reflection.json）[/cyan]"
                     )
             except Exception as ref_e:  # noqa: BLE001
                 degrade("pipeline.batch_reflection", "批末反思调用异常", ref_e)

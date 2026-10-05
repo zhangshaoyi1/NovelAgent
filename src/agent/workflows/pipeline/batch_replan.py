@@ -23,11 +23,11 @@ from agent.core.plan_gate import PlanGateRejected
 
 
 def _save_form_findings(project_dir, findings) -> None:
-    """形态审计发现留痕（追加写 .state/pacing_form.jsonl；失败不阻断）。"""
+    """形态审计发现留痕（追加写 .state/insights/pacing_form.jsonl；失败不阻断）。"""
     import json
     import time
 
-    p = Path(project_dir) / ".state" / "pacing_form.jsonl"
+    p = Path(project_dir) / ".state" / "insights" / "pacing_form.jsonl"
     try:
         p.parent.mkdir(parents=True, exist_ok=True)
         with p.open("a", encoding="utf-8") as fh:

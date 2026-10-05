@@ -46,7 +46,7 @@ class ReflectionOutput(BaseModel):
     summary: str = Field(default="", description="一句话总结本批质量态势")
 
 
-REFLECTION_FILE = ".state/batch_reflection.json"
+REFLECTION_FILE = ".state/insights/batch_reflection.json"  # 观测账本统一目录（20261003 复盘·账本合并）
 _HISTORY_CAP = 20
 
 

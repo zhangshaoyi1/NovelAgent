@@ -415,3 +415,20 @@ agent/
 | `.agents/skills/code-review.md`           | 代码审查清单                                  |
 
 <br />
+
+## 批末检查接入惯例（2026-10-05，源自 20261003 复盘·类 4）
+
+新增批末检查（滚动体检/账本告警/交叉验证之类）时遵循四条，**不新开平行通道**：
+
+1. **纯函数计算**：检查逻辑不打印、不落盘、不置位，返回结构化结果；
+2. **归口标签**：每条产出的风险/问题经 `core/quality/defect_routing.classify`
+   打 `[归口:owner]` 标签（作者看检查点卡即知找哪个机制修）；
+3. **risks 汇聚**：结果追加进检查点卡 `risks`（`_build_checkpoint_card`），
+   或以 `failure` 事件透出——不自建私有账本文件；
+4. **degrade 留痕**：任何异常走 `degrade()` 统一出口并在
+   `degrade_registry` 登记，豁免用 `# noqa: SILENT_DEGRADE reason=<类别>`。
+
+停批类新来源走 `core/engine/batch_outcome.py` 的 `StopKind` + `register`
+（禁止新增平行 `*_escalation_reason` 属性，红线拦截）。
+Appraiser 统一裁决为**触发条件制**（触发条件见
+`../项目文档/优化/20261003_自动写作实弹复盘_横向契约制度.md`），未触发前不重构。

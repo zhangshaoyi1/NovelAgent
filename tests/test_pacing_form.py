@@ -6,7 +6,7 @@
 - **低谷章职责**：``PaceTier.duty`` 为放松档必填（垫片/日常有职责、高潮/推进为空），
   渲染派生自字段（design_brief 两处消费），写手与评委同源。
 - **档位-张力交叉验证**：放松档实测 ≥8 = 该平没平；高潮档实测 ≤5 = 该爆没爆。
-- **留痕**：形态发现落 `.state/pacing_form.jsonl`，检查点卡透出本窗口内的发现。
+- **留痕**：形态发现落 `.state/insights/pacing_form.jsonl`，检查点卡透出本窗口内的发现。
 """
 
 from __future__ import annotations
@@ -170,8 +170,8 @@ def test_form_findings_flow_into_checkpoint_card(tmp_path) -> None:
     """批前形态发现经 pacing_form.jsonl 透出进检查点卡 risks。"""
     import agent.workflows.pipeline.agentic_pipeline_events as ev
 
-    (tmp_path / ".state").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".state" / "pacing_form.jsonl").write_text(
+    (tmp_path / ".state" / "insights").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".state" / "insights" / "pacing_form.jsonl").write_text(
         json.dumps({"rule": "R1 平推", "chapter": 2, "severity": "warn", "message": "连续 4 章推进"})
         + "\n"
         + json.dumps({"rule": "R1 平推", "chapter": 90, "severity": "warn", "message": "窗外"}),

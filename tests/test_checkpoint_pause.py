@@ -175,7 +175,7 @@ def test_auto_batch_writes_card_but_never_pauses(tmp_path) -> None:
 
 def test_light_pauses_on_risk_only(tmp_path) -> None:
     # 有风险（低置信交付）→ 挂起
-    (tmp_path / ".state").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".state" / "insights").mkdir(parents=True, exist_ok=True)
     (tmp_path / GATE_BLIND_FILE).write_text(
         json.dumps({"low_confidence_delivery": True}), encoding="utf-8"
     )
@@ -213,8 +213,8 @@ def test_zero_chapters_skips_checkpoint(tmp_path) -> None:
 
 # ---------------------------------------------------------------- V3.3 卡片信息
 def test_card_contains_next_plan_notes(tmp_path) -> None:
-    (tmp_path / ".state").mkdir(parents=True, exist_ok=True)
-    (tmp_path / ".state" / "batch_reflection.json").write_text(
+    (tmp_path / ".state" / "insights").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".state" / "insights" / "batch_reflection.json").write_text(
         json.dumps({
             "latest": {
                 "summary": "下批开复仇支线，第 8 章埋高潮钩子",

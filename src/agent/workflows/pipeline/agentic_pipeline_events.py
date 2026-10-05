@@ -29,12 +29,12 @@ GATE_ESCALATION_LIMIT = 3
 # （degrade 只写 logging，daemon stdout 为 0 字节）。
 # 与 P0-1（回退水位活在实例属性）**同构** —— 护栏状态必须比它守护的周期活得更久
 # （纪律第 6 条）。反证非设计意图：同期的 `eval_lessons.history`（跨轮累计）是落盘的。
-GATE_BLIND_FILE = ".state/gate_blind.json"
+GATE_BLIND_FILE = ".state/insights/gate_blind.json"  # 观测账本统一目录（20261003 复盘·账本合并）
 
 class _PipelineEventsMixin:
     # ---------------------------------------------------------------- 失明护栏状态（跨运行落盘）
     def _gate_blind_path(self):
-        """失明护栏状态文件路径（``.state/gate_blind.json``）。"""
+        """失明护栏状态文件路径（``.state/insights/gate_blind.json``）。"""
         return self.project_dir / GATE_BLIND_FILE
 
     def _gate_blind_load(self) -> dict:
@@ -514,7 +514,7 @@ class _PipelineEventsMixin:
 
     def _load_form_findings(self, lo: int, hi: int) -> list[str]:
         """读本批窗口内的节奏形态审计发现（pacing_form.jsonl；读失败返回空）。"""
-        p = self.project_dir / ".state" / "pacing_form.jsonl"
+        p = self.project_dir / ".state" / "insights" / "pacing_form.jsonl"
         if not p.exists():
             return []
         out: list[str] = []
