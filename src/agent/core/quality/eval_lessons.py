@@ -226,6 +226,24 @@ def load_eval_lessons_text(
             )
             issues = f.get("issues") or []
             if issues:
+                # 归口裁剪（20261003 复盘·类 4）：教训注入的对象是**写手**（prose
+                # 通道）——plan（改计划能修）/setting/human 归口的问题写给写手
+                # 只会误导（写手无法修复调度/设定错误），由各自修复通道处理。
+                from agent.core.quality.defect_routing import classify
+
+                prose_issues = [
+                    i for i in issues
+                    if classify(str(i)).owner in ("prose",)
+                ]
+                if len(prose_issues) < len(issues):
+                    from agent.core.infra.degrade import degrade
+
+                    degrade(
+                        "eval_lessons.route_trim",
+                        f"【{label}】{len(issues) - len(prose_issues)} 条非 prose 归口问题已裁剪出写手教训（走各自修复通道）",
+                    )
+                issues = prose_issues
+            if issues:
                 lines.append(
                     f"【{label}】实测 {f.get('value')} {arrow} 合格线 "
                     f"{f.get('threshold')}{tag}，具体问题："

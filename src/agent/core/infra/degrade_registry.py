@@ -190,6 +190,7 @@ DEGRADE_NAMESPACES: dict[str, str] = {
     "accept_opening.load": "cli/commands/accept_opening.py",
     "accept_opening.save": "cli/commands/accept_opening.py",
     "evaluator.opening_acceptance": "agents/evaluator.py",
+    "eval_lessons.route_trim": "core/quality/eval_lessons.py",
     "plan_gate.waiver": "core/plan_gate.py",
     "plan_gate.outline": "workflows/planning/m3_outline.py",
     "plan_gate.review_profile": "core/plan_gate.py",

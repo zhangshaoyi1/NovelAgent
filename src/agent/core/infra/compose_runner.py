@@ -31,7 +31,7 @@ def resolve_project_dir(name: str = "", directory: str = "") -> Path:
     - 给了 --name：落到 NOVEL_DATA_ROOT/<书名>
     """
     if directory:
-        return Path(directory).resolve()
+        return Path(directory).resolve()  # path-resolve-ok: compose 入口层解析用户目录
     if name:
         return Path(DEFAULT_NOVEL_ROOT) / name
     raise ValueError("必须提供 directory（续写）或 name（新书）")

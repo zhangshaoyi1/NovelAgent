@@ -32,6 +32,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from agent.core.infra.degrade import degrade
+from agent.core.base.control_flow import ControlFlowError
 
 #: 评审留痕（JSONL 只追加；eval 式回放用）
 PLAN_GATE_LOG = ".state/plan_gate.jsonl"
@@ -48,7 +49,8 @@ _REVIVE_WORDS = ("复活", "重生", "还魂", "起死回生", "苏醒")
 VALID_VERDICTS = ("pass", "revise")
 
 
-class PlanGateRejected(RuntimeError):
+class PlanGateRejected(ControlFlowError):
+    """规划闸门拒写（控制流异常：继承 BaseException，穿透一切 except Exception 降级网）。"""
     """规划闸门拒写（``PlanStore.mutate`` 不落盘、不留史，异常向上抛）。"""
 
     def __init__(self, feedback: str) -> None:

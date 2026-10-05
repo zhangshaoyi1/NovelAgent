@@ -129,7 +129,10 @@ class ProgressEventBus:
                             "seq": event.get("seq"),
                             "elapsed_s": event.get("elapsed_s"),
                             "project_dir": str(
-                                Path(self.progress_file).resolve().parent.parent
+                                # 20261003 复盘·类 3：不得对上层传入路径再 resolve
+                                # （相对路径二次 CWD 锚定 = novels 三重叠加根因）；
+                                # 词法推导即可（progress_file 由入口层保证绝对）。
+                                Path(self.progress_file).parent.parent
                             )
                             if self.progress_file is not None
                             else "",

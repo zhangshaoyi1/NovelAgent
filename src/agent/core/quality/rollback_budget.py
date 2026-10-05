@@ -87,7 +87,7 @@ def _as_int(value: Any) -> int:
 
 def _cache_key(path: Path) -> str:
     try:
-        return str(path.resolve())
+        return str(path.resolve())  # path-resolve-ok: 缓存键归一化（非重新锚定）
     except OSError:  # pragma: no cover - 罕见路径解析失败
         return str(path)
 
