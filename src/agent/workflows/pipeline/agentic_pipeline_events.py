@@ -486,10 +486,16 @@ class _PipelineEventsMixin:
             climax_warns = ledger_warnings(self.project_dir, end_ch)
         except Exception as e:  # noqa: BLE001
             degrade("pipeline.checkpoint", "高潮账本告警读取失败", e)
-        risks = (
-            (["低置信交付（写时门禁失明率超标）"] if low_conf else [])
-            + supervisor_alerts + eval_warns + form_warns + climax_warns
-        )
+        # 归口标签（20261003 复盘·类 4）：每条风险标明归谁修，作者看卡即知找哪个机制
+        from agent.core.quality.defect_routing import tag as _route_tag
+
+        risks = [
+            _route_tag(x)
+            for x in (
+                (["低置信交付（写时门禁失明率超标）"] if low_conf else [])
+                + supervisor_alerts + eval_warns + form_warns + climax_warns
+            )
+        ]
         return {
             "at": _now_iso(),
             "batch_range": [start_ch, end_ch] if wrote > 0 else [],

@@ -1098,6 +1098,17 @@ def update_streak_and_review(
         if not hit_rules:
             return
 
+        # 缺陷归口（20261003 复盘·类 4）：只有 **plan 归口** 的连批偏离才触发
+        # 规划对账评审——prose 归口（套话/篇幅/重复句）的连批偏离打回计划是
+        # 归口错位（改计划修不了正文，实弹《凡尘炼废》死循环根因）；它们的
+        # 修复通道见 defect_routing.ROUTING（rewrite/deslop），不在此升级。
+        from agent.core.quality.defect_routing import plan_owned
+
+        _issues_for_hit = [it for it in issues if str(it.get("metric", "?")) in hit_rules]
+        hit_rules = plan_owned(_issues_for_hit)
+        if not hit_rules:
+            return
+
         # 取当前规划做对账评审（old 留空 = 全量规划入评审视野）
         from agent.core.plan_store import PlanStore
 
